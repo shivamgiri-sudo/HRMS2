@@ -1312,12 +1312,12 @@ export default function BulkUploadHub() {
                         <Th>Rows</Th>
                         <Th>Status</Th>
                         <Th>Uploaded</Th>
-                        <Th>Actions</Th>
+                        <Th className="sticky right-0 bg-slate-50 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]">Actions</Th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {batches.map((batch) => (
-                        <tr key={batch.id} className="hover:bg-slate-50">
+                        <tr key={batch.id} className="group hover:bg-slate-50">
                           <Td>
                             <div className="font-semibold text-slate-950">
                               {batch.upload_batch_no}
@@ -1347,11 +1347,11 @@ export default function BulkUploadHub() {
                             <StatusBadge status={batch.batch_status} />
                           </Td>
                           <Td>{formatDateTime(batch.uploaded_at)}</Td>
-                          <Td>
+                          <Td className="sticky right-0 bg-white shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] group-hover:bg-slate-50">
                             <div className="flex flex-wrap gap-2">
                               <button
                                 onClick={() => loadBatchRows(batch)}
-                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
                               >
                                 View Rows
                               </button>
@@ -1360,7 +1360,7 @@ export default function BulkUploadHub() {
                                 <button
                                   onClick={() => importBatchToTarget(batch)}
                                   disabled={isProcessing || activeImportBatchId === batch.id}
-                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer shadow-[0_2px_6px_rgba(16,185,129,0.15)]"
                                 >
                                   {activeImportBatchId === batch.id ? "Importing..." : "Import to HRMS"}
                                 </button>
@@ -1610,16 +1610,16 @@ function ColumnList({
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+    <th className={`whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500 ${className ?? ""}`}>
       {children}
     </th>
   );
 }
 
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="whitespace-nowrap px-4 py-3 text-slate-600">{children}</td>;
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={`whitespace-nowrap px-4 py-3 text-slate-600 ${className ?? ""}`}>{children}</td>;
 }
 
 function StatusBadge({
