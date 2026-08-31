@@ -915,7 +915,9 @@ export default function AttendanceControlTower() {
                             aria-label={`Select ${row.employeeCode ?? row.employeeName ?? "row"}`} />
                         ) : null}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-600">{row.issueDate}</TableCell>
+                      <TableCell className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-600">
+                        {row.issueDate ? row.issueDate.split("-").reverse().join("/") : "—"}
+                      </TableCell>
                       <TableCell className="px-3 py-1.5 min-w-[140px] max-w-[180px]">
                         <p className="text-sm font-semibold text-slate-900 leading-tight truncate">{row.employeeName ?? row.employeeCode ?? "—"}</p>
                         <p className="mt-0.5 text-[11px] text-slate-400 leading-tight truncate">{row.employeeCode} · {row.branchName ?? "—"}</p>
