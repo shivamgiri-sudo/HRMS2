@@ -130,10 +130,10 @@ export default function PortalLogin() {
                       type="text"
                       value={otp}
                       autoFocus
-                      maxLength={6}
-                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                      className="h-10 border-slate-800 bg-slate-950/80 pl-10 text-center font-mono text-xl tracking-[0.4em] text-white transition-colors focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                      placeholder="000000"
+                      maxLength={50}
+                      onChange={(e) => setOtp(e.target.value)}
+                      className="h-10 border-slate-800 bg-slate-950/80 pl-10 text-center font-mono text-lg tracking-wider text-white transition-colors focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                      placeholder="Enter code"
                     />
                   </div>
                 </div>
@@ -147,7 +147,7 @@ export default function PortalLogin() {
                 <Button
                   type="submit"
                   className="h-10 w-full bg-emerald-600 font-medium text-white shadow-lg shadow-emerald-950 transition-all hover:bg-emerald-500"
-                  disabled={loading || otp.length !== 6}
+                  disabled={loading || otp.length < 6}
                 >
                   {loading ? (
                     <>
