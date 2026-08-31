@@ -8,7 +8,7 @@ import { REPORT_CATALOG } from "./report-catalog.js";
 
 export const reportAccessGrantsRouter = Router();
 reportAccessGrantsRouter.use(requireAuth);
-reportAccessGrantsRouter.use(requireRole(["super_admin", "admin"]));
+reportAccessGrantsRouter.use(requireRole("super_admin", "admin"));
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
