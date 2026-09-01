@@ -22,28 +22,10 @@ import {
   markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeMonth,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
+import { withBulkLockRetry } from "./lock-retry.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 export const ENTITY_TYPE = "employee_deduction_entries";
-
-/**
- * Deadlock retry helper — MySQL InnoDB can raise ER_LOCK_DEADLOCK when concurrent
- * deduction batch operations collide. Retry the transaction up to maxRetries times.
- */
-async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      const errno = (err as { errno?: number })?.errno;
-      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, 50 * attempt));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
 
 async function loadDeductionTypes(): Promise<Set<string>> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -184,11 +166,22 @@ export async function applyDeductionBatch(
   let applied = 0;
   let failed = 0;
 
-  for (const row of rows) {
+  // Bounded parallelism, not a serial loop.
+  //
+  // Every row here is independent in a way the other gated types are not: the UPDATE is
+  // addressed by primary key and guarded on `status = 'pending_approval'`, and nothing it
+  // writes is read by another row of the same batch. There is no per-employee ordering to
+  // preserve, so rows can be run directly rather than grouped first.
+  //
+  // Serially this was one round trip per row with nothing to overlap it against, which is
+  // what made a large deduction batch take minutes of almost pure waiting.
+  // BULK_ROW_CONCURRENCY is derived from the real pool size, so this overlaps without
+  // crowding out live traffic.
+  const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
     try {
       // Guarded on the current status so a replayed approval cannot resurrect a row
       // a later action deactivated.
-      await withDeadlockRetry(async () => {
+      await withBulkLockRetry(async () => {
         const [res] = await db.execute<ResultSetHeader>(
           `UPDATE employee_deduction_entries
               SET status = 'active', updated_at = NOW()
@@ -222,12 +215,22 @@ export async function applyDeductionBatch(
           upload_batch_no: batch.upload_batch_no,
         },
       });
-      applied++;
+      return { ok: true as const };
     } catch (err) {
       const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
-      errors.push(msg);
       await markRowFailed(row.id, msg);
+      return { ok: false as const, msg };
+    }
+  });
+
+  // Tallied after the fact rather than with counters mutated from inside the tasks, so the
+  // error order follows row order regardless of the order the tasks happened to finish in.
+  for (const outcome of outcomes) {
+    if (outcome.ok) {
+      applied++;
+    } else {
       failed++;
+      errors.push(outcome.msg);
     }
   }
 

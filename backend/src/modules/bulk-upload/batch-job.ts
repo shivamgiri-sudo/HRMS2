@@ -21,6 +21,7 @@
  * loses the map.
  */
 import type { RowDataPacket } from "mysql2";
+import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 
 export type BatchJobKind = "import" | "approve" | "reject";
@@ -177,14 +178,27 @@ export async function readBatchProgress(
 /**
  * How many rows may be in flight against MySQL at once.
  *
- * The pool is 25 connections with queueLimit 100 (db/mysql.ts, DB_POOL_MAX), shared
- * with every other request the API is serving. An unbounded Promise.all over a
- * 217-employee batch would ask for 217 connections at once, exhaust the pool and then
- * overflow the queue — turning a slow approval into a failed one for everybody using
- * the app at that moment. Six leaves the pool most of its headroom while still
- * cutting a serial batch to roughly a sixth of its wall time.
+ * An unbounded `Promise.all` over a 217-employee batch would ask for 217 connections at
+ * once, exhaust the pool and then overflow `queueLimit` — turning a slow approval into a
+ * failed one for everybody using the app at that moment. So this is bounded. The only
+ * question is where the bound goes, and it must be derived rather than written down:
+ *
+ * `env.ts` defaults `DB_POOL_MAX` to 25, but the deployed `backend/.env` sets it to **10**
+ * (verified 2026-09-02). A constant chosen against the 25 that appears in the source is
+ * therefore sized against a pool that does not exist in production — it would let a single
+ * batch hold most of the real pool while live user requests queue behind it, which is the
+ * contention this bound exists to prevent. Reading `env.DB_POOL_MAX` keeps the two in step
+ * no matter what any environment sets.
+ *
+ * Divided by three, not used whole, because a row is not one connection:
+ * `leaveService.submitRequest` takes a second pooled connection for its `GET_LOCK` while it
+ * runs, so the true in-flight count is up to 2x this number. At the live pool of 10 that is
+ * 3 groups → up to 6 connections, leaving 4 for everyone else; at the 25 of the default it
+ * lands on the 6 this constant used to hard-code. Floor of 2 so a small pool still overlaps
+ * at all; ceiling of 6 because beyond that the limit stops being the bottleneck and row-lock
+ * contention starts to be — and contention is what was failing these batches, not throughput.
  */
-export const BULK_ROW_CONCURRENCY = 6;
+export const BULK_ROW_CONCURRENCY = Math.max(2, Math.min(6, Math.floor(env.DB_POOL_MAX / 3)));
 
 /** Run `task` over `items` with at most `limit` in flight, results in input order. */
 export async function mapWithConcurrency<T, R>(

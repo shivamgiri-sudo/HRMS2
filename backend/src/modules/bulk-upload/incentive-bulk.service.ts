@@ -21,31 +21,12 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeMonth,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeMonth,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
+import { withBulkLockRetry } from "./lock-retry.js";
 
 export const ENTITY_TYPE = "incentive_upload_line";
-
-/**
- * Deadlock retry helper — MySQL InnoDB can raise ER_LOCK_DEADLOCK when concurrent
- * incentive batch operations collide. Retry the transaction up to maxRetries times.
- */
-async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      const errno = (err as { errno?: number })?.errno;
-      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, 50 * attempt));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
 
 interface IncentiveMasterRow extends RowDataPacket {
   id: string;
@@ -261,7 +242,7 @@ export async function applyIncentiveBatch(
 
   for (const incentiveBatchId of incentiveBatches) {
     try {
-      await withDeadlockRetry(async () => {
+      await withBulkLockRetry(async () => {
         const [res] = await db.execute<ResultSetHeader>(
           `UPDATE incentive_upload_batch
               SET status = 'approved', updated_at = NOW()
@@ -302,17 +283,22 @@ export async function applyIncentiveBatch(
     }
   }
 
-  for (const row of rows) {
-    await lockEntity({
+  // One statement per chunk rather than one per row. This loop is a bare INSERT with no
+  // other per-row work to amortise it, so at 1,000 rows it was 1,000 sequential round trips
+  // holding a pooled connection throughout - pure latency, and a long collision window
+  // against any other batch touching bulk_upload_locked_entity. Same writes, same
+  // idempotency, one trip per 500 rows.
+  await lockEntities(
+    rows.map((row) => ({
       entityType: ENTITY_TYPE,
       entityId: row.created_entity_id,
       batchId: batch.id,
       batchNo: batch.upload_batch_no,
       employeeId: null,
       lockedBy: approverUserId,
-    });
-    applied++;
-  }
+    })),
+  );
+  applied += rows.length;
 
   return { applied, failed, errors };
 }

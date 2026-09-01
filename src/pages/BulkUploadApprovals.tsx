@@ -728,37 +728,46 @@ export default function BulkUploadApprovals() {
                   placeholder="Verified against the branch attendance register for August 2026"
                 />
               </label>
-              {deciding && (
+              {deciding && (() => {
+                // Two genuinely different states, and they must not look the same. Once the
+                // server reports a row count the bar is a real measure; before that it is a
+                // placeholder, and claiming "15%" to a screen reader would be a lie. So the
+                // determinate case carries aria-valuenow and the indeterminate case omits it,
+                // which is exactly what the ARIA progressbar role uses to tell them apart.
+                const progress = decisionProgress?.progress;
+                const verb = deciding === "approve" ? "Applying" : "Rejecting";
+                const label = describeProgress(progress, verb);
+                const failedRows = progress?.failed ?? 0;
+                const percent =
+                  progress?.total && progress.processed !== null
+                    ? Math.min(100, Math.round(((progress.processed ?? 0) / progress.total) * 100))
+                    : null;
+                return (
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold text-indigo-900">
-                      {describeProgress(
-                        decisionProgress?.progress,
-                        deciding === "approve" ? "Applying" : "Rejecting",
-                      )}
+                    {/* Polite, not assertive: this updates every couple of seconds and must
+                        not interrupt an approver who is still reading the row list. */}
+                    <p className="text-xs font-semibold text-indigo-900" aria-live="polite">
+                      {label}
                     </p>
-                    {(decisionProgress?.progress?.failed ?? 0) > 0 && (
+                    {failedRows > 0 && (
                       <span className="text-xs font-semibold text-rose-600">
-                        {decisionProgress?.progress?.failed} failed
+                        {failedRows} failed
                       </span>
                     )}
                   </div>
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100">
+                  <div
+                    role="progressbar"
+                    aria-label={verb}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    {...(percent !== null ? { "aria-valuenow": percent } : {})}
+                    aria-valuetext={label}
+                    className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100"
+                  >
                     <div
-                      className="h-full rounded-full bg-indigo-500 transition-all duration-500"
-                      style={{
-                        width: `${
-                          decisionProgress?.progress?.total
-                            ? Math.min(
-                                100,
-                                Math.round(
-                                  ((decisionProgress.progress.processed ?? 0) /
-                                    decisionProgress.progress.total) * 100,
-                                ),
-                              )
-                            : 15
-                        }%`,
-                      }}
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-500 motion-reduce:transition-none"
+                      style={{ width: `${percent ?? 15}%` }}
                     />
                   </div>
                   <p className="mt-2 text-[11px] leading-relaxed text-indigo-700/80">
@@ -766,7 +775,8 @@ export default function BulkUploadApprovals() {
                     if you close it, the batch keeps processing and the queue will show the result.
                   </p>
                 </div>
-              )}
+                );
+              })()}
               <div className="flex items-center justify-between">
                 <p className="text-xs text-slate-400">
                   {openBatch.imported_rows} row{openBatch.imported_rows !== 1 ? "s" : ""} will be{" "}

@@ -22,6 +22,7 @@ import {
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
+import { withBulkLockRetry } from "./lock-retry.js";
 
 export const ENTITY_TYPE = "attendance_regularization";
 
@@ -177,31 +178,6 @@ async function linkedRows(batchId: string): Promise<LinkedRow[]> {
   return rows as LinkedRow[];
 }
 
-/**
- * InnoDB deadlocks on attendance_daily_record are expected when a batch contains
- * multiple consecutive dates for the same employee: gap/next-key locks from row N
- * are not fully released before row N+1 starts. MySQL says "try restarting
- * transaction" — we do exactly that, up to 4 attempts with brief backoff.
- */
-async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      const code = String((err as { code?: unknown })?.code ?? "");
-      const errno = Number((err as { errno?: unknown })?.errno ?? 0);
-      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
-        await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
-        lastErr = err;
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastErr;
-}
-
 export async function applyRegularizationBatch(
   batch: BatchRecord,
   approverUserId: string,
@@ -221,7 +197,7 @@ export async function applyRegularizationBatch(
   //
   // Within a group the rows stay strictly serial: consecutive dates for one employee
   // are exactly the case that deadlocks on attendance_daily_record, which is what
-  // withDeadlockRetry below exists for. This mirrors applyLeaveBatch's grouping.
+  // withBulkLockRetry below exists for. This mirrors applyLeaveBatch's grouping.
   const byEmployee = new Map<string, LinkedRow[]>();
   for (const row of rows) {
     const key = row.employee_id ? String(row.employee_id) : `__unresolved_${row.row_no}`;
@@ -239,7 +215,7 @@ export async function applyRegularizationBatch(
 
       for (const row of empRows) {
         try {
-          await withDeadlockRetry(() =>
+          await withBulkLockRetry(() =>
             wfmService.reviewRegularization(
               row.created_entity_id,
               {
