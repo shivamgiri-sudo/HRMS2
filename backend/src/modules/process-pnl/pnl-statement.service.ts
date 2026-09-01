@@ -10,6 +10,7 @@ import { processLobService } from "./process-lob.service.js";
 import { getActualPeopleCost } from "./bpo-pnl.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
+import { getApprovedAdjustmentsByProcess } from "./pnl-manual-adjustment.service.js";
 
 /**
  * P&L redesign (PR 3): transposed statement — components as rows, entities as dynamic columns.
@@ -49,6 +50,21 @@ export interface StatementColumn {
   peopleCostCoveragePct?: number;
   peopleCostActiveEmployees?: number;
   peopleCostCoveredEmployees?: number;
+  /**
+   * Manual Adjustments (Part B, 2026-09-01) — APPROVED projected_revenue/penalty/reward entries
+   * for this process/period only, folded into a figure shown ALONGSIDE `recognizedRevenue`, never
+   * in place of it. See pnl-manual-adjustment.service.ts. Absent for a branch/lob column — manual
+   * adjustments are process-scoped, and summing them across a branch's processes here would let a
+   * reader mistake a branch subtotal for a per-process approval decision.
+   */
+  manualAdjustment?: {
+    approvedProjectedRevenue: number;
+    approvedRewards: number;
+    approvedPenalties: number;
+    /** systemRevenue (recognizedRevenue) + approvedRewards - approvedPenalties. */
+    adjustedTotal: number;
+    pendingAdjustmentCount: number;
+  };
 }
 
 export interface StatementRow {
@@ -190,12 +206,57 @@ function enrichColumn(
   invoicedRevenue: ActualsByKey,
   seat: SeatRevenueActuals,
   people: PeopleCostByKey,
-  periodOpen: boolean
+  periodOpen: boolean,
+  /**
+   * True only for a "process" view column, where `data` IS one single, unmodified canonical
+   * BpoPnlRow (see the plain `row as unknown as Record<string, unknown>` mapping in getStatement)
+   * — the same row bpoPnlAllocationOverlayService.getProcessDetail's sub-tab reads its own `ebit`
+   * from. A2 below trusts `data.ebit` ONLY in that case.
+   *
+   * NOT for "branch": aggregateByBranch() pre-sums every ADDITIVE_FIELDS entry including `ebit`
+   * via sumField()/n(), which defaults a row with no `ebit` field at all to 0 — indistinguishable
+   * from a genuine canonical ebit of zero. Worse, even a real sum would be inconsistent with the
+   * branch column's OWN revenue/cost figures below, which this function recomputes from different
+   * sources (running-salary snapshot people cost, actuals-based IDC) than whatever each underlying
+   * canonical row itself used — so "operatingProfit = recognizedRevenue - totalCost" would stop
+   * holding for the branch total even though every number on the branch column is internally
+   * consistent. See pnl-running-salary.test.ts's "reconciles: Operating Profit equals Revenue
+   * minus Total Cost", which pins exactly that identity for the branch view.
+   *
+   * NOT for "lob": buildLobColumns() rows come from processLobService.getProcessSummary and carry
+   * no `ebit` field at all — a different engine, different waterfall shape.
+   */
+  trustCanonicalEbit: boolean
 ): Record<string, unknown> {
   const pick = (source: ActualsByKey) =>
     (key.processId ? source.byProcess.get(key.processId) : undefined)
     ?? (key.branchId ? source.byBranch.get(key.branchId) : undefined)
     ?? 0;
+
+  /*
+   * A3 FIX (2026-09-01): revenue must never inherit the WHOLE branch's invoiced/planned total
+   * just because a process has no per-process entry in these actuals maps.
+   *
+   * `pick()` above falls back to `source.byBranch.get(branchId)` whenever `byProcess` has
+   * nothing for this key — a reasonable default for a genuine BRANCH column (viewBy="branch",
+   * where key.processId is unset and the branch total IS the right answer), but wrong for a
+   * PROCESS column: it silently broadcasts 100% of the branch's revenue onto every process that
+   * has no configured process_revenue_rule / no attributable invoice line. Confirmed live on
+   * branch febd8777-6583-11f1-adb1-00155d0ab410, period 2026-07: MNP REJECTION, Finnable and
+   * Captureatrip — three different processes — all showed the identical Rs 1,17,81,253 branch
+   * total here, while the canonical per-process row (bpo-pnl.service.ts buildRows, which never
+   * falls back past its own process, see recognizedRevenue there) correctly had Rs 0 for all
+   * three (revenueDataStatus: "accounting_fallback" — no rule, no invoice, no accounting figure).
+   *
+   * Fix: for a process-scoped column, use ONLY the process's own entry — no branch fallback. A
+   * branch-scoped column (aggregateByBranch, key.processId unset) keeps the real branch total.
+   * Mirrors the REVENUE_RULE_MISSING alert bpo-pnl.service.ts already raises for exactly this
+   * "no rule configured" case (see bpoPnlService.getSummary) rather than inventing a new fallback.
+   */
+  const pickOwnRevenue = (source: ActualsByKey): number | undefined =>
+    key.processId ? source.byProcess.get(key.processId)
+    : key.branchId ? (source.byBranch.get(key.branchId) ?? 0)
+    : 0;
 
   const out = { ...data };
 
@@ -215,8 +276,8 @@ function enrichColumn(
    * Both are published either way — contracted against earned is the seat-shortfall view, and
    * a reader cannot judge one without seeing the other.
    */
-  const plannedRevenue = pick(revenue);
-  const invoiced = pick(invoicedRevenue);
+  const plannedRevenue = pickOwnRevenue(revenue) ?? 0;
+  const invoiced = pickOwnRevenue(invoicedRevenue) ?? 0;
   const existingRevenue = n(out.recognizedRevenue);
   /*
    * Priority for a CLOSED period: actual invoiced amount.
@@ -229,6 +290,9 @@ function enrichColumn(
    *   closed + invoiced > 0  →  invoiced   (actual billing)
    *   closed + invoiced = 0  →  existingRevenue or plannedRevenue (no invoice data yet)
    *   open                   →  existingRevenue or plannedRevenue (billing lag during live month)
+   *
+   * invoiced/plannedRevenue are now the process's OWN figures only (pickOwnRevenue, no branch
+   * broadcast — see A3 fix above), so this chain can no longer inherit branch-wide revenue.
    */
   const recognizedRevenue = (!periodOpen && invoiced > 0)
     ? invoiced
@@ -236,6 +300,13 @@ function enrichColumn(
   out.recognizedRevenue = recognizedRevenue;
   out.plannedRevenue = plannedRevenue;
   out.invoicedRevenue = invoiced;
+  /*
+   * A4: surface "no revenue rule configured" on the statement the same way bpo-pnl.service.ts's
+   * REVENUE_RULE_MISSING alert already does for the per-process detail — the canonical row already
+   * carries revenueDataStatus ("configured" | "configured_no_delivery" | "invoiced_fallback" |
+   * "accounting_fallback") via the `...data` spread below reads from the source row; passed through
+   * unchanged here for a process column so both surfaces agree on WHY a revenue figure is what it is.
+   */
   out.revenueBasis = (!periodOpen && invoiced > 0)
     ? "invoiced"
     : (existingRevenue > 0 ? "row" : "planned");
@@ -333,7 +404,35 @@ function enrichColumn(
   out.indirectCostTotal = indirectCostTotal;
   out.directCostTotal = directCostTotal;
   out.totalCost = totalCost;
-  out.operatingProfit = recognizedRevenue - totalCost;
+  /*
+   * A2 FIX (2026-09-01): Operating Profit reads the CANONICAL ebit from the underlying
+   * bpoPnlAllocationOverlayService/canonicalPnlService row (`data.ebit`, carried through
+   * unchanged by the `out = {...data}` spread above) whenever that row actually has one, instead
+   * of always overwriting it with this function's own local `recognizedRevenue - totalCost`
+   * recompute.
+   *
+   * Why this mattered: the local recompute here uses `indirectCostTotal = pick(idc)`, which reads
+   * the SAME branch-broadcast-shaped actuals map as the A3 revenue bug (pnl-actuals.service.ts's
+   * ActualsByKey) — a process with no per-process IDC entry silently inherited cost figures scoped
+   * to a different grain than the canonical engine's own per-process GRN/allocation attribution
+   * (bpo-pnl.service.ts buildRows + bpo-pnl-allocation-overlay.service.ts adjustedRow, which is
+   * what canonical ebit already is). Combined with the pre-A3 revenue broadcast this produced the
+   * live sign flip: MNP REJECTION, period 2026-07, branch febd8777-6583-11f1-adb1-00155d0ab410 —
+   * this statement's local recompute gave +Rs 79,85,596.94 while the canonical detail row's ebit
+   * (bpoPnlAllocationOverlayService.getProcessDetail, the ProcessPnlDetailPage sub-tab's source)
+   * was -Rs 8,91,003.06. Same process, same period, opposite sign.
+   *
+   * Fallback preserved for when there IS no canonical ebit to read: buildLobColumns' LOB rows
+   * (processLobService.getProcessSummary) carry no `ebit` field at all — that engine's P&L stops
+   * at a different waterfall shape — so `data.ebit` is undefined there and the local recompute is
+   * the only source that exists for a LOB column. It is also literally what the LOB engine
+   * produces on its own terms, not a stand-in for a missing better answer, so this is not a case of
+   * silently accepting worse data — the two are cross-checked in lob reconciliation elsewhere.
+   */
+  const canonicalEbit = out.ebit;
+  out.operatingProfit = (trustCanonicalEbit && canonicalEbit !== undefined && canonicalEbit !== null)
+    ? n(canonicalEbit)
+    : recognizedRevenue - totalCost;
 
   // How much of this column's headcount the people cost actually covers. An employee who earned
   // nothing this month — no present days, or no salary assigned — contributes no cost, so a column
@@ -376,6 +475,12 @@ export interface StatementDependencies {
   getInvoicedRevenue?: (period: string) => Promise<ActualsByKey>;
   getSeatRevenue?: (period: string) => Promise<SeatRevenueActuals>;
   getPeopleCost?: (period: string) => Promise<PeopleCostByKey>;
+  /** Part B: approved-only manual adjustments, batched per process for the period. Optional for
+   *  the same reason as the rest — an existing test injecting only the original deps still works,
+   *  simply without a manualAdjustment field on any column. */
+  getManualAdjustments?: (period: string) => Promise<Map<string, {
+    approvedProjectedRevenue: number; approvedRewards: number; approvedPenalties: number; pendingCount: number;
+  }>>;
 }
 
 const defaultDependencies: StatementDependencies = {
@@ -403,6 +508,7 @@ const defaultDependencies: StatementDependencies = {
     if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
     return getRunningPeopleCost(period);
   },
+  getManualAdjustments: (period) => getApprovedAdjustmentsByProcess(period),
 };
 
 export async function getStatement(
@@ -445,12 +551,13 @@ export async function getStatement(
   // Resolved once for the whole statement: every column in it belongs to the same period, and
   // deciding per column would let two columns of one report use different cost sources.
   const periodOpen = isOpenPeriod(periodCode);
-  const [idc, revenue, invoicedRevenue, seat, people] = await Promise.all([
+  const [idc, revenue, invoicedRevenue, seat, people, manualAdjustments] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
     (deps.getInvoicedRevenue ?? getInvoicedRevenueActuals)(periodCode),
     (deps.getSeatRevenue ?? getSeatRevenueActuals)(periodCode),
     (deps.getPeopleCost ?? getRunningPeopleCost)(periodCode),
+    (deps.getManualAdjustments ?? getApprovedAdjustmentsByProcess)(periodCode),
   ]);
   columnData = columnData.map((item) => {
     const data = enrichColumn(
@@ -464,11 +571,12 @@ export async function getStatement(
       invoicedRevenue,
       seat,
       people,
-      periodOpen
+      periodOpen,
+      viewBy === "process"
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
-    const column = data.peopleCostCoveragePct === undefined
+    let column = data.peopleCostCoveragePct === undefined
       ? item.column
       : {
           ...item.column,
@@ -476,6 +584,25 @@ export async function getStatement(
           peopleCostActiveEmployees: data.peopleCostActiveEmployees as number,
           peopleCostCoveredEmployees: data.peopleCostCoveredEmployees as number,
         };
+    // Part B: manual adjustments are process-scoped (see StatementColumn.manualAdjustment doc) —
+    // attached only for a "process" view column, keyed on the column id, which IS the processId there.
+    if (viewBy === "process") {
+      const bucket = manualAdjustments.get(item.column.id);
+      if (bucket && (bucket.approvedRewards !== 0 || bucket.approvedPenalties !== 0
+        || bucket.approvedProjectedRevenue !== 0 || bucket.pendingCount !== 0)) {
+        const systemRevenue = n(data.recognizedRevenue);
+        column = {
+          ...column,
+          manualAdjustment: {
+            approvedProjectedRevenue: bucket.approvedProjectedRevenue,
+            approvedRewards: bucket.approvedRewards,
+            approvedPenalties: bucket.approvedPenalties,
+            adjustedTotal: systemRevenue + bucket.approvedRewards - bucket.approvedPenalties,
+            pendingAdjustmentCount: bucket.pendingCount,
+          },
+        };
+      }
+    }
     return { column, data };
   });
 

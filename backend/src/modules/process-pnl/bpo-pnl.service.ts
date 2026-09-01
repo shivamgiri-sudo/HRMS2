@@ -568,6 +568,29 @@ async function getClassificationRules(period: string): Promise<ClassificationRul
   );
 }
 
+/**
+ * A5 FIX (2026-09-01): the real date real payroll data is "as of", for getActualPeopleCost().
+ *
+ * salary_prep_run has no single `finalized_at` column, so this takes the latest of the columns
+ * that actually get stamped as a run is closed out — disbursement, then the payroll-window
+ * auto-close, then finance approval, then (for a run still open) its own last update — the same
+ * precedence a reader would use to answer "when was this run last touched toward being final".
+ * NOW() is the last resort only when the period's runs somehow carry none of those (a run that
+ * was only ever INSERTed and never updated), so the caller still gets a real date rather than
+ * silently going back to null.
+ */
+async function getPayrollRunAsOfDate(period: string): Promise<string | null> {
+  if (!(await tableExists("salary_prep_run"))) return null;
+  const rows = await safeRows<RowDataPacket>(
+    `SELECT MAX(COALESCE(disbursed_at, auto_closed_at, finance_approved_at, updated_at, created_at)) AS as_of
+       FROM salary_prep_run
+      WHERE run_month = ?`,
+    [period]
+  );
+  const asOf = rows[0]?.as_of;
+  return asOf ? new Date(asOf).toISOString() : null;
+}
+
 function isSupportRole(person: PayrollPersonRow): boolean {
   const department = lower(person.department_name);
   const designation = lower(person.designation_name);
@@ -868,6 +891,16 @@ export async function getActualPeopleCost(period: string): Promise<PeopleCostByK
 
   const [people, rules] = await Promise.all([getPayrollPeople(period), getClassificationRules(period)]);
   if (people.length === 0) return out;
+  /*
+   * A5 FIX (2026-09-01): stamp a real asOfDate whenever real salary_prep_line payroll data is
+   * being used (people.length > 0, just confirmed above) instead of leaving it hardcoded null.
+   * pnl-statement.service.ts's StatementColumn.peopleCostAsOf / the "No people-cost snapshot"
+   * amber warning read this field to decide whether the people-cost figure is trustworthy — with
+   * it always null, a column backed by real finalized payroll still displayed the warning as if
+   * no data existed at all. getPayrollRunAsOfDate() falls back to NOW() only if the period's runs
+   * somehow carry no date at all, so this is never null again once real rows are present.
+   */
+  out.asOfDate = (await getPayrollRunAsOfDate(period)) ?? new Date().toISOString();
 
   const empty = (): Record<PnlPeopleBucket, number> =>
     ({ agent_salary: 0, dsc_people: 0, bmc_people: 0 });
