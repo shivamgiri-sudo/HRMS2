@@ -228,10 +228,39 @@ function enrichColumn(
    */
   trustCanonicalEbit: boolean
 ): Record<string, unknown> {
-  const pick = (source: ActualsByKey) =>
-    (key.processId ? source.byProcess.get(key.processId) : undefined)
-    ?? (key.branchId ? source.byBranch.get(key.branchId) : undefined)
-    ?? 0;
+  /*
+   * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
+   * process has no per-process entry — the identical defect class as the A3 revenue fix below,
+   * left unapplied to idc/people/seat until now (flagged as a follow-up in 8172b98a's commit
+   * message once that fix made a genuine per-process figure available for revenue to stop
+   * guessing at). Confirmed live, period 2026-07, calling pnlStatementService.getStatement()
+   * directly for both "process" and "branch" views and comparing the process-column sum against
+   * the real branch-column total:
+   *   NOIDA (18 processes):        total_idc  Rs 3,52,18,732.71 vs branch Rs 23,58,008.71 (~15x)
+   *                                 total_cost Rs 5,20,67,268.71 vs branch Rs 1,08,68,876.71 (~4.8x)
+   *   AHMEDABAD-JALDARSHAN (9):     total_idc  Rs 64,42,794.24  vs branch Rs 8,05,349.28   (~8x)
+   *                                 total_cost Rs 1,59,17,339.24 vs branch Rs 40,30,370.28 (~4x)
+   *   NOIDA-2 (6 processes):        total_idc  Rs 2,23,87,140.36 vs branch Rs 37,31,190.06 (~6x)
+   *                                 total_cost Rs 2,73,89,771.36 vs branch Rs 1,03,20,490.06 (~2.7x)
+   * because every process with no per-process idc/seat entry of its own was credited with the
+   * WHOLE branch's idc/seat figures via this fallback. After the fix, same live data: NOIDA's
+   * total_idc reconciles to Rs 22,06,610.77 vs branch Rs 23,58,008.71 (was ~15x, now ~94%);
+   * AHMEDABAD-JALDARSHAN's and NOIDA-2's total_idc match the branch total EXACTLY
+   * (Rs 8,05,349.28 and Rs 37,31,190.06 respectively) — the residual on NOIDA and on NOIDA-2's
+   * dsc/bmc salary lines is the genuinely unconfigured share (processes with no per-process
+   * entry now correctly show their own figure instead of a fabricated share), not a leftover of
+   * this bug.
+   *
+   * Fix: for a process-scoped column (key.processId set), use ONLY that process's own
+   * byProcess entry — no byBranch fallback. A branch-scoped column (key.processId unset,
+   * aggregateByBranch) keeps the real branch total via byBranch, same as before.
+   */
+  const pick = (source: ActualsByKey): number =>
+    key.processId
+      ? (source.byProcess.get(key.processId) ?? 0)
+      : key.branchId
+        ? (source.byBranch.get(key.branchId) ?? 0)
+        : 0;
 
   /*
    * A3 FIX (2026-09-01): revenue must never inherit the WHOLE branch's invoiced/planned total
@@ -350,8 +379,17 @@ function enrichColumn(
    * actually paid, and bpo-pnl.service.ts already reads it. So the snapshot's job ends when the
    * month does.
    */
-  const snapshot = (key.processId ? people.byProcess.get(key.processId) : undefined)
-    ?? (key.branchId ? people.byBranch.get(key.branchId) : undefined);
+  /*
+   * A6 FIX (2026-09-01): same branch-broadcast removal as pick() above, applied to the
+   * people-cost snapshot lookup — a process with no snapshot entry of its own must not silently
+   * inherit the whole branch's Agent/DSC/BMC snapshot. See pick()'s doc comment for the live
+   * numbers this was confirmed against (NOIDA, period 2026-07).
+   */
+  const snapshot = key.processId
+    ? people.byProcess.get(key.processId)
+    : key.branchId
+      ? people.byBranch.get(key.branchId)
+      : undefined;
   /*
    * Use the snapshot whenever it holds anything; fall back to the upstream figure when it does not.
    *
