@@ -323,14 +323,18 @@ export const REPORT_CATALOG: ReportMeta[] = [
     name: "Cost Centre Headcount",
     category: "HR & Workforce",
     subcategory: "Headcount & Org",
-    description: "Headcount distribution by cost centre",
-    rowGrain: "One row per cost centre",
-    primaryKey: ["cost_centre_name"],
+    description: "Headcount distribution by cost centre and employee status",
+    // Grain includes cost centre CODE and status. Name alone is not unique — 927 cost centres
+    // carry 913 distinct names, so a name-only key merged six different "Snapdeal" cost
+    // centres into one row.
+    rowGrain: "One row per cost centre code/branch/employee-status combination",
+    primaryKey: ["cost_centre_code", "branch_name", "employee_status"],
     columns: [
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
       { key: "cost_centre_name", label: "Cost Centre Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "active_headcount", label: "Active Headcount", format: "number", width: 100, align: "right" },
+      // See the note on headcount: "Active Headcount" became untrue once Inactive rows appeared.
+      { key: "active_headcount", label: "Headcount", format: "number", width: 100, align: "right" },
       { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
