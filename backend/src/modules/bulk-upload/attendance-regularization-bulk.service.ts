@@ -24,6 +24,29 @@ import {
 
 export const ENTITY_TYPE = "attendance_regularization";
 
+// Run `tasks` concurrently, at most `limit` in-flight at once.
+// Each task is a thunk () => Promise<T>. Errors are caught per-slot and
+// returned as-is so the caller can decide whether to surface them.
+async function runConcurrent<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<Array<T | Error>> {
+  const results: Array<T | Error> = new Array(tasks.length);
+  let next = 0;
+  async function worker() {
+    while (next < tasks.length) {
+      const idx = next++;
+      try {
+        results[idx] = await tasks[idx]!();
+      } catch (err) {
+        results[idx] = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
+}
+
 /** Mirrors regularizationSchema's own lookback rule so the error names the limit. */
 const MAX_LOOKBACK_DAYS = 90;
 const VALID_STATUSES = new Set(["present", "half_day", "absent"]);
@@ -175,18 +198,15 @@ export async function applyRegularizationBatch(
   let applied = 0;
   let failed = 0;
 
-  for (const row of rows) {
-    try {
-      // The same call the manual approver makes. This is what writes the corrected
-      // status and punch times into the attendance record.
+  const reviewerNote = remarks
+    ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
+    : `Branch Head bulk approval (${batch.upload_batch_no})`;
+
+  const results = await runConcurrent(
+    rows.map((row) => async () => {
       await wfmService.reviewRegularization(
         row.created_entity_id,
-        {
-          status: "approved",
-          reviewerNote: remarks
-            ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
-            : `Branch Head bulk approval (${batch.upload_batch_no})`,
-        },
+        { status: "approved", reviewerNote },
         approverUserId,
       );
       await lockEntity({
@@ -207,12 +227,19 @@ export async function applyRegularizationBatch(
         reason: remarks ?? undefined,
         new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
       });
-      applied++;
-    } catch (err) {
-      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+    }),
+    10,
+  );
+
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result instanceof Error) {
+      const msg = `Row ${rows[i]!.row_no}: ${result.message}`;
       errors.push(msg);
-      await markRowFailed(row.id, msg);
+      await markRowFailed(rows[i]!.id, msg);
       failed++;
+    } else {
+      applied++;
     }
   }
 
@@ -229,20 +256,25 @@ export async function rejectRegularizationBatch(
   let applied = 0;
   let failed = 0;
 
-  for (const row of rows) {
-    try {
+  const reviewerNote = `Branch Head rejected bulk upload ${batch.upload_batch_no}: ${remarks}`;
+
+  const results = await runConcurrent(
+    rows.map((row) => async () => {
       await wfmService.reviewRegularization(
         row.created_entity_id,
-        {
-          status: "rejected",
-          reviewerNote: `Branch Head rejected bulk upload ${batch.upload_batch_no}: ${remarks}`,
-        },
+        { status: "rejected", reviewerNote },
         approverUserId,
       );
-      applied++;
-    } catch (err) {
-      errors.push(`Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`);
+    }),
+    10,
+  );
+
+  for (let i = 0; i < results.length; i++) {
+    if (results[i] instanceof Error) {
+      errors.push(`Row ${rows[i]!.row_no}: ${(results[i] as Error).message}`);
       failed++;
+    } else {
+      applied++;
     }
   }
 
