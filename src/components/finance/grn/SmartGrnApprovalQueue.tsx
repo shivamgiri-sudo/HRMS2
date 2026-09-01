@@ -838,6 +838,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         ["Due date", dateLabel(target.due_date)],
                         ["Allocation", target.allocation_mode ?? "single"],
                         ["Acctg period", parent?.accounting_period ?? "—"],
+                        ["Remarks", parent?.remarks ?? null],
                         ["Rejection reason", parent?.rejection_reason ?? null],
                         ["Validation score", target.validation_score != null ? `${target.validation_score}%` : "—"],
                         ["Invoice", parent?.invoice_number ?? "—"],
@@ -846,7 +847,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         ["GSTIN", parent?.vendor_gstin ?? "—"],
                       ] as [string, string | null | undefined][]).map(([label, val]) => (
                         <GrnKv key={label} label={label}>
-                          <span className="block truncate">{val ?? "—"}</span>
+                          {/* title= so a long free-text value (Remarks, Vendor, Rejection reason)
+                              is still readable on hover instead of just cut off by truncate. */}
+                          <span className="block truncate" title={val ?? undefined}>{val ?? "—"}</span>
                         </GrnKv>
                       ))}
                     </GrnKvList>
