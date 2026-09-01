@@ -27,6 +27,26 @@ import {
 
 export const ENTITY_TYPE = "incentive_upload_line";
 
+/**
+ * Deadlock retry helper — MySQL InnoDB can raise ER_LOCK_DEADLOCK when concurrent
+ * incentive batch operations collide. Retry the transaction up to maxRetries times.
+ */
+async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      const errno = (err as { errno?: number })?.errno;
+      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 50 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 interface IncentiveMasterRow extends RowDataPacket {
   id: string;
   incentive_code: string;
@@ -241,29 +261,31 @@ export async function applyIncentiveBatch(
 
   for (const incentiveBatchId of incentiveBatches) {
     try {
-      const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE incentive_upload_batch
-            SET status = 'approved', updated_at = NOW()
-          WHERE id = ? AND status = 'pending_approval'`,
-        [incentiveBatchId],
-      );
-      if (res.affectedRows === 0) {
-        throw new Error("incentive batch is no longer pending approval");
-      }
-      // The approval step row the Incentives screen reads, so a bulk-approved batch
-      // shows the same chain history as one approved through that screen.
-      await db.execute(
-        // actioned_by is STORED GENERATED from approver_user_id — naming it in the
-        // column list makes MySQL reject the INSERT outright.
-        `INSERT INTO incentive_approval_step
-           (id, batch_id, step_number, required_role, approver_user_id, status, remarks,
-            decided_at, actioned_at)
-         VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
-        [
-          randomUUID(), incentiveBatchId, approverUserId,
-          remarks ?? `Branch Head bulk approval (${batch.upload_batch_no})`,
-        ],
-      );
+      await withDeadlockRetry(async () => {
+        const [res] = await db.execute<ResultSetHeader>(
+          `UPDATE incentive_upload_batch
+              SET status = 'approved', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [incentiveBatchId],
+        );
+        if (res.affectedRows === 0) {
+          throw new Error("incentive batch is no longer pending approval");
+        }
+        // The approval step row the Incentives screen reads, so a bulk-approved batch
+        // shows the same chain history as one approved through that screen.
+        await db.execute(
+          // actioned_by is STORED GENERATED from approver_user_id — naming it in the
+          // column list makes MySQL reject the INSERT outright.
+          `INSERT INTO incentive_approval_step
+             (id, batch_id, step_number, required_role, approver_user_id, status, remarks,
+              decided_at, actioned_at)
+           VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
+          [
+            randomUUID(), incentiveBatchId, approverUserId,
+            remarks ?? `Branch Head bulk approval (${batch.upload_batch_no})`,
+          ],
+        );
+      });
       void logSensitiveAction({
         actor_user_id: approverUserId,
         actor_role: "branch_head",

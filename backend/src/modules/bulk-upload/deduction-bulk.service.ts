@@ -25,6 +25,26 @@ import {
 
 export const ENTITY_TYPE = "employee_deduction_entries";
 
+/**
+ * Deadlock retry helper — MySQL InnoDB can raise ER_LOCK_DEADLOCK when concurrent
+ * deduction batch operations collide. Retry the transaction up to maxRetries times.
+ */
+async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      const errno = (err as { errno?: number })?.errno;
+      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 50 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 async function loadDeductionTypes(): Promise<Set<string>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1",
@@ -168,22 +188,24 @@ export async function applyDeductionBatch(
     try {
       // Guarded on the current status so a replayed approval cannot resurrect a row
       // a later action deactivated.
-      const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE employee_deduction_entries
-            SET status = 'active', updated_at = NOW()
-          WHERE id = ? AND status = 'pending_approval'`,
-        [row.created_entity_id],
-      );
-      if (res.affectedRows === 0) {
-        throw new Error("deduction entry is no longer pending approval");
-      }
-      await lockEntity({
-        entityType: ENTITY_TYPE,
-        entityId: row.created_entity_id,
-        batchId: batch.id,
-        batchNo: batch.upload_batch_no,
-        employeeId: null,
-        lockedBy: approverUserId,
+      await withDeadlockRetry(async () => {
+        const [res] = await db.execute<ResultSetHeader>(
+          `UPDATE employee_deduction_entries
+              SET status = 'active', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [row.created_entity_id],
+        );
+        if (res.affectedRows === 0) {
+          throw new Error("deduction entry is no longer pending approval");
+        }
+        await lockEntity({
+          entityType: ENTITY_TYPE,
+          entityId: row.created_entity_id,
+          batchId: batch.id,
+          batchNo: batch.upload_batch_no,
+          employeeId: null,
+          lockedBy: approverUserId,
+        });
       });
       void logSensitiveAction({
         actor_user_id: approverUserId,
