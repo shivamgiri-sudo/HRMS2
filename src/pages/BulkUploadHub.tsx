@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { apiUrl } from "@/lib/apiBase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -779,6 +780,28 @@ export default function BulkUploadHub() {
     });
   }
 
+  /**
+   * The staging path below is CSV-only: it reads the file as text, runs
+   * `parseCsvDetailed` over it and validates the rows against the selected
+   * template. The file picker has always advertised `.xls/.xlsx` too, but an
+   * Excel file fell straight through that `endsWith(".csv")` branch and staged
+   * nothing — producing a batch with `total_rows: 0` that the import endpoint
+   * (which works off staged rows) can never import, and a detail dialog reading
+   * "No staged rows found for this batch".
+   *
+   * Converting the first sheet to CSV text here puts Excel back on the exact
+   * same code path as a CSV, so template validation, the CSV health check and
+   * the row-level error report all behave identically for both. `sheet_to_csv`
+   * emits each cell's *formatted* value, so a date shows up as the sheet
+   * displayed it rather than as an Excel serial number.
+   */
+  async function excelFileToCsvText(file: File): Promise<string> {
+    const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) throw new Error("The workbook has no sheets.");
+    return XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName]!, { blankrows: false });
+  }
+
   async function createUploadBatch() {
     setMessage(null);
     setErrorMessage(null);
@@ -814,8 +837,13 @@ export default function BulkUploadHub() {
       let parsedRows: CsvRow[] = [];
       let stagedRows: ReturnType<typeof validateRows> = [];
 
-      if (selectedFile.name.toLowerCase().endsWith(".csv")) {
-        const text = await selectedFile.text();
+      const lowerName = selectedFile.name.toLowerCase();
+      const isExcel = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls");
+
+      if (lowerName.endsWith(".csv") || isExcel) {
+        const text = isExcel
+          ? await excelFileToCsvText(selectedFile)
+          : await selectedFile.text();
         const parsed = parseCsvDetailed(text);
         const health = buildCsvHealth(selectedTemplate, parsed);
         setCsvHealth(health);
@@ -828,6 +856,20 @@ export default function BulkUploadHub() {
 
         parsedRows = parsed.rows;
         stagedRows = validateRows(selectedTemplate, parsedRows);
+      }
+
+      // Nothing to stage means nothing this batch could ever import — the import
+      // endpoint dispatches over the staged rows, so recording the batch anyway
+      // just parks a permanently empty entry in the list ("0 Total", and a detail
+      // dialog saying no staged rows were found) with no hint of what went wrong.
+      // The two ways to get here are a template saved without any data filled in
+      // below the header, and a file type this hub cannot read; say which.
+      if (stagedRows.length === 0) {
+        throw new Error(
+          lowerName.endsWith(".csv") || isExcel
+            ? "This file has no data rows below the header — nothing would be uploaded. Fill in the template under the header row and try again."
+            : "Only .csv, .xlsx and .xls files can be read here. Save the file in one of those formats and upload it again."
+        );
       }
 
       const validRows = stagedRows.filter((row) => row.status === "valid").length;
