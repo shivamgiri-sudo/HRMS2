@@ -1385,6 +1385,7 @@ export default function BulkUploadHub() {
               setSelectedBatch(null);
               setSelectedBatchRows([]);
             }}
+            onBatchListRefresh={loadData}
           />
         )}
       </div>
@@ -1466,26 +1467,45 @@ function CsvHealthCard({ health }: { health: CsvHealth }) {
   );
 }
 
+type ResubmitResult = { importedRows: number; errorRows: number; newBatchNo: string };
+
 function BatchRowsDialog({
   batch,
   rows,
   onClose,
+  onBatchListRefresh,
 }: {
   batch: UploadBatch;
   rows: UploadBatchRow[];
   onClose: () => void;
+  onBatchListRefresh?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"success" | "failed">("success");
+  const [editMode, setEditMode] = useState(false);
+  // edits[rowId][fieldKey] = edited value
+  const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [resubmitResult, setResubmitResult] = useState<ResubmitResult | null>(null);
+  const [resubmitError, setResubmitError] = useState<string | null>(null);
 
   const successRows = rows.filter((r) => r.row_status === "imported" || r.row_status === "success");
-  const failedRows = rows.filter((r) => r.row_status === "error" || r.row_status === "failed" || (r.error_messages && r.error_messages.length > 0));
+  const failedRows = rows.filter(
+    (r) => r.row_status === "error" || r.row_status === "failed" || (r.error_messages && r.error_messages.length > 0)
+  );
 
-  // Derive column headers from raw_data keys (union across all rows)
   const dataKeys = useMemo(() => {
     const keySet = new Set<string>();
     rows.forEach((r) => Object.keys(r.raw_data || {}).forEach((k) => keySet.add(k)));
     return Array.from(keySet);
   }, [rows]);
+
+  function getCellValue(row: UploadBatchRow, key: string) {
+    return edits[row.id]?.[key] ?? String(row.raw_data?.[key] ?? "");
+  }
+
+  function setCellValue(rowId: string, key: string, value: string) {
+    setEdits((prev) => ({ ...prev, [rowId]: { ...(prev[rowId] ?? {}), [key]: value } }));
+  }
 
   function downloadFailedCsv() {
     if (!failedRows.length) return;
@@ -1496,7 +1516,7 @@ function BatchRowsDialog({
         const cells = [
           row.row_no,
           ...dataKeys.map((k) => {
-            const val = String(row.raw_data?.[k] ?? "");
+            const val = getCellValue(row, k);
             return `"${val.replace(/"/g, '""')}"`;
           }),
           `"${(row.error_messages || []).join("; ").replace(/"/g, '""')}"`,
@@ -1513,6 +1533,59 @@ function BatchRowsDialog({
     URL.revokeObjectURL(url);
   }
 
+  async function handleResubmit() {
+    if (!failedRows.length) return;
+    const rpcName = getImportRpc(batch.upload_type_code);
+    if (!rpcName) {
+      setResubmitError("This upload type does not support direct resubmit. Use Download Failed CSV instead.");
+      return;
+    }
+    setSubmitting(true);
+    setResubmitResult(null);
+    setResubmitError(null);
+    try {
+      // 1. Create a new batch
+      const newBatchNo = `${batch.upload_batch_no}-R${Date.now().toString().slice(-4)}`;
+      const batchRes = await hrmsApi.post<{ success: boolean; data: UploadBatch }>("/api/bulk-upload/batches", {
+        upload_batch_no: newBatchNo,
+        upload_type_code: batch.upload_type_code,
+        original_file_name: batch.original_file_name,
+        total_rows: failedRows.length,
+        valid_rows: failedRows.length,
+        error_rows: 0,
+        batch_status: "validated",
+      });
+      const newBatchId = batchRes.data.id;
+
+      // 2. Stage the (edited) failed rows
+      const stagingPayload = failedRows.map((row) => ({
+        row_no: row.row_no,
+        raw_data: Object.fromEntries(dataKeys.map((k) => [k, getCellValue(row, k)])),
+        row_status: "pending",
+        error_messages: [],
+      }));
+      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload);
+
+      // 3. Run import
+      const importRes = await hrmsApi.post<{ success: boolean; data: { importedRows: number; errorRows: number } }>(
+        `/api/bulk-upload/batches/${newBatchId}/import`,
+        { rpc_name: rpcName }
+      );
+      setResubmitResult({
+        importedRows: importRes.data.importedRows ?? 0,
+        errorRows: importRes.data.errorRows ?? 0,
+        newBatchNo,
+      });
+      setEditMode(false);
+      onBatchListRefresh?.();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResubmitError(`Resubmit failed: ${msg}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const displayRows = activeTab === "success" ? successRows : failedRows;
 
   return (
@@ -1521,22 +1594,45 @@ function BatchRowsDialog({
         {/* Header */}
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">
-              Upload Batch
-            </p>
-            <h3 className="mt-0.5 text-xl font-semibold text-slate-950">
-              {batch.upload_batch_no}
-            </h3>
+            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">Upload Batch</p>
+            <h3 className="mt-0.5 text-xl font-semibold text-slate-950">{batch.upload_batch_no}</h3>
             <p className="mt-0.5 text-sm text-slate-500">{batch.original_file_name}</p>
           </div>
-          <div className="flex items-center gap-3">
-            {activeTab === "failed" && failedRows.length > 0 && (
-              <button
-                onClick={downloadFailedCsv}
-                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-              >
-                Download Failed CSV
-              </button>
+          <div className="flex items-center gap-2">
+            {activeTab === "failed" && failedRows.length > 0 && !resubmitResult && (
+              <>
+                <button
+                  onClick={downloadFailedCsv}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Download CSV
+                </button>
+                {!editMode ? (
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                  >
+                    Edit & Resubmit
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setEditMode(false); setEdits({}); }}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      disabled={submitting}
+                    >
+                      Cancel Edit
+                    </button>
+                    <button
+                      onClick={handleResubmit}
+                      disabled={submitting}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {submitting ? "Submitting…" : `Submit ${failedRows.length} Fixed Row${failedRows.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </>
+                )}
+              </>
             )}
             <button
               onClick={onClose}
@@ -1558,7 +1654,30 @@ function BatchRowsDialog({
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
             {rows.length} Total
           </span>
+          {editMode && (
+            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+              Edit mode — fix cells, then Submit
+            </span>
+          )}
         </div>
+
+        {/* Resubmit result banner */}
+        {resubmitResult && (
+          <div className="mx-6 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-800">
+              Resubmit complete — batch {resubmitResult.newBatchNo}
+            </p>
+            <p className="mt-0.5 text-xs text-emerald-700">
+              {resubmitResult.importedRows} imported successfully
+              {resubmitResult.errorRows > 0 && `, ${resubmitResult.errorRows} still failed — check the new batch in the list`}
+            </p>
+          </div>
+        )}
+        {resubmitError && (
+          <div className="mx-6 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <p className="text-xs text-rose-700">{resubmitError}</p>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-0 border-b border-slate-200 px-6">
@@ -1589,12 +1708,10 @@ function BatchRowsDialog({
           </button>
         </div>
 
-        {/* Table body */}
+        {/* Table */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {rows.length === 0 ? (
-            <div className="py-12 text-center text-sm text-slate-500">
-              No staged rows found for this batch.
-            </div>
+            <div className="py-12 text-center text-sm text-slate-500">No staged rows found for this batch.</div>
           ) : displayRows.length === 0 ? (
             <div className="py-12 text-center text-sm text-slate-500">
               {activeTab === "success" ? "No successful rows." : "No failed rows — all rows imported successfully."}
@@ -1605,13 +1722,9 @@ function BatchRowsDialog({
                 <thead className="sticky top-0 bg-slate-50">
                   <tr>
                     <Th>#</Th>
-                    {dataKeys.map((k) => (
-                      <Th key={k}>{k}</Th>
-                    ))}
+                    {dataKeys.map((k) => <Th key={k}>{k}</Th>)}
                     {activeTab === "failed" && (
-                      <Th>
-                        <span className="text-rose-600">Errors (fix & re-upload)</span>
-                      </Th>
+                      <Th><span className="text-rose-600">Errors</span></Th>
                     )}
                   </tr>
                 </thead>
@@ -1621,7 +1734,7 @@ function BatchRowsDialog({
                       key={row.id}
                       className={
                         activeTab === "failed"
-                          ? "bg-rose-50/40 hover:bg-rose-50"
+                          ? editMode ? "bg-amber-50/40 hover:bg-amber-50" : "bg-rose-50/40 hover:bg-rose-50"
                           : "hover:bg-emerald-50/30"
                       }
                     >
@@ -1630,9 +1743,18 @@ function BatchRowsDialog({
                       </Td>
                       {dataKeys.map((k) => (
                         <Td key={k}>
-                          <span className="block max-w-[180px] truncate" title={String(row.raw_data?.[k] ?? "")}>
-                            {String(row.raw_data?.[k] ?? "")}
-                          </span>
+                          {activeTab === "failed" && editMode ? (
+                            <input
+                              type="text"
+                              value={getCellValue(row, k)}
+                              onChange={(e) => setCellValue(row.id, k, e.target.value)}
+                              className="w-full min-w-[100px] rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                            />
+                          ) : (
+                            <span className="block max-w-[180px] truncate" title={String(row.raw_data?.[k] ?? "")}>
+                              {String(row.raw_data?.[k] ?? "")}
+                            </span>
+                          )}
                         </Td>
                       ))}
                       {activeTab === "failed" && (
@@ -1640,10 +1762,7 @@ function BatchRowsDialog({
                           {row.error_messages?.length ? (
                             <ul className="space-y-1">
                               {row.error_messages.map((error, idx) => (
-                                <li
-                                  key={idx}
-                                  className="flex items-start gap-1.5 text-rose-700"
-                                >
+                                <li key={idx} className="flex items-start gap-1.5 text-rose-700">
                                   <span className="mt-0.5 shrink-0 text-rose-400">•</span>
                                   {error}
                                 </li>
@@ -1662,10 +1781,17 @@ function BatchRowsDialog({
           )}
         </div>
 
-        {activeTab === "failed" && failedRows.length > 0 && (
-          <div className="border-t border-slate-100 bg-rose-50/60 px-6 py-3">
-            <p className="text-xs text-rose-700">
-              <span className="font-semibold">To re-upload:</span> Download the Failed CSV above, fix the errors in each row, then upload again as a new batch.
+        {activeTab === "failed" && failedRows.length > 0 && !editMode && !resubmitResult && (
+          <div className="border-t border-slate-100 bg-slate-50 px-6 py-3">
+            <p className="text-xs text-slate-500">
+              Click <span className="font-semibold text-indigo-700">Edit & Resubmit</span> to fix values inline and resubmit directly, or <span className="font-semibold">Download CSV</span> to fix offline and re-upload as a new batch.
+            </p>
+          </div>
+        )}
+        {activeTab === "failed" && editMode && (
+          <div className="border-t border-indigo-100 bg-indigo-50/60 px-6 py-3">
+            <p className="text-xs text-indigo-700">
+              Edit the cells above, then click <span className="font-semibold">Submit Fixed Rows</span>. A new batch will be created and imported automatically.
             </p>
           </div>
         )}
