@@ -18,6 +18,9 @@ import { applyRegularizationBatch, rejectRegularizationBatch } from "./attendanc
 import { applyLeaveBatch, rejectLeaveBatch } from "./leave-application-bulk.service.js";
 import { applyIncentiveBatch, rejectIncentiveBatch } from "./incentive-bulk.service.js";
 import { applyDeductionBatch, rejectDeductionBatch } from "./deduction-bulk.service.js";
+import {
+  startBatchJob, getBatchJob, readBatchProgress, type BatchJobKind,
+} from "./batch-job.js";
 
 export const bulkApprovalRouter = Router();
 bulkApprovalRouter.use(requireAuth);
@@ -190,6 +193,101 @@ bulkApprovalRouter.get("/approvals/batches/:id/preview", h(async (req, res) => {
 
 type Decision = "approve" | "reject";
 
+/**
+ * Run the decision itself — everything that used to happen after the claim.
+ *
+ * This is the part that takes minutes on a real batch, so it no longer runs inside
+ * the request (see batch-job.ts). It returns exactly the payload the route used to
+ * send, which the browser now collects from the status endpoint instead.
+ */
+async function performDecision(
+  decision: Decision,
+  batch: Awaited<ReturnType<typeof getBatch>>,
+  userId: string,
+  remarks: string,
+  req: AuthenticatedRequest,
+): Promise<Record<string, unknown>> {
+  let outcome;
+  if (decision === "approve") {
+    switch (batch.upload_type_code) {
+      case "ATTENDANCE_REGULARIZATION_BULK":
+        outcome = await applyRegularizationBatch(batch, userId, remarks || null); break;
+      case "LEAVE_APPLICATION_BULK":
+        outcome = await applyLeaveBatch(batch, userId, remarks || null); break;
+      case "INCENTIVE_BULK":
+        outcome = await applyIncentiveBatch(batch, userId, remarks || null); break;
+      case "DEDUCTION_BULK":
+        outcome = await applyDeductionBatch(batch, userId, remarks || null); break;
+      default:
+        throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
+    }
+  } else {
+    switch (batch.upload_type_code) {
+      case "ATTENDANCE_REGULARIZATION_BULK":
+        outcome = await rejectRegularizationBatch(batch, userId, remarks); break;
+      case "LEAVE_APPLICATION_BULK":
+        outcome = await rejectLeaveBatch(batch, userId, remarks); break;
+      case "INCENTIVE_BULK":
+        outcome = await rejectIncentiveBatch(batch, userId, remarks); break;
+      case "DEDUCTION_BULK":
+        outcome = await rejectDeductionBatch(batch, userId, remarks); break;
+      default:
+        throw new BulkUploadError(`No reject handler for ${batch.upload_type_code}`, 501);
+    }
+  }
+
+  const finalStatus =
+    decision === "reject" ? "rejected" : outcome.failed > 0 ? "partially_applied" : "approved";
+  const summary =
+    decision === "reject"
+      ? `Rejected by Branch Head: ${outcome.applied} row(s) cancelled. ${remarks}`
+      : `${outcome.applied} row(s) applied, ${outcome.failed} failed.` +
+        (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
+
+  await markDecided(batch.id, finalStatus, userId, remarks || null, summary);
+  await auditBatchAction({
+    userId,
+    actionType: decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
+    batch,
+    reason: remarks || undefined,
+    detail: { applied: outcome.applied, failed: outcome.failed, final_status: finalStatus },
+    req,
+  });
+
+  // Notify uploader of failed rows so they can fix and re-submit
+  if (finalStatus === "partially_applied" && outcome.failed > 0) {
+    const [approverRows] = await db.execute<RowDataPacket[]>(
+      "SELECT TRIM(CONCAT(COALESCE(full_name, ''), ' ', COALESCE(email, ''))) AS display FROM auth_user WHERE id = ? LIMIT 1",
+      [userId],
+    );
+    const approverName = String((approverRows as RowDataPacket[])[0]?.display ?? "Branch Head").trim();
+    void sendPartialApplyEmail({
+      batch,
+      appliedCount: outcome.applied,
+      failedCount: outcome.failed,
+      approverName,
+      remarks: remarks || null,
+    });
+  }
+
+  return {
+    success: outcome.failed === 0,
+    approval_status: finalStatus,
+    applied: outcome.applied,
+    failed: outcome.failed,
+    errors: outcome.errors.slice(0, 100),
+    message: summary,
+  };
+}
+
+/**
+ * Start a decision. Answers in milliseconds, whatever the batch size.
+ *
+ * Every check that can reject the request — type, state, permission, the claim —
+ * still runs here, so a caller that gets 202 knows the decision is genuinely under
+ * way. Only the row work is detached, and its result is collected from
+ * GET /approvals/batches/:id/job-status.
+ */
 async function runDecision(
   decision: Decision,
   req: AuthenticatedRequest,
@@ -232,84 +330,87 @@ async function runDecision(
     });
   }
 
+  startBatchJob(
+    batch.id,
+    decision === "approve" ? "approve" : "reject",
+    () => performDecision(decision, batch, userId, remarks, req),
+    // Put the batch back in the queue rather than leaving it stuck in 'approving'.
+    // The request has already been answered, so this is the only place left to do it.
+    async () => { await releaseClaim(batch.id); },
+  );
+
+  return res.status(202).json({
+    success: true,
+    processing: true,
+    job: decision,
+    batch_id: batch.id,
+    total_rows: batch.imported_rows ?? batch.total_rows ?? null,
+    message:
+      decision === "approve"
+        ? "Approval started. This runs one row at a time and can take a few minutes on a large batch — the screen will keep itself updated."
+        : "Rejection started — the screen will keep itself updated.",
+  });
+}
+
+/**
+ * GET /approvals/batches/:id/job-status — where the browser collects the result.
+ *
+ * Terminal state is read from upload_batch, not from the in-process job map, so an
+ * approval that finished before an API restart still reports correctly afterwards.
+ */
+bulkApprovalRouter.get("/approvals/batches/:id/job-status", h(async (req, res) => {
   try {
-    let outcome;
-    if (decision === "approve") {
-      switch (batch.upload_type_code) {
-        case "ATTENDANCE_REGULARIZATION_BULK":
-          outcome = await applyRegularizationBatch(batch, userId, remarks || null); break;
-        case "LEAVE_APPLICATION_BULK":
-          outcome = await applyLeaveBatch(batch, userId, remarks || null); break;
-        case "INCENTIVE_BULK":
-          outcome = await applyIncentiveBatch(batch, userId, remarks || null); break;
-        case "DEDUCTION_BULK":
-          outcome = await applyDeductionBatch(batch, userId, remarks || null); break;
-        default:
-          throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
-      }
-    } else {
-      switch (batch.upload_type_code) {
-        case "ATTENDANCE_REGULARIZATION_BULK":
-          outcome = await rejectRegularizationBatch(batch, userId, remarks); break;
-        case "LEAVE_APPLICATION_BULK":
-          outcome = await rejectLeaveBatch(batch, userId, remarks); break;
-        case "INCENTIVE_BULK":
-          outcome = await rejectIncentiveBatch(batch, userId, remarks); break;
-        case "DEDUCTION_BULK":
-          outcome = await rejectDeductionBatch(batch, userId, remarks); break;
-        default:
-          throw new BulkUploadError(`No reject handler for ${batch.upload_type_code}`, 501);
-      }
-    }
+    const batch = await getBatch(req.params.id);
+    await assertCanApprove(req.authUser!.id, batch);
 
-    const finalStatus =
-      decision === "reject" ? "rejected" : outcome.failed > 0 ? "partially_applied" : "approved";
-    const summary =
-      decision === "reject"
-        ? `Rejected by Branch Head: ${outcome.applied} row(s) cancelled. ${remarks}`
-        : `${outcome.applied} row(s) applied, ${outcome.failed} failed.` +
-          (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
+    const job = getBatchJob(batch.id);
+    const kind: BatchJobKind = job?.kind ?? "approve";
+    const progress = await readBatchProgress(batch.id, kind);
 
-    await markDecided(batch.id, finalStatus, userId, remarks || null, summary);
-    await auditBatchAction({
-      userId,
-      actionType: decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
-      batch,
-      reason: remarks || undefined,
-      detail: { applied: outcome.applied, failed: outcome.failed, final_status: finalStatus },
-      req,
-    });
+    const decided = ["approved", "rejected", "partially_applied"].includes(
+      String(batch.approval_status ?? ""),
+    );
+    const running = batch.batch_status === "approving";
 
-    // Notify uploader of failed rows so they can fix and re-submit
-    if (finalStatus === "partially_applied" && outcome.failed > 0) {
-      const [approverRows] = await db.execute<import("mysql2").RowDataPacket[]>(
-        "SELECT TRIM(CONCAT(COALESCE(full_name, ''), ' ', COALESCE(email, ''))) AS display FROM auth_user WHERE id = ? LIMIT 1",
-        [userId],
+    // The batch itself is the authority, and it is read in that order: decided beats
+    // everything, and a batch still claimed as 'approving' is running even if the job
+    // map holds a failure — that failure belongs to an earlier attempt, not this one.
+    // The map is only consulted for the richer payload and for a failure that never
+    // made it onto the batch.
+    const phase = decided ? "done" : running ? "running" : job?.phase === "failed" ? "failed" : "idle";
+
+    let errors: string[] = [];
+    if (phase === "done" || phase === "failed") {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT row_no, error_messages FROM upload_batch_row
+          WHERE upload_batch_id = ? AND row_status IN ('error','failed')
+          ORDER BY row_no ASC LIMIT 100`,
+        [batch.id],
       );
-      const approverName = String((approverRows as import("mysql2").RowDataPacket[])[0]?.display ?? "Branch Head").trim();
-      void sendPartialApplyEmail({
-        batch,
-        appliedCount: outcome.applied,
-        failedCount: outcome.failed,
-        approverName,
-        remarks: remarks || null,
+      errors = (rows as RowDataPacket[]).map((r) => {
+        const parsed = typeof r.error_messages === "string"
+          ? (JSON.parse(r.error_messages) as string[])
+          : ((r.error_messages as string[]) ?? []);
+        return `Row ${r.row_no}: ${(parsed ?? []).join("; ")}`;
       });
     }
 
     return res.json({
-      success: outcome.failed === 0,
-      approval_status: finalStatus,
-      applied: outcome.applied,
-      failed: outcome.failed,
-      errors: outcome.errors.slice(0, 100),
-      message: summary,
+      success: true,
+      phase,
+      job: kind,
+      batch_status: batch.batch_status,
+      approval_status: batch.approval_status,
+      progress,
+      errors,
+      error: job?.phase === "failed" ? job.error : undefined,
+      message: job?.phase === "failed" ? job.error : (batch.error_summary ?? null),
+      result: job?.phase === "done" ? job.result : undefined,
     });
   } catch (err) {
-    // Put the batch back in the queue rather than leaving it stuck in 'approving'.
-    await releaseClaim(batch.id);
     return fail(res, err);
   }
-}
+}));
 
 bulkApprovalRouter.post("/approvals/batches/:id/approve", h((req, res) => runDecision("approve", req, res)));
 bulkApprovalRouter.post("/approvals/batches/:id/reject", h((req, res) => runDecision("reject", req, res)));

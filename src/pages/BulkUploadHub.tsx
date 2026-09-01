@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import {
+  pollBatchJob, isBatchJobStarted, describeProgress,
+  type BatchJobStatus,
+} from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -605,6 +609,9 @@ export default function BulkUploadHub() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Live progress of an import running on the server. The POST that started it
+  // returns immediately now, so this is what the uploader watches.
+  const [importProgress, setImportProgress] = useState<BatchJobStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const selectedTemplate = useMemo(
@@ -955,27 +962,61 @@ export default function BulkUploadHub() {
 
     setIsProcessing(true);
     setActiveImportBatchId(batch.id);
+    setImportProgress(null);
     setMessage(`Import started for ${batch.upload_batch_no}. Please wait...`);
 
     try {
-      // Import can process hundreds of rows server-side; the 30s default abort
-      // timeout used to fire well before the server finished, so the UI showed
-      // a false failure even on batches that went on to import successfully.
-      const res = await hrmsApi.post<{ success: boolean; data?: any; error?: string }>(`/api/bulk-upload/batches/${batch.id}/import`, {
+      // The server no longer imports the rows inside this request: it claims the
+      // batch, answers 202 and keeps working. Waiting for the whole import used to
+      // hit nginx's 60s proxy timeout on any sizeable file, so the uploader saw a
+      // 502 while the import was still running — and had no way to learn how it
+      // ended. The outcome is collected by polling instead.
+      const res = await hrmsApi.post<{
+        success: boolean;
+        processing?: boolean;
+        total_rows?: number | null;
+        data?: any;
+        error?: string;
+      }>(`/api/bulk-upload/batches/${batch.id}/import`, {
         rpc_name: rpcName,
-      }, 300000);
+      }, 60000);
 
       if (!res.success) {
         throw new Error(res.error || "Import action failed.");
       }
 
-      const result = res.data || {};
+      let result: any = res.data || {};
+
+      if (isBatchJobStarted(res)) {
+        setImportProgress({
+          phase: "running",
+          progress: { total: res.total_rows ?? null, processed: 0, succeeded: 0, failed: 0 },
+        });
+        const final = await pollBatchJob(
+          `/api/bulk-upload/batches/${batch.id}/import-status`,
+          { onProgress: setImportProgress },
+        );
+        if (final.phase === "failed") {
+          throw new Error(final.error || final.message || "Import action failed.");
+        }
+        result = (final.result as { data?: any })?.data ?? {
+          importedRows: final.progress?.succeeded ?? 0,
+          errorRows: final.progress?.failed ?? 0,
+        };
+      }
+
       if (result.ok === false) {
         throw new Error(result.message || "Import action failed.");
       }
 
-      const importedRows = Number(result.importedRows || result.imported_rows || 0);
-      const errorRows = Number(result.errorRows || result.error_rows || 0);
+      // The approval-gated importers report `staged`, the rest `importedRows` /
+      // `imported_rows`. Reading only the last two made every leave, regularization,
+      // incentive and deduction import announce "Imported 0 row(s)" however many it
+      // had actually staged.
+      const importedRows = Number(
+        result.importedRows ?? result.imported_rows ?? result.staged ?? 0,
+      );
+      const errorRows = Number(result.errorRows ?? result.error_rows ?? result.failed ?? 0);
       const successMsg = `Import completed for ${batch.upload_batch_no}. Imported ${importedRows} row(s).${
         errorRows ? ` ${errorRows} row(s) failed and are visible in View Rows.` : ""
       }`;
@@ -989,9 +1030,11 @@ export default function BulkUploadHub() {
       const msg = error instanceof Error ? error.message : "Import action failed.";
       setErrorMessage(msg);
       window.alert(`Import failed: ${msg}`);
+      await loadData();
     } finally {
       setIsProcessing(false);
       setActiveImportBatchId(null);
+      setImportProgress(null);
     }
   }
 
@@ -1073,6 +1116,38 @@ export default function BulkUploadHub() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <ProductivityUpload />
             </section>
+          )}
+
+          {effectiveTab === "master" && activeImportBatchId && (
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-indigo-900">
+                  {describeProgress(importProgress?.progress, "Importing")}
+                </p>
+                {(importProgress?.progress?.failed ?? 0) > 0 && (
+                  <span className="text-xs font-semibold text-rose-600">
+                    {importProgress?.progress?.failed} row(s) failed
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100">
+                <div
+                  className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                  style={{
+                    width: `${
+                      importProgress?.progress?.total
+                        ? Math.min(100, Math.round(((importProgress.progress.processed ?? 0) / importProgress.progress.total) * 100))
+                        : 15
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-indigo-700/80">
+                Each row runs through the same validation the single-employee screen uses,
+                so a large file takes a few minutes. The import continues on the server even
+                if you leave this page.
+              </p>
+            </div>
           )}
 
           {effectiveTab === "master" && (message || errorMessage) && (
@@ -1608,14 +1683,34 @@ function BatchRowsDialog({
       }));
       await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload);
 
-      // 3. Run import
-      const importRes = await hrmsApi.post<{ success: boolean; data: { importedRows: number; errorRows: number } }>(
+      // 3. Run import. It answers 202 and keeps working, so wait it out by polling
+      // rather than by holding the request open past the proxy timeout.
+      const importRes = await hrmsApi.post<{
+        success: boolean;
+        processing?: boolean;
+        data?: { importedRows?: number; errorRows?: number; staged?: number; failed?: number };
+      }>(
         `/api/bulk-upload/batches/${newBatchId}/import`,
-        { rpc_name: rpcName }
+        { rpc_name: rpcName },
+        60000,
       );
+
+      let outcome: Record<string, unknown> = importRes.data ?? {};
+      if (isBatchJobStarted(importRes)) {
+        const final = await pollBatchJob(`/api/bulk-upload/batches/${newBatchId}/import-status`);
+        if (final.phase === "failed") {
+          throw new Error(final.error || final.message || "Import action failed.");
+        }
+        outcome = ((final.result as { data?: Record<string, unknown> })?.data) ?? {
+          importedRows: final.progress?.succeeded ?? 0,
+          errorRows: final.progress?.failed ?? 0,
+        };
+      }
+
       setResubmitResult({
-        importedRows: importRes.data.importedRows ?? 0,
-        errorRows: importRes.data.errorRows ?? 0,
+        // Gated types report `staged`/`failed`, the rest `importedRows`/`errorRows`.
+        importedRows: Number(outcome.importedRows ?? outcome.staged ?? 0),
+        errorRows: Number(outcome.errorRows ?? outcome.failed ?? 0),
         newBatchNo,
       });
       setEditMode(false);

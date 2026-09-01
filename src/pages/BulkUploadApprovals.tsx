@@ -16,6 +16,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import {
+  pollBatchJob, isBatchJobStarted, describeProgress,
+  type BatchJobStatus,
+} from "@/lib/bulkBatchJob";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsModernShell } from "@/components/ui/hrms-modern";
 
@@ -169,6 +173,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/**
+ * How a decision ended, returned rather than written straight to state: load()
+ * clears the error banner, so anything set before the reload would vanish before
+ * the approver could read it.
+ */
+interface Outcome {
+  notice: string;
+  error?: string;
+}
+
 export default function BulkUploadApprovals() {
   const [pending, setPending] = useState<PendingBatch[]>([]);
   const [history, setHistory] = useState<DecidedBatch[]>([]);
@@ -181,6 +195,10 @@ export default function BulkUploadApprovals() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [deciding, setDeciding] = useState<"approve" | "reject" | null>(null);
+  // Live progress of a decision running on the server. The request that started it
+  // returned immediately; this is what the approver watches instead of a spinner
+  // that used to end in a 502.
+  const [decisionProgress, setDecisionProgress] = useState<BatchJobStatus | null>(null);
 
   const [openHistoryBatch, setOpenHistoryBatch] = useState<HistoryBatchFull | null>(null);
   const [historyRows, setHistoryRows] = useState<PreviewRow[]>([]);
@@ -214,6 +232,7 @@ export default function BulkUploadApprovals() {
 
   const openPreview = useCallback(async (batch: PendingBatch) => {
     setOpenBatch(batch);
+    setDecisionProgress(null);
     setRemarks("");
     setPreviewRows([]);
     setPreviewLoading(true);
@@ -249,6 +268,42 @@ export default function BulkUploadApprovals() {
     }
   }, []);
 
+  /**
+   * Wait out a decision that is running on the server and report how it ended.
+   *
+   * Shared by decide() and by the resume path below, because a batch found already
+   * 'approving' (the approver reloaded the page, or a previous attempt hit the old
+   * 502) has to be followed in exactly the same way.
+   */
+  const trackDecision = useCallback(
+    async (batchId: string, decision: "approve" | "reject"): Promise<Outcome> => {
+      const final = await pollBatchJob(
+        `/api/bulk-upload/approvals/batches/${batchId}/job-status`,
+        { onProgress: setDecisionProgress },
+      );
+
+      if (final.phase === "failed") {
+        throw new Error(final.error ?? final.message ?? `Could not ${decision} this batch.`);
+      }
+
+      const result = final.result as
+        | { message?: string; failed?: number; errors?: string[] }
+        | undefined;
+      const failed = result?.failed ?? final.progress?.failed ?? 0;
+      const summary =
+        result?.message ??
+        final.message ??
+        `Batch ${final.approval_status ?? `${decision}d`}.`;
+
+      if (failed > 0) {
+        const firstErrors = (result?.errors ?? final.errors ?? []).slice(0, 3).join(" | ");
+        return { notice: summary, error: firstErrors ? `${summary} First errors: ${firstErrors}` : summary };
+      }
+      return { notice: summary };
+    },
+    [],
+  );
+
   const decide = useCallback(
     async (decision: "approve" | "reject") => {
       if (!openBatch) return;
@@ -263,37 +318,103 @@ export default function BulkUploadApprovals() {
           : `Reject ${openBatch.upload_batch_no}? The staged rows will be cancelled and nothing will be applied.`;
       if (!window.confirm(confirmText)) return;
 
+      const batchId = openBatch.id;
       setDeciding(decision);
       setError("");
+      setDecisionProgress(null);
       try {
-        // The decision runs every domain engine row by row, which for a large batch
-        // takes far longer than the default client timeout.
+        // The server no longer applies the rows inside this request. It validates,
+        // claims the batch, answers 202 and keeps working — which is what stopped a
+        // large batch from dying on nginx's 60s proxy timeout with a 502 while the
+        // approval was in fact running fine. The outcome is collected by polling.
         const res = await hrmsApi.post<{
           success: boolean;
+          processing?: boolean;
+          total_rows?: number | null;
           approval_status?: string;
           applied?: number;
           failed?: number;
           errors?: string[];
           message?: string;
         }>(
-          `/api/bulk-upload/approvals/batches/${openBatch.id}/${decision}`,
+          `/api/bulk-upload/approvals/batches/${batchId}/${decision}`,
           { remarks: remarks.trim() },
-          300000,
+          60000,
         );
-        if (res.message && res.failed) {
-          setError(`${res.message} First errors: ${(res.errors ?? []).slice(0, 3).join(" | ")}`);
+
+        let outcome: Outcome;
+        if (isBatchJobStarted(res)) {
+          setDecisionProgress({
+            phase: "running",
+            progress: {
+              total: res.total_rows ?? null,
+              processed: 0,
+              succeeded: 0,
+              failed: 0,
+            },
+          });
+          outcome = await trackDecision(batchId, decision);
+        } else {
+          // An API that has not been updated yet still answers synchronously.
+          outcome = {
+            notice: res.message ?? `Batch ${decision}d.`,
+            error:
+              res.message && res.failed
+                ? `${res.message} First errors: ${(res.errors ?? []).slice(0, 3).join(" | ")}`
+                : undefined,
+          };
         }
-        setNotice(res.message ?? `Batch ${decision}d.`);
         setOpenBatch(null);
+        // Reload first — load() resets the error banner, so the outcome is written
+        // after it or it would be wiped before anyone read it.
         await load();
+        setNotice(outcome.notice);
+        if (outcome.error) setError(outcome.error);
       } catch (err) {
-        setError(err instanceof Error ? err.message : `Could not ${decision} this batch.`);
+        const message = err instanceof Error ? err.message : `Could not ${decision} this batch.`;
+        await load();
+        setError(message);
       } finally {
         setDeciding(null);
+        setDecisionProgress(null);
       }
     },
-    [openBatch, remarks, load],
+    [openBatch, remarks, load, trackDecision],
   );
+
+  /**
+   * Follow a decision that was already running when this page loaded.
+   *
+   * Before the work was moved off the request, a batch cut off by the proxy timeout
+   * stayed claimed as 'approving' with nothing watching it, and the approver's only
+   * evidence was the 502. Now the queue picks it back up and reports how it ends,
+   * whether this browser started it or not.
+   */
+  useEffect(() => {
+    const inFlight = pending.find((b) => b.batch_status === "approving");
+    if (!inFlight || deciding) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const final = await pollBatchJob(
+          `/api/bulk-upload/approvals/batches/${inFlight.id}/job-status`,
+          { intervalMs: 5000 },
+        );
+        if (cancelled) return;
+        if (final.phase !== "running") {
+          setNotice(
+            final.message ??
+              `Batch ${inFlight.upload_batch_no} finished (${final.approval_status ?? final.phase}).`,
+          );
+          await load();
+        }
+      } catch {
+        // A batch someone else is deciding is not this screen's error to report.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pending, deciding, load]);
 
   const previewColumns = useMemo(() => {
     const cols = new Set<string>();
@@ -397,6 +518,15 @@ export default function BulkUploadApprovals() {
                       <p className="font-semibold text-slate-800">{batch.upload_batch_no}</p>
                       {batch.original_file_name && (
                         <p className="text-xs text-slate-400 truncate max-w-[180px]">{batch.original_file_name}</p>
+                      )}
+                      {batch.batch_status === "approving" && (
+                        // A batch mid-decision used to look identical to an untouched one,
+                        // so the only way to discover it was to click Approve and get a
+                        // bare 409. Say so on the row instead.
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Being decided now
+                        </span>
                       )}
                     </td>
                     <td className="px-5 py-3">
@@ -594,6 +724,45 @@ export default function BulkUploadApprovals() {
                   placeholder="Verified against the branch attendance register for August 2026"
                 />
               </label>
+              {deciding && (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-indigo-900">
+                      {describeProgress(
+                        decisionProgress?.progress,
+                        deciding === "approve" ? "Applying" : "Rejecting",
+                      )}
+                    </p>
+                    {(decisionProgress?.progress?.failed ?? 0) > 0 && (
+                      <span className="text-xs font-semibold text-rose-600">
+                        {decisionProgress?.progress?.failed} failed
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100">
+                    <div
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                      style={{
+                        width: `${
+                          decisionProgress?.progress?.total
+                            ? Math.min(
+                                100,
+                                Math.round(
+                                  ((decisionProgress.progress.processed ?? 0) /
+                                    decisionProgress.progress.total) * 100,
+                                ),
+                              )
+                            : 15
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-indigo-700/80">
+                    This runs on the server one row at a time. You can leave this page open —
+                    if you close it, the batch keeps processing and the queue will show the result.
+                  </p>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <p className="text-xs text-slate-400">
                   {openBatch.imported_rows} row{openBatch.imported_rows !== 1 ? "s" : ""} will be{" "}
