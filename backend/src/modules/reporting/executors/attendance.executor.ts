@@ -133,10 +133,25 @@ export async function attendanceRegisterMonthly(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
-
-  // Date range binds before the WHERE params (JOIN ON is evaluated first in positional binding).
+  // Two-population filter: show all currently-active employees (even if absent
+  // all month) PLUS any inactive employee who actually has an attendance record
+  // during the period. This matches legacy-report behaviour — the legacy showed
+  // employees who worked any day in the month regardless of current status —
+  // without depending on date_of_exit, which is NULL for ~28,000 historical
+  // inactive records in this database (exit date was never backfilled).
+  // EXISTS subquery params go into the WHERE, which is evaluated after the
+  // LEFT JOIN ON clause. unshift puts the JOIN params at the front first, then
+  // the EXISTS params are appended so they bind in the correct positional order.
+  clauses.push(
+    "(e.active_status = 1 OR EXISTS (" +
+    "  SELECT 1 FROM attendance_daily_record _x" +
+    "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
+    "))"
+  );
+  // JOIN ON binds go to the front (positional order: JOIN before WHERE).
   params.unshift(firstDay, lastDay);
+  // EXISTS binds appended after all other WHERE params.
+  params.push(firstDay, lastDay);
 
   const attSql = `
     SELECT
@@ -158,6 +173,7 @@ export async function attendanceRegisterMonthly(
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+      CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
       e.date_of_joining,
       DAY(adr.record_date) AS day_num,
       adr.attendance_status,
@@ -186,7 +202,7 @@ export async function attendanceRegisterMonthly(
     present:        "P",
     absent:         "A",
     half_day:       "HD",
-    week_off:       "W",
+    week_off:       "A",
     holiday:        "H",
     leave_approved: "L",
     on_duty:        "OD",
@@ -200,15 +216,16 @@ export async function attendanceRegisterMonthly(
   for (const row of attRows) {
     if (!empMap.has(row.employee_id)) {
       empMap.set(row.employee_id, {
-        emp_code:       row.employee_code,
-        bio_code:       row.bio_code,
-        emp_name:       row.emp_name,
-        department:     row.department,
-        designation:    row.designation,
-        profile:        row.profile,
-        cost_center:    row.cost_center,
-        emp_location:   row.emp_location,
-        billable:       row.billable,
+        emp_code:        row.employee_code,
+        bio_code:        row.bio_code,
+        emp_name:        row.emp_name,
+        department:      row.department,
+        designation:     row.designation,
+        profile:         row.profile,
+        cost_center:     row.cost_center,
+        emp_location:    row.emp_location,
+        billable:        row.billable,
+        employee_status: row.employee_status,
         date_of_joining: row.date_of_joining,
       });
     }
@@ -264,16 +281,17 @@ export async function attendanceRegisterMonthly(
     const salDays    = Math.round((paidBase + eligibleWO + holiday) * 100) / 100;
 
     return {
-      sno:          idx + 1,
-      emp_code:     emp.emp_code,
-      bio_code:     emp.bio_code,
-      emp_name:     emp.emp_name.trim(),
-      department:   emp.department,
-      designation:  emp.designation,
-      profile:      emp.profile,
-      cost_center:  emp.cost_center,
-      emp_location: emp.emp_location,
-      billable:     emp.billable,
+      sno:             idx + 1,
+      emp_code:        emp.emp_code,
+      bio_code:        emp.bio_code,
+      emp_name:        emp.emp_name.trim(),
+      department:      emp.department,
+      designation:     emp.designation,
+      profile:         emp.profile,
+      cost_center:     emp.cost_center,
+      emp_location:    emp.emp_location,
+      billable:        emp.billable,
+      employee_status: emp.employee_status,
       ...Object.fromEntries(
         Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
       ),
@@ -356,8 +374,17 @@ export async function attendanceDaily(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
+  // Same two-population rule as attendanceRegisterMonthly: active employees
+  // always, inactive employees only if they have a record in the date range.
+  clauses.push(
+    "(e.active_status = 1 OR EXISTS (" +
+    "  SELECT 1 FROM attendance_daily_record _x" +
+    "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
+    "))"
+  );
+  // JOIN ON (adr + session subquery) binds go to the front; EXISTS binds follow.
   params.unshift(from, to, from, to);
+  params.push(from, to);
 
   const base = `SELECT adr.record_date,
          e.employee_code,
@@ -385,7 +412,8 @@ export async function attendanceDaily(
          adr.late_by_minutes,
          adr.lwp_value,
          CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
-         adr.is_locked
+         adr.is_locked,
+         CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
     FROM employees e
     LEFT JOIN attendance_daily_record adr
            ON adr.employee_id = e.id
@@ -643,6 +671,7 @@ export async function attendanceSummary(
            COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            SUM(adr.attendance_status='present') AS present_days,
            SUM(adr.attendance_status='half_day') AS half_days,
            SUM(adr.attendance_status='absent') AS absent_days,
@@ -657,7 +686,7 @@ export async function attendanceSummary(
       LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-              b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
+              e.active_status, b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
      ORDER BY employee_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -752,7 +781,8 @@ export async function lateArrivalSummary(
              ELSE 'Severe Late'
            END AS late_status,
            CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
-           COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
+           COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -852,7 +882,8 @@ export async function overtimeSummary(
          TIME_FORMAT(SEC_TO_TIME(SUM(
            GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
          ) * 60), '%H:%i') AS overtime_duration,
-         ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay
+         ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay,
+         CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
     FROM attendance_daily_record adr
     JOIN employees e ON e.id = adr.employee_id
     LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -884,7 +915,7 @@ export async function overtimeSummary(
     ) otp ON otp.employee_id = e.id
    WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day','week_off_worked')
    GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-            b.branch_name, p.process_name, d.dept_name, dm.designation_name,
+            e.active_status, b.branch_name, p.process_name, d.dept_name, dm.designation_name,
             occ.cost_centre_code, occ.cost_centre_name
    HAVING overtime_hours > 0
    ORDER BY overtime_hours DESC`;
@@ -1117,6 +1148,7 @@ export async function habitualAbsenteeList(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COUNT(*) AS absent_days
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
@@ -1124,7 +1156,7 @@ export async function habitualAbsenteeList(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
+     GROUP BY e.id, e.employee_code, employee_name, e.active_status, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      HAVING absent_days >= ${Number.isFinite(threshold) && threshold > 0 ? threshold : 3}
      ORDER BY e.id ASC`;
 
