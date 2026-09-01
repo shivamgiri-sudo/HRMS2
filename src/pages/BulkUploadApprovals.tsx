@@ -486,7 +486,10 @@ export default function BulkUploadApprovals() {
 
       {/* Preview / decision drawer */}
       {openBatch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]"
+          onClick={(e) => { if (e.target === e.currentTarget && deciding === null) setOpenBatch(null); }}
+        >
           <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200/80">
             {/* Drawer header with gradient accent */}
             <div className="relative overflow-hidden rounded-t-2xl">
@@ -599,6 +602,14 @@ export default function BulkUploadApprovals() {
                   )}
                 </p>
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={deciding !== null}
+                    onClick={() => setOpenBatch(null)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="button"
                     disabled={deciding !== null}
