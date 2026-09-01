@@ -176,56 +176,95 @@ export async function applyLeaveBatch(
   let applied = 0;
   let failed = 0;
 
-  for (const row of rows) {
-    try {
-      // 'approved', not 'branch_head_approved'.
-      //
-      // Both statuses run the identical balance deduction and attendance write inside
-      // reviewRequest, so the two looked interchangeable. They are not, once the row
-      // is in the table: 'approved' is the ONLY leave status the rest of the system
-      // reads. attendance-engine.service.ts resolves an approved-leave override with
-      // `leave_request.status = 'approved'`, and the day it writes into
-      // attendance_daily_record is left is_locked = 0 (verified live: 14 of 14
-      // leave_approved rows are unlocked). So a batch approved as
-      // 'branch_head_approved' produced a leave_approved attendance row that the
-      // nightly engine could not see any leave behind — it reclassified the day from
-      // biometric/APR evidence, overwrote the unlocked row as 'absent' with
-      // lwp_value 1.00, and payroll charged LWP for leave the branch head had
-      // approved. The upload would have looked like it worked, and the money would
-      // have been wrong a night later.
-      //
-      // Fourteen other consumers filter leave the same way — payroll's
-      // leave-reversal.service.ts, the leave-balance-sync worker, roster capacity,
-      // RTA and the reporting executors among them — so this is not only the engine.
-      //
-      // Who approved it is not lost: importLeaveBatch already sets approval_level =
-      // 'branch_head' and requires_branch_head_approval = 1 on every row of the
-      // batch, and the remark below names the batch.
-      await leaveService.reviewRequest(
-        row.created_entity_id,
-        {
-          status: "approved",
-          remarks: remarks
-            ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
-            : `Branch Head bulk approval (${batch.upload_batch_no})`,
-        },
-        approverUserId,
-      );
-      await lockEntity({
-        entityType: ENTITY_TYPE,
-        entityId: row.created_entity_id,
-        batchId: batch.id,
-        batchNo: batch.upload_batch_no,
-        employeeId: null,
-        lockedBy: approverUserId,
-      });
-      applied++;
-    } catch (err) {
-      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
-      errors.push(msg);
-      await markRowFailed(row.id, msg);
-      failed++;
+  // Fetch employee_id for each leave_request so we can group by employee.
+  // Same-employee rows must run serially — reviewRequest reads then writes the
+  // leave balance and two parallel calls for the same employee would both read
+  // the pre-deduction balance and produce a double-deduction. Different employees
+  // have independent balances so their rows can run concurrently.
+  const leaveIds = rows.map((r) => r.created_entity_id);
+  const empByLeaveId = new Map<string, string>();
+  if (leaveIds.length > 0) {
+    const [lrRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_id FROM leave_request WHERE id IN (${leaveIds.map(() => "?").join(",")})`,
+      leaveIds,
+    );
+    for (const lr of lrRows as RowDataPacket[]) {
+      empByLeaveId.set(String(lr.id), String(lr.employee_id));
     }
+  }
+
+  const byEmployee = new Map<string, LinkedRow[]>();
+  for (const row of rows) {
+    const empId = empByLeaveId.get(row.created_entity_id) ?? `__unresolved_${row.row_no}`;
+    if (!byEmployee.has(empId)) byEmployee.set(empId, []);
+    byEmployee.get(empId)!.push(row);
+  }
+
+  const groupResults = await Promise.all(
+    [...byEmployee.values()].map(async (empRows) => {
+      let grpApplied = 0;
+      let grpFailed = 0;
+      const grpErrors: string[] = [];
+
+      for (const row of empRows) {
+        try {
+          // 'approved', not 'branch_head_approved'.
+          //
+          // Both statuses run the identical balance deduction and attendance write inside
+          // reviewRequest, so the two looked interchangeable. They are not, once the row
+          // is in the table: 'approved' is the ONLY leave status the rest of the system
+          // reads. attendance-engine.service.ts resolves an approved-leave override with
+          // `leave_request.status = 'approved'`, and the day it writes into
+          // attendance_daily_record is left is_locked = 0 (verified live: 14 of 14
+          // leave_approved rows are unlocked). So a batch approved as
+          // 'branch_head_approved' produced a leave_approved attendance row that the
+          // nightly engine could not see any leave behind — it reclassified the day from
+          // biometric/APR evidence, overwrote the unlocked row as 'absent' with
+          // lwp_value 1.00, and payroll charged LWP for leave the branch head had
+          // approved. The upload would have looked like it worked, and the money would
+          // have been wrong a night later.
+          //
+          // Fourteen other consumers filter leave the same way — payroll's
+          // leave-reversal.service.ts, the leave-balance-sync worker, roster capacity,
+          // RTA and the reporting executors among them — so this is not only the engine.
+          //
+          // Who approved it is not lost: importLeaveBatch already sets approval_level =
+          // 'branch_head' and requires_branch_head_approval = 1 on every row of the
+          // batch, and the remark below names the batch.
+          await leaveService.reviewRequest(
+            row.created_entity_id,
+            {
+              status: "approved",
+              remarks: remarks
+                ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
+                : `Branch Head bulk approval (${batch.upload_batch_no})`,
+            },
+            approverUserId,
+          );
+          await lockEntity({
+            entityType: ENTITY_TYPE,
+            entityId: row.created_entity_id,
+            batchId: batch.id,
+            batchNo: batch.upload_batch_no,
+            employeeId: null,
+            lockedBy: approverUserId,
+          });
+          grpApplied++;
+        } catch (err) {
+          const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+          grpErrors.push(msg);
+          await markRowFailed(row.id, msg);
+          grpFailed++;
+        }
+      }
+      return { grpApplied, grpFailed, grpErrors };
+    }),
+  );
+
+  for (const r of groupResults) {
+    applied += r.grpApplied;
+    failed += r.grpFailed;
+    errors.push(...r.grpErrors);
   }
 
   return { applied, failed, errors };
@@ -237,26 +276,32 @@ export async function rejectLeaveBatch(
   remarks: string,
 ): Promise<ApplyOutcome> {
   const rows = await linkedRows(batch.id);
-  const errors: string[] = [];
-  let applied = 0;
-  let failed = 0;
 
-  for (const row of rows) {
-    try {
-      await leaveService.reviewRequest(
+  // Rejections only set status=rejected and write a log entry — no balance reads or
+  // writes — so all rows can run in parallel without race-condition risk.
+  const results = await Promise.allSettled(
+    rows.map((row) =>
+      leaveService.reviewRequest(
         row.created_entity_id,
         {
           status: "rejected",
           remarks: `Branch Head rejected bulk upload ${batch.upload_batch_no}: ${remarks}`,
         },
         approverUserId,
-      );
+      ),
+    ),
+  );
+
+  let applied = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (let i = 0; i < results.length; i++) {
+    if (results[i].status === "fulfilled") {
       applied++;
-    } catch (err) {
-      errors.push(`Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`);
+    } else {
       failed++;
+      errors.push(`Row ${rows[i].row_no}: ${(results[i] as PromiseRejectedResult).reason?.message ?? String((results[i] as PromiseRejectedResult).reason)}`);
     }
   }
-
   return { applied, failed, errors };
 }

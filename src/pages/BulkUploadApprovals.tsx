@@ -85,6 +85,21 @@ const TYPE_COLOR: Record<string, string> = {
  * What approving actually does, per type. Shown on the confirm step — an approver
  * deducting 400 leave balances deserves to be told that is what the button does.
  */
+const PREFERRED_COLUMNS: Record<string, string[]> = {
+  LEAVE_APPLICATION_BULK:              ["employee_code", "leave_code", "from_date", "to_date", "total_days", "reason"],
+  ATTENDANCE_REGULARIZATION_BULK:      ["employee_code", "session_date", "requested_status", "reason", "reason_code", "dispute_type", "new_punch_in", "new_punch_out", "supporting_note"],
+  INCENTIVE_BULK:                      ["employee_code", "incentive_code", "pay_month", "amount", "remarks"],
+  DEDUCTION_BULK:                      ["employee_code", "deduction_type_code", "run_month", "amount", "description", "is_prorated"],
+};
+
+function sortColumns(cols: string[], typeCode: string): string[] {
+  const preferred = PREFERRED_COLUMNS[typeCode] ?? [];
+  return [
+    ...preferred.filter((c) => cols.includes(c)),
+    ...cols.filter((c) => !preferred.includes(c)),
+  ];
+}
+
 const TYPE_EFFECT: Record<string, string> = {
   ATTENDANCE_REGULARIZATION_BULK:
     "Approving applies each correction to the employee's attendance record.",
@@ -287,8 +302,8 @@ export default function BulkUploadApprovals() {
         parseJson<Record<string, unknown>>(row.raw_data) ?? {};
       for (const key of Object.keys(data)) cols.add(key);
     }
-    return [...cols];
-  }, [previewRows]);
+    return sortColumns([...cols], openBatch?.upload_type_code ?? "");
+  }, [previewRows, openBatch]);
 
   const historyPreviewColumns = useMemo(() => {
     const cols = new Set<string>();
@@ -297,8 +312,8 @@ export default function BulkUploadApprovals() {
         parseJson<Record<string, unknown>>(row.raw_data) ?? {};
       for (const key of Object.keys(data)) cols.add(key);
     }
-    return [...cols];
-  }, [historyRows]);
+    return sortColumns([...cols], openHistoryBatch?.upload_type_code ?? "");
+  }, [historyRows, openHistoryBatch]);
 
   return (
     <DashboardLayout>
