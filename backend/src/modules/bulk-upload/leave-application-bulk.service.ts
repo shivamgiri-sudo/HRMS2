@@ -21,6 +21,7 @@ import {
   markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeDate,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 export const ENTITY_TYPE = "leave_request";
 
@@ -220,8 +221,15 @@ export async function applyLeaveBatch(
     byEmployee.get(empId)!.push(row);
   }
 
-  const groupResults = await Promise.all(
-    [...byEmployee.values()].map(async (empRows) => {
+  // Bounded rather than a plain Promise.all over every employee: the pool is 25
+  // connections with queueLimit 100 (db/mysql.ts), shared with every other request
+  // the API is serving. A 217-employee batch fanned out at once asks for 217
+  // connections, drains the pool and then overflows the queue — which turns one slow
+  // approval into failed requests across the whole app.
+  const groupResults = await mapWithConcurrency(
+    [...byEmployee.values()],
+    BULK_ROW_CONCURRENCY,
+    async (empRows) => {
       let grpApplied = 0;
       let grpFailed = 0;
       const grpErrors: string[] = [];
@@ -280,7 +288,7 @@ export async function applyLeaveBatch(
         }
       }
       return { grpApplied, grpFailed, grpErrors };
-    }),
+    },
   );
 
   for (const r of groupResults) {
@@ -300,29 +308,36 @@ export async function rejectLeaveBatch(
   const rows = await linkedRows(batch.id);
 
   // Rejections only set status=rejected and write a log entry — no balance reads or
-  // writes — so all rows can run in parallel without race-condition risk.
-  const results = await Promise.allSettled(
-    rows.map((row) =>
-      leaveService.reviewRequest(
+  // writes — so rows can run in parallel without race-condition risk. The parallelism
+  // is still bounded: the connection pool is shared with the rest of the app, and a
+  // few hundred rows released at once would drain it (see BULK_ROW_CONCURRENCY).
+  const results = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, (row) =>
+    leaveService
+      .reviewRequest(
         row.created_entity_id,
         {
           status: "rejected",
           remarks: `Branch Head rejected bulk upload ${batch.upload_batch_no}: ${remarks}`,
         },
         approverUserId,
+      )
+      .then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
       ),
-    ),
   );
 
   let applied = 0;
   let failed = 0;
   const errors: string[] = [];
   for (let i = 0; i < results.length; i++) {
-    if (results[i].status === "fulfilled") {
+    const outcome = results[i];
+    if (outcome.status === "fulfilled") {
       applied++;
     } else {
       failed++;
-      errors.push(`Row ${rows[i].row_no}: ${(results[i] as PromiseRejectedResult).reason?.message ?? String((results[i] as PromiseRejectedResult).reason)}`);
+      const reason = outcome.reason;
+      errors.push(`Row ${rows[i].row_no}: ${(reason as Error)?.message ?? String(reason)}`);
     }
   }
   return { applied, failed, errors };

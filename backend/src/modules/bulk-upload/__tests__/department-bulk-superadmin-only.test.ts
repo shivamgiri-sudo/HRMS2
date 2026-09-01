@@ -78,8 +78,12 @@ describe("bulk department upload is super_admin-only", () => {
   it("allows a department upload from super_admin", async () => {
     roles = ["super_admin"];
     const res = await importDepartments();
-    expect(res.status).toBe(200);
-    expect(importDepartmentMasterBatch).toHaveBeenCalledWith(BATCH_ID, "user-1");
+    // 202: the import is started and run in the background (see batch-job.ts), so
+    // the service call is awaited rather than asserted synchronously.
+    expect(res.status).toBe(202);
+    await vi.waitFor(() =>
+      expect(importDepartmentMasterBatch).toHaveBeenCalledWith(BATCH_ID, "user-1"),
+    );
   });
 });
 
