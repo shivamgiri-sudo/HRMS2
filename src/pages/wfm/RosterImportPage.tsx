@@ -6,7 +6,7 @@
  * Features: night-shift amber highlight, manual cell override, missing-employee list.
  */
 
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -429,7 +429,7 @@ export default function RosterImportPage() {
   // genuinely succeeding server-side. Raising the client timeout is the real fix for that case;
   // pollingAfterTimeout below covers the case where even 120s isn't enough on a very large batch.
   const commitMutation = useMutation({
-    mutationFn: (overrideWarnings = false) =>
+    mutationFn: (overrideWarnings: boolean) =>
       hrmsApi.post<{ assignmentsCreated: number; employeesNotified: number }>(
         `/api/wfm/roster-imports/${batchId}/commit`,
         { overrideWarnings, cycleId },

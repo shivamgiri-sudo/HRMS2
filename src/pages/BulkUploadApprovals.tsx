@@ -356,11 +356,15 @@ export default function BulkUploadApprovals() {
           outcome = await trackDecision(batchId, decision);
         } else {
           // An API that has not been updated yet still answers synchronously.
+          // isBatchJobStarted is a type predicate, so this branch narrows `res` to
+          // Exclude<…, BatchJobStarted>, which collapses to `never` — the 202 shape is a
+          // structural subset of the synchronous one. Read the sync body off its own alias.
+          const sync = res as { failed?: number; errors?: string[]; message?: string };
           outcome = {
-            notice: res.message ?? `Batch ${decision}d.`,
+            notice: sync.message ?? `Batch ${decision}d.`,
             error:
-              res.message && res.failed
-                ? `${res.message} First errors: ${(res.errors ?? []).slice(0, 3).join(" | ")}`
+              sync.message && sync.failed
+                ? `${sync.message} First errors: ${(sync.errors ?? []).slice(0, 3).join(" | ")}`
                 : undefined,
           };
         }
