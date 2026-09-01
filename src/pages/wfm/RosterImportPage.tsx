@@ -292,6 +292,13 @@ export default function RosterImportPage() {
   const [showMissing, setShowMissing] = useState(false);
   const [gridSearch, setGridSearch] = useState("");
   const [issuesOnly, setIssuesOnly] = useState(false);
+  // Set when a commit request aborts client-side (30s+ default) while the server keeps working —
+  // commit is one lock+validate+write cycle PER EMPLOYEE, not one statement, so a few thousand
+  // rows over the remote DB link routinely outlasts a short timeout even though the commit itself
+  // is still succeeding. Drives the batch-status query back into polling so the page reflects the
+  // real outcome (COMMITTED, or still PREVIEW with the actual error) once the server finishes,
+  // instead of leaving the uploader stuck on "please refresh" forever.
+  const [pollingAfterTimeout, setPollingAfterTimeout] = useState(false);
 
   /**
    * Upload scope. "process" is the original single-process flow. "branch" covers a whole
@@ -326,10 +333,26 @@ export default function RosterImportPage() {
     queryFn: () =>
       hrmsApi.get<{ batch: ImportBatch }>(`/api/wfm/roster-imports/${batchId}`),
     enabled: !!batchId,
-    refetchInterval: (data) =>
-      data?.state?.data?.batch?.status === "PARSING" ? 2000 : false,
+    refetchInterval: (data) => {
+      const status = data?.state?.data?.batch?.status;
+      if (status === "PARSING") return 2000;
+      // Keep polling after a commit-request timeout until the batch leaves PREVIEW (either
+      // COMMITTED once the server-side commit actually finishes, or still PREVIEW with the
+      // real error surfaced) — see pollingAfterTimeout above for why this can outlast the
+      // original request by a couple of minutes on a large file.
+      if (pollingAfterTimeout && status === "PREVIEW") return 5000;
+      return false;
+    },
   });
   const batch = batchData?.batch;
+
+  // Stop polling once the batch has moved past PREVIEW (COMMITTED/FAILED/CANCELLED) — the
+  // outcome is now known and reflected in `batch`, so there is nothing left to wait for.
+  useEffect(() => {
+    if (pollingAfterTimeout && batch && batch.status !== "PREVIEW") {
+      setPollingAfterTimeout(false);
+    }
+  }, [pollingAfterTimeout, batch?.status]);
 
   // All rows for grid (fetch up to 5000 per-cell entries)
   const { data: rowsData } = useQuery({
@@ -398,14 +421,33 @@ export default function RosterImportPage() {
   });
 
   // Commit mutation
+  //
+  // 120s, not the 30s JSON default: commitImportBatch acquires a per-employee advisory lock and
+  // runs the leave/rest/payroll-lock checks and write ONE EMPLOYEE AT A TIME (roster-import.
+  // service.ts), so a multi-thousand-row file over the production DB's WAN link (122.184.128.90,
+  // per backend/.env — not localhost) routinely takes well past 30s even though the commit is
+  // genuinely succeeding server-side. Raising the client timeout is the real fix for that case;
+  // pollingAfterTimeout below covers the case where even 120s isn't enough on a very large batch.
   const commitMutation = useMutation({
     mutationFn: (overrideWarnings = false) =>
       hrmsApi.post<{ assignmentsCreated: number; employeesNotified: number }>(
         `/api/wfm/roster-imports/${batchId}/commit`,
-        { overrideWarnings, cycleId }
+        { overrideWarnings, cycleId },
+        120000
       ),
     onSuccess: () => {
+      setPollingAfterTimeout(false);
       qc.invalidateQueries({ queryKey: ["roster-import-batch", batchId] });
+    },
+    onError: (err: unknown) => {
+      // The request aborted client-side, but commitImportBatch has no server-side rollback for
+      // work already done (each employee's lock scope commits independently — see the "partial
+      // success is still success" note in roster-import.service.ts) — so the commit is very
+      // likely still running or already finished on the server. Poll the batch instead of
+      // leaving the page stuck on a dead "please refresh" message.
+      if ((err as Error)?.message?.includes("Request timed out")) {
+        setPollingAfterTimeout(true);
+      }
     },
   });
 
@@ -487,12 +529,14 @@ export default function RosterImportPage() {
   const canCommit =
     batch?.status === "PREVIEW" &&
     (batch.error_rows ?? 0) === 0 &&
-    !commitMutation.isPending;
+    !commitMutation.isPending &&
+    !pollingAfterTimeout;
 
   const reset = () => {
     setBatchId(null);
     uploadMutation.reset();
     commitMutation.reset();
+    setPollingAfterTimeout(false);
   };
 
   function fmtDateHeader(d: string) {
@@ -741,7 +785,7 @@ export default function RosterImportPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => commitMutation.mutate(true)}
-                      disabled={commitMutation.isPending}
+                      disabled={commitMutation.isPending || pollingAfterTimeout}
                     >
                       Override & Commit
                     </Button>
@@ -751,7 +795,7 @@ export default function RosterImportPage() {
                     disabled={!canCommit}
                     className="gap-2"
                   >
-                    {commitMutation.isPending ? (
+                    {commitMutation.isPending || pollingAfterTimeout ? (
                       <><RefreshCw className="h-4 w-4 animate-spin" /> Committing…</>
                     ) : (
                       <><Send className="h-4 w-4" /> Commit {(batch.valid_rows ?? 0) + (batch.warning_rows ?? 0)} rows</>
@@ -777,7 +821,13 @@ export default function RosterImportPage() {
               </div>
             )}
 
-            {commitMutation.isError && (
+            {pollingAfterTimeout ? (
+              <p className="px-4 pb-3 text-sm text-amber-600 flex items-center gap-2">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                The commit is taking longer than expected — the server is still processing this
+                batch in the background. Checking automatically every 5s; no need to resubmit.
+              </p>
+            ) : commitMutation.isError && (
               <p className="px-4 pb-3 text-sm text-red-600">
                 {(commitMutation.error as Error).message}
               </p>
