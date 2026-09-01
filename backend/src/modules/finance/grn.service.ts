@@ -687,21 +687,21 @@ export const grnService = {
       throw new Error("Invoice / supporting attachment is required before submission");
     }
 
-    // Allocate at submission, not at draft creation: abandoned drafts must not consume a
-    // sequence slot. Shared with grnValidationControlService.submit() — which is the path that
-    // actually runs for GRNs raised through the current form — so the two can never disagree
-    // about when a number appears or what shape it takes. See grn-number-on-submit.ts.
-    const grnNumber = await resolveGrnNumberOnSubmit(grn);
+    // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
+    // submission — mirrors the live path's own change in grn-validation-control.service.ts's
+    // submit(). See resolveGrnNumberOnSubmit's caller in reviewGrn() below and in
+    // grn-smart.service.ts's review(). An existing number (re-submit after return, or a legacy
+    // migrated row) is left exactly as it was.
+    const grnNumber = grn.grn_number ?? null;
 
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted',
-              grn_number = COALESCE(grn_number, ?),
               submitted_by = ?,
               submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [grnNumber, actorUserId, payload.remarks?.trim() || null, grnId]
+      [actorUserId, payload.remarks?.trim() || null, grnId]
     );
     if (result.affectedRows !== 1) {
       throw new Error("GRN status changed before submission; refresh and try again");
@@ -752,6 +752,7 @@ export const grnService = {
     const connection = await db.getConnection();
     let paymentId: string | null = null;
     let newStatus: GrnStatus;
+    let grnNumber: string | null = null;
 
     try {
       await connection.beginTransaction();
@@ -885,6 +886,12 @@ export const grnService = {
             ? "pending_accounts_payment"
             : "approved";
 
+          // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
+          // submission — see the same change in grn-smart.service.ts's review() and
+          // grn-validation-control.service.ts's submit(). A rejected GRN never reaches this
+          // branch, so it never gets one.
+          grnNumber = await resolveGrnNumberOnSubmit(grn);
+
           const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
                 SET status = ?,
@@ -897,7 +904,8 @@ export const grnService = {
                     review_note = ?,
                     approved_by = ?,
                     approved_at = NOW(),
-                    rejection_reason = NULL
+                    rejection_reason = NULL,
+                    grn_number = COALESCE(grn_number, ?)
               WHERE id = ? AND status = 'branch_head_approved'`,
             [
               newStatus,
@@ -907,6 +915,7 @@ export const grnService = {
               actorUserId,
               payload.reviewNote?.trim() || null,
               actorUserId,
+              grnNumber,
               grnId,
             ]
           );
@@ -1024,7 +1033,7 @@ export const grnService = {
     if (paymentId) {
       await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
     }
-    return { success: true, newStatus: newStatus!, paymentId };
+    return { success: true, newStatus: newStatus!, paymentId, grnNumber };
   },
 
   async cancelGrn(grnId: string, actorUserId: string, actorRole: string) {

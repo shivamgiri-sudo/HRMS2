@@ -3,7 +3,6 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
-import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
@@ -248,20 +247,18 @@ export const grnValidationControlService = {
           .join("; ")}`
       );
     }
-    // The GRN number is assigned HERE, on draft → submitted, and nowhere else. This method is
-    // the submit that actually runs — smartGrnRouter is mounted on "/grns" far above the legacy
-    // POST /grns/:id/submit, so Express never reaches grnService.submitForApproval() — and until
-    // now it never allocated one, so GRNs raised through the current form reached Branch Head and
-    // Finance Head approval with grn_number = NULL. See grn-number-on-submit.ts.
-    const grnNumber = await resolveGrnNumberOnSubmit(typeRows[0]);
-
+    // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not here — see
+    // resolveGrnNumberOnSubmit's caller in grn-smart.service.ts's review(). Submission used to
+    // allocate one (2026-08-27 fix for the two-submit-paths bug, see grn-number-on-submit.ts's
+    // own header), which meant a rejected GRN kept a real number forever. An existing number
+    // (a re-submit after return, or a legacy migrated row) is left exactly as it was — this
+    // method never clears one, only chooses not to mint a new one.
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted', submitted_by = ?, submitted_at = NOW(),
-              grn_number = COALESCE(grn_number, ?),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [actorUserId, grnNumber, remarks?.trim() || null, grnId]
+      [actorUserId, remarks?.trim() || null, grnId]
     );
     if (result.affectedRows !== 1) {
       throw new Error("GRN status changed before submission; refresh and try again");
@@ -269,10 +266,10 @@ export const grnValidationControlService = {
     await audit("GRN_SUBMIT", grnId, actorUserId, actorRole, {
       validation_score: validation.score,
       effective_blocking_count: 0,
-      grn_number: grnNumber,
+      grn_number: typeRows[0].grn_number ?? null,
       remarks,
     });
-    return { success: true, newStatus: "submitted", grnNumber, validation };
+    return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
   },
 
   async review(

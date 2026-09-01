@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   dateTimeLabel,
+  grnDisplayNumber,
   grnStatusTone,
   labelStatus,
   money,
@@ -48,7 +49,8 @@ type GrnDocument = {
 type GrnWorkspace = {
   grn: {
     id: string;
-    grn_number: string;
+    /** NULL until Finance Head approves it — render via grnDisplayNumber(grn). */
+    grn_number: string | null;
     grn_type: string;
     status: string;
     branch_name: string | null;
@@ -214,7 +216,7 @@ export function GrnDetailDrawer({
       >
         <SheetHeader className="border-b border-grn-line-soft px-5 py-4">
           <SheetTitle className="flex items-center gap-3 text-base font-bold text-grn-ink">
-            <span className="font-grn-mono text-grn-brand">{grn?.grn_number ?? "…"}</span>
+            <span className="font-grn-mono text-grn-brand">{grn ? grnDisplayNumber(grn) : "…"}</span>
             {grn && (
               <StatusStamp tone={grnStatusTone(grn.status)}>
                 {labelStatus(grn.status)}

@@ -68,6 +68,14 @@ vi.mock("../../process-pnl/budget-consumption.service.js", () => ({
   },
 }));
 
+// Owner ruling: reviewGrn()'s finance_head-approve branch now allocates a GRN number (moved
+// here from submission). Unmocked, it would make its own db.execute round trip and consume the
+// STATE_CHANGED tests' single scripted mockConnection.execute.mockResolvedValueOnce meant for
+// the guarded UPDATE — not what those tests exercise.
+vi.mock("../grn-number-on-submit.js", () => ({
+  resolveGrnNumberOnSubmit: vi.fn().mockResolvedValue("GRN/TEST/2026-27/0001"),
+}));
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P0-1  Legacy GRN validation bypass removed
 // ─────────────────────────────────────────────────────────────────────────────
