@@ -62,6 +62,35 @@ export function currentBusinessMonth(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/** Local-timezone YYYY-MM-DD for a given date. */
+function localIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Today, in the user's business timezone.
+ *
+ * Same reason currentBusinessMonth exists: `new Date().toISOString().slice(0, 10)` is a UTC
+ * substring, so in IST it returns YESTERDAY between 00:00 and 05:29 every day.
+ */
+export function businessToday(): string {
+  return localIsoDate(new Date());
+}
+
+/**
+ * First day of the current month, in the user's business timezone.
+ *
+ * This one is not an edge case — it was wrong on every single call. `new Date(y, m, 1)` builds
+ * local midnight, and converting that to a UTC string subtracts the offset, so in IST
+ * `new Date(y, m, 1).toISOString().slice(0, 10)` lands on the LAST DAY OF THE PREVIOUS MONTH.
+ * Verified under TZ=Asia/Kolkata on 2026-09-01: it returned "2026-08-31". Every report whose
+ * default From date came from that helper silently began a day early, in the wrong month.
+ */
+export function businessFirstDayOfMonth(): string {
+  const now = new Date();
+  return localIsoDate(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
 // ─── Value Formatters ──────────────────────────────────────────────────────────
 
 export function formatValue(value: unknown, format: ColumnFormat): string {
@@ -201,6 +230,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "department_name", label: "Department", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "active_headcount", label: "Active Headcount", format: "number", width: 120, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -219,6 +249,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "official_email", label: "Official Email", format: "email", width: 200 },
       { key: "mobile", label: "Mobile", format: "phone", width: 120, sensitive: true },
       { key: "employment_status", label: "Status", format: "status", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "date_of_exit", label: "DOL", format: "date", width: 100 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
@@ -256,6 +287,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "manager_code", label: "Manager Code", format: "text", width: 110 },
       { key: "manager_name", label: "Reporting Manager", format: "text", width: 180 },
       { key: "mapping_status", label: "Mapping Status", format: "status", width: 170 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -273,6 +305,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "department_name", label: "Department", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "with_manager", label: "With Manager", format: "number", width: 100, align: "right" },
       { key: "without_manager", label: "Without Manager", format: "number", width: 100, align: "right" },
     ],
@@ -292,6 +325,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_centre_name", label: "Cost Centre Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "active_headcount", label: "Active Headcount", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -345,8 +379,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
     defaultFilters: {
-      from: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-      to: new Date().toISOString().slice(0, 10),
+      from: businessFirstDayOfMonth(),
+      to: businessToday(),
     },
   },
   {
@@ -368,6 +402,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "probation_end_date", label: "Probation End", format: "date", width: 100 },
       { key: "days_to_confirmation", label: "Days to Confirmation", format: "number", width: 120, align: "right" },
       { key: "confirmation_status", label: "Status", format: "status", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -391,6 +426,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "contract_end_date", label: "Contract End", format: "date", width: 100 },
       { key: "days_to_expiry", label: "Days to Expiry", format: "number", width: 100, align: "right" },
       { key: "contract_type", label: "Contract Type", format: "text", width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -464,6 +500,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "process_name", label: "Process Name", format: "text", width: 150 },
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
       { key: "cost_centre_name", label: "Cost Centre Name", format: "text", width: 180 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -481,6 +518,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "years_of_service", label: "Years of Service", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "days_until_anniversary", label: "Days Until Anniversary", format: "number", width: 100, align: "right" },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "department_name", label: "Department Name", format: "text", width: 150 },
@@ -522,6 +560,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "total_login_duration", label: "Total Login Hours", format: "duration", width: 100 },
       { key: "productive_minutes", label: "Productive Minutes", format: "minutes", width: 120 },
       { key: "attendance_source", label: "Source", format: "text", width: 80 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "attendance_status", label: "Status", format: "status", width: 100 },
       { key: "late_by_minutes", label: "Late (mins)", format: "number", width: 80, align: "right" },
       { key: "lwp_value", label: "LWP Value", format: "number", width: 100, align: "right" },
@@ -614,6 +653,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "lwp_days", label: "LWP", format: "number", width: 80, align: "right" },
       { key: "late_days", label: "Late Days", format: "number", width: 100, align: "right" },
       { key: "total_hours", label: "Total Hours", format: "minutes", width: 110 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
@@ -637,6 +677,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_center", label: "CostCenter", format: "text", width: 130 },
       { key: "emp_location", label: "EmpLocation", format: "text", width: 100 },
       { key: "billable", label: "Billable", format: "text", width: 70, align: "center" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "day_1", label: "Day 1", format: "text", width: 150 },
       { key: "day_2", label: "Day 2", format: "text", width: 150 },
       { key: "day_3", label: "Day 3", format: "text", width: 150 },
@@ -680,7 +721,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "wfm", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
-    defaultFilters: { month: new Date().toISOString().slice(0, 7) },
+    defaultFilters: { month: currentBusinessMonth() },
   },
   {
     code: "attendance-register-grid",
@@ -735,6 +776,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "late_status", label: "Late Status", format: "status", width: 130 },
       { key: "approved_exception", label: "Approved Exception", format: "text", width: 150 },
       { key: "reporting_manager", label: "Reporting Manager", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
@@ -755,6 +797,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "designation_name", label: "Designation", format: "text", width: 140 },
       { key: "days_attended", label: "Days Attended", format: "number", width: 100, align: "right" },
       { key: "total_worked_hours", label: "Total Worked (hrs)", format: "number", width: 120, align: "right" },
@@ -852,6 +895,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "absent_days", label: "Absent Days", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
@@ -1079,6 +1123,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "branch_name",     label: "BranchName",   format: "text",   width: 130 },
       { key: "cost_center",     label: "Cost Center",  format: "text",   width: 180 },
       { key: "process_name",    label: "Process Name", format: "text",   width: 170 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
 
       { key: "cl_current",      label: "CL",           format: "number", width: 64, align: "center" },
       { key: "ml_current",      label: "ML",           format: "number", width: 64, align: "center" },
@@ -1096,8 +1141,13 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "ptl_mtl_remain",  label: "PTL/MTL",      format: "number", width: 84, align: "center" },
     ],
     headerGroups: [
+      // colSpan values must sum to columns.length (18). The ungrouped block covers
+      // process_name AND employee_status — it was colSpan 1 when process_name was the
+      // only column between "Emp Details" and "Current Leave"; adding employee_status
+      // without widening it left the grouped header row one column short of the data,
+      // which silently shifts every leave group one cell to the left.
       { label: "Emp Details",   colSpan: 4 },
-      { label: "",              colSpan: 1 },
+      { label: "",              colSpan: 2 },
       { label: "Current Leave", colSpan: 4 },
       { label: "Leave Taken",   colSpan: 4 },
       { label: "Leave Remain",  colSpan: 4 },
@@ -1334,7 +1384,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     ],
     viewRoles: ["super_admin", "admin", "finance", "payroll", "hr_head"],
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
-    defaultFilters: { month: new Date().toISOString().slice(0, 7) },
+    defaultFilters: { month: currentBusinessMonth() },
   },
   {
     code: "payroll-variance",
@@ -1755,8 +1805,8 @@ export const REPORT_CATALOG: ReportMeta[] = [
     viewRoles: ["super_admin", "admin", "hr", "hr_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
     defaultFilters: {
-      from: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-      to: new Date().toISOString().slice(0, 10),
+      from: businessFirstDayOfMonth(),
+      to: businessToday(),
     },
   },
   {
@@ -1901,6 +1951,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process Name", format: "text", width: 150 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -2614,6 +2665,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "expiry_date", label: "Expiry Date", format: "date", width: 100 },
       { key: "certification_status", label: "Status", format: "status", width: 100 },
       { key: "days_to_expiry", label: "Days to Expiry", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head", "trainer"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -2717,6 +2769,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "document_type", label: "Missing Document", format: "text", width: 160 },
       { key: "mandatory", label: "Mandatory", format: "boolean", width: 80 },
       { key: "days_since_joining", label: "Days Since Joining", format: "number", width: 120, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
@@ -2743,6 +2796,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "uan_status", label: "UAN Status", format: "status", width: 100 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll"],
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
@@ -2765,6 +2819,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll"],
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
@@ -2786,6 +2841,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "pan_status", label: "PAN Status", format: "status", width: 100 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll"],
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
@@ -2809,6 +2865,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "bank_status", label: "Bank Status", format: "status", width: 130 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll"],
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
@@ -2959,6 +3016,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
       { key: "employment_status", label: "Employment Status", format: "status", width: 130 },
       { key: "employee_state", label: "State", format: "status", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "reporting_manager_code", label: "Manager Code", format: "text", width: 120 },
       { key: "reporting_manager_name", label: "Reporting Manager", format: "text", width: 180 },
       { key: "missing_attributes", label: "Missing", format: "text", width: 220 },
@@ -3210,6 +3268,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
       { key: "bank_status", label: "Bank Status", format: "status", width: 130 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
     exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
@@ -3337,6 +3396,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "missing_docs", label: "Missing", format: "number", width: 100, align: "right" },
       { key: "completion_pct", label: "Completion %", format: "percentage", width: 100, align: "right" },
       { key: "joining_document_status", label: "Joining Doc Status", format: "status", width: 130 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "ceo"],
     exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
