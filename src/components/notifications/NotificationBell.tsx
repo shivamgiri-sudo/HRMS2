@@ -16,6 +16,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { resolveNotificationIcon, type NotificationTone } from "@/lib/notification-icons";
 
 export const NotificationBell = () => {
   const navigate = useNavigate();
@@ -33,17 +34,21 @@ export const NotificationBell = () => {
     }
   };
 
-  const getTypeStyles = (type: string) => {
-    switch (type) {
-      case "warning":
-        return "border-l-4 border-l-orange-500 bg-orange-50 dark:bg-orange-950/20";
-      case "error":
-        return "border-l-4 border-l-red-500 bg-red-50 dark:bg-red-950/20";
-      case "success":
-        return "border-l-4 border-l-green-500 bg-green-50 dark:bg-green-950/20";
-      default:
-        return "border-l-4 border-l-blue-500 bg-blue-50 dark:bg-blue-950/20";
-    }
+  // Keyed on the semantic tone resolveNotificationIcon derives from the real `type` value, not
+  // on the literal strings "warning"/"error"/"success" the old switch matched against — nothing
+  // this platform actually produces uses those three words as a type, so every notification fell
+  // to the same default blue border. See notification-icons.tsx for the full type -> icon/tone map.
+  const TONE_STYLES: Record<NotificationTone, string> = {
+    warning: "border-l-4 border-l-orange-500 bg-orange-50 dark:bg-orange-950/20",
+    danger: "border-l-4 border-l-red-500 bg-red-50 dark:bg-red-950/20",
+    success: "border-l-4 border-l-green-500 bg-green-50 dark:bg-green-950/20",
+    info: "border-l-4 border-l-blue-500 bg-blue-50 dark:bg-blue-950/20",
+  };
+  const TONE_ICON_COLOR: Record<NotificationTone, string> = {
+    warning: "text-orange-600",
+    danger: "text-red-600",
+    success: "text-green-600",
+    info: "text-blue-600",
   };
 
   return (
@@ -88,32 +93,36 @@ export const NotificationBell = () => {
             </div>
           ) : (
             <div className="divide-y">
-              {notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className={cn(
-                    "p-3 cursor-pointer hover:bg-muted/50 transition-colors",
-                    getTypeStyles(notification.type),
-                    !notification.read && "font-medium"
-                  )}
-                  onClick={() => handleNotificationClick(notification)}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate">{notification.title}</p>
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                        {notification.message}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-                      </p>
-                    </div>
-                    {!notification.read && (
-                      <div className="h-2 w-2 bg-primary rounded-full flex-shrink-0 mt-1" />
+              {notifications.map((notification) => {
+                const { icon: TypeIcon, tone } = resolveNotificationIcon(notification.type);
+                return (
+                  <div
+                    key={notification.id}
+                    className={cn(
+                      "p-3 cursor-pointer hover:bg-muted/50 transition-colors",
+                      TONE_STYLES[tone],
+                      !notification.read && "font-medium"
                     )}
+                    onClick={() => handleNotificationClick(notification)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <TypeIcon className={cn("h-4 w-4 mt-0.5 flex-shrink-0", TONE_ICON_COLOR[tone])} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{notification.title}</p>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {notification.message}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                        </p>
+                      </div>
+                      {!notification.read && (
+                        <div className="h-2 w-2 bg-primary rounded-full flex-shrink-0 mt-1" />
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </ScrollArea>

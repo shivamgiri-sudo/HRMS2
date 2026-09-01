@@ -510,12 +510,21 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     return true;
   });
 
-  // Query work_inbox_item for this user
+  // Query work_inbox_item for this user.
+  //
+  // grn_approval_pending / budget_approval_pending are excluded here even though they live in
+  // this same table: they exist ONLY to give GRN/Branch Budget approvals a bell alert (see
+  // grn.service.ts's notifyGrnStage / branch-budget.service.ts's notifyBudgetStage), and this
+  // very GET /api/inbox/my-pending response already carries the same two approvals in full,
+  // with real Approve/Reject wiring, via getDerivedRegistryItems below (GRN_APPROVAL_PENDING /
+  // BUDGET_APPROVAL_PENDING). Including both here would show every pending GRN and Branch
+  // Budget twice on the Work Inbox page — once actionable, once not.
   const [inboxRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, type AS module, title, description, entity_type, entity_id, action_url,
             priority, created_at
      FROM work_inbox_item
      WHERE user_id = ? AND is_actioned = 0
+       AND type NOT IN ('grn_approval_pending', 'budget_approval_pending')
      ORDER BY FIELD(priority,'urgent','high','normal','low'), created_at DESC
      LIMIT 200`,
     [userId],
