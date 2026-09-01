@@ -31,6 +31,19 @@ export interface BpoProcessPnlDetail {
     consumedBudget: number;
   };
   generatedAt: string;
+  /**
+   * Manual Adjustments (Projected Revenue / Penalty / Reward): APPROVED entries only, folded into
+   * a figure shown ALONGSIDE row.recognizedRevenue — never in place of it. Null when the table has
+   * no rows for this process/period at all.
+   */
+  manualAdjustment: {
+    approvedProjectedRevenue: number;
+    approvedRewards: number;
+    approvedPenalties: number;
+    adjustedTotal: number;
+    systemRevenue: number;
+    pendingCount: number;
+  } | null;
 }
 
 function queryString(filters: BpoPnlFilters) {

@@ -3,6 +3,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
+import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -534,6 +535,18 @@ export const bpoPnlAllocationOverlayService = {
       this.getSummary({ ...filters, processId }),
     ]);
     const row = summary.rows.find((item) => item.processId === processId) ?? detail.row;
+    /*
+     * Manual Adjustments (Part B, 2026-09-01): a SEPARATE figure alongside the pure system
+     * `row.recognizedRevenue` — never blended into it. Only APPROVED projected_revenue/penalty/
+     * reward entries for this exact process+period contribute; pending/rejected ones do not, and
+     * `row` itself is completely untouched. period comes from filters.period, already normalized
+     * by canonicalPnlService.getProcessDetail's caller; falls back to the row's own period if a
+     * caller reaches this directly without normalizing.
+     */
+    const periodCode = String(filters.period ?? "").match(/^\d{4}-\d{2}$/)
+      ? String(filters.period)
+      : new Date().toISOString().slice(0, 7);
+    const manualAdjustment = await getAdjustedTotal(processId, periodCode, row.recognizedRevenue);
     return {
       ...detail,
       row,
@@ -548,6 +561,8 @@ export const bpoPnlAllocationOverlayService = {
         tax: row.tax,
       },
       allocationAccurate: true,
+      // Clearly separate from `row` — a consumer must not confuse this with the system figure.
+      manualAdjustment,
     };
   },
 

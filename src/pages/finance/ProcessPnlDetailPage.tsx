@@ -11,6 +11,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { useBpoProcessPnlDetail } from "@/hooks/useBpoProcessPnlDetail";
 import { useProcessPnlSection } from "@/hooks/useProcessPnlDetail";
+import { ManualAdjustmentsPanel } from "@/components/finance/pnl/ManualAdjustmentsPanel";
 import { formatDateDDMMYYYY } from "@/lib/date-format";
 
 /**
@@ -234,6 +235,14 @@ export default function ProcessPnlDetailPage() {
               <TabsTrigger value="grn-budget" className="h-7 text-xs">GRN &amp; budget</TabsTrigger>
               <TabsTrigger value="ledger" className="h-7 text-xs">Ledger</TabsTrigger>
               <TabsTrigger value="reconciliation" className="h-7 text-xs">Reconciliation</TabsTrigger>
+              <TabsTrigger value="adjustments" className="h-7 text-xs">
+                Manual Adjustments
+                {(detail.manualAdjustment?.pendingCount ?? 0) > 0 && (
+                  <span className="ml-1 rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-700">
+                    {detail.manualAdjustment!.pendingCount}
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
 
             {/* ── STATEMENT TAB ── */}
@@ -740,6 +749,16 @@ export default function ProcessPnlDetailPage() {
                   </div>
                 )}
               </section>
+            </TabsContent>
+
+            <TabsContent value="adjustments" className="space-y-3">
+              <ManualAdjustmentsPanel
+                processId={processId}
+                processName={row.processName}
+                period={period}
+                systemRevenue={row.recognizedRevenue}
+                adjustedTotal={detail.manualAdjustment}
+              />
             </TabsContent>
           </Tabs>
         </div>
