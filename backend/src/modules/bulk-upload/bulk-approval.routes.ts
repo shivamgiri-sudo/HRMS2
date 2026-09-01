@@ -159,12 +159,12 @@ bulkApprovalRouter.get("/approvals/batches/:id/preview", h(async (req, res) => {
     if (codeSet.size > 0) {
       const codes = [...codeSet];
       const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT emp_code, TRIM(CONCAT(first_name, ' ', COALESCE(last_name, ''))) AS full_name
+        `SELECT employee_code, TRIM(CONCAT(first_name, ' ', COALESCE(last_name, ''))) AS full_name
            FROM employees
-          WHERE emp_code IN (${codes.map(() => "?").join(",")})`,
+          WHERE employee_code IN (${codes.map(() => "?").join(",")})`,
         codes,
       );
-      for (const e of empRows) nameMap.set(String(e.emp_code), String(e.full_name));
+      for (const e of empRows) nameMap.set(String(e.employee_code), String(e.full_name));
     }
 
     const enriched = rows.map((row) => {

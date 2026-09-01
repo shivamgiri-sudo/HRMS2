@@ -50,6 +50,12 @@ interface DecidedBatch {
   branch_name: string | null;
 }
 
+interface HistoryBatchFull extends DecidedBatch {
+  original_file_name?: string | null;
+  uploaded_by_name?: string | null;
+  submitted_for_approval_at?: string | null;
+}
+
 interface PreviewRow {
   row_no: number;
   normalized_data: Record<string, unknown> | string | null;
@@ -161,6 +167,10 @@ export default function BulkUploadApprovals() {
   const [remarks, setRemarks] = useState("");
   const [deciding, setDeciding] = useState<"approve" | "reject" | null>(null);
 
+  const [openHistoryBatch, setOpenHistoryBatch] = useState<HistoryBatchFull | null>(null);
+  const [historyRows, setHistoryRows] = useState<PreviewRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -203,6 +213,24 @@ export default function BulkUploadApprovals() {
       setOpenBatch(null);
     } finally {
       setPreviewLoading(false);
+    }
+  }, []);
+
+  const openHistoryPreview = useCallback(async (batch: HistoryBatchFull) => {
+    setOpenHistoryBatch(batch);
+    setHistoryRows([]);
+    setHistoryLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data?: PreviewRow[]; message?: string }>(
+        `/api/bulk-upload/approvals/batches/${batch.id}/preview`,
+      );
+      if (!res.success) throw new Error(res.message || "Could not load the batch rows.");
+      setHistoryRows(res.data ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load batch detail.");
+      setOpenHistoryBatch(null);
+    } finally {
+      setHistoryLoading(false);
     }
   }, []);
 
@@ -261,6 +289,16 @@ export default function BulkUploadApprovals() {
     }
     return [...cols];
   }, [previewRows]);
+
+  const historyPreviewColumns = useMemo(() => {
+    const cols = new Set<string>();
+    for (const row of historyRows.slice(0, 50)) {
+      const data = parseJson<Record<string, unknown>>(row.normalized_data) ??
+        parseJson<Record<string, unknown>>(row.raw_data) ?? {};
+      for (const key of Object.keys(data)) cols.add(key);
+    }
+    return [...cols];
+  }, [historyRows]);
 
   return (
     <DashboardLayout>
@@ -408,7 +446,11 @@ export default function BulkUploadApprovals() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {history.map((batch) => (
-                  <tr key={batch.id} className="transition-colors duration-150 hover:bg-slate-50/60">
+                  <tr
+                    key={batch.id}
+                    className="transition-colors duration-150 hover:bg-indigo-50/40 cursor-pointer"
+                    onClick={() => void openHistoryPreview(batch as HistoryBatchFull)}
+                  >
                     <td className="px-5 py-3 font-semibold text-slate-800">{batch.upload_batch_no}</td>
                     <td className="px-5 py-3">
                       <TypeBadge code={batch.upload_type_code} />
@@ -562,6 +604,121 @@ export default function BulkUploadApprovals() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* History detail drawer */}
+      {openHistoryBatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200/80">
+            <div className="relative overflow-hidden rounded-t-2xl">
+              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-slate-500 via-slate-400 to-slate-300" />
+              <div className="flex items-start justify-between px-6 py-4 pt-5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+                    <FileCheck className="h-5 w-5 text-slate-600" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-bold text-slate-900">{openHistoryBatch.upload_batch_no}</h3>
+                      <TypeBadge code={openHistoryBatch.upload_type_code} />
+                      <StatusBadge status={openHistoryBatch.approval_status} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {openHistoryBatch.branch_name ?? "—"} · Decided {formatDateTime(openHistoryBatch.approved_at)}
+                    </p>
+                    {openHistoryBatch.approval_remarks && (
+                      <p className="mt-1 text-xs text-slate-600 italic">"{openHistoryBatch.approval_remarks}"</p>
+                    )}
+                    {openHistoryBatch.error_summary && (
+                      <p className="mt-1 text-xs text-amber-700">{openHistoryBatch.error_summary}</p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenHistoryBatch(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600" />
+                  <span className="ml-3 text-sm text-slate-500">Loading rows…</span>
+                </div>
+              ) : historyRows.length === 0 ? (
+                <p className="py-8 text-center text-sm text-slate-400">No row data available.</p>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 rounded-lg">
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">#</th>
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">Employee</th>
+                      {historyPreviewColumns.map((c) => (
+                        <th key={c} className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">{c}</th>
+                      ))}
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {historyRows.map((row) => {
+                      const data =
+                        parseJson<Record<string, unknown>>(row.normalized_data) ??
+                        parseJson<Record<string, unknown>>(row.raw_data) ?? {};
+                      const errs = parseJson<string[]>(row.error_messages);
+                      const isApplied = row.row_status === "imported";
+                      const isErr = row.row_status === "error";
+                      return (
+                        <tr
+                          key={row.row_no}
+                          className={isErr ? "bg-rose-50/60" : isApplied ? "bg-emerald-50/30" : "hover:bg-slate-50/60"}
+                        >
+                          <td className="px-3 py-2 font-medium text-slate-400">{row.row_no}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">
+                            {row.employee_name ?? <span className="text-slate-400">—</span>}
+                          </td>
+                          {historyPreviewColumns.map((c) => (
+                            <td key={c} className="px-3 py-2 text-slate-700">
+                              {String(data[c] ?? "")}
+                            </td>
+                          ))}
+                          <td className="px-3 py-2">
+                            {isApplied ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                                <CheckCircle2 className="h-3 w-3" />
+                                applied
+                              </span>
+                            ) : isErr ? (
+                              <span className="inline-flex items-center gap-1 text-rose-600 font-medium">
+                                <XCircle className="h-3 w-3 shrink-0" />
+                                {Array.isArray(errs) ? errs[0] : "failed"}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">{row.row_status}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end border-t border-slate-100 bg-slate-50/60 px-6 py-3 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => setOpenHistoryBatch(null)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
