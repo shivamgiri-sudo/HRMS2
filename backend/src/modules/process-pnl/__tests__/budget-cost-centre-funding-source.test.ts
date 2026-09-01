@@ -23,7 +23,7 @@ type Alloc = {
   funding_cost_centre_id: string | null;
   budget_line_id: string;
   lifecycle_status: "reserved" | "consumed";
-  amount_with_tax: number;
+  pnl_cost_amount: number;
 };
 
 function makeExecute(opts: {
@@ -56,14 +56,14 @@ function makeExecute(opts: {
     }
 
     // spendRows: grouped by (cost_centre_id, head, sub_head).
-    if (s.includes("SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.amount_with_tax") && s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head")) {
+    if (s.includes("SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount") && s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head")) {
       const groups = new Map<string, { cost_centre_id: string | null; head: string; sub_head: string | null; reserved: number; consumed: number }>();
       for (const a of allocations) {
         const line = lines.find((l) => l.id === a.budget_line_id)!;
         const key = JSON.stringify([a.cost_centre_id, line.head, line.sub_head]);
         const g = groups.get(key) ?? { cost_centre_id: a.cost_centre_id, head: line.head, sub_head: line.sub_head, reserved: 0, consumed: 0 };
-        if (a.lifecycle_status === "reserved") g.reserved += a.amount_with_tax;
-        else g.consumed += a.amount_with_tax;
+        if (a.lifecycle_status === "reserved") g.reserved += a.pnl_cost_amount;
+        else g.consumed += a.pnl_cost_amount;
         groups.set(key, g);
       }
       return [[...groups.values()], []];
@@ -77,15 +77,15 @@ function makeExecute(opts: {
         if (!spilled) continue;
         const key = JSON.stringify([a.cost_centre_id, a.funding_cost_centre_id]);
         const g = groups.get(key) ?? { cost_centre_id: a.cost_centre_id, funding_cost_centre_id: a.funding_cost_centre_id, reserved: 0, consumed: 0 };
-        if (a.lifecycle_status === "reserved") g.reserved += a.amount_with_tax;
-        else g.consumed += a.amount_with_tax;
+        if (a.lifecycle_status === "reserved") g.reserved += a.pnl_cost_amount;
+        else g.consumed += a.pnl_cost_amount;
         groups.set(key, g);
       }
       return [[...groups.values()], []];
     }
 
     // simpleGrnRows — none in these fixtures.
-    if (s.includes("l.reserved_amount AS reserved")) return [[], []];
+    if (s.includes("CASE WHEN NOT EXISTS")) return [[], []];
 
     // unallocatedRows.
     if (s.includes("AS cnt, COALESCE(SUM(l.gross_amount)")) return [[{ cnt: 0, total_budget: 0 }], []];
@@ -106,7 +106,7 @@ describe("no spill — the new fields are present and zero, nothing else changes
   it("a cost centre funded entirely by its own line reports zero fundedElsewhere", async () => {
     execute.mockImplementation(makeExecute({
       lines: [{ id: "line-A", cost_centre_id: "cc-A", head: "Rent", sub_head: null, gross_amount: 10000 }],
-      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: "cc-A", budget_line_id: "line-A", lifecycle_status: "consumed", amount_with_tax: 1000 }],
+      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: "cc-A", budget_line_id: "line-A", lifecycle_status: "consumed", pnl_cost_amount: 1000 }],
       costCentres: [{ id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" }],
     }));
     const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
@@ -121,7 +121,7 @@ describe("cost centre A funded by cost centre B's line", () => {
   it("reports the spend under A (unchanged) AND names B as the funding source", async () => {
     execute.mockImplementation(makeExecute({
       lines: [{ id: "line-B", cost_centre_id: "cc-B", head: "Office Supplies", sub_head: "Stationery", gross_amount: 20000 }],
-      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: "cc-B", budget_line_id: "line-B", lifecycle_status: "consumed", amount_with_tax: 3000 }],
+      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: "cc-B", budget_line_id: "line-B", lifecycle_status: "consumed", pnl_cost_amount: 3000 }],
       costCentres: [
         { id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" },
         { id: "cc-B", cost_centre_code: "B", cost_centre_name: "CC B" },
@@ -153,7 +153,7 @@ describe("cost centre A funded by cost centre B's line", () => {
   it("a branch-common (pooled) funding line reports the source as the branch pool, not a guess", async () => {
     execute.mockImplementation(makeExecute({
       lines: [{ id: "line-pool", cost_centre_id: null, head: "Electricity", sub_head: null, gross_amount: 50000 }],
-      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: null, budget_line_id: "line-pool", lifecycle_status: "reserved", amount_with_tax: 1200 }],
+      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: null, budget_line_id: "line-pool", lifecycle_status: "reserved", pnl_cost_amount: 1200 }],
       costCentres: [{ id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" }],
     }));
     const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
@@ -172,8 +172,8 @@ describe("cost centre A funded by cost centre B's line", () => {
         { id: "line-B", cost_centre_id: "cc-B", head: "Rent", sub_head: null, gross_amount: 20000 },
       ],
       allocations: [
-        { cost_centre_id: "cc-A", funding_cost_centre_id: "cc-A", budget_line_id: "line-A", lifecycle_status: "consumed", amount_with_tax: 500 },
-        { cost_centre_id: "cc-A", funding_cost_centre_id: "cc-B", budget_line_id: "line-B", lifecycle_status: "consumed", amount_with_tax: 700 },
+        { cost_centre_id: "cc-A", funding_cost_centre_id: "cc-A", budget_line_id: "line-A", lifecycle_status: "consumed", pnl_cost_amount: 500 },
+        { cost_centre_id: "cc-A", funding_cost_centre_id: "cc-B", budget_line_id: "line-B", lifecycle_status: "consumed", pnl_cost_amount: 700 },
       ],
       costCentres: [
         { id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" },
