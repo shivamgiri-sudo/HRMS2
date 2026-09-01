@@ -347,11 +347,16 @@ export async function computeRunningSalary(
     (d) => d >= tomorrowStr && d <= monthEnd
   ).length;
 
-  const projectedPaidWorkingDays = paidWorkingDaysTillDate + futurePresent;
-  // Projected week-offs use same slab logic with projected paid base
+  // Week-off eligibility for the projection uses the EARNED paid base only.
+  // Adding futurePresent (all remaining calendar days incl. Sundays) to paidWorkingDaysTillDate
+  // inflates a working-day count with calendar days — different units — pushing the sum past
+  // availableWorkingDays and triggering the "full attendance → all week-offs" path even when
+  // the employee has only 25.5 of the 26 needed working days (Aug 2026, 5-Sunday month).
+  // The final payroll engine uses actual full-month attendance; the projection should show what
+  // the employee has earned so far, not a speculative future that hasn't happened.
   const projectedEligibleWeekoffs = await calculateWeekoffEligibility(
     employeeId,
-    projectedPaidWorkingDays,
+    paidWorkingDaysTillDate,
     runMonth,
   );
 
