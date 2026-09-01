@@ -569,6 +569,25 @@ export const wfmService = {
     reviewerId: string
   ): Promise<AttendanceRegularization> {
     const reg = await this.getRegularization(id);
+
+    // Replay guard. This method is not idempotent on its own: it unconditionally rewrites
+    // attendance_regularization and then re-applies the correction to attendance_daily_record,
+    // so calling it twice on the same row applies the same correction twice and fires a second
+    // audit entry and entity lock.
+    //
+    // That is not hypothetical. A bulk branch-head approval of a 217-row batch was cut off by
+    // the 60s proxy timeout partway through (batch 1f5da7b3's twin: 89 of 217 rows processed,
+    // 83 applied), leaving the batch back at pending_approval with most of its rows already
+    // approved. Re-approving it — the only way to finish the batch — replayed those 83.
+    //
+    // A regularization already sitting in the requested terminal state has nothing left to do,
+    // so return it untouched. The bulk path then counts it as applied, which is accurate: the
+    // correction IS in place. Re-review that genuinely changes the decision (approved -> rejected)
+    // still falls through and is applied normally.
+    if (reg.status === input.status && (input.status === "approved" || input.status === "rejected")) {
+      return reg;
+    }
+
     const conn = await db.getConnection();
     await conn.beginTransaction();
     try {
