@@ -1314,6 +1314,37 @@ export const grnService = {
     /** Opt-in only — GRN Search and other existing callers must keep showing drafts by default. */
     excludeDraft?: boolean;
   }) {
+    // A GRN split across cost centres/heads keeps ONE header row but several grn_cost_allocation
+    // rows, each with its own share. When a cost-centre drill-down is active (the case this exists
+    // for — BudgetGrnDrillDownDialog.tsx), the row list must show THIS cost centre's share, not the
+    // header's full amount_with_tax, or every split GRN over-reports on every row it appears under.
+    // Optional and inert for every other caller: no costCentreId, no join, no new columns, byte-
+    // identical query to before. pnl_cost_amount rides along too, matching this drill-down's
+    // Consumed comparison (see budget-cost-centre-utilization.service.ts) rather than the
+    // tax-inclusive figure.
+    let contextAllocationJoin = "";
+    const contextAllocationParams: unknown[] = [];
+    if (filters.costCentreId) {
+      const headMatch = filters.head ? "AND bl.head = ?" : "";
+      const subHeadMatch = filters.subHead ? "AND bl.sub_head = ?" : "";
+      contextAllocationJoin = `
+         LEFT JOIN (
+           SELECT gca.grn_request_id,
+                  SUM(gca.amount_with_tax) AS amount_with_tax,
+                  SUM(gca.pnl_cost_amount) AS pnl_cost_amount
+             FROM grn_cost_allocation gca
+             JOIN finance_budget_line bl ON bl.id = gca.budget_line_id
+            WHERE gca.cost_centre_id = ?
+              AND gca.lifecycle_status IN ('reserved', 'consumed')
+              ${headMatch}
+              ${subHeadMatch}
+            GROUP BY gca.grn_request_id
+         ) ctx_alloc ON ctx_alloc.grn_request_id = g.id`;
+      contextAllocationParams.push(filters.costCentreId);
+      if (filters.head) contextAllocationParams.push(filters.head);
+      if (filters.subHead) contextAllocationParams.push(filters.subHead);
+    }
+
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (filters.branchScope) {
@@ -1515,7 +1546,14 @@ export const grnService = {
               COALESCE(
                 CONCAT(fhb.first_name, ' ', fhb.last_name),
                 CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
-              ) AS finance_head_reviewed_by_name
+              ) AS finance_head_reviewed_by_name,
+              -- This drill-down context's own share of a split GRN — NULL when costCentreId was
+              -- not supplied, or when this GRN was never split (a single-cost-centre GRN has no
+              -- rows in the allocation table at all, and the header amount already IS its whole
+              -- spend). The frontend prefers these over amount_with_tax/pnl_cost_amount whenever
+              -- they are non-NULL.
+              ctx_alloc.amount_with_tax AS context_amount_with_tax,
+              ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
@@ -1526,10 +1564,11 @@ export const grnService = {
          LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
          LEFT JOIN employees bhb ON bhb.user_id = g.branch_head_reviewed_by
          LEFT JOIN employees fhb ON fhb.user_id = g.finance_head_reviewed_by
+         ${contextAllocationJoin}
          ${where}
         ORDER BY g.created_at DESC
         LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...contextAllocationParams, ...params, limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,

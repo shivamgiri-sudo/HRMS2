@@ -49,8 +49,10 @@ describe("grnService.listGrns — cost centre filter matches split-GRN allocatio
     expect(sql).toContain("gca.grn_request_id = g.id");
     expect(sql).toContain("gca.cost_centre_id = ?");
     expect(sql).toContain("gca.lifecycle_status IN ('reserved', 'consumed')");
-    // Bound once for the header column, once for the allocation EXISTS clause.
-    expect(params.filter((p) => p === "cc-noida-2-ops")).toHaveLength(2);
+    // Bound three times: the header column, the allocation EXISTS clause, and the split-share
+    // ctx_alloc subquery (this drill-down's own-cost-centre-share join, added alongside this
+    // same fix so the row list shows a split GRN's share here rather than its full header total).
+    expect(params.filter((p) => p === "cc-noida-2-ops")).toHaveLength(3);
   });
 
   it("also applies the OR-matched filter to the COUNT query", async () => {
@@ -64,6 +66,31 @@ describe("grnService.listGrns — cost centre filter matches split-GRN allocatio
     await grnService.listGrns({});
     const { sql } = callWith("FROM grn_request");
     expect(sql).not.toContain("grn_cost_allocation");
+  });
+
+  it("joins this cost centre's split share, further narrowed by head/subHead when given", async () => {
+    // A GRN split across cost centres/heads keeps one header row but several allocation rows —
+    // without this join the row list shows every split GRN's FULL header amount on every cost
+    // centre it touches, instead of just this drill-down's own share.
+    await grnService.listGrns({ costCentreId: "cc-noida-2-ops", head: "Rent", subHead: "Office" });
+    const { sql, params } = callWith("FROM grn_request");
+    expect(sql).toContain("LEFT JOIN (");
+    expect(sql).toContain("ctx_alloc.amount_with_tax AS context_amount_with_tax");
+    expect(sql).toContain("ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount");
+    expect(sql).toContain("ON ctx_alloc.grn_request_id = g.id");
+    expect(sql).toContain("AND bl.head = ?");
+    expect(sql).toContain("AND bl.sub_head = ?");
+    // Join params (cost centre, head, sub-head) come before the header WHERE's own bindings.
+    expect(params.slice(0, 3)).toEqual(["cc-noida-2-ops", "Rent", "Office"]);
+  });
+
+  it("omits the head/sub-head narrowing from the join when they are not given", async () => {
+    await grnService.listGrns({ costCentreId: "cc-noida-2-ops" });
+    const { sql, params } = callWith("FROM grn_request");
+    expect(sql).toContain("LEFT JOIN (");
+    expect(sql).not.toContain("AND bl.head = ?");
+    expect(sql).not.toContain("AND bl.sub_head = ?");
+    expect(params[0]).toBe("cc-noida-2-ops");
   });
 });
 

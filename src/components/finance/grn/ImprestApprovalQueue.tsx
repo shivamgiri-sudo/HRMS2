@@ -36,6 +36,11 @@ type ImprestRow = {
   sub_head?: string | null;
   cost_centre_name?: string | null;
   description?: string | null;
+  /** The raiser's own note at creation time — e.g. "Paid to X for Y". `description` is a
+   *  system-generated structural summary ("1 invoice component(s) across N cost centre(s)"),
+   *  never what the raiser typed; the two were being conflated here, hiding the real reason a
+   *  reviewer needs to approve or query the voucher. */
+  remarks?: string | null;
   amount?: number | null;
   amount_with_tax?: number | null;
   status: string;
@@ -238,7 +243,9 @@ export function ImprestApprovalQueue() {
                     <GrnCellSub>{row.sub_head ?? "—"}</GrnCellSub>
                   </GrnTd>
                   <GrnTd>
-                    <span className="line-clamp-2">{row.description ?? "—"}</span>
+                    {/* The raiser's own note — was showing description, the system-generated
+                        split-count summary, never what was actually typed at creation. */}
+                    <span className="line-clamp-2" title={row.remarks ?? undefined}>{row.remarks ?? "—"}</span>
                     {/* Proof is what a reviewer checks before approving, so its presence is
                         visible in the row rather than one click away. */}
                     <GrnCellSub>
