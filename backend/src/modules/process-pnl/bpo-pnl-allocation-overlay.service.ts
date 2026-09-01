@@ -4,6 +4,7 @@ import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
 import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
+import { costComponentDataFlags } from "./pnl-cost-component-flags.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -576,7 +577,14 @@ export const bpoPnlAllocationOverlayService = {
     const periodCode = String(filters.period ?? "").match(/^\d{4}-\d{2}$/)
       ? String(filters.period)
       : new Date().toISOString().slice(0, 7);
-    const manualAdjustment = await getAdjustedTotal(processId, periodCode, row.recognizedRevenue);
+    const [manualAdjustment, costComponentFlags] = await Promise.all([
+      getAdjustedTotal(processId, periodCode, row.recognizedRevenue),
+      // "Not yet configured" vs "genuinely zero" for depreciation/amortization/finance cost/tax —
+      // see pnl-cost-component-flags.ts. Scoped to this exact process, OR a branch-level pool
+      // configured for its branch (a pool not yet allocated to this specific process is still
+      // evidence the cost type was configured for the branch it belongs to).
+      costComponentDataFlags(periodCode, { processId, branchId: row.branchId }),
+    ]);
     return {
       ...detail,
       row,
@@ -593,6 +601,10 @@ export const bpoPnlAllocationOverlayService = {
       allocationAccurate: true,
       // Clearly separate from `row` — a consumer must not confuse this with the system figure.
       manualAdjustment,
+      // Presentation-only: which of depreciation/amortization/financeCost/tax above actually has an
+      // entered row behind it, vs is zero because process_pnl_cost_component has never been filled
+      // in. Changes no calculated figure.
+      costComponentFlags,
     };
   },
 

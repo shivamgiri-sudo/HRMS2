@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useCeoOverview, type CeoBranchRow, type CeoFocus, type CeoOpportunity } from "@/hooks/useCeoOverview";
 import { FilterMultiSelect } from "./FilterMultiSelect";
+import { PnlFullWaterfallCard } from "./PnlFullWaterfallCard";
 
 /**
  * The CEO view of the P&L.
@@ -285,6 +286,16 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
           ))}
         </div>
       </section>
+
+      {/* Full P&L Waterfall — supplementary detail, collapsed by default so it never visually
+          competes with the headline Operating Profit figures above. Scoped to whichever single
+          branch the branch filter (or a click on a branch row below) has narrowed to; company-wide
+          otherwise — the same drilldown pattern the branch table row already uses via onSelect. */}
+      <PnlFullWaterfallCard
+        period={period}
+        branchId={branchIds.length === 1 ? branchIds[0] : null}
+        branchName={branchIds.length === 1 ? branchOptions.find((b) => b.value === branchIds[0])?.label : null}
+      />
 
       {/* Branch comparison */}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
