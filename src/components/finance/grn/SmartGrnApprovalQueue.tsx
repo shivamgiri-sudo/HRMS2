@@ -904,6 +904,21 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       )}
                     </div>
                   </div>
+
+                  {canReview && (
+                    <div className="border-t border-grn-line-soft px-4 py-4">
+                      <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                        Remarks
+                      </p>
+                      <GrnTextarea
+                        value={reviewNote}
+                        onChange={(e) => setReviewNote(e.target.value)}
+                        className="min-h-[72px] w-full text-[12px]"
+                        placeholder="Why this decision — required on reject, recorded in audit trail"
+                        disabled={reviewMutation.isPending}
+                      />
+                    </div>
+                  )}
                 </>
               )}
             </TabsContent>
