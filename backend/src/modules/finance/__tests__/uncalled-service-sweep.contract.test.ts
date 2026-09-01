@@ -78,14 +78,16 @@ describe("finance services are actually invoked", () => {
 
 describe("the GRN numbering flag is genuinely switchable", () => {
   const GRN_SERVICE = readFileSync(at("../grn.service.ts"), "utf8");
-  // 2026-08-27: the numbering block moved OUT of grn.service.ts into grn-number-on-submit.ts.
-  // It had to: there are two submit paths and only this one allocated, while the one that
-  // actually runs (grnValidationControlService.submit, reached because smartGrnRouter is mounted
-  // on "/grns" above the legacy route) did not — so GRNs reached full approval with
-  // grn_number = NULL. Both call the shared helper now; these assertions follow the code.
+  // 2026-08-27: the numbering block moved OUT of grn.service.ts into grn-number-on-submit.ts,
+  // because there were two SUBMIT paths and only one allocated. Superseded since: the CALL SITE
+  // moved again, from submission to final (Finance Head) approval — a number now identifies
+  // approved spend, not merely raised spend, and a rejected GRN never gets one. There are two
+  // live approval implementations for the same reason there were two submit ones (grn-smart's
+  // review() for allocation-aware GRNs, grn.service.ts's reviewGrn() as the fallback — see
+  // grn-smart.routes.ts's onlyWhenSmart), and both must call this one shared helper.
   const ON_SUBMIT = readFileSync(at("../grn-number-on-submit.ts"), "utf8");
 
-  it("reads the format at submission rather than assuming one", () => {
+  it("reads the format at approval time rather than assuming one", () => {
     expect(ON_SUBMIT).toContain("await resolveGrnNumberFormat()");
   });
 
@@ -100,10 +102,20 @@ describe("the GRN numbering flag is genuinely switchable", () => {
     expect(ON_SUBMIT).toContain("allocateGrnNumber(String(");
   });
 
-  it("both submit paths go through it, so they cannot disagree", () => {
+  it("both live finance_head-approval paths go through it, so they cannot disagree", () => {
     expect(GRN_SERVICE).toContain("await resolveGrnNumberOnSubmit(grn)");
+    expect(readFileSync(at("../grn-smart.service.ts"), "utf8"))
+      .toContain("await resolveGrnNumberOnSubmit(grn)");
+  });
+
+  it("neither live submit path calls it any more", () => {
     expect(readFileSync(at("../grn-validation-control.service.ts"), "utf8"))
-      .toContain("await resolveGrnNumberOnSubmit(typeRows[0])");
+      .not.toContain("resolveGrnNumberOnSubmit(typeRows[0])");
+    const submitBlock = GRN_SERVICE.slice(
+      GRN_SERVICE.indexOf("async submitForApproval("),
+      GRN_SERVICE.indexOf("async submitForApproval(") + 2500,
+    );
+    expect(submitBlock).not.toContain("resolveGrnNumberOnSubmit(");
   });
 
   it("numbers from the accounting period, not the vendor's bill date", () => {

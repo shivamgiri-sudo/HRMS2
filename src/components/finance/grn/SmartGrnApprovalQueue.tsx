@@ -22,6 +22,7 @@ import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
   checkTone,
   dateLabel,
+  grnDisplayNumber,
   grnStatusTone,
   labelStatus,
   money,
@@ -60,7 +61,10 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 type GrnRow = {
   id: string;
-  grn_number: string;
+  /** NULL until Finance Head approves it — Owner ruling: the number identifies approved spend,
+   *  not merely raised spend. A rejected GRN never gets one. Render via grnDisplayNumber(row),
+   *  never this field directly, or a pending/rejected row shows blank. */
+  grn_number: string | null;
   grn_type: "vendor" | "imprest";
   branch_id: string;
   branch_name?: string | null;
@@ -635,7 +639,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                   onClick={() => { setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
                 >
                   <GrnTd className="font-grn-mono font-bold text-grn-brand">
-                    <span className="block">{row.grn_number}</span>
+                    <span className="block">{grnDisplayNumber(row)}</span>
                     {row.accounting_period && row.bill_date &&
                       row.accounting_period.slice(0, 7) !== row.bill_date.slice(0, 7) && (
                         <span className="mt-0.5 block font-grn-mono text-[10px] font-normal text-amber-600">
@@ -700,7 +704,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         <>
                           <GrnIconButton
                             title="Approve"
-                            aria-label={`Approve ${row.grn_number}`}
+                            aria-label={`Approve ${grnDisplayNumber(row)}`}
                             disabled={reviewMutation.isPending}
                             onClick={(e) => { e.stopPropagation(); reviewMutation.mutate({ id: row.id, decision: "approved", note: "" }); }}
                           >
@@ -708,7 +712,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                           </GrnIconButton>
                           <GrnIconButton
                             title="Reject (opens review)"
-                            aria-label={`Reject ${row.grn_number}`}
+                            aria-label={`Reject ${grnDisplayNumber(row)}`}
                             className="hover:border-grn-crit hover:text-grn-crit"
                             onClick={(e) => { e.stopPropagation(); setTarget(row); setDecision("rejected"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
                           >
@@ -771,7 +775,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
         <SheetContent side="right" className="grn-scope flex w-full flex-col gap-0 p-0 sm:w-[560px] sm:max-w-[560px]">
           <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-[16px] py-[12px]">
             <SheetTitle className="font-grn-mono text-[13px] font-bold text-grn-brand">
-              {target?.grn_number} — Review
+              {target ? grnDisplayNumber(target) : "…"} — Review
             </SheetTitle>
             <div className="flex flex-wrap items-center gap-2 pt-0.5">
               <span className="text-[11px] text-grn-ink-soft">
@@ -826,7 +830,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                   {target && (
                     <GrnKvList>
                       {([
-                        ["GRN Number", target.grn_number],
+                        ["GRN Number", grnDisplayNumber(target)],
                         ["Type", target.grn_type],
                         ["Branch", target.branch_name],
                         ["Vendor", target.vendor_name],
@@ -838,6 +842,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         ["Due date", dateLabel(target.due_date)],
                         ["Allocation", target.allocation_mode ?? "single"],
                         ["Acctg period", parent?.accounting_period ?? "—"],
+                        ["Remarks", parent?.remarks ?? null],
                         ["Rejection reason", parent?.rejection_reason ?? null],
                         ["Validation score", target.validation_score != null ? `${target.validation_score}%` : "—"],
                         ["Invoice", parent?.invoice_number ?? "—"],
@@ -846,7 +851,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         ["GSTIN", parent?.vendor_gstin ?? "—"],
                       ] as [string, string | null | undefined][]).map(([label, val]) => (
                         <GrnKv key={label} label={label}>
-                          <span className="block truncate">{val ?? "—"}</span>
+                          {/* title= so a long free-text value (Remarks, Vendor, Rejection reason)
+                              is still readable on hover instead of just cut off by truncate. */}
+                          <span className="block truncate" title={val ?? undefined}>{val ?? "—"}</span>
                         </GrnKv>
                       ))}
                     </GrnKvList>
@@ -904,6 +911,21 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       )}
                     </div>
                   </div>
+
+                  {canReview && (
+                    <div className="border-t border-grn-line-soft px-4 py-4">
+                      <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                        Remarks
+                      </p>
+                      <GrnTextarea
+                        value={reviewNote}
+                        onChange={(e) => setReviewNote(e.target.value)}
+                        className="min-h-[72px] w-full text-[12px]"
+                        placeholder="Why this decision — required on reject, recorded in audit trail"
+                        disabled={reviewMutation.isPending}
+                      />
+                    </div>
+                  )}
                 </>
               )}
             </TabsContent>

@@ -148,10 +148,40 @@ export const budgetCostCentreUtilizationService = {
 
     // Measured spend. Joined back to the line so a GRN is attributed to the head/sub-head it was
     // budgeted under, and grouped on the GRN's OWN cost centre — which may differ from the line's.
+    //
+    // pnl_cost_amount, NOT amount_with_tax: budgetConsumptionService.reserve()/consume() charge
+    // the budget line at pnl_cost_amount's basis (net/taxable value on an ITC-eligible line, gross
+    // otherwise — see consumptionBasis() in budget-consumption.service.ts), because GST recovered
+    // as ITC is never a real P&L cost. Summing amount_with_tax here compared a tax-inclusive
+    // figure against the line's tax-basis-correct counter, which is exactly why this tab's
+    // Consumed could exceed the Variance tab's by the GST portion on every ITC-eligible GRN —
+    // live-verified 2026-09-01: eliminated Rs 90,629 of drift across 5 budgets, the largest being
+    // Rs 52,241 on one branch's active budget. (Corrected 2026-09-01: first reported as "~Rs
+    // 78,000" from a hand-summed subset; the actual sum of all 5 affected budgets is Rs 90,629 —
+    // re-verified independently against live data before correcting this comment.)
+    //
+    // RESIDUAL, deliberately not chased further — re-verified 2026-09-01, not caused by this
+    // query or by the simple-GRN fallback below:
+    //   - One budget's Reserved figure still disagrees by Rs 4,662 (two lines, Rs 4,275 + Rs 387).
+    //     Traced to two GRNs (is_multi_month = 1) whose grn_cost_allocation.pnl_cost_amount is the
+    //     GRN's full committed amount (matches what reserve() should charge — confirmed via
+    //     grn_period_allocation, which spreads that SAME full amount's P&L recognition across 2-3
+    //     months for reporting only, not the reservation itself), while finance_budget_line's own
+    //     reserved_amount counter is short by exactly that much. The discrepancy is in whatever
+    //     wrote the line counter historically (2026-08-24/27), not in how either figure is read
+    //     here — no reserve()/consume() call arguments survive to reconstruct why.
+    //   - Four budgets' Consumed figures disagree by a combined Rs 4,970 (Rs 2,159/1,143/958/710),
+    //     each spanning 3-5 small GRNs with no multi-month or funded-elsewhere involvement — same
+    //     "allocation sum exceeds the line counter" shape, no common cause found.
+    //   - Total unreconciled: Rs 9,632 across 5 of the ~29 live budgets. Small enough, and old
+    //     enough (all pre-dating this session), that it reads as accumulated historical drift
+    //     rather than a live bug — but it is real money that does not currently reconcile, and a
+    //     one-time correction script (in the fix-imprest-reattribute.ts / fix-grn-*.ts family)
+    //     would be the right way to close it if Finance wants it closed rather than monitored.
     const [spendRows] = await db.query<RowDataPacket[]>(
       `SELECT g.cost_centre_id AS cost_centre_id, l.head AS head, l.sub_head AS sub_head,
-              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.amount_with_tax ELSE 0 END) AS reserved,
-              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.amount_with_tax ELSE 0 END) AS consumed
+              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,
+              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.pnl_cost_amount ELSE 0 END) AS consumed
          FROM grn_cost_allocation g
          JOIN finance_budget_line l ON l.id = g.budget_line_id
         WHERE l.budget_id = ? AND g.lifecycle_status IN ('reserved', 'consumed')
@@ -167,8 +197,8 @@ export const budgetCostCentreUtilizationService = {
     // actually spilled — most cost centres will have zero rows here.
     const [fundedElsewhereRows] = await db.query<RowDataPacket[]>(
       `SELECT g.cost_centre_id AS cost_centre_id, g.funding_cost_centre_id AS funding_cost_centre_id,
-              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.amount_with_tax ELSE 0 END) AS reserved,
-              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.amount_with_tax ELSE 0 END) AS consumed
+              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,
+              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.pnl_cost_amount ELSE 0 END) AS consumed
          FROM grn_cost_allocation g
          JOIN finance_budget_line l ON l.id = g.budget_line_id
         WHERE l.budget_id = ?
@@ -186,18 +216,37 @@ export const budgetCostCentreUtilizationService = {
     // via budgetConsumptionService) with NO grn_cost_allocation rows written. Without this, the
     // CC tab's consumed column reads zero for those lines while the variance tab correctly shows
     // the line's consumed_amount, producing a visible discrepancy for direct-CC budget lines.
+    //
+    // Checked PER STATUS, not per line: a line can carry a settled GRN with a real 'consumed'
+    // allocation row alongside a newer GRN whose 'reserved' allocation was never written. The
+    // original single NOT EXISTS (any status) treated "this line has an allocation row" as "fully
+    // covered" and skipped crediting the missing reserved portion entirely — live-verified
+    // 2026-09-01 on 4 budgets where Reserved showed money the Cost Centre tab reported as zero.
+    // Reserved and consumed are independent CASE arms so a line can be fallen back on for one
+    // status while genuinely measured (0 added here) for the other.
     const [simpleGrnRows] = await db.query<RowDataPacket[]>(
       `SELECT l.cost_centre_id, l.head, l.sub_head,
-              l.reserved_amount AS reserved,
-              l.consumed_amount AS consumed
+              CASE WHEN NOT EXISTS (
+                SELECT 1 FROM grn_cost_allocation g
+                 WHERE g.budget_line_id = l.id AND g.lifecycle_status = 'reserved'
+              ) THEN l.reserved_amount ELSE 0 END AS reserved,
+              CASE WHEN NOT EXISTS (
+                SELECT 1 FROM grn_cost_allocation g
+                 WHERE g.budget_line_id = l.id AND g.lifecycle_status = 'consumed'
+              ) THEN l.consumed_amount ELSE 0 END AS consumed
          FROM finance_budget_line l
         WHERE l.budget_id = ?
           AND l.cost_centre_id IS NOT NULL
           AND (l.reserved_amount > 0 OR l.consumed_amount > 0)
-          AND NOT EXISTS (
-            SELECT 1 FROM grn_cost_allocation g
-             WHERE g.budget_line_id = l.id
-               AND g.lifecycle_status IN ('reserved', 'consumed')
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM grn_cost_allocation g
+               WHERE g.budget_line_id = l.id AND g.lifecycle_status = 'reserved'
+            )
+            OR NOT EXISTS (
+              SELECT 1 FROM grn_cost_allocation g
+               WHERE g.budget_line_id = l.id AND g.lifecycle_status = 'consumed'
+            )
           )`,
       [budgetId]
     );

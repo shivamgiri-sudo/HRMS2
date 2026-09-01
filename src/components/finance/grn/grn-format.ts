@@ -75,3 +75,30 @@ export function dateLabel(value: unknown) {
 export function dateTimeLabel(value: unknown): string | null {
   return formatDateTimeDDMMYYYY(value);
 }
+
+/**
+ * A stand-in identity for a GRN that has not been through Finance Head approval yet.
+ *
+ * Owner ruling: `grn_number` is assigned at FINAL approval, not at submission — a rejected GRN
+ * therefore never gets one. Every screen that identifies a GRN by its number needs SOMETHING to
+ * show for the two stages (submitted, branch_head_approved) that come before that, which is what
+ * this is: derived from the GRN's own id (already a unique UUID, no new backend field or
+ * sequence needed), stable for the life of the record, and visually unmistakable for a real
+ * number — no `/`, no financial-year, no monthly sequence, because it is not one.
+ *
+ * Never persisted, never sent to the server: purely a display-layer fallback, recomputed fresh
+ * every render from whatever id the row already carries.
+ */
+export function pendingGrnReference(id: unknown): string {
+  const clean = String(id ?? "").replace(/-/g, "");
+  return clean ? `PND-${clean.slice(0, 8).toUpperCase()}` : "PND-UNKNOWN";
+}
+
+/** The number to actually show for a GRN: its real grn_number once Finance Head has approved it,
+ *  the stand-in reference before that (including forever, on a rejected GRN — see
+ *  pendingGrnReference's own doc). Every approval-facing screen should render THIS, not
+ *  `grn.grn_number` directly, or a pending/rejected row displays blank. */
+export function grnDisplayNumber(grn: { grn_number?: unknown; id?: unknown }): string {
+  const real = String(grn.grn_number ?? "").trim();
+  return real || pendingGrnReference(grn.id);
+}

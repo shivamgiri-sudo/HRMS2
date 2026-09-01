@@ -441,7 +441,19 @@ export const grnService = {
       payload.branchId
     ) as any;
 
-    if (payload.billDate.slice(0, 7) !== String(budgetLine.period_code)) {
+    // An explicit accountingPeriod is only ever present when the caller asked to book into a
+    // month other than the bill date's own month — grn.routes.ts's periodOverrideRoles gate has
+    // already restricted that to Finance Head/Accounts Head/Branch Admin/Super Admin before this
+    // function is ever called (see the comment there). Everyone else's payload omits it, so
+    // effectivePeriod is exactly billDate's month and behaviour is unchanged.
+    //
+    // Without this, the override was write-only: grn.routes.ts approved the request, then this
+    // check re-derived the period from billDate anyway and rejected it — an elevated user who
+    // picked a real, budgeted PAST period for a TODAY-dated bill (the deliberate cut-off-booking
+    // case the override exists for) got "Bill date must fall within approved budget period"
+    // for the one thing they were just cleared to do.
+    const effectivePeriod = payload.accountingPeriod?.trim() || payload.billDate.slice(0, 7);
+    if (effectivePeriod !== String(budgetLine.period_code)) {
       throw new Error(
         `Bill date must fall within approved budget period ${budgetLine.period_code}`
       );
@@ -687,21 +699,21 @@ export const grnService = {
       throw new Error("Invoice / supporting attachment is required before submission");
     }
 
-    // Allocate at submission, not at draft creation: abandoned drafts must not consume a
-    // sequence slot. Shared with grnValidationControlService.submit() — which is the path that
-    // actually runs for GRNs raised through the current form — so the two can never disagree
-    // about when a number appears or what shape it takes. See grn-number-on-submit.ts.
-    const grnNumber = await resolveGrnNumberOnSubmit(grn);
+    // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
+    // submission — mirrors the live path's own change in grn-validation-control.service.ts's
+    // submit(). See resolveGrnNumberOnSubmit's caller in reviewGrn() below and in
+    // grn-smart.service.ts's review(). An existing number (re-submit after return, or a legacy
+    // migrated row) is left exactly as it was.
+    const grnNumber = grn.grn_number ?? null;
 
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted',
-              grn_number = COALESCE(grn_number, ?),
               submitted_by = ?,
               submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [grnNumber, actorUserId, payload.remarks?.trim() || null, grnId]
+      [actorUserId, payload.remarks?.trim() || null, grnId]
     );
     if (result.affectedRows !== 1) {
       throw new Error("GRN status changed before submission; refresh and try again");
@@ -752,6 +764,7 @@ export const grnService = {
     const connection = await db.getConnection();
     let paymentId: string | null = null;
     let newStatus: GrnStatus;
+    let grnNumber: string | null = null;
 
     try {
       await connection.beginTransaction();
@@ -885,6 +898,12 @@ export const grnService = {
             ? "pending_accounts_payment"
             : "approved";
 
+          // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
+          // submission — see the same change in grn-smart.service.ts's review() and
+          // grn-validation-control.service.ts's submit(). A rejected GRN never reaches this
+          // branch, so it never gets one.
+          grnNumber = await resolveGrnNumberOnSubmit(grn);
+
           const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
                 SET status = ?,
@@ -897,7 +916,8 @@ export const grnService = {
                     review_note = ?,
                     approved_by = ?,
                     approved_at = NOW(),
-                    rejection_reason = NULL
+                    rejection_reason = NULL,
+                    grn_number = COALESCE(grn_number, ?)
               WHERE id = ? AND status = 'branch_head_approved'`,
             [
               newStatus,
@@ -907,6 +927,7 @@ export const grnService = {
               actorUserId,
               payload.reviewNote?.trim() || null,
               actorUserId,
+              grnNumber,
               grnId,
             ]
           );
@@ -1024,7 +1045,7 @@ export const grnService = {
     if (paymentId) {
       await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
     }
-    return { success: true, newStatus: newStatus!, paymentId };
+    return { success: true, newStatus: newStatus!, paymentId, grnNumber };
   },
 
   async cancelGrn(grnId: string, actorUserId: string, actorRole: string) {
@@ -1293,6 +1314,37 @@ export const grnService = {
     /** Opt-in only — GRN Search and other existing callers must keep showing drafts by default. */
     excludeDraft?: boolean;
   }) {
+    // A GRN split across cost centres/heads keeps ONE header row but several grn_cost_allocation
+    // rows, each with its own share. When a cost-centre drill-down is active (the case this exists
+    // for — BudgetGrnDrillDownDialog.tsx), the row list must show THIS cost centre's share, not the
+    // header's full amount_with_tax, or every split GRN over-reports on every row it appears under.
+    // Optional and inert for every other caller: no costCentreId, no join, no new columns, byte-
+    // identical query to before. pnl_cost_amount rides along too, matching this drill-down's
+    // Consumed comparison (see budget-cost-centre-utilization.service.ts) rather than the
+    // tax-inclusive figure.
+    let contextAllocationJoin = "";
+    const contextAllocationParams: unknown[] = [];
+    if (filters.costCentreId) {
+      const headMatch = filters.head ? "AND bl.head = ?" : "";
+      const subHeadMatch = filters.subHead ? "AND bl.sub_head = ?" : "";
+      contextAllocationJoin = `
+         LEFT JOIN (
+           SELECT gca.grn_request_id,
+                  SUM(gca.amount_with_tax) AS amount_with_tax,
+                  SUM(gca.pnl_cost_amount) AS pnl_cost_amount
+             FROM grn_cost_allocation gca
+             JOIN finance_budget_line bl ON bl.id = gca.budget_line_id
+            WHERE gca.cost_centre_id = ?
+              AND gca.lifecycle_status IN ('reserved', 'consumed')
+              ${headMatch}
+              ${subHeadMatch}
+            GROUP BY gca.grn_request_id
+         ) ctx_alloc ON ctx_alloc.grn_request_id = g.id`;
+      contextAllocationParams.push(filters.costCentreId);
+      if (filters.head) contextAllocationParams.push(filters.head);
+      if (filters.subHead) contextAllocationParams.push(filters.subHead);
+    }
+
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (filters.branchScope) {
@@ -1494,7 +1546,14 @@ export const grnService = {
               COALESCE(
                 CONCAT(fhb.first_name, ' ', fhb.last_name),
                 CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
-              ) AS finance_head_reviewed_by_name
+              ) AS finance_head_reviewed_by_name,
+              -- This drill-down context's own share of a split GRN — NULL when costCentreId was
+              -- not supplied, or when this GRN was never split (a single-cost-centre GRN has no
+              -- rows in the allocation table at all, and the header amount already IS its whole
+              -- spend). The frontend prefers these over amount_with_tax/pnl_cost_amount whenever
+              -- they are non-NULL.
+              ctx_alloc.amount_with_tax AS context_amount_with_tax,
+              ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
@@ -1505,10 +1564,11 @@ export const grnService = {
          LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
          LEFT JOIN employees bhb ON bhb.user_id = g.branch_head_reviewed_by
          LEFT JOIN employees fhb ON fhb.user_id = g.finance_head_reviewed_by
+         ${contextAllocationJoin}
          ${where}
         ORDER BY g.created_at DESC
         LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...contextAllocationParams, ...params, limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,

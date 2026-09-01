@@ -96,6 +96,20 @@ async function assertAllocationBranch(req: AuthenticatedRequest, allocationId: s
   return { found: true as const, allowed: true as const };
 }
 
+/** Same shape as assertAllocationBranch, for an imprest_manager id instead of an allocation id. */
+async function assertManagerBranch(req: AuthenticatedRequest, managerId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM imprest_manager WHERE id = ? LIMIT 1`,
+    [managerId],
+  );
+  if (!rows[0]) return { found: false as const };
+  const scope = await scopeOf(req);
+  if (scope.mode === "branches" && !scope.branchIds.includes(String(rows[0].branch_id))) {
+    return { found: true as const, allowed: false as const };
+  }
+  return { found: true as const, allowed: true as const };
+}
+
 const fail = (res: any, error: unknown, fallback: string) =>
   res.status(400).json({
     success: false,
@@ -243,6 +257,46 @@ imprestRouter.get(
       [branchId],
     );
     res.json({ success: true, data: rows });
+  }),
+);
+
+/**
+ * The Imprest Adjustment screen — a manual correcting entry with no real transaction behind it.
+ *
+ * Same write roles as an allocation (finance_head, super_admin): this moves the float exactly
+ * like an allocation does, and Owner ruling 2026-08-17 placed that authority with Finance Head
+ * alone. Unlike an allocation this can also go the other way (debit), which is why it posts
+ * through imprestLedgerService's own "adjustment" entry type instead of createAllocation().
+ */
+imprestRouter.post(
+  "/managers/:id/adjustment",
+  requireWriteAccess,
+  requireRole(...IMPREST_WRITE_ROLES),
+  h(async (req, res) => {
+    try {
+      const access = await assertManagerBranch(req, req.params.id);
+      if (!access.found) {
+        return res.status(404).json({ success: false, error: "Imprest manager not found" });
+      }
+      if (!access.allowed) {
+        return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+      }
+      const user = actor(req);
+      const data = await imprestService.postAdjustment(
+        {
+          imprestManagerId: req.params.id,
+          direction: req.body?.direction === "debit" ? "debit" : "credit",
+          amount: Number(req.body?.amount),
+          transactionDate: String(req.body?.transactionDate ?? ""),
+          reason: String(req.body?.reason ?? ""),
+        },
+        user.id,
+        user.role,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to post the adjustment");
+    }
   }),
 );
 

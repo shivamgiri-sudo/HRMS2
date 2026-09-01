@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   dateTimeLabel,
+  grnDisplayNumber,
   grnStatusTone,
   labelStatus,
   money,
@@ -48,7 +49,8 @@ type GrnDocument = {
 type GrnWorkspace = {
   grn: {
     id: string;
-    grn_number: string;
+    /** NULL until Finance Head approves it — render via grnDisplayNumber(grn). */
+    grn_number: string | null;
     grn_type: string;
     status: string;
     branch_name: string | null;
@@ -68,6 +70,9 @@ type GrnWorkspace = {
     created_by_name: string | null;
     created_at: string | null;
     description: string | null;
+    /** The raiser's own note at creation time — distinct from description, a system-generated
+     *  structural summary. */
+    remarks: string | null;
     purchase_reference: string | null;
   };
   documents: GrnDocument[];
@@ -214,7 +219,7 @@ export function GrnDetailDrawer({
       >
         <SheetHeader className="border-b border-grn-line-soft px-5 py-4">
           <SheetTitle className="flex items-center gap-3 text-base font-bold text-grn-ink">
-            <span className="font-grn-mono text-grn-brand">{grn?.grn_number ?? "…"}</span>
+            <span className="font-grn-mono text-grn-brand">{grn ? grnDisplayNumber(grn) : "…"}</span>
             {grn && (
               <StatusStamp tone={grnStatusTone(grn.status)}>
                 {labelStatus(grn.status)}
@@ -332,6 +337,10 @@ export function GrnDetailDrawer({
                     ["Invoice #", grn.invoice_number],
                     ["Acctg period", grn.accounting_period],
                     ["PO / Contract", grn.purchase_reference],
+                    // The raiser's own note at creation time. Was missing here entirely —
+                    // "Description" below is a system-generated structural summary ("1 invoice
+                    // component(s) across N cost centre(s)"), never what the raiser typed.
+                    ["Remarks", grn.remarks],
                     ["Description", grn.description],
                     ["Raised by", grn.created_by_name],
                     ["Raised at", dateTimeLabel(grn.created_at)],

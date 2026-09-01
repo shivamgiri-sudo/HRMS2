@@ -24,6 +24,26 @@ import {
 
 export const ENTITY_TYPE = "leave_request";
 
+/**
+ * Deadlock retry helper — MySQL InnoDB can raise ER_LOCK_DEADLOCK when concurrent
+ * leave balance reads/writes collide. Retry the transaction up to maxRetries times.
+ */
+async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      const errno = (err as { errno?: number })?.errno;
+      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 50 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 interface LeaveTypeRow extends RowDataPacket {
   id: string;
   leave_code: string;
@@ -231,15 +251,17 @@ export async function applyLeaveBatch(
           // Who approved it is not lost: importLeaveBatch already sets approval_level =
           // 'branch_head' and requires_branch_head_approval = 1 on every row of the
           // batch, and the remark below names the batch.
-          await leaveService.reviewRequest(
-            row.created_entity_id,
-            {
-              status: "approved",
-              remarks: remarks
-                ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
-                : `Branch Head bulk approval (${batch.upload_batch_no})`,
-            },
-            approverUserId,
+          await withDeadlockRetry(() =>
+            leaveService.reviewRequest(
+              row.created_entity_id,
+              {
+                status: "approved",
+                remarks: remarks
+                  ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
+                  : `Branch Head bulk approval (${batch.upload_batch_no})`,
+              },
+              approverUserId,
+            ),
           );
           await lockEntity({
             entityType: ENTITY_TYPE,
