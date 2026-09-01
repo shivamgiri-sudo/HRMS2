@@ -219,17 +219,23 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // ═══════════════════════════════════════════════════════════════════════════════
   {
     code: "headcount",
-    name: "Active Headcount Summary",
+    name: "Headcount Summary",
     category: "HR & Workforce",
     subcategory: "Headcount & Org",
-    description: "Summary of active employees grouped by branch, department, and process",
-    rowGrain: "One row per branch/department/process combination",
-    primaryKey: ["branch_name", "department_name", "process_name"],
+    description: "Headcount grouped by branch, department, process and employee status",
+    // Status is part of the grain now: the report reports BOTH populations and splits each
+    // combination into an Active row and an Inactive row.
+    rowGrain: "One row per branch/department/process/employee-status combination",
+    primaryKey: ["branch_name", "department_name", "process_name", "employee_status"],
     columns: [
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "department_name", label: "Department", format: "text", width: 120 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "active_headcount", label: "Active Headcount", format: "number", width: 120, align: "right" },
+      // Labelled "Headcount", not "Active Headcount". The key stays active_headcount because
+      // that is the executor's alias and the inline route block's alias, but the value is no
+      // longer an active-only count: on an Inactive row it counts inactive employees, so the
+      // old label stated the opposite of what the cell contains.
+      { key: "active_headcount", label: "Headcount", format: "number", width: 120, align: "right" },
       { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],

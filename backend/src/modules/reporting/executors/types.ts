@@ -25,6 +25,12 @@ export interface ExecFilters {
   year?: string;
   financialYear?: string;
   status?: string;
+  /**
+   * "active" | "inactive" | "all". Absent means BOTH populations — see
+   * appendEmployeeStatusFilter. Distinct from `status`, which is an approval/workflow
+   * state on the report's own subject and means nothing for employee population.
+   */
+  employeeStatus?: string;
   includeInactive?: boolean;
   [key: string]: unknown;
 }
@@ -328,6 +334,26 @@ export function appendFilterConditions(
 // SQL helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Today's date in the business timezone (IST), as YYYY-MM-DD.
+ *
+ * Not `new Date().toISOString().slice(0, 10)`, which is a UTC substring. The MySQL pool runs
+ * every session at +05:30 and the business day is IST, so on a UTC-hosted backend that
+ * substring names the wrong day for the last 5.5 hours of every IST day — a report defaulting
+ * to "today" then queries yesterday while the data it is compared against is stamped today.
+ *
+ * Pinned to Asia/Kolkata rather than the host's local time so the answer does not depend on
+ * how the server happens to be configured.
+ */
+export function businessToday(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export function dateParam(value: unknown, fallback: string): string {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return fallback;
@@ -355,6 +381,97 @@ export function monthParam(value: unknown): string {
  * `BETWEEN '2026-07-01' AND '2026-07-31'` silently drops everything after midnight on the
  * 31st.
  */
+/**
+ * The two-population rule: a report must show every employee who was in force during the
+ * selected period, not only those active right now.
+ *
+ * `clauses.push("e.active_status = 1")` answers "who is active TODAY", which is the wrong
+ * question for any report scoped to a period. Run the July register in September and every
+ * employee who left in August vanishes from it — including from payroll, statutory and
+ * attendance registers that are supposed to be a record of that month. The row is not wrong,
+ * it is absent, so nothing on screen indicates anything is missing.
+ *
+ * Two ways to express "in force", because the data supports one and not the other:
+ *
+ *   byFact()  — active now, OR has a real row in the period's fact table. Preferred wherever
+ *               a fact table exists. Independent of date_of_exit, which is NULL for roughly
+ *               28,000 historical inactive employees in this database (exit dates were never
+ *               backfilled), so any exit-date test silently treats those as never-departed.
+ *
+ *   byTenure()— joined on or before the period end, and either never exited or exited on or
+ *               after the period start. For employee-grain reports with no fact table to
+ *               anchor against. Inclusive by construction: the NULL date_of_exit population
+ *               above stays visible rather than being dropped.
+ *
+ * Pair either with `employeeStatusExpression()` in the SELECT so a row's state is visible
+ * rather than inferred, and add e.active_status to GROUP BY on aggregate reports.
+ */
+export const employeeInForce = {
+  /**
+   * @param factTable  table holding the period's rows (must have employee_id + a date column)
+   * @param dateColumn the period column on that table
+   * @param alias      employees alias in the outer query
+   * @returns clause plus the two bind params it consumes, in order
+   */
+  byFact(
+    factTable: string,
+    dateColumn: string,
+    from: string,
+    to: string,
+    alias = "e",
+  ): { clause: string; params: unknown[] } {
+    return {
+      clause:
+        `(${alias}.active_status = 1 OR EXISTS (` +
+        `SELECT 1 FROM \`${factTable}\` _inforce ` +
+        `WHERE _inforce.employee_id = ${alias}.id ` +
+        `AND _inforce.\`${dateColumn}\` BETWEEN ? AND ?))`,
+      params: [from, to],
+    };
+  },
+
+  byTenure(from: string, to: string, alias = "e"): { clause: string; params: unknown[] } {
+    return {
+      clause:
+        `(${alias}.date_of_joining IS NULL OR ${alias}.date_of_joining <= ?) ` +
+        `AND (${alias}.date_of_exit IS NULL OR ${alias}.date_of_exit >= ?)`,
+      params: [to, from],
+    };
+  },
+};
+
+/** Renders active_status as the label the catalogs declare for `employee_status`. */
+export function employeeStatusExpression(alias = "e"): string {
+  return `CASE WHEN ${alias}.active_status = 1 THEN 'Active' ELSE 'Inactive' END`;
+}
+
+/**
+ * Narrow a two-population report to one population on request.
+ *
+ * Default is BOTH, which is the point of the two-population rule — a period report should
+ * show everyone in force during that period. This exists so a user who wants only current
+ * staff can still say so, without the executor silently deciding for them.
+ *
+ * `includeInactive` is honoured as a back-compatible alias: several executors already
+ * branched on it before `employeeStatus` existed, and saved report requests carry it.
+ */
+export function appendEmployeeStatusFilter(
+  filters: ExecFilters,
+  clauses: string[],
+  params: unknown[],
+  alias = "e",
+): void {
+  const raw = String(filters.employeeStatus ?? "").trim().toLowerCase();
+
+  if (raw === "active")   { clauses.push(`${alias}.active_status = 1`); return; }
+  if (raw === "inactive") { clauses.push(`${alias}.active_status = 0`); return; }
+  if (raw === "all" || raw === "both") return;
+
+  // No explicit choice. `includeInactive: false` is the only remaining way to ask for
+  // active-only, and it is what the pre-existing call sites meant.
+  if (filters.includeInactive === false) clauses.push(`${alias}.active_status = 1`);
+}
+
 export function monthRange(month: string): { start: string; endExclusive: string } {
   const [y, m] = month.split("-").map(Number);
   const start = `${month}-01`;

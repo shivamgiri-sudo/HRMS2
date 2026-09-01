@@ -16,6 +16,8 @@ import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js
 import {
   appendScopeConditions,
   appendFilterConditions,
+  appendEmployeeStatusFilter,
+  employeeInForce,
   dateParam,
   monthParam,
   applyPagination,
@@ -61,8 +63,6 @@ export async function headcount(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
-
   const base = `
     -- COALESCE on the SELECT only, never on the GROUP BY. Grouping stays exactly as it was so
     -- no row can merge or split and no headcount can move; this changes what an unmapped row is
@@ -75,13 +75,14 @@ export async function headcount(
     SELECT COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COUNT(*) AS active_headcount
       FROM employees e
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY b.branch_name, d.dept_name, p.process_name
+     GROUP BY b.branch_name, d.dept_name, p.process_name, e.active_status
      ORDER BY b.branch_name, d.dept_name, p.process_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -105,7 +106,24 @@ export async function employeeMaster(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  if (!filters.includeInactive) clauses.push("e.active_status = 1");
+
+  // Both populations by default; `employeeStatus` narrows on request. Previously this was
+  // an unconditional `active_status = 1` unless the caller passed `includeInactive`, which
+  // the Report Library never sends — so the Employee Status column this report now carries
+  // could only ever read "Active".
+  appendEmployeeStatusFilter(filters, clauses, params);
+
+  // The From/To controls the Library shows for this report were never read, so changing
+  // either of them left all 1,102 rows identical. There is no fact table to anchor a period
+  // against on an employee master list, so tenure is the period test: joined by the end of
+  // the window and not gone before it started.
+  if (filters.from || filters.to) {
+    const from = dateParam(filters.from, "1900-01-01");
+    const to   = dateParam(filters.to, "9999-12-31");
+    const inForce = employeeInForce.byTenure(from, to);
+    clauses.push(inForce.clause);
+    params.push(...inForce.params);
+  }
 
   // Cursor-based pagination for worker mode
   if (options.mode === "worker" && options.cursor != null) {
@@ -118,6 +136,7 @@ export async function employeeMaster(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.official_email, e.mobile, e.employment_status,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            e.date_of_joining, e.date_of_exit,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
@@ -167,7 +186,6 @@ export async function managerMapping(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?"); params.push(options.cursor);
@@ -185,6 +203,7 @@ export async function managerMapping(
                   AND e.reporting_manager_id <> e.manager_id THEN 'MANAGER_FIELD_MISMATCH'
              ELSE 'OK'
            END AS mapping_status,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -221,7 +240,6 @@ export async function orgStructureSnapshot(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   const base = `
     -- Aligned with the inline block this used to disagree with, and with the catalogue.
@@ -236,6 +254,7 @@ export async function orgStructureSnapshot(
     SELECT COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COUNT(e.id) AS headcount,
            SUM(CASE WHEN e.reporting_manager_id IS NOT NULL OR e.manager_id IS NOT NULL THEN 1 ELSE 0 END) AS with_manager,
            SUM(CASE WHEN e.reporting_manager_id IS NULL AND e.manager_id IS NULL THEN 1 ELSE 0 END) AS without_manager
@@ -244,7 +263,7 @@ export async function orgStructureSnapshot(
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN process_master p    ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY b.branch_name, d.dept_name, p.process_name
+     GROUP BY b.branch_name, d.dept_name, p.process_name, e.active_status
      ORDER BY b.branch_name, d.dept_name, p.process_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -268,7 +287,6 @@ export async function costCentreHeadcount(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   // Grouped by NAME, which is not unique. Live check: 927 cost centres carry only 913
   // distinct names — 8 names belong to several cost centres at once. "Snapdeal" is six of
@@ -294,12 +312,13 @@ export async function costCentreHeadcount(
     SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COUNT(*) AS active_headcount
       FROM employees e
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY cc.cost_centre_code, cc.cost_centre_name, b.branch_name
+     GROUP BY cc.cost_centre_code, cc.cost_centre_name, b.branch_name, e.active_status
      ORDER BY cc.cost_centre_code, b.branch_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -622,7 +641,8 @@ export async function bankMissing(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status
+           CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
       LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -724,6 +744,7 @@ export async function confirmationDueList(
            e.date_of_joining,
            ${CONFIRMATION_DUE_DATE} AS confirmation_due_date,
            DATEDIFF(CURDATE(), ${CONFIRMATION_DUE_DATE}) AS overdue_days,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -777,6 +798,7 @@ export async function contractExpiryList(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            e.date_of_joining, ec.contract_end_date,
            DATEDIFF(ec.contract_end_date, CURDATE()) AS days_to_expiry,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -972,6 +994,7 @@ export async function birthdayList(
            ) + IF(
            DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_birth), '-', DAY(e.date_of_birth))) < CURDATE(), 365, 0
            ) AS days_until_birthday,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
@@ -1039,6 +1062,7 @@ export async function anniversaryList(
            ) + IF(
            DATE(CONCAT(YEAR(CURDATE()), '-', MONTH(e.date_of_joining), '-', DAY(e.date_of_joining))) < CURDATE(), 365, 0
            ) AS days_until_anniversary,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(pr.process_name, 'UNASSIGNED') AS process_name,
@@ -1092,7 +1116,6 @@ export async function orgMappingGaps(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
   clauses.push(`(
     e.cost_centre_id IS NULL
     OR e.process_id IS NULL
@@ -1110,6 +1133,7 @@ export async function orgMappingGaps(
   const base = `
     SELECT e.id AS _cursor,
            ${identitySpineSelect("e")},
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            CONCAT_WS(', ',
              CASE WHEN e.cost_centre_id IS NULL THEN 'COST_CENTRE' END,
              CASE WHEN e.process_id     IS NULL THEN 'PROCESS' END,

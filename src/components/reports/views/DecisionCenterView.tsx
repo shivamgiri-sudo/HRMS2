@@ -43,7 +43,14 @@ import {
 import { HrmsModernShell } from "@/components/ui/hrms-modern";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatValue, type ColumnDef, type ReportMeta } from "@/lib/report-catalog";
+import {
+  formatValue,
+  currentBusinessMonth,
+  businessFirstDayOfMonth,
+  businessToday,
+  type ColumnDef,
+  type ReportMeta,
+} from "@/lib/report-catalog";
 
 type PerspectiveType = "overview" | "trend" | "register" | "exceptions" | "reconciliation" | "compliance";
 type ReportState = "idle" | "loading" | "success" | "empty" | "error";
@@ -207,18 +214,13 @@ const PACK_ICONS: Record<string, LucideIcon> = {
   "visitor-workplace": Building2,
 };
 
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
-}
-
-function firstDayOfMonth() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
+// Date defaults come from the shared business-timezone helpers, not from UTC substrings of
+// toISOString(). The local copies these replace were wrong in IST: firstDayOfMonth() returned
+// the last day of the PREVIOUS month on every call, and currentMonth()/today() returned the
+// previous month/day between 00:00 and 05:29 daily. See the notes in lib/report-catalog.ts.
+const currentMonth = currentBusinessMonth;
+const firstDayOfMonth = businessFirstDayOfMonth;
+const today = businessToday;
 
 function mask(value: unknown) {
   const text = String(value ?? "");

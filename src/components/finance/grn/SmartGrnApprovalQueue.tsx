@@ -859,6 +859,17 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     </GrnKvList>
                   )}
 
+                  {parent?.description && (
+                    <div className="border-t border-grn-line-soft px-4 py-3">
+                      <p className="mb-1 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                        Description
+                      </p>
+                      <p className="text-[12.5px] text-grn-ink leading-relaxed whitespace-pre-wrap">
+                        {String(parent.description)}
+                      </p>
+                    </div>
+                  )}
+
                   <div className="border-t border-grn-line-soft px-4 py-4">
                     <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
                       Documents
