@@ -441,7 +441,22 @@ export default function ProcessPnlDetailPage() {
               </section>
 
               <section className="rounded-lg border p-3">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Rewards &amp; penalties (this cost centre)</h3>
+                <div className="mb-2 flex items-center gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Rewards &amp; penalties (this cost centre)</h3>
+                  <Badge variant="outline" className="rounded-full border-amber-300 bg-amber-50 px-2 py-0 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Legacy</Badge>
+                </div>
+                {/* This is the ORIGINAL reward/penalty mechanism (cost_centre_reward_penalty):
+                    approved rows are already blended into the "Recognized revenue" and "Net earned
+                    revenue" figures shown above and in the Adjusted Total on the Manual Adjustments
+                    tab — they are not a separate line here, just a read-only view of what already
+                    moved revenue. It is a different mechanism from Manual Adjustments (which is
+                    approval-gated and shown as its own separate Adjusted Total, never blended). The
+                    two do not combine automatically; check both if a revenue figure looks off. */}
+                <p className="mb-2 text-[11px] text-amber-700">
+                  Legacy mechanism — approved rows here already sit inside "Recognized revenue" above
+                  (no separate line). Distinct from the "Manual Adjustments" tab, which is approval-gated
+                  and shown separately as its own Adjusted Total.
+                </p>
                 {rpQuery.isLoading ? <Skeleton className="h-24 rounded-lg" /> : (
                   <DataTable
                     columns={[

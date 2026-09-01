@@ -165,6 +165,31 @@ async function linkedRows(batchId: string): Promise<LinkedRow[]> {
   return rows as LinkedRow[];
 }
 
+/**
+ * InnoDB deadlocks on attendance_daily_record are expected when a batch contains
+ * multiple consecutive dates for the same employee: gap/next-key locks from row N
+ * are not fully released before row N+1 starts. MySQL says "try restarting
+ * transaction" — we do exactly that, up to 4 attempts with brief backoff.
+ */
+async function withDeadlockRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const code = String((err as { code?: unknown })?.code ?? "");
+      const errno = Number((err as { errno?: unknown })?.errno ?? 0);
+      if ((code === "ER_LOCK_DEADLOCK" || errno === 1213) && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
+        lastErr = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 export async function applyRegularizationBatch(
   batch: BatchRecord,
   approverUserId: string,
@@ -177,17 +202,17 @@ export async function applyRegularizationBatch(
 
   for (const row of rows) {
     try {
-      // The same call the manual approver makes. This is what writes the corrected
-      // status and punch times into the attendance record.
-      await wfmService.reviewRegularization(
-        row.created_entity_id,
-        {
-          status: "approved",
-          reviewerNote: remarks
-            ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
-            : `Branch Head bulk approval (${batch.upload_batch_no})`,
-        },
-        approverUserId,
+      await withDeadlockRetry(() =>
+        wfmService.reviewRegularization(
+          row.created_entity_id,
+          {
+            status: "approved",
+            reviewerNote: remarks
+              ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
+              : `Branch Head bulk approval (${batch.upload_batch_no})`,
+          },
+          approverUserId,
+        )
       );
       await lockEntity({
         entityType: ENTITY_TYPE,

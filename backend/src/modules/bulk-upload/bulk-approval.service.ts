@@ -19,6 +19,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { emailService } from "../communication/email.service.js";
 
 /** Upload types that must not apply until a branch head approves them. */
 export const APPROVAL_GATED_TYPES = new Set([
@@ -378,7 +379,19 @@ export async function markDecided(
  * timeout cannot run the domain engines twice and double-deduct a leave balance.
  * Mirrors the claim the existing import dispatcher uses.
  */
+// A claim older than this is assumed to be from a crashed server and is safe to release.
+const STALE_CLAIM_MINUTES = 5;
+
 export async function claimForDecision(batchId: string): Promise<boolean> {
+  // Auto-release any claim that has been stuck in 'approving' for more than
+  // STALE_CLAIM_MINUTES — this happens when the server restarts mid-approval.
+  await db.execute(
+    `UPDATE upload_batch
+        SET batch_status = 'pending_approval', updated_at = NOW()
+      WHERE id = ? AND batch_status = 'approving'
+        AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [batchId, STALE_CLAIM_MINUTES],
+  );
   const [res] = await db.execute<ResultSetHeader>(
     `UPDATE upload_batch
         SET batch_status = 'approving', updated_at = NOW()
@@ -394,6 +407,16 @@ export async function releaseClaim(batchId: string): Promise<void> {
       WHERE id = ? AND batch_status = 'approving'`,
     [batchId],
   );
+}
+
+/** Force-releases a stuck claim regardless of age. Super-admin only. */
+export async function releaseStuckClaim(batchId: string): Promise<boolean> {
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE upload_batch SET batch_status = 'pending_approval', updated_at = NOW()
+      WHERE id = ? AND batch_status = 'approving'`,
+    [batchId],
+  );
+  return res.affectedRows > 0;
 }
 
 export async function auditBatchAction(params: {
@@ -419,6 +442,147 @@ export async function auditBatchAction(params: {
     },
     req: params.req,
   });
+}
+
+interface FailedRowForEmail {
+  row_no: number;
+  raw_data: Record<string, unknown>;
+  error_messages: string[];
+}
+
+/**
+ * Sends an email to the batch uploader listing the rows that failed during
+ * partial approval, so they can fix and re-upload only the failed records.
+ */
+export async function sendPartialApplyEmail(params: {
+  batch: BatchRecord;
+  appliedCount: number;
+  failedCount: number;
+  approverName: string;
+  remarks: string | null;
+}): Promise<void> {
+  if (!emailService.isConfigured()) return;
+
+  // Fetch uploader email
+  const [userRows] = await db.execute<RowDataPacket[]>(
+    "SELECT email, full_name FROM auth_user WHERE id = ? LIMIT 1",
+    [params.batch.uploaded_by],
+  );
+  const uploader = (userRows as RowDataPacket[])[0];
+  if (!uploader?.email) return;
+
+  // Fetch failed rows
+  const [rowData] = await db.execute<RowDataPacket[]>(
+    `SELECT row_no, raw_data, error_messages
+       FROM upload_batch_row
+      WHERE upload_batch_id = ?
+        AND (row_status = 'error' OR row_status = 'failed')
+      ORDER BY row_no ASC
+      LIMIT 200`,
+    [params.batch.id],
+  );
+  const failedRows = (rowData as RowDataPacket[]).map((r) => ({
+    row_no: r.row_no as number,
+    raw_data: (typeof r.raw_data === "string" ? JSON.parse(r.raw_data) : r.raw_data) as Record<string, unknown>,
+    error_messages: (typeof r.error_messages === "string" ? JSON.parse(r.error_messages) : r.error_messages ?? []) as string[],
+  })) as FailedRowForEmail[];
+
+  if (!failedRows.length) return;
+
+  // Derive column headers from the first row's keys
+  const dataKeys = Object.keys(failedRows[0].raw_data);
+
+  const tableRows = failedRows.map((row) => {
+    const cells = dataKeys.map(
+      (k) => `<td style="padding:6px 10px;border:1px solid #e2e8f0;white-space:nowrap">${String(row.raw_data[k] ?? "")}</td>`,
+    ).join("");
+    const errors = (row.error_messages || []).map((e) => `<li>${e}</li>`).join("");
+    return `<tr>
+      <td style="padding:6px 10px;border:1px solid #e2e8f0;font-weight:600;color:#64748b">${row.row_no}</td>
+      ${cells}
+      <td style="padding:6px 10px;border:1px solid #e2e8f0;color:#dc2626"><ul style="margin:0;padding-left:14px">${errors}</ul></td>
+    </tr>`;
+  }).join("");
+
+  const headerCells = [`<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">Row #</th>`,
+    ...dataKeys.map((k) => `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">${k}</th>`),
+    `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left;color:#dc2626">Errors (fix & re-upload)</th>`,
+  ].join("");
+
+  const typeLabel: Record<string, string> = {
+    LEAVE_APPLICATION_BULK: "Leave Application",
+    ATTENDANCE_REGULARIZATION_BULK: "Attendance Regularization",
+    INCENTIVE_BULK: "Incentive",
+    DEDUCTION_BULK: "Deduction",
+  };
+
+  const html = `
+<div style="font-family:Inter,Arial,sans-serif;max-width:900px;margin:0 auto;color:#1e293b">
+  <div style="background:#1e293b;padding:20px 28px;border-radius:12px 12px 0 0">
+    <h2 style="margin:0;color:#fff;font-size:18px">MAS Callnet PeopleOS — Partial Approval Notice</h2>
+  </div>
+  <div style="background:#fff;border:1px solid #e2e8f0;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px">
+    <p>Hi ${uploader.full_name || uploader.email},</p>
+    <p>Your bulk upload batch <strong>${params.batch.upload_batch_no}</strong> (${typeLabel[params.batch.upload_type_code] ?? params.batch.upload_type_code}) has been <strong>partially approved</strong> by ${params.approverName}.</p>
+
+    <table style="border-collapse:collapse;width:100%;margin:12px 0">
+      <tr>
+        <td style="padding:6px 12px;background:#f0fdf4;border-radius:6px;font-weight:600;color:#16a34a">✓ ${params.appliedCount} row(s) applied successfully</td>
+      </tr>
+      <tr><td style="height:6px"></td></tr>
+      <tr>
+        <td style="padding:6px 12px;background:#fef2f2;border-radius:6px;font-weight:600;color:#dc2626">✗ ${params.failedCount} row(s) failed — listed below</td>
+      </tr>
+    </table>
+
+    ${params.remarks ? `<p style="background:#f8fafc;border-left:3px solid #94a3b8;padding:8px 12px;margin:12px 0;font-size:13px"><strong>Approver remarks:</strong> ${params.remarks}</p>` : ""}
+
+    <h3 style="font-size:14px;margin:20px 0 8px;color:#dc2626">Failed Rows — Fix and Re-Upload</h3>
+    <p style="font-size:13px;color:#64748b;margin:0 0 10px">Correct the highlighted errors in each row below and submit a new upload batch.</p>
+
+    <div style="overflow-x:auto">
+      <table style="border-collapse:collapse;font-size:12px;width:100%">
+        <thead><tr>${headerCells}</tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:20px;font-size:13px;color:#64748b">
+      Log in to <a href="https://mcnhrms.teammas.in/bulk-upload" style="color:#4f46e5">PeopleOS Bulk Upload</a>, create a new batch with only the failed rows above (corrected), and submit for re-approval.
+    </p>
+    <hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0">
+    <p style="font-size:11px;color:#94a3b8">MAS Callnet PeopleOS · Automated notification — do not reply</p>
+  </div>
+</div>`;
+
+  // Build CSV attachment — headers + data + errors column
+  const csvHeaders = ["Row No", ...dataKeys, "Errors"];
+  const csvLines = [
+    csvHeaders.map((h) => `"${h}"`).join(","),
+    ...failedRows.map((row) => {
+      const cells = [
+        row.row_no,
+        ...dataKeys.map((k) => `"${String(row.raw_data[k] ?? "").replace(/"/g, '""')}"`),
+        `"${(row.error_messages || []).join("; ").replace(/"/g, '""')}"`,
+      ];
+      return cells.join(",");
+    }),
+  ];
+  const csvContent = csvLines.join("\n");
+
+  await emailService.send({
+    to: uploader.email as string,
+    subject: `[PeopleOS] Partial Approval — ${params.batch.upload_batch_no} (${params.failedCount} row(s) need correction)`,
+    html,
+    text: `Hi ${uploader.full_name || uploader.email},\n\nYour batch ${params.batch.upload_batch_no} was partially approved.\n${params.appliedCount} row(s) succeeded, ${params.failedCount} row(s) failed.\n\nFailed rows are attached as a CSV. Fix the errors and re-upload a new batch.\n\nMAS Callnet PeopleOS`,
+    attachments: [
+      {
+        filename: `failed_rows_${params.batch.upload_batch_no}.csv`,
+        content: Buffer.from(csvContent, "utf8"),
+        contentType: "text/csv",
+      },
+    ],
+  }).catch(() => { /* email failure must not block the approval response */ });
 }
 
 /**

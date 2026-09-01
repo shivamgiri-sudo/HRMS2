@@ -12,7 +12,7 @@ import { hasAnyRole, getUserAssignmentScopes } from "../../shared/scopeAccess.js
 import {
   APPROVAL_GATED_TYPES, APPROVER_ROLES, BulkUploadError,
   getBatch, assertCanApprove, markDecided, claimForDecision, releaseClaim,
-  auditBatchAction,
+  releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
 } from "./bulk-approval.service.js";
 import { applyRegularizationBatch, rejectRegularizationBatch } from "./attendance-regularization-bulk.service.js";
 import { applyLeaveBatch, rejectLeaveBatch } from "./leave-application-bulk.service.js";
@@ -280,6 +280,22 @@ async function runDecision(
       req,
     });
 
+    // Notify uploader of failed rows so they can fix and re-submit
+    if (finalStatus === "partially_applied" && outcome.failed > 0) {
+      const [approverRows] = await db.execute<import("mysql2").RowDataPacket[]>(
+        "SELECT TRIM(CONCAT(COALESCE(full_name, ''), ' ', COALESCE(email, ''))) AS display FROM auth_user WHERE id = ? LIMIT 1",
+        [userId],
+      );
+      const approverName = String((approverRows as import("mysql2").RowDataPacket[])[0]?.display ?? "Branch Head").trim();
+      void sendPartialApplyEmail({
+        batch,
+        appliedCount: outcome.applied,
+        failedCount: outcome.failed,
+        approverName,
+        remarks: remarks || null,
+      });
+    }
+
     return res.json({
       success: outcome.failed === 0,
       approval_status: finalStatus,
@@ -297,3 +313,19 @@ async function runDecision(
 
 bulkApprovalRouter.post("/approvals/batches/:id/approve", h((req, res) => runDecision("approve", req, res)));
 bulkApprovalRouter.post("/approvals/batches/:id/reject", h((req, res) => runDecision("reject", req, res)));
+
+// Force-release a batch stuck in 'approving' — super_admin / admin only.
+// Used when the server restarted mid-approval and claimForDecision's auto-release
+// (5-minute staleness window) hasn't fired yet.
+bulkApprovalRouter.post("/approvals/batches/:id/release-claim", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isSuperAdmin = await hasAnyRole(userId, "super_admin", "admin");
+  if (!isSuperAdmin) {
+    return res.status(403).json({ success: false, message: "Only super_admin or admin can force-release a stuck batch claim." });
+  }
+  const released = await releaseStuckClaim(req.params.id);
+  return res.json({
+    success: released,
+    message: released ? "Batch claim released — it is back in the approval queue." : "Batch was not in approving state.",
+  });
+}));

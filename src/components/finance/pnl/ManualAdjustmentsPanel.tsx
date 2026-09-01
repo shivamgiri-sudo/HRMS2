@@ -104,6 +104,16 @@ export function ManualAdjustmentsPanel({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           Adjusted Total (system revenue ± approved adjustments)
         </h3>
+        <p className="mb-2 flex items-start gap-1 text-[11px] text-slate-500">
+          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" />
+          <span>
+            "System revenue" below may already include amounts from the separate, older{" "}
+            <span className="font-semibold text-amber-700">Legacy Rewards &amp; Penalties</span> entries
+            (see the Revenue tab) — those blend directly into revenue with no line of their own. The
+            adjustments here are on top of that figure, not a replacement for it; the two mechanisms
+            do not reconcile automatically.
+          </span>
+        </p>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
           <dt className="text-slate-500">System revenue (unchanged)</dt>
           <dd className="text-right font-medium text-slate-900">{currency(systemRevenue)}</dd>

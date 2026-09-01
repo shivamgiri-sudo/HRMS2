@@ -234,7 +234,9 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         </article>
         <Kpi label="Invoiced revenue" value={lakh(revenue)} detail={`${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`} />
         <Kpi label="People cost" value={lakh(peopleCost)}
-          detail={`${revenue > 0 ? ((peopleCost / revenue) * 100).toFixed(1) : "—"}% of revenue · ${staffPaid.toLocaleString("en-IN")} paid`} />
+          detail={`${revenue > 0 ? ((peopleCost / revenue) * 100).toFixed(1) : "—"}% of revenue · ${staffPaid.toLocaleString("en-IN")} paid`}
+          title="Full month's payroll (gross + employer PF/ESIC/gratuity, from the locked salary run) for every paid employee. The P&L Statement tab's Agent + DSC + BMC salary lines will read lower: that split comes from a separate day-by-day earned-to-date estimate that only covers employees it can compute attendance for, and does not include the leave-reversal step the payroll run applies. Both are real, correctly-computed numbers on different bases — this one is what payroll actually paid." />
+
         <Kpi label="Indirect cost" value={lakh(indirectCost)}
           detail={`${revenue > 0 ? ((indirectCost / revenue) * 100).toFixed(1) : "—"}% of revenue`} />
         <Kpi label="Revenue per head" value={revenuePerHead === null ? "—" : thousand(revenuePerHead)}
@@ -469,10 +471,16 @@ function Filter({
   );
 }
 
-function Kpi({ label, value, detail }: { label: string; value: string; detail: string }) {
+function Kpi({ label, value, detail, title }: { label: string; value: string; detail: string; title?: string }) {
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+    <article
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+      title={title}
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        {label}
+        {title && <span className="ml-1 text-slate-400" aria-hidden="true">ⓘ</span>}
+      </div>
       <div className="mt-1 text-[26px] font-semibold leading-tight tabular-nums">{value}</div>
       <div className="mt-1 text-xs text-slate-500">{detail}</div>
     </article>
