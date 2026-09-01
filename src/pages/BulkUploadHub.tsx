@@ -645,7 +645,21 @@ export default function BulkUploadHub() {
         hrmsApi.get<{ success: boolean; data: UploadBatch[] }>("/api/bulk-upload/batches").catch(() => ({ success: true, data: [] as UploadBatch[] })),
       ]);
 
-      const loadedTemplates = templatesResult.data || [];
+      // EMAIL_TEMPLATE_IMPORT is active in upload_template_master, so /templates returns it
+      // and it appeared in this dropdown — but it has no entry in IMPORT_RPC_BY_TYPE above,
+      // and the backend does not accept an rpc_name for it either. A user could therefore
+      // pick "Email Template Import", upload a file, watch it validate, and only then be
+      // stopped with "Import mapping for EMAIL_TEMPLATE_IMPORT is not enabled yet" — the
+      // whole upload wasted at the last step.
+      //
+      // It is not missing a mapping; it belongs somewhere else. Email templates are imported
+      // through NativeEmailTemplateBulkImport.tsx, which has its own preview/confirm flow
+      // against /api/admin/email-templates/import/*. Offering a second, broken door to the
+      // same feature is worse than offering one, so this hub hides it rather than mapping it.
+      const loadedTemplates = (templatesResult.data || []).filter(
+        (template) =>
+          String(template.upload_type_code || "").toUpperCase() !== "EMAIL_TEMPLATE_IMPORT",
+      );
       setTemplates(loadedTemplates);
       setBatches(batchesResult.data || []);
 
