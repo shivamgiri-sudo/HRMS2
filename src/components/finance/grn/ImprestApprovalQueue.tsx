@@ -4,7 +4,7 @@ import { CornerUpLeft, Check, History, RefreshCw, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
-import { dateLabel, grnStatusTone, labelStatus, money } from "@/components/finance/grn/grn-format";
+import { dateLabel, grnDisplayNumber, grnStatusTone, labelStatus, money } from "@/components/finance/grn/grn-format";
 import {
   GRN_TR, GrnButton, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState,
   GrnIconButton, GrnInput, GrnTable, GrnTd, GrnTextarea, GrnTh,
@@ -27,7 +27,9 @@ import {
 
 type ImprestRow = {
   id: string;
-  grn_number: string;
+  /** NULL until Finance Head approves it (imprest's final stage too) — render via
+   *  grnDisplayNumber(row), never this field directly. */
+  grn_number: string | null;
   bill_date?: string | null;
   branch_name?: string | null;
   head?: string | null;
@@ -224,7 +226,7 @@ export function ImprestApprovalQueue() {
               {rows.map((row) => (
                 <tr key={row.id} className={GRN_TR}>
                   <GrnTd>
-                    <span className="font-mono">{row.grn_number}</span>
+                    <span className="font-mono">{grnDisplayNumber(row)}</span>
                     <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>
                   </GrnTd>
                   <GrnTd>
@@ -270,7 +272,7 @@ export function ImprestApprovalQueue() {
                   <GrnTd>
                     <div className="flex items-center gap-1">
                       <GrnIconButton
-                        aria-label={`Approve ${row.grn_number}`}
+                        aria-label={`Approve ${grnDisplayNumber(row)}`}
                         disabled={decide.isPending}
                         onClick={() => decide.mutate({ id: row.id, kind: "approve" })}
                       >
@@ -279,19 +281,19 @@ export function ImprestApprovalQueue() {
                       {/* Return, not reject, is the default corrective action for imprest —
                           the voucher usually needs fixing, not killing. */}
                       <GrnIconButton
-                        aria-label={`Return ${row.grn_number} to the Branch Head`}
+                        aria-label={`Return ${grnDisplayNumber(row)} to the Branch Head`}
                         onClick={() => { setAction({ row, kind: "return" }); setReason(""); }}
                       >
                         <CornerUpLeft className="h-3.5 w-3.5" />
                       </GrnIconButton>
                       <GrnIconButton
-                        aria-label={`Reject ${row.grn_number}`}
+                        aria-label={`Reject ${grnDisplayNumber(row)}`}
                         onClick={() => { setAction({ row, kind: "reject" }); setReason(""); }}
                       >
                         <X className="h-3.5 w-3.5" />
                       </GrnIconButton>
                       <GrnIconButton
-                        aria-label={`History of ${row.grn_number}`}
+                        aria-label={`History of ${grnDisplayNumber(row)}`}
                         onClick={() => setHistoryFor((current) => (current?.id === row.id ? null : row))}
                       >
                         <History className="h-3.5 w-3.5" />
@@ -308,7 +310,7 @@ export function ImprestApprovalQueue() {
       {historyFor && (
         <div className="border-t border-grn-line p-3">
           <p className="text-xs font-semibold text-grn-ink">
-            History · <span className="font-mono">{historyFor.grn_number}</span>
+            History · <span className="font-mono">{grnDisplayNumber(historyFor)}</span>
           </p>
           {history.isLoading ? (
             <p className="mt-2 text-[11px] text-grn-ink-soft">Loading…</p>
@@ -357,7 +359,7 @@ export function ImprestApprovalQueue() {
         <div className="border-t border-grn-line p-3">
           <p className="text-xs font-semibold text-grn-ink">
             {action.kind === "return" ? "Send back to the Branch Head" : "Reject"} ·{" "}
-            <span className="font-mono">{action.row.grn_number}</span>
+            <span className="font-mono">{grnDisplayNumber(action.row)}</span>
           </p>
           <p className="mt-0.5 text-[11px] text-grn-ink-soft">
             {action.kind === "return"

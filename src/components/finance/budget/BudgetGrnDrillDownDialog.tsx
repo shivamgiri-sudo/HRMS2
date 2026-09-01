@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { ChevronRight, FileText, Loader2, Paperclip, AlertTriangle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { money, dateLabel, dateTimeLabel, labelStatus, grnStatusTone, checkTone } from "@/components/finance/grn/grn-format";
+import { money, dateLabel, dateTimeLabel, grnDisplayNumber, labelStatus, grnStatusTone, checkTone } from "@/components/finance/grn/grn-format";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 
 export type GrnDrillDownContext = {
@@ -20,7 +20,8 @@ export type GrnDrillDownContext = {
 
 type GrnRow = {
   id: string;
-  grn_number: string;
+  /** NULL until Finance Head approves it — render via grnDisplayNumber(grn). */
+  grn_number: string | null;
   invoice_number: string | null;
   vendor_name: string | null;
   bill_date: string | null;
@@ -228,7 +229,7 @@ export function BudgetGrnDrillDownDialog({
                         <td className="px-3 py-2 font-medium text-slate-800">
                           <span className="inline-flex items-center gap-1.5">
                             <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                            {grn.grn_number}
+                            {grnDisplayNumber(grn)}
                             {hasAttachment(grn) && <Paperclip className="h-3 w-3 shrink-0 text-slate-400" />}
                           </span>
                         </td>
