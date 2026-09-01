@@ -5,6 +5,16 @@
  * CEO-level self-review of the budget-cost-centre-utilization.service.ts tax-basis fix (commit
  * 45890035, branch fix/grn-variance-drilldown-and-remarks).
  *
+ * APPLIED 2026-09-01: both lines corrected live (8d0e5faa: 23,749.98 -> 28,024.98; ed50e469:
+ * 2,649.96 -> 3,036.96), both audited in sensitive_action_log (action_type
+ * BUDGET_LINE_RESERVED_SHORTFALL_CORRECTED). System-wide re-scan afterward confirmed zero
+ * remaining reserved-side mismatches of this shape anywhere in live data. The first --apply
+ * attempt hit two schema bugs, fixed here after the fact (see the two comments below) — the
+ * data UPDATEs themselves were correct on the first attempt in both cases; only the audit-log
+ * INSERT needed the fix, and the one entry that was momentarily missing was written manually
+ * moments later with a note explaining why. Left in the repo, still safe to re-run (idempotent),
+ * in case this exact shortfall shape ever recurs elsewhere.
+ *
  * THE ISSUE
  *   finance_budget_line.reserved_amount is a running counter, incremented by
  *   budgetConsumptionService.reserve() at Branch Head approval. It is supposed to equal the sum
@@ -55,7 +65,10 @@ import "dotenv/config";
 import { v4 as uuidv4 } from "uuid";
 
 const APPLY = process.argv.includes("--apply");
-const ACTOR_ID = "00000000-0000-0000-0000-migration0003"; // sentinel for audit log, distinct from other fix-*.ts scripts' sentinels
+// char(36) column — must be exactly UUID-shaped. "migration0003" (13 chars) overflowed it on
+// the live run; ER_DATA_TOO_LONG on actor_user_id. "budgetfix003" is 12 chars, fits the last
+// 8-4-4-4-12 segment exactly.
+const ACTOR_ID = "00000000-0000-0000-0000-budgetfix003";
 
 const TARGET_LINE_IDS = [
   "8d0e5faa-26e7-48a7-9ba2-1a5caf1f33b8",
@@ -71,7 +84,7 @@ async function writeAudit(
   await conn.execute(
     `INSERT INTO sensitive_action_log
        (id, actor_user_id, actor_role, action_type, module_key,
-        entity_type, entity_id, change_summary, created_at)
+        entity_type, entity_id, change_summary, acted_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       uuidv4(),
