@@ -44,6 +44,18 @@ export interface BpoProcessPnlDetail {
     systemRevenue: number;
     pendingCount: number;
   } | null;
+  /**
+   * "Not yet configured" vs "genuinely zero" for depreciation/amortization/finance cost/tax —
+   * process_pnl_cost_component holds zero rows in production today, so every one of these reads
+   * false and the waterfall card shows "Not yet configured" rather than a confident-looking ₹0.
+   * Presentation-only: does not affect row.depreciation/amortization/financeCost/tax themselves.
+   */
+  costComponentFlags: {
+    hasDepreciationData: boolean;
+    hasAmortizationData: boolean;
+    hasFinanceCostData: boolean;
+    hasTaxData: boolean;
+  };
 }
 
 function queryString(filters: BpoPnlFilters) {

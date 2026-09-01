@@ -74,6 +74,26 @@ function moneyTone(value: number) {
   return value >= 0 ? "text-emerald-700" : "text-rose-700";
 }
 
+/**
+ * ₹0 with no data behind it reads as "genuinely zero" — a real fact about performance — when it
+ * actually means "nobody has ever entered this cost" (process_pnl_cost_component holds zero rows
+ * in production today; see pnl-cost-component-flags.ts). Those are different claims, so an
+ * unconfigured cost type gets its own badge instead of a bare currency figure.
+ */
+function CostFigure({ value, hasData }: { value: number; hasData: boolean }) {
+  if (!hasData) {
+    return (
+      <span
+        className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500"
+        title="No row has ever been entered in process_pnl_cost_component for this cost type/period — this is not a confirmed ₹0, it has simply never been configured."
+      >
+        Not yet configured
+      </span>
+    );
+  }
+  return <span className="text-slate-900">{currency(value)}</span>;
+}
+
 function statusTone(status: string) {
   if (status === "profitable" || status === "configured" || status === "matched") return "bg-emerald-100 text-emerald-700";
   if (status === "loss-making" || status === "exception") return "bg-rose-100 text-rose-700";
@@ -320,19 +340,19 @@ export default function ProcessPnlDetailPage() {
                     <dt className="text-slate-500">EBITDA margin</dt>
                     <dd className={`text-right font-medium ${moneyTone(row.ebitdaMarginPct ?? 0)}`}>{percent(row.ebitdaMarginPct)}</dd>
                     <dt className="text-slate-500">Depreciation</dt>
-                    <dd className="text-right font-medium text-slate-900">{currency(row.depreciation)}</dd>
+                    <dd className="text-right font-medium"><CostFigure value={row.depreciation} hasData={detail.costComponentFlags.hasDepreciationData} /></dd>
                     <dt className="text-slate-500">Amortization</dt>
-                    <dd className="text-right font-medium text-slate-900">{currency(row.amortization)}</dd>
+                    <dd className="text-right font-medium"><CostFigure value={row.amortization} hasData={detail.costComponentFlags.hasAmortizationData} /></dd>
                     <dt className="text-slate-500">EBIT / Operating profit</dt>
                     <dd className={`text-right font-medium ${moneyTone(row.ebit)}`}>{currency(row.ebit)}</dd>
                     <dt className="text-slate-500">Operating profit margin</dt>
                     <dd className="text-right font-medium text-slate-900">{percent(row.operatingProfitPct)}</dd>
                     <dt className="text-slate-500">Finance cost</dt>
-                    <dd className="text-right font-medium text-slate-900">{currency(row.financeCost)}</dd>
+                    <dd className="text-right font-medium"><CostFigure value={row.financeCost} hasData={detail.costComponentFlags.hasFinanceCostData} /></dd>
                     <dt className="text-slate-500">PBT</dt>
                     <dd className={`text-right font-medium ${moneyTone(row.pbt)}`}>{currency(row.pbt)}</dd>
                     <dt className="text-slate-500">Tax</dt>
-                    <dd className="text-right font-medium text-slate-900">{currency(row.tax)}</dd>
+                    <dd className="text-right font-medium"><CostFigure value={row.tax} hasData={detail.costComponentFlags.hasTaxData} /></dd>
                     <dt className="text-slate-500">PAT</dt>
                     <dd className={`text-right font-medium ${moneyTone(row.pat)}`}>{currency(row.pat)}</dd>
                   </dl>
