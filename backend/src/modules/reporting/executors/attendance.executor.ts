@@ -148,6 +148,8 @@ export async function attendanceRegisterMonthly(
     "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
     "))"
   );
+  // Exclude employees at inactive branches unless no branch is assigned.
+  clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
   // JOIN ON binds go to the front (positional order: JOIN before WHERE).
   params.unshift(firstDay, lastDay);
   // EXISTS binds appended after all other WHERE params.
@@ -382,6 +384,8 @@ export async function attendanceDaily(
     "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
     "))"
   );
+  // Exclude employees at inactive branches.
+  clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
   // JOIN ON (adr + session subquery) binds go to the front; EXISTS binds follow.
   params.unshift(from, to, from, to);
   params.push(from, to);
