@@ -441,7 +441,19 @@ export const grnService = {
       payload.branchId
     ) as any;
 
-    if (payload.billDate.slice(0, 7) !== String(budgetLine.period_code)) {
+    // An explicit accountingPeriod is only ever present when the caller asked to book into a
+    // month other than the bill date's own month — grn.routes.ts's periodOverrideRoles gate has
+    // already restricted that to Finance Head/Accounts Head/Branch Admin/Super Admin before this
+    // function is ever called (see the comment there). Everyone else's payload omits it, so
+    // effectivePeriod is exactly billDate's month and behaviour is unchanged.
+    //
+    // Without this, the override was write-only: grn.routes.ts approved the request, then this
+    // check re-derived the period from billDate anyway and rejected it — an elevated user who
+    // picked a real, budgeted PAST period for a TODAY-dated bill (the deliberate cut-off-booking
+    // case the override exists for) got "Bill date must fall within approved budget period"
+    // for the one thing they were just cleared to do.
+    const effectivePeriod = payload.accountingPeriod?.trim() || payload.billDate.slice(0, 7);
+    if (effectivePeriod !== String(budgetLine.period_code)) {
       throw new Error(
         `Bill date must fall within approved budget period ${budgetLine.period_code}`
       );
