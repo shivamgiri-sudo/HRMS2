@@ -532,6 +532,16 @@ export default function NativeJoiningControlRoom() {
                   <TabsContent value="documents"><SecureDocumentList candidateId={selectedId} /></TabsContent>
 
                   <TabsContent value="bgv" className="grid gap-4">
+                    {/* PDF shortcut — same button present in BGV Verification Center */}
+                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <span className="text-sm font-semibold text-slate-700">BGV Report PDF</span>
+                      <a href={`/bgv-report-view/${detail.summary.candidate_id}`} target="_blank" rel="noopener noreferrer">
+                        <Button size="sm" variant="outline" className="gap-2">
+                          <FileText className="h-4 w-4" />
+                          View / Download PDF
+                        </Button>
+                      </a>
+                    </div>
                     <AddressBgvPanel candidateId={detail.summary.candidate_id} />
                     <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
                       <div className="text-sm font-semibold">Name/Document Match</div>

@@ -122,8 +122,9 @@ export const recruitmentRouteElements = (
       <Route path="/ats/bgv"          element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
       {/* /ats/bgv-enhanced removed — redirect to canonical BGV verification center */}
       <Route path="/ats/bgv-enhanced" element={<Navigate to="/ats/bgv" replace />} />
-      <Route path="/ats/bgv-report"   element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
-      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr']}><NativeBGVReportView /></ProtectedRoute>} />
+      {/* /ats/bgv-report removed — NativeBGVReport was a redirect stub; canonical page is /ats/bgv */}
+      <Route path="/ats/bgv-report"   element={<Navigate to="/ats/bgv" replace />} />
+      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr','branch_hr','hr_admin','ho_hr','process_hr','recruitment_hr']}><NativeBGVReportView /></ProtectedRoute>} />
       <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
       <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><DashboardLayout><NativeReconciliationDashboard /></DashboardLayout></ProtectedRoute>} />
 

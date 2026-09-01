@@ -68,7 +68,7 @@ async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: 
   // (migration 1541/1542) — this inner check alone is not enough: the outer
   // requireRole() middleware runs first and 403s before this function is ever
   // reached, so both layers must carry the same role list.
-  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter", "payroll_head", "payroll_hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
+  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter", "payroll_head", "payroll_hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
   const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
   const candidateRecord = candidate as unknown as Record<string, unknown>;
   const assignedRecruiterIds = [
@@ -188,33 +188,33 @@ router.post("/provider/callback", h(async (req: Request & { rawBody?: Buffer }, 
 }));
 
 // HR/BGV/Admin protected routes — all have role check + row-scope
-router.get("/queue", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
-  const scoped = await buildScopeWhereClause(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: "c.applied_for_branch", processId: "c.applied_for_process" }, { allowAdminBypass: true });
+router.get("/queue", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = await buildScopeWhereClause(req.authUser!.id, ["admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"], { branchId: "c.applied_for_branch", processId: "c.applied_for_process" }, { allowAdminBypass: true });
   return res.json({ success: true, data: await listBgvQueueScoped(req.query.status as string | undefined, scoped) });
 }));
 
-router.get("/candidates", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
-  const scoped = await buildScopeWhereClause(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: "c.applied_for_branch", processId: "c.applied_for_process" }, { allowAdminBypass: true });
+router.get("/candidates", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = await buildScopeWhereClause(req.authUser!.id, ["admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"], { branchId: "c.applied_for_branch", processId: "c.applied_for_process" }, { allowAdminBypass: true });
   return res.json({ success: true, data: await listBgvQueueScoped(req.query.status as string | undefined, scoped) });
 }));
 
-router.get("/candidates/:candidateId", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/candidates/:candidateId", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await getBgvStatusForCandidate(req.params.candidateId) });
 }));
 
-router.get("/status/:candidateId", requireAuth, requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/status/:candidateId", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "recruiter"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await getBgvStatusForCandidate(req.params.candidateId) });
 }));
 
-router.post("/trigger/:candidateId", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/trigger/:candidateId", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   const nameMatch = await runNameMatchCheck(req.params.candidateId, req.authUser!.id);
   return res.status(201).json({ success: true, data: { name_match: nameMatch } });
 }));
 
-router.post("/retry/:candidateId/:checkType", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/retry/:candidateId/:checkType", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   if (req.params.checkType === "name_match") {
     return res.json({ success: true, data: await runNameMatchCheck(req.params.candidateId, req.authUser!.id) });
@@ -228,12 +228,12 @@ router.post("/retry/:candidateId/:checkType", requireAuth, requireRole("admin", 
   });
 }));
 
-router.post("/candidates/:candidateId/verify/pan", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/candidates/:candidateId/verify/pan", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await verifyPanForCandidate(req.params.candidateId, req.body, { actorType: "hr", actorId: req.authUser!.id }) });
 }));
 
-router.post("/candidates/:candidateId/verify/bank", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/candidates/:candidateId/verify/bank", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await verifyBankForCandidate(req.params.candidateId, req.body, { actorType: "hr", actorId: req.authUser!.id }) });
 }));
@@ -244,7 +244,7 @@ router.post("/candidates/:candidateId/manual-review", requireAuth, requireRole("
   return res.json({ success: true, data: await manualReview(req.params.candidateId, req.body, req.authUser!.id) });
 }));
 
-router.patch("/manual-feedback/:candidateId/:checkType", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.patch("/manual-feedback/:candidateId/:checkType", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   const allowedStatuses = new Set(["verified", "mismatch", "failed", "manual_review"]);
   const requestedStatus = String(req.body.status ?? "manual_review");
   const status = (allowedStatuses.has(requestedStatus) ? requestedStatus : "manual_review") as "verified" | "mismatch" | "failed" | "manual_review";
@@ -261,7 +261,7 @@ router.patch("/manual-feedback/:candidateId/:checkType", requireAuth, requireRol
   });
 }));
 
-router.patch("/name-match/:candidateId/override", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.patch("/name-match/:candidateId/override", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   const reason = String(req.body.reason ?? "");
   if (!reason.trim()) return res.status(400).json({ success: false, message: "reason required" });
   await requireBgvCandidateScope(req, req.params.candidateId);
@@ -279,7 +279,7 @@ router.post("/candidates/:candidateId/waive", requireAuth, requireRole("admin", 
 // categories (address in particular) from the Joining Control Room BGV tab — mirrors
 // the payroll_head grant on waive/manual-review above; requireBgvCandidateScope's inner
 // role list was updated to match.
-router.get("/report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
   await requireBgvCandidateScope(req, candidateId);
@@ -296,7 +296,7 @@ router.get("/report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(a
   return res.json({ success: true, data: (rows as RowDataPacket[])[0] ?? null });
 }));
 
-router.post("/report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   const { candidate_id, locked, ...fields } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
   await requireBgvCandidateScope(req, candidate_id);
@@ -611,7 +611,7 @@ router.put("/admin/provider-config", requireAuth, requireRole("admin"), h(async 
 }));
 
 // ── Sync API check results → BGV report ──────────────────────────────────────
-router.post("/sync-report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/sync-report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidate_id } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
   const result = await syncBgvChecksToReport(String(candidate_id));
@@ -619,7 +619,7 @@ router.post("/sync-report", requireAuth, requireRole("admin", "hr", "payroll_hr"
 }));
 
 // ── Full BGV Report Data (for PDF generation) ─────────────────────────────────
-router.get("/report/full", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/report/full", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
   await requireBgvCandidateScope(req, candidateId);

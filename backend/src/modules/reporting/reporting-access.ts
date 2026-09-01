@@ -17,7 +17,15 @@ const ROLE_ALIASES: Record<string, string[]> = {
   payroll_head: ["payroll"],
   payroll_branch: ["payroll"],
   payroll_hr: ["payroll"],
-  recruitment_hr: ["recruiter"],
+  // HR-family roles that were missing aliases → got zero access to all 20 HR
+  // operational reports and 4-5 BPO master catalog reports. Fixed migration 1646.
+  hr_admin: ["hr"],
+  ho_hr: ["hr"],
+  process_hr: ["hr"],
+  // recruitment_hr gains hr alias in addition to recruiter so it picks up all
+  // HR operational reports that recruitment activity depends on (onboarding
+  // tracker, joining report, BGV status, etc.).
+  recruitment_hr: ["hr", "recruiter"],
   quality_analyst: ["quality"],
   qa: ["quality"],
   visitor_security: ["security"],

@@ -380,8 +380,11 @@ export async function canViewEmployeeBgv(
     return true;
   }
 
-  // HR and payroll_hr can view employees in their branch/process scope
-  if (actorRoles.includes("hr") || actorRoles.includes("payroll_hr") || actorRoles.includes("branch_head")) {
+  // HR and payroll_hr can view employees in their branch/process scope.
+  // All HR-family roles (branch_hr, hr_admin, ho_hr, process_hr, recruitment_hr)
+  // are treated the same as hr — branch-scoped access enforced below.
+  const HR_ROLES = ["hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr", "branch_head"];
+  if (actorRoles.some((r) => HR_ROLES.includes(r))) {
     // Get actor's scope
     const [actorRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.branch_id, e.process_id FROM employees e WHERE e.user_id = ? LIMIT 1`,
