@@ -250,6 +250,7 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "daily-hc-shift": [...dateFilters, ...branchProcess],
     "shift-adherence-detail": [...dateFilters, ...branchProcess],
     "attendance-summary": [...monthFilter, ...branchProcess],
+    "attendance-register-monthly": [...monthFilter, ...branchProcess],
     "attendance-register-grid": [...monthFilter, ...branchProcess],
     "late-arrival-summary": [...monthFilter, ...branchProcess],
     "overtime-summary": [...monthFilter, ...branchProcess],
@@ -1022,7 +1023,11 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
     setCurrentPage(1);
     setReportState("idle");
     setErrorMessage("");
-    setFilterValues({});
+    setFilterValues(
+      r.defaultFilters
+        ? Object.fromEntries(Object.entries(r.defaultFilters).map(([k, v]) => [k, String(v)]))
+        : {}
+    );
     setDuplicateInfo({ hasDuplicates: false, duplicateCount: 0 });
     const next = [r.code, ...recentCodes.filter(c => c !== r.code)].slice(0, 8);
     setRecentCodes(next);
