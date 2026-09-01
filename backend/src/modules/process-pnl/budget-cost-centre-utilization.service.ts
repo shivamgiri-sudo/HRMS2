@@ -155,8 +155,29 @@ export const budgetCostCentreUtilizationService = {
     // as ITC is never a real P&L cost. Summing amount_with_tax here compared a tax-inclusive
     // figure against the line's tax-basis-correct counter, which is exactly why this tab's
     // Consumed could exceed the Variance tab's by the GST portion on every ITC-eligible GRN —
-    // live-verified 2026-09-01: eliminated a combined ~Rs 78,000 of the drift across 5 budgets,
-    // the largest being Rs 52,240 on one branch's active budget.
+    // live-verified 2026-09-01: eliminated Rs 90,629 of drift across 5 budgets, the largest being
+    // Rs 52,241 on one branch's active budget. (Corrected 2026-09-01: first reported as "~Rs
+    // 78,000" from a hand-summed subset; the actual sum of all 5 affected budgets is Rs 90,629 —
+    // re-verified independently against live data before correcting this comment.)
+    //
+    // RESIDUAL, deliberately not chased further — re-verified 2026-09-01, not caused by this
+    // query or by the simple-GRN fallback below:
+    //   - One budget's Reserved figure still disagrees by Rs 4,662 (two lines, Rs 4,275 + Rs 387).
+    //     Traced to two GRNs (is_multi_month = 1) whose grn_cost_allocation.pnl_cost_amount is the
+    //     GRN's full committed amount (matches what reserve() should charge — confirmed via
+    //     grn_period_allocation, which spreads that SAME full amount's P&L recognition across 2-3
+    //     months for reporting only, not the reservation itself), while finance_budget_line's own
+    //     reserved_amount counter is short by exactly that much. The discrepancy is in whatever
+    //     wrote the line counter historically (2026-08-24/27), not in how either figure is read
+    //     here — no reserve()/consume() call arguments survive to reconstruct why.
+    //   - Four budgets' Consumed figures disagree by a combined Rs 4,970 (Rs 2,159/1,143/958/710),
+    //     each spanning 3-5 small GRNs with no multi-month or funded-elsewhere involvement — same
+    //     "allocation sum exceeds the line counter" shape, no common cause found.
+    //   - Total unreconciled: Rs 9,632 across 5 of the ~29 live budgets. Small enough, and old
+    //     enough (all pre-dating this session), that it reads as accumulated historical drift
+    //     rather than a live bug — but it is real money that does not currently reconcile, and a
+    //     one-time correction script (in the fix-imprest-reattribute.ts / fix-grn-*.ts family)
+    //     would be the right way to close it if Finance wants it closed rather than monitored.
     const [spendRows] = await db.query<RowDataPacket[]>(
       `SELECT g.cost_centre_id AS cost_centre_id, l.head AS head, l.sub_head AS sub_head,
               SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,

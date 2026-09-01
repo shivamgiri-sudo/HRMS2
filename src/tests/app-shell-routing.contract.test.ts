@@ -51,7 +51,6 @@ describe("application shell routing contracts", () => {
       ["Name Consistency", "/ats/name-consistency"],
       ["ATS Reconciliation", "/ats/reconciliation"],
       ["ATS Extensions", "/ats/extensions"],
-      ["Enhanced BGV", "/ats/bgv-enhanced"],
       ["Attendance Integrity", "/wfm/attendance-integrity"],
       ["WFM Manager Approvals", "/wfm-manager-approvals"],
       ["KPI Master", "/kpi-master"],
@@ -309,6 +308,11 @@ describe("application shell routing contracts", () => {
       "/payroll/salary-disputes/queue",
       "/payroll/salary-disputes/team",
       "/payroll/salary-package-manager",
+      //   /ats/bgv-enhanced, /ats/bgv-report -> /ats/bgv (in navConfig). Both pages were
+      //   retired by c0203458; the routes stay only so old bookmarks land on the canonical
+      //   BGV verification center.
+      "/ats/bgv-enhanced",
+      "/ats/bgv-report",
 
       // (d2) ⚠️ Gated shut, so a menu entry would be a dead link. FINANCE_CLIENT_PAYMENTS has
       // NO page_catalog row and ZERO role grants, so <Gate> denies every user — the page is
