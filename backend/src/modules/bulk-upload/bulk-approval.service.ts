@@ -298,6 +298,10 @@ export async function getBatch(batchId: string): Promise<BatchRecord> {
  * same file, and hasAnyRole returns true for super_admin unconditionally.
  */
 export async function assertCanApprove(userId: string, batch: BatchRecord): Promise<void> {
+  // super_admin is both maker and checker — can approve their own uploads and
+  // any batch regardless of branch scope.
+  if (await hasAnyRole(userId, "super_admin")) return;
+
   if (batch.uploaded_by && batch.uploaded_by === userId) {
     throw new BulkUploadError(
       "You uploaded this batch, so you cannot approve it. A different Branch Head must review it.",
@@ -312,9 +316,6 @@ export async function assertCanApprove(userId: string, batch: BatchRecord): Prom
       403,
     );
   }
-
-  // super_admin reaches every branch queue; the self-approval check above already ran.
-  if (await hasAnyRole(userId, "super_admin")) return;
 
   const inScope = await hasScopedAccess(
     userId,
