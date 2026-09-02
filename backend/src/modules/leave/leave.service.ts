@@ -22,6 +22,7 @@ import type {
 import type {
   CreateHolidayInput,
   CreateLeaveTypeInput,
+  UpdateHolidayScopeInput,
   LeaveRequestFilters,
   LeaveRequestInput,
   ReviewLeaveInput,
@@ -108,6 +109,58 @@ async function applyBalanceDeduction(
       `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
        VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
       [employeeId, leaveTypeId, year, days]
+    );
+  }
+}
+
+/**
+ * Write a holiday's cost-centre / designation narrowing on the caller's
+ * transaction.
+ *
+ * Contract, dictated by how the attendance engine reads these tables
+ * (attendance-engine.service.ts resolveOverridePriority, and the matching
+ * classifier in shared/leaveChargeableDays.ts):
+ *
+ *   NOT EXISTS (any mapping row for this holiday)  => applies to everyone
+ *   OR EXISTS  (a row matching the employee)       => applies to them
+ *
+ * So writing ZERO rows is meaningful — it is the "whole branch" case — and
+ * writing rows is what narrows the holiday. The engine does not filter on
+ * is_active or is_mandatory, so this only ever writes live rows and leaves
+ * is_mandatory at its 0 default; a caller who wants a holiday removed for a
+ * scope must simply not list that scope.
+ *
+ * branch_id is stamped on the cost-centre rows for traceability only — the
+ * engine matches on cost_centre_id and reads branch scope from
+ * leave_holiday_master.branch_id.
+ */
+async function writeHolidayScope(
+  conn: any,
+  holidayId: string,
+  branchId: string | null,
+  scope: { costCentreIds: string[]; designationIds: string[] },
+  actorId: string | null
+): Promise<void> {
+  // De-duplicate: holiday_cost_centre_mapping has no unique key on
+  // (holiday_id, cost_centre_id), so a repeated id in the payload would insert
+  // twice and make the scope look larger than it is in the list response.
+  const costCentreIds = [...new Set(scope.costCentreIds)];
+  const designationIds = [...new Set(scope.designationIds)];
+
+  for (const costCentreId of costCentreIds) {
+    await conn.execute(
+      `INSERT INTO holiday_cost_centre_mapping
+         (id, holiday_id, branch_id, cost_centre_id, is_active, created_by)
+       VALUES (?, ?, ?, ?, 1, ?)`,
+      [randomUUID(), holidayId, branchId, costCentreId, actorId]
+    );
+  }
+  for (const designationId of designationIds) {
+    await conn.execute(
+      `INSERT INTO holiday_designation_mapping
+         (id, holiday_id, designation_id, is_active, created_by)
+       VALUES (?, ?, ?, 1, ?)`,
+      [randomUUID(), holidayId, designationId, actorId]
     );
   }
 }
@@ -1118,20 +1171,121 @@ export const leaveService = {
     if (year) { sql += " AND YEAR(holiday_date) = ?"; params.push(year); }
     sql += " ORDER BY holiday_date ASC";
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    return rows as LeaveHoliday[];
+    const holidays = rows as LeaveHoliday[];
+    if (holidays.length === 0) return holidays;
+
+    // Attach the scope narrowing so a caller can see WHY a holiday does or does
+    // not apply to someone. Without this the list looks identical whether a
+    // holiday is branch-wide or restricted to one cost centre — which is how
+    // the Aug-2026 holidays read as saved-correctly while covering the whole
+    // branch. Empty arrays mean branch-wide, matching the engine's rule.
+    const ids = holidays.map((h) => h.id);
+    const [ccRows] = await db.query<RowDataPacket[]>(
+      `SELECT holiday_id, cost_centre_id FROM holiday_cost_centre_mapping
+        WHERE holiday_id IN (?) AND cost_centre_id IS NOT NULL`,
+      [ids]
+    );
+    const [dgRows] = await db.query<RowDataPacket[]>(
+      `SELECT holiday_id, designation_id FROM holiday_designation_mapping
+        WHERE holiday_id IN (?)`,
+      [ids]
+    );
+    const ccBy = new Map<string, string[]>();
+    for (const r of ccRows as any[]) {
+      const list = ccBy.get(r.holiday_id) ?? [];
+      list.push(r.cost_centre_id);
+      ccBy.set(r.holiday_id, list);
+    }
+    const dgBy = new Map<string, string[]>();
+    for (const r of dgRows as any[]) {
+      const list = dgBy.get(r.holiday_id) ?? [];
+      list.push(r.designation_id);
+      dgBy.set(r.holiday_id, list);
+    }
+    return holidays.map((h) => ({
+      ...h,
+      cost_centre_ids: ccBy.get(h.id) ?? [],
+      designation_ids: dgBy.get(h.id) ?? [],
+    }));
   },
 
-  async createHoliday(input: CreateHolidayInput): Promise<LeaveHoliday> {
+  async createHoliday(input: CreateHolidayInput, createdBy?: string | null): Promise<LeaveHoliday> {
     const id = randomUUID();
-    await db.execute(
-      `INSERT INTO leave_holiday_master (id, holiday_name, holiday_date, holiday_type, branch_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, input.holidayName, input.holidayDate, input.holidayType, input.branchId ?? null]
-    );
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        `INSERT INTO leave_holiday_master (id, holiday_name, holiday_date, holiday_type, branch_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [id, input.holidayName, input.holidayDate, input.holidayType, input.branchId ?? null]
+      );
+      // The mapping rows are written in the SAME transaction as the holiday. A
+      // holiday that exists without the scope its creator chose is worse than
+      // no holiday at all: it silently applies to the entire branch and pays
+      // people who were never meant to get the day off.
+      await writeHolidayScope(conn, id, input.branchId ?? null, {
+        costCentreIds: input.costCentreIds ?? [],
+        designationIds: input.designationIds ?? [],
+      }, createdBy ?? null);
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]
     );
-    return (rows as LeaveHoliday[])[0];
+    const holiday = (rows as LeaveHoliday[])[0];
+    return {
+      ...holiday,
+      cost_centre_ids: input.costCentreIds ?? [],
+      designation_ids: input.designationIds ?? [],
+    };
+  },
+
+  // Replace a holiday's scope wholesale. Used to correct a holiday that was
+  // saved before the scope could be stored at all, and to re-narrow one that
+  // was entered too widely.
+  async updateHolidayScope(
+    holidayId: string,
+    input: UpdateHolidayScopeInput,
+    updatedBy?: string | null
+  ): Promise<LeaveHoliday> {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      "SELECT id, branch_id FROM leave_holiday_master WHERE id = ? LIMIT 1",
+      [holidayId]
+    );
+    const row = (existing as RowDataPacket[])[0] as any;
+    if (!row) throw new Error("Holiday not found");
+
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
+      // Hard DELETE, not is_active = 0. The engine's scope check ignores
+      // is_active entirely — it asks only whether ANY mapping row exists for
+      // the holiday — so a soft-deleted row would keep the holiday narrowed
+      // while matching nobody, silently removing the day from everyone.
+      await conn.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [holidayId]);
+      await conn.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [holidayId]);
+      await writeHolidayScope(conn, holidayId, row.branch_id ?? null, input, updatedBy ?? null);
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [holidayId]
+    );
+    return {
+      ...(rows as LeaveHoliday[])[0],
+      cost_centre_ids: [...new Set(input.costCentreIds)],
+      designation_ids: [...new Set(input.designationIds)],
+    };
   },
 
   // Called by payroll at cycle lock time. Marks all still-pending leave requests
