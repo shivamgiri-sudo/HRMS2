@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { notifyRosterPublished } from "./roster.notifications.js";
+import { isRestPolicyFeatureActive, validateMinimumRest, applyRestDecision } from "../wfm/rest-policy.service.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -430,16 +431,53 @@ export const rosterGovernanceService = {
     }
   },
 
-  async bulkUpsertAssignments(cycleId: string, assignments: BulkAssignRow[], userId: string, req?: Request): Promise<{ upserted: number; errors: string[] }> {
+  async bulkUpsertAssignments(cycleId: string, assignments: BulkAssignRow[], userId: string, req?: Request): Promise<{ upserted: number; errors: string[]; warnings: string[] }> {
     const cycle = await this.getCycle(cycleId);
     if (!EDITABLE_ASSIGNMENT_STATUSES.has(cycle.status)) {
       throw Object.assign(new Error("Published/active roster assignments cannot be bulk-overwritten; use controlled roster-change workflow"), { statusCode: 409 });
     }
     let upserted = 0;
     const errors: string[] = [];
+    const warnings: string[] = [];
+
+    // Gate the REST-policy check once per batch — skipped entirely when the
+    // migration that adds wfm_minimum_rest_policy has not been applied.
+    const restPolicyFeatureActive = await isRestPolicyFeatureActive();
+
     for (const row of assignments) {
       try {
         await this.validateAssignment(cycle, row);
+
+        // ── Non-blocking REST check (manual assignments must not be silently
+        //    skipped; WFM must be able to override — violations surface as
+        //    warnings only, never as write blockers).
+        if (restPolicyFeatureActive && row.shift_template_id) {
+          const [shiftRows] = await db.execute<RowDataPacket[]>(
+            `SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1`,
+            [row.shift_template_id]
+          );
+          const shiftTpl = shiftRows[0];
+          if (shiftTpl?.start_time && shiftTpl?.end_time) {
+            const restCheck = await validateMinimumRest(
+              { employeeId: row.employee_id, processId: cycle.process_id, branchId: cycle.branch_id, forDate: String(row.roster_date).slice(0, 10) },
+              { startTime: String(shiftTpl.start_time).slice(0, 5), endTime: String(shiftTpl.end_time).slice(0, 5) }
+            );
+            if (!restCheck.ok) {
+              // applyRestDecision persists a wfm_roster_conflict_log row (warn mode)
+              // or returns !allowed (block mode). Either way, manual writes always
+              // proceed — WFM is the override authority here.
+              await applyRestDecision(restCheck, {
+                employeeId: String(row.employee_id),
+                rosterDate: String(row.roster_date).slice(0, 10),
+              });
+              const msg = restCheck.reason === "REST_POLICY_MISSING"
+                ? `REST warning for emp ${row.employee_id} on ${String(row.roster_date).slice(0, 10)}: no minimum-rest policy configured`
+                : `REST warning for emp ${row.employee_id} on ${String(row.roster_date).slice(0, 10)}: only ${restCheck.actualRestMinutes}min rest against ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min)`;
+              warnings.push(msg);
+            }
+          }
+        }
+
         await db.execute(
           `INSERT INTO roster_daily_assignment
              (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off, is_holiday, notes)
@@ -456,8 +494,8 @@ export const rosterGovernanceService = {
         errors.push(`${row.employee_id}/${row.roster_date}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_ASSIGNMENTS_BULK_UPSERTED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: cycleId, change_summary: { upserted, errors: errors.length, process_id: cycle.process_id }, req });
-    return { upserted, errors };
+    await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_ASSIGNMENTS_BULK_UPSERTED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: cycleId, change_summary: { upserted, errors: errors.length, warnings: warnings.length, process_id: cycle.process_id }, req });
+    return { upserted, errors, warnings };
   },
 
   async acknowledgeRoster(cycleId: string, employeeId: string, userId: string, req?: Request): Promise<{ acknowledged: number }> {

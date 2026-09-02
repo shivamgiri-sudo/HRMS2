@@ -83,7 +83,7 @@ export async function buildCatalogWorkbook(params: CatalogWorkbookParams): Promi
       } else if (c.format === 'number' && !TEXT_KEYS.test(c.key)) {
         const n = Number(raw);
         cell.value = Number.isFinite(n) ? Math.round(n * 100) / 100 : sanitise(raw);
-        if (Number.isFinite(n)) cell.numFmt = '0.##';
+        if (Number.isFinite(n)) cell.numFmt = Number.isInteger(Math.round(n * 100) / 100) ? '0' : '0.##';
       } else {
         cell.value = sanitise(raw);
         if (TEXT_KEYS.test(c.key)) cell.numFmt = '@';

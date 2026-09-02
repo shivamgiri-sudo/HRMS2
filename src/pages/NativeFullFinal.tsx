@@ -385,15 +385,26 @@ function PrepareFFForm({
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
           <b>Computed by the system</b> — pre-filled below where available.
           <ul className="mt-2 space-y-1 text-xs">
-            {(Object.entries(computedFields) as [keyof FFFormState, ComputedComponent][]).map(([key, c]) => (
-              <li key={key}>
-                {fields.find((f) => f.key === key)?.label ?? key}:{" "}
-                {c.status === "computed"
-                  ? INR(c.value)
-                  : <span className="italic text-amber-700">not yet configured — {c.note}</span>
-                }
-              </li>
-            ))}
+            {(Object.entries(computedFields) as [keyof FFFormState, ComputedComponent][]).map(([key, c]) => {
+              // The note is never just decoration — for gratuity in particular, an
+              // uncapped-because-unconfigured warning (Payment of Gratuity Act ceiling)
+              // rides inside this same string when the statutory cap isn't set up. It
+              // used to be dropped entirely once c.status was "computed", so the one
+              // figure most likely to need a second look before approval was the one
+              // silently presented as if there was nothing to check.
+              const isWarning = c.status === "computed" && /uncapped|not.+configured|must be checked/i.test(c.note ?? "");
+              return (
+                <li key={key}>
+                  {fields.find((f) => f.key === key)?.label ?? key}:{" "}
+                  {c.status === "computed" ? INR(c.value) : <span className="italic text-amber-700">not yet configured</span>}
+                  {c.note && (
+                    <span className={`block text-[11px] ${isWarning ? "font-bold text-amber-700" : "text-emerald-700/70"}`}>
+                      {c.note}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -590,6 +601,8 @@ export default function NativeFullFinal() {
   const [loadingFF, setLoadingFF] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [paymentReference, setPaymentReference] = useState("");
+  const [markingPaid, setMarkingPaid] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"info" | "success" | "error">("info");
 
@@ -676,16 +689,24 @@ export default function NativeFullFinal() {
       return showMessage("Provide a reason for the figures that differ from the computed values.", "error");
     setSubmitting(true); setMessage("");
     try {
+      // Field names here must match FfInput (backend/src/modules/exit/ff.service.ts) exactly —
+      // it's camelCase, not the snake_case the rest of this file's local types use. This used
+      // to send snake_case keys the backend read as undefined, which createFF then defaulted
+      // to 0 for every single one — so this call always wrote a ₹0.00 settlement, silently,
+      // with no error: the backend's own consistency check compares expectedNet (computed from
+      // the same all-undefined object) against suppliedNet (also 0), so 0 === 0 passed and the
+      // deviation guard never fired either. NativeExitCommandCenter.tsx's own F&F panel already
+      // used the correct camelCase names, which is why this bug was invisible there.
       await hrmsApi.post(`/api/exit/ff/${selectedRequest.id}`, {
-        calculation_date: form.calculation_date,
-        notice_period_days: toNum(form.notice_period_days),
-        notice_shortfall_days: toNum(form.notice_shortfall_days),
-        notice_recovery: toNum(form.notice_recovery),
-        earned_leave_encashment: 0,
-        gratuity_amount: toNum(form.gratuity_amount),
-        salary_hold: toNum(form.salary_hold),
-        advances_recovery: toNum(form.advances_recovery),
-        net_payable: toNum(form.net_payable),
+        calculationDate: form.calculation_date,
+        noticePeriodDays: toNum(form.notice_period_days),
+        noticeShortfallDays: toNum(form.notice_shortfall_days),
+        noticeRecovery: toNum(form.notice_recovery),
+        earnedLeaveEncashment: 0,
+        gratuityAmount: toNum(form.gratuity_amount),
+        salaryHold: toNum(form.salary_hold),
+        advancesRecovery: toNum(form.advances_recovery),
+        netPayable: toNum(form.net_payable),
         ...(deviating.length > 0 ? { overrideReason: overrideReason.trim() } : {}),
       });
       showMessage("F&F settlement created successfully. Verify statutory/provisional status before approval.", "success");
@@ -706,6 +727,25 @@ export default function NativeFullFinal() {
       setFfCalc({ ...ffCalc, status: "approved", approved_at: new Date().toISOString() });
     } catch (err: unknown) { showMessage((err as Error).message || "Approval failed.", "error"); }
     finally { setApproving(false); }
+  };
+
+  // POST /api/exit/ff/:id/paid — the backend's disbursement-recording step (maker-checker:
+  // markFfPaid refuses when the payer is the same person who approved) had no UI anywhere to
+  // reach it, so an approved settlement could never actually be marked paid through the app,
+  // leaving FF_PAID_BUT_EMPLOYEE_ACTIVE — the check that reads this status — permanently unable
+  // to fire.
+  const markPaid = async () => {
+    if (!ffCalc) return;
+    const reference = paymentReference.trim();
+    if (!reference) return showMessage("A payment reference (bank/UTR/cheque) is required to mark this paid.", "error");
+    setMarkingPaid(true); setMessage("");
+    try {
+      const res = await hrmsApi.post<{ success: boolean; data: FFCalculation }>(`/api/exit/ff/${ffCalc.id}/paid`, { paymentReference: reference });
+      showMessage("F&F recorded as paid.", "success");
+      setFfCalc(res.data ?? { ...ffCalc, status: "paid" });
+      setPaymentReference("");
+    } catch (err: unknown) { showMessage((err as Error).message || "Failed to record payment.", "error"); }
+    finally { setMarkingPaid(false); }
   };
 
   function showMessage(msg: string, type: "info" | "success" | "error") { setMessage(msg); setMessageType(type); }
@@ -1078,6 +1118,32 @@ export default function NativeFullFinal() {
                         }
                         {isCurrentProvisional ? "Approval Blocked (Provisional)" : "Approve F&F Settlement"}
                       </button>
+                    )}
+
+                    {ffCalc.status === "approved" && (
+                      <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <label className="block text-sm font-semibold text-slate-700">
+                          Payment Reference (bank / UTR / cheque)
+                        </label>
+                        <input
+                          type="text"
+                          value={paymentReference}
+                          onChange={(e) => setPaymentReference(e.target.value)}
+                          placeholder="e.g. UTR2026083112345"
+                          className="w-full rounded-xl border px-4 py-2.5 text-sm outline-none focus:border-blue-400"
+                        />
+                        <button
+                          onClick={markPaid}
+                          disabled={markingPaid || !paymentReference.trim()}
+                          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 py-3.5 text-sm font-bold text-white transition-colors hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          {markingPaid ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          Mark Paid
+                        </button>
+                        <p className="text-xs text-slate-400">
+                          Must be recorded by someone other than whoever approved this settlement.
+                        </p>
+                      </div>
                     )}
                   </>
                 )}

@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
   dateLabel,
+  grnDisplayNumber,
   grnStatusTone,
   labelStatus,
   money,
@@ -41,7 +42,8 @@ import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 
 type GrnRow = {
   id: string;
-  grn_number: string;
+  /** NULL until Finance Head approves it — render via grnDisplayNumber(row). */
+  grn_number: string | null;
   grn_type: "vendor" | "imprest";
   invoice_number?: string | null;
   bill_date?: string | null;
@@ -372,7 +374,7 @@ export function GrnSearchWorkspace({
                     onClick={onOpenGrn ? () => onOpenGrn(row.id) : undefined}
                   >
                     <GrnTd>
-                      <span className="font-mono">{row.grn_number}</span>
+                      <span className="font-mono">{grnDisplayNumber(row)}</span>
                       <GrnCellSub>
                         {row.branch_name ?? "—"}
                         {row.is_multi_month ? " · multi-month" : ""}
@@ -422,7 +424,7 @@ export function GrnSearchWorkspace({
                             raiser had no way to send it on again. The endpoint existed. */}
                         {String(row.status).startsWith("returned_") && (
                           <GrnIconButton
-                            aria-label={`Resubmit ${row.grn_number}`}
+                            aria-label={`Resubmit ${grnDisplayNumber(row)}`}
                             disabled={resubmit.isPending}
                             onClick={() => resubmit.mutate(row.id)}
                           >
@@ -434,7 +436,7 @@ export function GrnSearchWorkspace({
                             unclassified, which keeps "not classified" reachable — historical
                             rows are NULL and forcing a guess would be worse than leaving them. */}
                         <GrnIconButton
-                          aria-label={`Change billing status of ${row.grn_number}`}
+                          aria-label={`Change billing status of ${grnDisplayNumber(row)}`}
                           disabled={billingCycle.isPending}
                           onClick={() =>
                             billingCycle.mutate({ id: row.id, next: nextBillingStatus(row.billing_cycle_status) })

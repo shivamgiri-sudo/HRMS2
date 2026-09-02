@@ -16,6 +16,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import {
+  pollBatchJob, isBatchJobStarted, describeProgress,
+  type BatchJobStatus,
+} from "@/lib/bulkBatchJob";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsModernShell } from "@/components/ui/hrms-modern";
 
@@ -50,6 +54,12 @@ interface DecidedBatch {
   branch_name: string | null;
 }
 
+interface HistoryBatchFull extends DecidedBatch {
+  original_file_name?: string | null;
+  uploaded_by_name?: string | null;
+  submitted_for_approval_at?: string | null;
+}
+
 interface PreviewRow {
   row_no: number;
   normalized_data: Record<string, unknown> | string | null;
@@ -79,6 +89,21 @@ const TYPE_COLOR: Record<string, string> = {
  * What approving actually does, per type. Shown on the confirm step — an approver
  * deducting 400 leave balances deserves to be told that is what the button does.
  */
+const PREFERRED_COLUMNS: Record<string, string[]> = {
+  LEAVE_APPLICATION_BULK:              ["employee_code", "leave_code", "from_date", "to_date", "total_days", "reason"],
+  ATTENDANCE_REGULARIZATION_BULK:      ["employee_code", "session_date", "requested_status", "reason", "reason_code", "dispute_type", "new_punch_in", "new_punch_out", "supporting_note"],
+  INCENTIVE_BULK:                      ["employee_code", "incentive_code", "pay_month", "amount", "remarks"],
+  DEDUCTION_BULK:                      ["employee_code", "deduction_type_code", "run_month", "amount", "description", "is_prorated"],
+};
+
+function sortColumns(cols: string[], typeCode: string): string[] {
+  const preferred = PREFERRED_COLUMNS[typeCode] ?? [];
+  return [
+    ...preferred.filter((c) => cols.includes(c)),
+    ...cols.filter((c) => !preferred.includes(c)),
+  ];
+}
+
 const TYPE_EFFECT: Record<string, string> = {
   ATTENDANCE_REGULARIZATION_BULK:
     "Approving applies each correction to the employee's attendance record.",
@@ -148,6 +173,16 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/**
+ * How a decision ended, returned rather than written straight to state: load()
+ * clears the error banner, so anything set before the reload would vanish before
+ * the approver could read it.
+ */
+interface Outcome {
+  notice: string;
+  error?: string;
+}
+
 export default function BulkUploadApprovals() {
   const [pending, setPending] = useState<PendingBatch[]>([]);
   const [history, setHistory] = useState<DecidedBatch[]>([]);
@@ -160,6 +195,14 @@ export default function BulkUploadApprovals() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [deciding, setDeciding] = useState<"approve" | "reject" | null>(null);
+  // Live progress of a decision running on the server. The request that started it
+  // returned immediately; this is what the approver watches instead of a spinner
+  // that used to end in a 502.
+  const [decisionProgress, setDecisionProgress] = useState<BatchJobStatus | null>(null);
+
+  const [openHistoryBatch, setOpenHistoryBatch] = useState<HistoryBatchFull | null>(null);
+  const [historyRows, setHistoryRows] = useState<PreviewRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -189,6 +232,7 @@ export default function BulkUploadApprovals() {
 
   const openPreview = useCallback(async (batch: PendingBatch) => {
     setOpenBatch(batch);
+    setDecisionProgress(null);
     setRemarks("");
     setPreviewRows([]);
     setPreviewLoading(true);
@@ -206,6 +250,60 @@ export default function BulkUploadApprovals() {
     }
   }, []);
 
+  const openHistoryPreview = useCallback(async (batch: HistoryBatchFull) => {
+    setOpenHistoryBatch(batch);
+    setHistoryRows([]);
+    setHistoryLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data?: PreviewRow[]; message?: string }>(
+        `/api/bulk-upload/approvals/batches/${batch.id}/preview`,
+      );
+      if (!res.success) throw new Error(res.message || "Could not load the batch rows.");
+      setHistoryRows(res.data ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load batch detail.");
+      setOpenHistoryBatch(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  /**
+   * Wait out a decision that is running on the server and report how it ended.
+   *
+   * Shared by decide() and by the resume path below, because a batch found already
+   * 'approving' (the approver reloaded the page, or a previous attempt hit the old
+   * 502) has to be followed in exactly the same way.
+   */
+  const trackDecision = useCallback(
+    async (batchId: string, decision: "approve" | "reject"): Promise<Outcome> => {
+      const final = await pollBatchJob(
+        `/api/bulk-upload/approvals/batches/${batchId}/job-status`,
+        { onProgress: setDecisionProgress },
+      );
+
+      if (final.phase === "failed") {
+        throw new Error(final.error ?? final.message ?? `Could not ${decision} this batch.`);
+      }
+
+      const result = final.result as
+        | { message?: string; failed?: number; errors?: string[] }
+        | undefined;
+      const failed = result?.failed ?? final.progress?.failed ?? 0;
+      const summary =
+        result?.message ??
+        final.message ??
+        `Batch ${final.approval_status ?? `${decision}d`}.`;
+
+      if (failed > 0) {
+        const firstErrors = (result?.errors ?? final.errors ?? []).slice(0, 3).join(" | ");
+        return { notice: summary, error: firstErrors ? `${summary} First errors: ${firstErrors}` : summary };
+      }
+      return { notice: summary };
+    },
+    [],
+  );
+
   const decide = useCallback(
     async (decision: "approve" | "reject") => {
       if (!openBatch) return;
@@ -220,37 +318,107 @@ export default function BulkUploadApprovals() {
           : `Reject ${openBatch.upload_batch_no}? The staged rows will be cancelled and nothing will be applied.`;
       if (!window.confirm(confirmText)) return;
 
+      const batchId = openBatch.id;
       setDeciding(decision);
       setError("");
+      setDecisionProgress(null);
       try {
-        // The decision runs every domain engine row by row, which for a large batch
-        // takes far longer than the default client timeout.
+        // The server no longer applies the rows inside this request. It validates,
+        // claims the batch, answers 202 and keeps working — which is what stopped a
+        // large batch from dying on nginx's 60s proxy timeout with a 502 while the
+        // approval was in fact running fine. The outcome is collected by polling.
         const res = await hrmsApi.post<{
           success: boolean;
+          processing?: boolean;
+          total_rows?: number | null;
           approval_status?: string;
           applied?: number;
           failed?: number;
           errors?: string[];
           message?: string;
         }>(
-          `/api/bulk-upload/approvals/batches/${openBatch.id}/${decision}`,
+          `/api/bulk-upload/approvals/batches/${batchId}/${decision}`,
           { remarks: remarks.trim() },
-          300000,
+          60000,
         );
-        if (res.message && res.failed) {
-          setError(`${res.message} First errors: ${(res.errors ?? []).slice(0, 3).join(" | ")}`);
+
+        let outcome: Outcome;
+        if (isBatchJobStarted(res)) {
+          setDecisionProgress({
+            phase: "running",
+            progress: {
+              total: res.total_rows ?? null,
+              processed: 0,
+              succeeded: 0,
+              failed: 0,
+            },
+          });
+          outcome = await trackDecision(batchId, decision);
+        } else {
+          // An API that has not been updated yet still answers synchronously.
+          // isBatchJobStarted is a type predicate, so this branch narrows `res` to
+          // Exclude<…, BatchJobStarted>, which collapses to `never` — the 202 shape is a
+          // structural subset of the synchronous one. Read the sync body off its own alias.
+          const sync = res as { failed?: number; errors?: string[]; message?: string };
+          outcome = {
+            notice: sync.message ?? `Batch ${decision}d.`,
+            error:
+              sync.message && sync.failed
+                ? `${sync.message} First errors: ${(sync.errors ?? []).slice(0, 3).join(" | ")}`
+                : undefined,
+          };
         }
-        setNotice(res.message ?? `Batch ${decision}d.`);
         setOpenBatch(null);
+        // Reload first — load() resets the error banner, so the outcome is written
+        // after it or it would be wiped before anyone read it.
         await load();
+        setNotice(outcome.notice);
+        if (outcome.error) setError(outcome.error);
       } catch (err) {
-        setError(err instanceof Error ? err.message : `Could not ${decision} this batch.`);
+        const message = err instanceof Error ? err.message : `Could not ${decision} this batch.`;
+        await load();
+        setError(message);
       } finally {
         setDeciding(null);
+        setDecisionProgress(null);
       }
     },
-    [openBatch, remarks, load],
+    [openBatch, remarks, load, trackDecision],
   );
+
+  /**
+   * Follow a decision that was already running when this page loaded.
+   *
+   * Before the work was moved off the request, a batch cut off by the proxy timeout
+   * stayed claimed as 'approving' with nothing watching it, and the approver's only
+   * evidence was the 502. Now the queue picks it back up and reports how it ends,
+   * whether this browser started it or not.
+   */
+  useEffect(() => {
+    const inFlight = pending.find((b) => b.batch_status === "approving");
+    if (!inFlight || deciding) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const final = await pollBatchJob(
+          `/api/bulk-upload/approvals/batches/${inFlight.id}/job-status`,
+          { intervalMs: 5000 },
+        );
+        if (cancelled) return;
+        if (final.phase !== "running") {
+          setNotice(
+            final.message ??
+              `Batch ${inFlight.upload_batch_no} finished (${final.approval_status ?? final.phase}).`,
+          );
+          await load();
+        }
+      } catch {
+        // A batch someone else is deciding is not this screen's error to report.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pending, deciding, load]);
 
   const previewColumns = useMemo(() => {
     const cols = new Set<string>();
@@ -259,8 +427,18 @@ export default function BulkUploadApprovals() {
         parseJson<Record<string, unknown>>(row.raw_data) ?? {};
       for (const key of Object.keys(data)) cols.add(key);
     }
-    return [...cols];
-  }, [previewRows]);
+    return sortColumns([...cols], openBatch?.upload_type_code ?? "");
+  }, [previewRows, openBatch]);
+
+  const historyPreviewColumns = useMemo(() => {
+    const cols = new Set<string>();
+    for (const row of historyRows.slice(0, 50)) {
+      const data = parseJson<Record<string, unknown>>(row.normalized_data) ??
+        parseJson<Record<string, unknown>>(row.raw_data) ?? {};
+      for (const key of Object.keys(data)) cols.add(key);
+    }
+    return sortColumns([...cols], openHistoryBatch?.upload_type_code ?? "");
+  }, [historyRows, openHistoryBatch]);
 
   return (
     <DashboardLayout>
@@ -345,6 +523,15 @@ export default function BulkUploadApprovals() {
                       {batch.original_file_name && (
                         <p className="text-xs text-slate-400 truncate max-w-[180px]">{batch.original_file_name}</p>
                       )}
+                      {batch.batch_status === "approving" && (
+                        // A batch mid-decision used to look identical to an untouched one,
+                        // so the only way to discover it was to click Approve and get a
+                        // bare 409. Say so on the row instead.
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Being decided now
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3">
                       <TypeBadge code={batch.upload_type_code} />
@@ -408,7 +595,11 @@ export default function BulkUploadApprovals() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {history.map((batch) => (
-                  <tr key={batch.id} className="transition-colors duration-150 hover:bg-slate-50/60">
+                  <tr
+                    key={batch.id}
+                    className="transition-colors duration-150 hover:bg-indigo-50/40 cursor-pointer"
+                    onClick={() => void openHistoryPreview(batch as HistoryBatchFull)}
+                  >
                     <td className="px-5 py-3 font-semibold text-slate-800">{batch.upload_batch_no}</td>
                     <td className="px-5 py-3">
                       <TypeBadge code={batch.upload_type_code} />
@@ -429,7 +620,10 @@ export default function BulkUploadApprovals() {
 
       {/* Preview / decision drawer */}
       {openBatch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]"
+          onClick={(e) => { if (e.target === e.currentTarget && deciding === null) setOpenBatch(null); }}
+        >
           <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200/80">
             {/* Drawer header with gradient accent */}
             <div className="relative overflow-hidden rounded-t-2xl">
@@ -534,6 +728,55 @@ export default function BulkUploadApprovals() {
                   placeholder="Verified against the branch attendance register for August 2026"
                 />
               </label>
+              {deciding && (() => {
+                // Two genuinely different states, and they must not look the same. Once the
+                // server reports a row count the bar is a real measure; before that it is a
+                // placeholder, and claiming "15%" to a screen reader would be a lie. So the
+                // determinate case carries aria-valuenow and the indeterminate case omits it,
+                // which is exactly what the ARIA progressbar role uses to tell them apart.
+                const progress = decisionProgress?.progress;
+                const verb = deciding === "approve" ? "Applying" : "Rejecting";
+                const label = describeProgress(progress, verb);
+                const failedRows = progress?.failed ?? 0;
+                const percent =
+                  progress?.total && progress.processed !== null
+                    ? Math.min(100, Math.round(((progress.processed ?? 0) / progress.total) * 100))
+                    : null;
+                return (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    {/* Polite, not assertive: this updates every couple of seconds and must
+                        not interrupt an approver who is still reading the row list. */}
+                    <p className="text-xs font-semibold text-indigo-900" aria-live="polite">
+                      {label}
+                    </p>
+                    {failedRows > 0 && (
+                      <span className="text-xs font-semibold text-rose-600">
+                        {failedRows} failed
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    role="progressbar"
+                    aria-label={verb}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    {...(percent !== null ? { "aria-valuenow": percent } : {})}
+                    aria-valuetext={label}
+                    className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100"
+                  >
+                    <div
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-500 motion-reduce:transition-none"
+                      style={{ width: `${percent ?? 15}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-indigo-700/80">
+                    This runs on the server one row at a time. You can leave this page open —
+                    if you close it, the batch keeps processing and the queue will show the result.
+                  </p>
+                </div>
+                );
+              })()}
               <div className="flex items-center justify-between">
                 <p className="text-xs text-slate-400">
                   {openBatch.imported_rows} row{openBatch.imported_rows !== 1 ? "s" : ""} will be{" "}
@@ -542,6 +785,14 @@ export default function BulkUploadApprovals() {
                   )}
                 </p>
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={deciding !== null}
+                    onClick={() => setOpenBatch(null)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="button"
                     disabled={deciding !== null}
@@ -562,6 +813,121 @@ export default function BulkUploadApprovals() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* History detail drawer */}
+      {openHistoryBatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
+          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200/80">
+            <div className="relative overflow-hidden rounded-t-2xl">
+              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-slate-500 via-slate-400 to-slate-300" />
+              <div className="flex items-start justify-between px-6 py-4 pt-5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100">
+                    <FileCheck className="h-5 w-5 text-slate-600" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-bold text-slate-900">{openHistoryBatch.upload_batch_no}</h3>
+                      <TypeBadge code={openHistoryBatch.upload_type_code} />
+                      <StatusBadge status={openHistoryBatch.approval_status} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {openHistoryBatch.branch_name ?? "—"} · Decided {formatDateTime(openHistoryBatch.approved_at)}
+                    </p>
+                    {openHistoryBatch.approval_remarks && (
+                      <p className="mt-1 text-xs text-slate-600 italic">"{openHistoryBatch.approval_remarks}"</p>
+                    )}
+                    {openHistoryBatch.error_summary && (
+                      <p className="mt-1 text-xs text-amber-700">{openHistoryBatch.error_summary}</p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenHistoryBatch(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
+              {historyLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600" />
+                  <span className="ml-3 text-sm text-slate-500">Loading rows…</span>
+                </div>
+              ) : historyRows.length === 0 ? (
+                <p className="py-8 text-center text-sm text-slate-400">No row data available.</p>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 rounded-lg">
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">#</th>
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">Employee</th>
+                      {historyPreviewColumns.map((c) => (
+                        <th key={c} className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">{c}</th>
+                      ))}
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {historyRows.map((row) => {
+                      const data =
+                        parseJson<Record<string, unknown>>(row.normalized_data) ??
+                        parseJson<Record<string, unknown>>(row.raw_data) ?? {};
+                      const errs = parseJson<string[]>(row.error_messages);
+                      const isApplied = row.row_status === "imported";
+                      const isErr = row.row_status === "error";
+                      return (
+                        <tr
+                          key={row.row_no}
+                          className={isErr ? "bg-rose-50/60" : isApplied ? "bg-emerald-50/30" : "hover:bg-slate-50/60"}
+                        >
+                          <td className="px-3 py-2 font-medium text-slate-400">{row.row_no}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">
+                            {row.employee_name ?? <span className="text-slate-400">—</span>}
+                          </td>
+                          {historyPreviewColumns.map((c) => (
+                            <td key={c} className="px-3 py-2 text-slate-700">
+                              {String(data[c] ?? "")}
+                            </td>
+                          ))}
+                          <td className="px-3 py-2">
+                            {isApplied ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                                <CheckCircle2 className="h-3 w-3" />
+                                applied
+                              </span>
+                            ) : isErr ? (
+                              <span className="inline-flex items-center gap-1 text-rose-600 font-medium">
+                                <XCircle className="h-3 w-3 shrink-0" />
+                                {Array.isArray(errs) ? errs[0] : "failed"}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">{row.row_status}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end border-t border-slate-100 bg-slate-50/60 px-6 py-3 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => setOpenHistoryBatch(null)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

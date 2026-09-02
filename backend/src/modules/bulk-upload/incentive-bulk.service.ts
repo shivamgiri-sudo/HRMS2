@@ -21,9 +21,10 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeMonth,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeMonth,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
+import { withBulkLockRetry } from "./lock-retry.js";
 
 export const ENTITY_TYPE = "incentive_upload_line";
 
@@ -107,7 +108,7 @@ export async function importIncentiveBatch(
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp) validationError = `employee_code "${d.employee_code}" not found or not active`;
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
     else if (!code) validationError = "incentive_code is required";
     else if (!master) {
       validationError =
@@ -241,29 +242,31 @@ export async function applyIncentiveBatch(
 
   for (const incentiveBatchId of incentiveBatches) {
     try {
-      const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE incentive_upload_batch
-            SET status = 'approved', updated_at = NOW()
-          WHERE id = ? AND status = 'pending_approval'`,
-        [incentiveBatchId],
-      );
-      if (res.affectedRows === 0) {
-        throw new Error("incentive batch is no longer pending approval");
-      }
-      // The approval step row the Incentives screen reads, so a bulk-approved batch
-      // shows the same chain history as one approved through that screen.
-      await db.execute(
-        // actioned_by is STORED GENERATED from approver_user_id — naming it in the
-        // column list makes MySQL reject the INSERT outright.
-        `INSERT INTO incentive_approval_step
-           (id, batch_id, step_number, required_role, approver_user_id, status, remarks,
-            decided_at, actioned_at)
-         VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
-        [
-          randomUUID(), incentiveBatchId, approverUserId,
-          remarks ?? `Branch Head bulk approval (${batch.upload_batch_no})`,
-        ],
-      );
+      await withBulkLockRetry(async () => {
+        const [res] = await db.execute<ResultSetHeader>(
+          `UPDATE incentive_upload_batch
+              SET status = 'approved', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [incentiveBatchId],
+        );
+        if (res.affectedRows === 0) {
+          throw new Error("incentive batch is no longer pending approval");
+        }
+        // The approval step row the Incentives screen reads, so a bulk-approved batch
+        // shows the same chain history as one approved through that screen.
+        await db.execute(
+          // actioned_by is STORED GENERATED from approver_user_id — naming it in the
+          // column list makes MySQL reject the INSERT outright.
+          `INSERT INTO incentive_approval_step
+             (id, batch_id, step_number, required_role, approver_user_id, status, remarks,
+              decided_at, actioned_at)
+           VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
+          [
+            randomUUID(), incentiveBatchId, approverUserId,
+            remarks ?? `Branch Head bulk approval (${batch.upload_batch_no})`,
+          ],
+        );
+      });
       void logSensitiveAction({
         actor_user_id: approverUserId,
         actor_role: "branch_head",
@@ -280,17 +283,22 @@ export async function applyIncentiveBatch(
     }
   }
 
-  for (const row of rows) {
-    await lockEntity({
+  // One statement per chunk rather than one per row. This loop is a bare INSERT with no
+  // other per-row work to amortise it, so at 1,000 rows it was 1,000 sequential round trips
+  // holding a pooled connection throughout - pure latency, and a long collision window
+  // against any other batch touching bulk_upload_locked_entity. Same writes, same
+  // idempotency, one trip per 500 rows.
+  await lockEntities(
+    rows.map((row) => ({
       entityType: ENTITY_TYPE,
       entityId: row.created_entity_id,
       batchId: batch.id,
       batchNo: batch.upload_batch_no,
       employeeId: null,
       lockedBy: approverUserId,
-    });
-    applied++;
-  }
+    })),
+  );
+  applied += rows.length;
 
   return { applied, failed, errors };
 }

@@ -13,6 +13,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import { calculateWeekoffEligibility } from "../../payroll/weekoff-eligibility.service.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -29,6 +30,50 @@ import {
   statusList,
   LEAVE_STATUSES,
 } from "../../../shared/attendanceStatus.js";
+
+/**
+ * Shared "what shift name do we show for this roster row" expression, used by every report
+ * below that joins wra/ws/wst. Fixes a real gap: the spreadsheet roster-importer's commit path
+ * (roster-import.service.ts) writes wfm_roster_assignment.shift_start_time/shift_end_time
+ * directly from the parsed cell and never sets shift_id or shift_template_id (there is no shift
+ * master/template row to link to — the time comes straight off the sheet). Before this, that
+ * left ws.shift_name and wst.shift_name both NULL for every imported row, so these reports
+ * showed 'Roster Not Assigned' even for a roster that was genuinely uploaded and committed.
+ *
+ * Resolution order, mirroring roster-view.service.ts's cellLabel() (the roster table screen,
+ * which already handles this correctly):
+ *   1. wst.shift_name       — cycle-based roster generator (shift_template_id)
+ *   2. ws.shift_name        — legacy/manual-assign path (shift_id)
+ *   3. wra's own start/end  — spreadsheet import path, no shift master row exists
+ *   4. wra.assignment_type  — non-shift day types (WEEK_OFF/LEAVE/HOLIDAY/etc.) that never
+ *                             carry a shift by definition
+ *   5. 'Roster Not Assigned' — only when wra has no row for this employee+date at all, or
+ *                             (SHIFT type only) is missing every timing source above.
+ */
+const ROSTER_SHIFT_NAME_SQL = `COALESCE(
+           wst.shift_name,
+           ws.shift_name,
+           CASE WHEN wra.shift_start_time IS NOT NULL AND wra.shift_end_time IS NOT NULL
+                THEN CONCAT(wra.shift_start_time, '-', wra.shift_end_time) END,
+           CASE WHEN wra.assignment_type IN ('WEEK_OFF','LEAVE','HOLIDAY','TRAINING','ABSENT','HALF_DAY','UNSCHEDULED')
+                THEN wra.assignment_type END,
+           'Roster Not Assigned'
+         )`;
+
+/**
+ * Cross-midnight-safe minutes between the import path's own shift_start_time/shift_end_time,
+ * for use only where wst/ws (which already carry a correct minutes column) resolve to nothing.
+ * Same formula as 1201_shift_versioning_backfill.sql's scheduled_minutes backfill — a plain
+ * TIMESTAMPDIFF(MINUTE, start, end) goes negative for an overnight shift like 22:00-06:00.
+ */
+const ROSTER_IMPORT_MINUTES_SQL = `(
+           TIME_TO_SEC(
+             CASE WHEN TIME_TO_SEC(CAST(wra.shift_end_time AS TIME)) <= TIME_TO_SEC(CAST(wra.shift_start_time AS TIME))
+                  THEN ADDTIME(CAST(wra.shift_end_time AS TIME), '24:00:00')
+                  ELSE CAST(wra.shift_end_time AS TIME)
+             END
+           ) - TIME_TO_SEC(CAST(wra.shift_start_time AS TIME))
+         ) / 60`;
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -70,42 +115,21 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  *
  * Verified as a no-op on the data by checksumming all 1,124 rows x 50 columns before and after.
  */
-// Payroll-aligned week-off eligibility slab table (mirrors weekoff-eligibility.service.ts).
-// Inline to avoid an async import and the payroll module coupling inside a reporting executor.
-const WEEKOFF_SLABS = [
-  { from: 0,  to: 6,  max: 0 },
-  { from: 7,  to: 11, max: 1 },
-  { from: 12, to: 17, max: 2 },
-  { from: 18, to: 23, max: 3 },
-  { from: 24, to: 25, max: 4 },
-] as const;
-
-function findSlabMaxWeekoffs(paidBase: number): number | undefined {
-  // See findSlabMaxWeekoffs in payroll/weekoff-eligibility.service.ts for the full explanation:
-  // slab boundaries are whole numbers but paidBase is fractional whenever the month has a
-  // half-day or on-duty day, so an exact-integer-range match leaves every boundary value
-  // (6.5, 11.5, 17.5, 23.5) unmatched -- and unmatched was being read as unlimited eligibility,
-  // not zero. Fixed the same way: a slab's upper bound is the next slab's from-field (exclusive),
-  // so the ranges are continuous. Only the last slab keeps its own to-field as a real ceiling.
-  for (let i = 0; i < WEEKOFF_SLABS.length; i++) {
-    const slab = WEEKOFF_SLABS[i];
-    const isLast = i === WEEKOFF_SLABS.length - 1;
-    if (isLast) {
-      if (paidBase >= slab.from && paidBase <= slab.to) return slab.max;
-    } else if (paidBase >= slab.from && paidBase < WEEKOFF_SLABS[i + 1].from) {
-      return slab.max;
-    }
-  }
-  return undefined;
-}
-
-function calcEligibleWeekoffs(paidBase: number, actualSundays: number, daysInMonth: number): number {
-  const availableWorkingDays = daysInMonth - actualSundays;
-  if (paidBase >= availableWorkingDays) return actualSundays;
-  const slabMax = findSlabMaxWeekoffs(paidBase);
-  if (slabMax === undefined) return actualSundays; // paidBase > 25 -> full eligibility
-  return Math.min(slabMax, actualSundays);
-}
+/**
+ * Week-off eligibility is NOT computed here.
+ *
+ * There is one engine for it — calculateWeekoffEligibility() in
+ * payroll/weekoff-eligibility.service.ts — and this report is an add-on to that, not a second
+ * opinion. It used to carry its own copy of the rule (its own slab table and its own
+ * available-working-days check) "to avoid an async import", and the copy drifted: payroll
+ * gained a sixth slab for 5-Sunday months, this one kept five ending at 25, and for 25 present
+ * days plus a half-day (paidBase 25.5) the register said 5 week-offs where payroll pays 4.
+ *
+ * The engine already expresses the rule the right way round — entitlement is relative to the
+ * month, not to fixed day counts: you earn every week-off by covering
+ * daysInMonth - actualWeekoffs. That is 26 days in a 31-day month with 5 Sundays, and 25 in a
+ * 30-day month with 5 Sundays. Anything the engine learns later, this report inherits.
+ */
 
 export async function attendanceRegisterMonthly(
   filters: ExecFilters,
@@ -118,12 +142,6 @@ export async function attendanceRegisterMonthly(
   const firstDay = `${month}-01`;
   const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
 
-  // Count Sundays in the reporting month (payroll week-off denominator).
-  let actualSundays = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    if (new Date(yr, mo - 1, d).getDay() === 0) actualSundays++;
-  }
-
   // Scope and filter conditions apply to the employees table (alias "e").
   // The attendance date range moves to the LEFT JOIN ON clause so employees
   // with no records in the month still appear — their day cells are filled
@@ -133,10 +151,39 @@ export async function attendanceRegisterMonthly(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
-
-  // Date range binds before the WHERE params (JOIN ON is evaluated first in positional binding).
+  // Two-population filter: show all currently-active employees (even if absent
+  // all month) PLUS any inactive employee who actually has an attendance record
+  // during the period. This matches legacy-report behaviour — the legacy showed
+  // employees who worked any day in the month regardless of current status —
+  // without depending on date_of_exit, which is NULL for ~28,000 historical
+  // inactive records in this database (exit date was never backfilled).
+  // EXISTS subquery params go into the WHERE, which is evaluated after the
+  // LEFT JOIN ON clause. unshift puts the JOIN params at the front first, then
+  // the EXISTS params are appended so they bind in the correct positional order.
+  // An inactive employee earns a place in the register by having actually been engaged during
+  // the month — not merely by having a row. Delhi Office put 51 ex-employees into the August
+  // register whose every row was `missing_punch`: an unresolved, unpaid status that maps to
+  // Absent. They arrived with 0 present, 0 leave, 31 absences and sal_days 0 — pure noise that
+  // buries the people who really worked. `absent`, `week_off` and `unreconciled` say the same
+  // thing, so engagement is the positive list below.
+  //
+  // Active employees are unaffected: they are admitted by the first arm regardless of status.
+  // Someone who worked part of the month and then left still appears, which is the whole point
+  // of the two-population rule — their present/leave/holiday days satisfy this list.
+  clauses.push(
+    "(e.active_status = 1 OR EXISTS (" +
+    "  SELECT 1 FROM attendance_daily_record _x" +
+    "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
+    "    AND _x.attendance_status IN " +
+    "        ('present','half_day','on_duty','leave_approved','holiday','week_off_worked')" +
+    "))"
+  );
+  // Exclude employees at inactive branches unless no branch is assigned.
+  clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
+  // JOIN ON binds go to the front (positional order: JOIN before WHERE).
   params.unshift(firstDay, lastDay);
+  // EXISTS binds appended after all other WHERE params.
+  params.push(firstDay, lastDay);
 
   const attSql = `
     SELECT
@@ -158,6 +205,7 @@ export async function attendanceRegisterMonthly(
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+      CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
       e.date_of_joining,
       DAY(adr.record_date) AS day_num,
       adr.attendance_status,
@@ -186,7 +234,7 @@ export async function attendanceRegisterMonthly(
     present:        "P",
     absent:         "A",
     half_day:       "HD",
-    week_off:       "W",
+    week_off:       "A",
     holiday:        "H",
     leave_approved: "L",
     on_duty:        "OD",
@@ -200,15 +248,17 @@ export async function attendanceRegisterMonthly(
   for (const row of attRows) {
     if (!empMap.has(row.employee_id)) {
       empMap.set(row.employee_id, {
-        emp_code:       row.employee_code,
-        bio_code:       row.bio_code,
-        emp_name:       row.emp_name,
-        department:     row.department,
-        designation:    row.designation,
-        profile:        row.profile,
-        cost_center:    row.cost_center,
-        emp_location:   row.emp_location,
-        billable:       row.billable,
+        employee_id:     row.employee_id,
+        emp_code:        row.employee_code,
+        bio_code:        row.bio_code,
+        emp_name:        row.emp_name,
+        department:      row.department,
+        designation:     row.designation,
+        profile:         row.profile,
+        cost_center:     row.cost_center,
+        emp_location:    row.emp_location,
+        billable:        row.billable,
+        employee_status: row.employee_status,
         date_of_joining: row.date_of_joining,
       });
     }
@@ -224,7 +274,7 @@ export async function attendanceRegisterMonthly(
   const todayTs = new Date();
   todayTs.setHours(0, 0, 0, 0);
 
-  const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
+  const pivotRows = await Promise.all(Array.from(empMap.values()).map(async (emp, idx) => {
     // Normalise date_of_joining to midnight for day-boundary comparisons.
     const dojRaw = emp.date_of_joining;
     const doj = dojRaw ? new Date(dojRaw) : null;
@@ -258,22 +308,32 @@ export async function attendanceRegisterMonthly(
       else if (v === "H")  holiday++;
     }
 
-    // Payroll-aligned eligible week-offs (slab-based, mirrors payrollCalculate.service.ts).
+    // Straight from the payroll engine — same function the payslip uses, same policy-backed
+    // slabs, same month-relative "worked every available day" rule.
     const paidBase   = present + hd * 0.5 + od;
-    const eligibleWO = calcEligibleWeekoffs(paidBase, actualSundays, daysInMonth);
-    const salDays    = Math.round((paidBase + eligibleWO + holiday) * 100) / 100;
+    const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, month);
+
+    // Capped at the length of the month. Week-offs are credited on top of paid days, and an
+    // employee who worked every day of the month — including their week-offs — still earns the
+    // week-off entitlement (a worked Sunday is paid AND counts toward entitlement). Added
+    // together that produced sal_days above the calendar month: 31 present + 5 week-offs = 36
+    // in a 31-day August, on 15 rows of the live August register. Salary days can never exceed
+    // the days that exist to be paid for, so the sum is a ceiling, not a running total.
+    const rawSalDays = paidBase + eligibleWO + holiday;
+    const salDays    = Math.round(Math.min(rawSalDays, daysInMonth) * 100) / 100;
 
     return {
-      sno:          idx + 1,
-      emp_code:     emp.emp_code,
-      bio_code:     emp.bio_code,
-      emp_name:     emp.emp_name.trim(),
-      department:   emp.department,
-      designation:  emp.designation,
-      profile:      emp.profile,
-      cost_center:  emp.cost_center,
-      emp_location: emp.emp_location,
-      billable:     emp.billable,
+      sno:             idx + 1,
+      emp_code:        emp.emp_code,
+      bio_code:        emp.bio_code,
+      emp_name:        emp.emp_name.trim(),
+      department:      emp.department,
+      designation:     emp.designation,
+      profile:         emp.profile,
+      cost_center:     emp.cost_center,
+      emp_location:    emp.emp_location,
+      billable:        emp.billable,
+      employee_status: emp.employee_status,
       ...Object.fromEntries(
         Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
       ),
@@ -287,7 +347,7 @@ export async function attendanceRegisterMonthly(
       sal_days:      salDays,
       total:         daysInMonth,
     };
-  });
+  }));
 
   // Slice the caller's page out of the pivot.
   //
@@ -356,8 +416,19 @@ export async function attendanceDaily(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
+  // Same two-population rule as attendanceRegisterMonthly: active employees
+  // always, inactive employees only if they have a record in the date range.
+  clauses.push(
+    "(e.active_status = 1 OR EXISTS (" +
+    "  SELECT 1 FROM attendance_daily_record _x" +
+    "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
+    "))"
+  );
+  // Exclude employees at inactive branches.
+  clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
+  // JOIN ON (adr + session subquery) binds go to the front; EXISTS binds follow.
   params.unshift(from, to, from, to);
+  params.push(from, to);
 
   const base = `SELECT adr.record_date,
          e.employee_code,
@@ -369,9 +440,9 @@ export async function attendanceDaily(
          COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
          desig.designation_name,
          COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
-         COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
-         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time), '%H:%i') AS shift_start,
-         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time), '%H:%i') AS shift_end,
+         ${ROSTER_SHIFT_NAME_SQL} AS shift_name,
+         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)), '%H:%i') AS shift_start,
+         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)), '%H:%i') AS shift_end,
          TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
          TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
          CASE
@@ -385,7 +456,8 @@ export async function attendanceDaily(
          adr.late_by_minutes,
          adr.lwp_value,
          CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
-         adr.is_locked
+         adr.is_locked,
+         CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
     FROM employees e
     LEFT JOIN attendance_daily_record adr
            ON adr.employee_id = e.id
@@ -463,7 +535,7 @@ export async function dailyHcShift(
     SELECT adr.record_date,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
+           ${ROSTER_SHIFT_NAME_SQL} AS shift_name,
            COUNT(*) AS scheduled_headcount,
            SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_count,
            SUM(adr.attendance_status = 'absent') AS absent_count,
@@ -483,7 +555,7 @@ export async function dailyHcShift(
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY adr.record_date, b.branch_name, p.process_name, COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned')
+     GROUP BY adr.record_date, b.branch_name, p.process_name, ${ROSTER_SHIFT_NAME_SQL}
      ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -540,9 +612,9 @@ export async function shiftAdherenceDetail(
          COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
          COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-         COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
-         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time), '%H:%i') AS scheduled_start,
-         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time), '%H:%i') AS scheduled_end,
+         ${ROSTER_SHIFT_NAME_SQL} AS shift_name,
+         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)), '%H:%i') AS scheduled_start,
+         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)), '%H:%i') AS scheduled_end,
          TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
          TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
          CASE
@@ -550,26 +622,27 @@ export async function shiftAdherenceDetail(
            THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
            ELSE NULL
          END AS total_login_duration,
-         COALESCE(wst.productive_minutes, ws.required_minutes, 540) AS scheduled_minutes,
+         COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}, 540) AS scheduled_minutes,
          COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
          adr.late_by_minutes AS late_minutes,
          CASE
-           WHEN agg_ses.latest_punch IS NOT NULL AND COALESCE(wst.end_time, ws.end_time) IS NOT NULL
-                AND TIME(agg_ses.latest_punch) < COALESCE(wst.end_time, ws.end_time)
-           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), COALESCE(wst.end_time, ws.end_time))
+           WHEN agg_ses.latest_punch IS NOT NULL AND COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)) IS NOT NULL
+                AND TIME(agg_ses.latest_punch) < COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME))
+           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)))
            ELSE 0
          END AS early_logout_minutes,
          CASE
-           WHEN COALESCE(wst.productive_minutes, ws.required_minutes) IS NOT NULL AND COALESCE(wst.productive_minutes, ws.required_minutes) > 0
-           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), COALESCE(wst.productive_minutes, ws.required_minutes)) / COALESCE(wst.productive_minutes, ws.required_minutes) * 100, 1)
+           WHEN COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}) IS NOT NULL
+                AND COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}) > 0
+           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL})) / COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}) * 100, 1)
            ELSE NULL
          END AS adherence_pct,
          adr.attendance_status,
          CASE
            WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
-           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}, 540) * 0.85 THEN 'LATE_AND_SHORT'
            WHEN adr.late_mark = 1 THEN 'LATE'
-           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}, 540) * 0.85 THEN 'SHORT'
            ELSE 'ON_TIME'
          END AS adherence_status,
          CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
@@ -643,6 +716,7 @@ export async function attendanceSummary(
            COALESCE(pm.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(acc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(acc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            SUM(adr.attendance_status='present') AS present_days,
            SUM(adr.attendance_status='half_day') AS half_days,
            SUM(adr.attendance_status='absent') AS absent_days,
@@ -657,7 +731,7 @@ export async function attendanceSummary(
       LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-              b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
+              e.active_status, b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
      ORDER BY employee_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -739,8 +813,8 @@ export async function lateArrivalSummary(
            COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-           COALESCE(wst.start_time, ws.start_time) AS scheduled_start,
+           ${ROSTER_SHIFT_NAME_SQL} AS roster_shift,
+           COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) AS scheduled_start,
            was.login_time AS punch_in,
            adr.late_by_minutes AS late_minutes,
            COALESCE(arc.grace_minutes, 15) AS grace_minutes,
@@ -752,7 +826,8 @@ export async function lateArrivalSummary(
              ELSE 'Severe Late'
            END AS late_status,
            CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
-           COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
+           COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -852,7 +927,8 @@ export async function overtimeSummary(
          TIME_FORMAT(SEC_TO_TIME(SUM(
            GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
          ) * 60), '%H:%i') AS overtime_duration,
-         ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay
+         ROUND(COALESCE(MAX(otp.overtime_pay), 0), 0) AS overtime_pay,
+         CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
     FROM attendance_daily_record adr
     JOIN employees e ON e.id = adr.employee_id
     LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -884,7 +960,7 @@ export async function overtimeSummary(
     ) otp ON otp.employee_id = e.id
    WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day','week_off_worked')
    GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-            b.branch_name, p.process_name, d.dept_name, dm.designation_name,
+            e.active_status, b.branch_name, p.process_name, d.dept_name, dm.designation_name,
             occ.cost_centre_code, occ.cost_centre_name
    HAVING overtime_hours > 0
    ORDER BY overtime_hours DESC`;
@@ -1117,6 +1193,7 @@ export async function habitualAbsenteeList(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COUNT(*) AS absent_days
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
@@ -1124,7 +1201,7 @@ export async function habitualAbsenteeList(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
+     GROUP BY e.id, e.employee_code, employee_name, e.active_status, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      HAVING absent_days >= ${Number.isFinite(threshold) && threshold > 0 ? threshold : 3}
      ORDER BY e.id ASC`;
 

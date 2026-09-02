@@ -70,6 +70,15 @@ interface ProcessListResponse { data: { id: string; name: string }[] }
 interface PlanListResponse    { data: RosterPlan[] }
 interface AssignmentResponse  { data: AutoRosterAssignment[] }
 
+type EmployeeRow = {
+  employee_id: string;
+  employee_code: string;
+  employee_name: string;
+  branch_name: string | null;
+  process_name: string | null;
+  days: Record<string, AutoRosterAssignment>;
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function weekStart(date: Date): Date {
@@ -154,6 +163,7 @@ export default function RosterWorkspace() {
 
   const [processId, setProcessId] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
 
   // ── Queries ──────────────────────────────────────────────────────────────
 
@@ -234,15 +244,6 @@ export default function RosterWorkspace() {
     approveMutation.isPending  || publishMutation.isPending;
 
   // ── Grid builder ─────────────────────────────────────────────────────────
-
-  type EmployeeRow = {
-    employee_id: string;
-    employee_code: string;
-    employee_name: string;
-    branch_name: string | null;
-    process_name: string | null;
-    days: Record<string, AutoRosterAssignment>;
-  };
 
   const grid = useMemo<EmployeeRow[]>(() => {
     const map = new Map<string, EmployeeRow>();
@@ -503,7 +504,11 @@ export default function RosterWorkspace() {
               </thead>
               <tbody>
                 {grid.map((emp) => (
-                  <tr key={emp.employee_id} className="hover:bg-teal-50/30 transition-colors">
+                  <tr
+                    key={emp.employee_id}
+                    className="hover:bg-teal-50/30 transition-colors cursor-pointer"
+                    onClick={() => setSelectedEmployee(emp)}
+                  >
                     <td className="sticky left-0 z-10 bg-white border border-slate-100 px-3 py-1.5">
                       <div className="font-medium text-slate-800">{emp.employee_name}</div>
                       <div className="text-slate-400">{emp.employee_code}</div>
@@ -533,6 +538,86 @@ export default function RosterWorkspace() {
         )}
 
       </div>
+
+      {/* Employee detail slide-over drawer */}
+      {selectedEmployee && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/20"
+            onClick={() => setSelectedEmployee(null)}
+          />
+          <div className="fixed inset-y-0 right-0 z-50 flex max-w-2xl w-full flex-col bg-white shadow-xl overflow-y-auto">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <div>
+                <span className="font-semibold text-sm text-slate-800">
+                  {selectedEmployee.employee_name}
+                </span>
+                <span className="ml-2 text-xs text-slate-400 font-mono">
+                  {selectedEmployee.employee_code}
+                </span>
+              </div>
+              <button
+                onClick={() => setSelectedEmployee(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Employee Info</p>
+              <dl className="grid grid-cols-2 gap-2 text-sm">
+                <dt className="text-slate-500">Employee Code</dt>
+                <dd className="text-slate-800 font-mono">{selectedEmployee.employee_code}</dd>
+
+                <dt className="text-slate-500">Name</dt>
+                <dd className="text-slate-800">{selectedEmployee.employee_name}</dd>
+
+                <dt className="text-slate-500">Process</dt>
+                <dd className="text-slate-800">{selectedEmployee.process_name ?? <span className="text-slate-400">—</span>}</dd>
+
+                <dt className="text-slate-500">Branch</dt>
+                <dd className="text-slate-800">{selectedEmployee.branch_name ?? <span className="text-slate-400">—</span>}</dd>
+              </dl>
+
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mt-4">Week Assignments</p>
+              {Object.keys(selectedEmployee.days).length === 0 ? (
+                <p className="text-slate-400 text-sm">None</p>
+              ) : (
+                <div className="space-y-2">
+                  {weekDates.map((d) => {
+                    const a = selectedEmployee.days[d];
+                    if (!a) return (
+                      <div key={d} className="flex items-center justify-between text-sm border-b pb-2">
+                        <span className="text-slate-500">{d}</span>
+                        <span className="text-slate-300">—</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-400">no data</span>
+                      </div>
+                    );
+                    return (
+                      <div key={d} className="flex items-center justify-between text-sm border-b pb-2">
+                        <span className="text-slate-500">{d}</span>
+                        <span className="text-slate-700">
+                          {a.roster_status === "Week Off"
+                            ? "Week Off"
+                            : [a.shift_code, a.shift_name].filter(Boolean).join(" · ") || a.roster_status}
+                        </span>
+                        <span className={`text-xs capitalize px-2 py-0.5 rounded-full ${
+                          a.acknowledgement_status === "acknowledged"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-yellow-100 text-yellow-700"
+                        }`}>
+                          {a.acknowledgement_status ?? "pending"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </DashboardLayout>
   );
 }

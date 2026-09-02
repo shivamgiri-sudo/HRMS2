@@ -22,6 +22,7 @@ import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js
 import {
   appendScopeConditions,
   appendFilterConditions,
+  businessToday,
   dateParam,
   monthParam,
   monthRange,
@@ -138,7 +139,6 @@ export async function leaveBalance(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
@@ -160,6 +160,7 @@ export async function leaveBalance(
            -- employees.cost_center free-text column is deliberately not used.
            COALESCE(NULLIF(cc.cost_centre_name,''), NULLIF(cc.cost_centre_code,''), '') AS cost_center,
            COALESCE(p.process_name,'') AS process_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            ${bucketAggregates()}
       FROM employees e
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
@@ -168,7 +169,7 @@ export async function leaveBalance(
       LEFT JOIN leave_balance_ledger lbl
              ON lbl.employee_id = e.id
             AND lbl.balance_year = ${year}
-      -- active_status = 1 is REQUIRED, not cosmetic. Production retains retired
+      -- lt.active_status = 1 is REQUIRED, not cosmetic. Production retains retired
       -- leave types that still hold ledger history: 'SL' (Sick Leave, retired in
       -- favour of 'ML' Medical Leave) and 'PL' (Paternity, superseded by 'PTRL').
       -- Without this filter SL is summed into the ML column on top of ML, and PL
@@ -177,7 +178,7 @@ export async function leaveBalance(
                                      AND lt.active_status = 1
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
-              b.branch_name, cc.cost_centre_name, cc.cost_centre_code, p.process_name
+              e.active_status, b.branch_name, cc.cost_centre_name, cc.cost_centre_code, p.process_name
      ORDER BY ${orderBy}`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -368,35 +369,54 @@ export async function leaveTrendMonthly(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const to    = dateParam(filters.to, businessToday());
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("lr.status = 'approved'");
   clauses.push("lr.from_date BETWEEN ? AND ?");
   params.push(from, to);
 
+  /**
+   * Three corrections, all so the output matches the contract both catalogs declare
+   * (month, leave_code, leave_name, total_requests, approved_requests, rejected_requests,
+   * total_days, unique_employees):
+   *
+   * 1. `leave_month` -> `month` and `employee_count` -> `unique_employees`. The grid keys
+   *    cells by the catalog column name, so under the old aliases those two columns rendered
+   *    em-dashes even though the values were being fetched.
+   *
+   * 2. total/approved/rejected request counts are now produced. The query filtered
+   *    `lr.status = 'approved'` in the WHERE, so the three declared count columns could never
+   *    be populated — a trend report cannot show a rejection trend if rejections are excluded
+   *    before aggregation. The status test moved into conditional aggregates; total_days still
+   *    counts approved days only, which is the only reading of "days taken" that means
+   *    anything.
+   *
+   * 3. branch_name / process_name dropped from SELECT and GROUP BY. Neither is a declared
+   *    column, but both were grouping keys, so one month/leave-type combination was split
+   *    across a row per branch per process and the grid drew what looked like duplicated rows
+   *    with no way to tell them apart. Both remain filterable — appendFilterConditions still
+   *    applies branchId/processId to the WHERE — they just no longer split the grain.
+   */
   const base = `
-    SELECT LEFT(lr.from_date,7) AS leave_month,
-           lt.leave_name, lt.leave_code,
-           SUM(lr.total_days) AS total_days,
-           COUNT(DISTINCT lr.employee_id) AS employee_count,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
+    SELECT LEFT(lr.from_date,7) AS month,
+           lt.leave_code, lt.leave_name,
+           COUNT(*) AS total_requests,
+           SUM(CASE WHEN LOWER(lr.status) = 'approved' THEN 1 ELSE 0 END) AS approved_requests,
+           SUM(CASE WHEN LOWER(lr.status) = 'rejected' THEN 1 ELSE 0 END) AS rejected_requests,
+           SUM(CASE WHEN LOWER(lr.status) = 'approved' THEN lr.total_days ELSE 0 END) AS total_days,
+           COUNT(DISTINCT lr.employee_id) AS unique_employees
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
       LEFT JOIN process_master p ON p.id  = e.process_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY LEFT(lr.from_date,7),
-              lt.id, lt.leave_name, lt.leave_code,
-              b.branch_name, p.process_name
-     ORDER BY leave_month ASC, lt.leave_name ASC`;
+     GROUP BY LEFT(lr.from_date,7), lt.id, lt.leave_code, lt.leave_name
+     ORDER BY month ASC, lt.leave_name ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options); // always — aggregate report has no cursor

@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import {
+  pollBatchJob, isBatchJobStarted, describeProgress,
+  type BatchJobStatus,
+} from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -604,6 +609,9 @@ export default function BulkUploadHub() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Live progress of an import running on the server. The POST that started it
+  // returns immediately now, so this is what the uploader watches.
+  const [importProgress, setImportProgress] = useState<BatchJobStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const selectedTemplate = useMemo(
@@ -637,7 +645,21 @@ export default function BulkUploadHub() {
         hrmsApi.get<{ success: boolean; data: UploadBatch[] }>("/api/bulk-upload/batches").catch(() => ({ success: true, data: [] as UploadBatch[] })),
       ]);
 
-      const loadedTemplates = templatesResult.data || [];
+      // EMAIL_TEMPLATE_IMPORT is active in upload_template_master, so /templates returns it
+      // and it appeared in this dropdown — but it has no entry in IMPORT_RPC_BY_TYPE above,
+      // and the backend does not accept an rpc_name for it either. A user could therefore
+      // pick "Email Template Import", upload a file, watch it validate, and only then be
+      // stopped with "Import mapping for EMAIL_TEMPLATE_IMPORT is not enabled yet" — the
+      // whole upload wasted at the last step.
+      //
+      // It is not missing a mapping; it belongs somewhere else. Email templates are imported
+      // through NativeEmailTemplateBulkImport.tsx, which has its own preview/confirm flow
+      // against /api/admin/email-templates/import/*. Offering a second, broken door to the
+      // same feature is worse than offering one, so this hub hides it rather than mapping it.
+      const loadedTemplates = (templatesResult.data || []).filter(
+        (template) =>
+          String(template.upload_type_code || "").toUpperCase() !== "EMAIL_TEMPLATE_IMPORT",
+      );
       setTemplates(loadedTemplates);
       setBatches(batchesResult.data || []);
 
@@ -779,6 +801,28 @@ export default function BulkUploadHub() {
     });
   }
 
+  /**
+   * The staging path below is CSV-only: it reads the file as text, runs
+   * `parseCsvDetailed` over it and validates the rows against the selected
+   * template. The file picker has always advertised `.xls/.xlsx` too, but an
+   * Excel file fell straight through that `endsWith(".csv")` branch and staged
+   * nothing — producing a batch with `total_rows: 0` that the import endpoint
+   * (which works off staged rows) can never import, and a detail dialog reading
+   * "No staged rows found for this batch".
+   *
+   * Converting the first sheet to CSV text here puts Excel back on the exact
+   * same code path as a CSV, so template validation, the CSV health check and
+   * the row-level error report all behave identically for both. `sheet_to_csv`
+   * emits each cell's *formatted* value, so a date shows up as the sheet
+   * displayed it rather than as an Excel serial number.
+   */
+  async function excelFileToCsvText(file: File): Promise<string> {
+    const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) throw new Error("The workbook has no sheets.");
+    return XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName]!, { blankrows: false });
+  }
+
   async function createUploadBatch() {
     setMessage(null);
     setErrorMessage(null);
@@ -814,8 +858,13 @@ export default function BulkUploadHub() {
       let parsedRows: CsvRow[] = [];
       let stagedRows: ReturnType<typeof validateRows> = [];
 
-      if (selectedFile.name.toLowerCase().endsWith(".csv")) {
-        const text = await selectedFile.text();
+      const lowerName = selectedFile.name.toLowerCase();
+      const isExcel = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls");
+
+      if (lowerName.endsWith(".csv") || isExcel) {
+        const text = isExcel
+          ? await excelFileToCsvText(selectedFile)
+          : await selectedFile.text();
         const parsed = parseCsvDetailed(text);
         const health = buildCsvHealth(selectedTemplate, parsed);
         setCsvHealth(health);
@@ -828,6 +877,20 @@ export default function BulkUploadHub() {
 
         parsedRows = parsed.rows;
         stagedRows = validateRows(selectedTemplate, parsedRows);
+      }
+
+      // Nothing to stage means nothing this batch could ever import — the import
+      // endpoint dispatches over the staged rows, so recording the batch anyway
+      // just parks a permanently empty entry in the list ("0 Total", and a detail
+      // dialog saying no staged rows were found) with no hint of what went wrong.
+      // The two ways to get here are a template saved without any data filled in
+      // below the header, and a file type this hub cannot read; say which.
+      if (stagedRows.length === 0) {
+        throw new Error(
+          lowerName.endsWith(".csv") || isExcel
+            ? "This file has no data rows below the header — nothing would be uploaded. Fill in the template under the header row and try again."
+            : "Only .csv, .xlsx and .xls files can be read here. Save the file in one of those formats and upload it again."
+        );
       }
 
       const validRows = stagedRows.filter((row) => row.status === "valid").length;
@@ -913,27 +976,61 @@ export default function BulkUploadHub() {
 
     setIsProcessing(true);
     setActiveImportBatchId(batch.id);
+    setImportProgress(null);
     setMessage(`Import started for ${batch.upload_batch_no}. Please wait...`);
 
     try {
-      // Import can process hundreds of rows server-side; the 30s default abort
-      // timeout used to fire well before the server finished, so the UI showed
-      // a false failure even on batches that went on to import successfully.
-      const res = await hrmsApi.post<{ success: boolean; data?: any; error?: string }>(`/api/bulk-upload/batches/${batch.id}/import`, {
+      // The server no longer imports the rows inside this request: it claims the
+      // batch, answers 202 and keeps working. Waiting for the whole import used to
+      // hit nginx's 60s proxy timeout on any sizeable file, so the uploader saw a
+      // 502 while the import was still running — and had no way to learn how it
+      // ended. The outcome is collected by polling instead.
+      const res = await hrmsApi.post<{
+        success: boolean;
+        processing?: boolean;
+        total_rows?: number | null;
+        data?: any;
+        error?: string;
+      }>(`/api/bulk-upload/batches/${batch.id}/import`, {
         rpc_name: rpcName,
-      }, 300000);
+      }, 60000);
 
       if (!res.success) {
         throw new Error(res.error || "Import action failed.");
       }
 
-      const result = res.data || {};
+      let result: any = res.data || {};
+
+      if (isBatchJobStarted(res)) {
+        setImportProgress({
+          phase: "running",
+          progress: { total: res.total_rows ?? null, processed: 0, succeeded: 0, failed: 0 },
+        });
+        const final = await pollBatchJob(
+          `/api/bulk-upload/batches/${batch.id}/import-status`,
+          { onProgress: setImportProgress },
+        );
+        if (final.phase === "failed") {
+          throw new Error(final.error || final.message || "Import action failed.");
+        }
+        result = (final.result as { data?: any })?.data ?? {
+          importedRows: final.progress?.succeeded ?? 0,
+          errorRows: final.progress?.failed ?? 0,
+        };
+      }
+
       if (result.ok === false) {
         throw new Error(result.message || "Import action failed.");
       }
 
-      const importedRows = Number(result.importedRows || result.imported_rows || 0);
-      const errorRows = Number(result.errorRows || result.error_rows || 0);
+      // The approval-gated importers report `staged`, the rest `importedRows` /
+      // `imported_rows`. Reading only the last two made every leave, regularization,
+      // incentive and deduction import announce "Imported 0 row(s)" however many it
+      // had actually staged.
+      const importedRows = Number(
+        result.importedRows ?? result.imported_rows ?? result.staged ?? 0,
+      );
+      const errorRows = Number(result.errorRows ?? result.error_rows ?? result.failed ?? 0);
       const successMsg = `Import completed for ${batch.upload_batch_no}. Imported ${importedRows} row(s).${
         errorRows ? ` ${errorRows} row(s) failed and are visible in View Rows.` : ""
       }`;
@@ -947,9 +1044,11 @@ export default function BulkUploadHub() {
       const msg = error instanceof Error ? error.message : "Import action failed.";
       setErrorMessage(msg);
       window.alert(`Import failed: ${msg}`);
+      await loadData();
     } finally {
       setIsProcessing(false);
       setActiveImportBatchId(null);
+      setImportProgress(null);
     }
   }
 
@@ -1031,6 +1130,38 @@ export default function BulkUploadHub() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <ProductivityUpload />
             </section>
+          )}
+
+          {effectiveTab === "master" && activeImportBatchId && (
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-indigo-900">
+                  {describeProgress(importProgress?.progress, "Importing")}
+                </p>
+                {(importProgress?.progress?.failed ?? 0) > 0 && (
+                  <span className="text-xs font-semibold text-rose-600">
+                    {importProgress?.progress?.failed} row(s) failed
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100">
+                <div
+                  className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                  style={{
+                    width: `${
+                      importProgress?.progress?.total
+                        ? Math.min(100, Math.round(((importProgress.progress.processed ?? 0) / importProgress.progress.total) * 100))
+                        : 15
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-indigo-700/80">
+                Each row runs through the same validation the single-employee screen uses,
+                so a large file takes a few minutes. The import continues on the server even
+                if you leave this page.
+              </p>
+            </div>
           )}
 
           {effectiveTab === "master" && (message || errorMessage) && (
@@ -1385,6 +1516,7 @@ export default function BulkUploadHub() {
               setSelectedBatch(null);
               setSelectedBatchRows([]);
             }}
+            onBatchListRefresh={loadData}
           />
         )}
       </div>
@@ -1466,80 +1598,332 @@ function CsvHealthCard({ health }: { health: CsvHealth }) {
   );
 }
 
+type ResubmitResult = { importedRows: number; errorRows: number; newBatchNo: string };
+
 function BatchRowsDialog({
   batch,
   rows,
   onClose,
+  onBatchListRefresh,
 }: {
   batch: UploadBatch;
   rows: UploadBatchRow[];
   onClose: () => void;
+  onBatchListRefresh?: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"success" | "failed">("success");
+  const [editMode, setEditMode] = useState(false);
+  // edits[rowId][fieldKey] = edited value
+  const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [resubmitResult, setResubmitResult] = useState<ResubmitResult | null>(null);
+  const [resubmitError, setResubmitError] = useState<string | null>(null);
+
+  const successRows = rows.filter((r) => r.row_status === "imported" || r.row_status === "success");
+  const failedRows = rows.filter(
+    (r) => r.row_status === "error" || r.row_status === "failed" || (r.error_messages && r.error_messages.length > 0)
+  );
+
+  const dataKeys = useMemo(() => {
+    const keySet = new Set<string>();
+    rows.forEach((r) => Object.keys(r.raw_data || {}).forEach((k) => keySet.add(k)));
+    return Array.from(keySet);
+  }, [rows]);
+
+  function getCellValue(row: UploadBatchRow, key: string) {
+    return edits[row.id]?.[key] ?? String(row.raw_data?.[key] ?? "");
+  }
+
+  function setCellValue(rowId: string, key: string, value: string) {
+    setEdits((prev) => ({ ...prev, [rowId]: { ...(prev[rowId] ?? {}), [key]: value } }));
+  }
+
+  function downloadFailedCsv() {
+    if (!failedRows.length) return;
+    const headers = ["Row No", ...dataKeys, "Errors"];
+    const csvLines = [
+      headers.map((h) => `"${h}"`).join(","),
+      ...failedRows.map((row) => {
+        const cells = [
+          row.row_no,
+          ...dataKeys.map((k) => {
+            const val = getCellValue(row, k);
+            return `"${val.replace(/"/g, '""')}"`;
+          }),
+          `"${(row.error_messages || []).join("; ").replace(/"/g, '""')}"`,
+        ];
+        return cells.join(",");
+      }),
+    ];
+    const blob = new Blob([csvLines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `failed_rows_${batch.upload_batch_no}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleResubmit() {
+    if (!failedRows.length) return;
+    const rpcName = getImportRpc(batch.upload_type_code);
+    if (!rpcName) {
+      setResubmitError("This upload type does not support direct resubmit. Use Download Failed CSV instead.");
+      return;
+    }
+    setSubmitting(true);
+    setResubmitResult(null);
+    setResubmitError(null);
+    try {
+      // 1. Create a new batch
+      const newBatchNo = `${batch.upload_batch_no}-R${Date.now().toString().slice(-4)}`;
+      const batchRes = await hrmsApi.post<{ success: boolean; data: UploadBatch }>("/api/bulk-upload/batches", {
+        upload_batch_no: newBatchNo,
+        upload_type_code: batch.upload_type_code,
+        original_file_name: batch.original_file_name,
+        total_rows: failedRows.length,
+        valid_rows: failedRows.length,
+        error_rows: 0,
+        batch_status: "validated",
+      });
+      const newBatchId = batchRes.data.id;
+
+      // 2. Stage the (edited) failed rows
+      const stagingPayload = failedRows.map((row) => ({
+        row_no: row.row_no,
+        raw_data: Object.fromEntries(dataKeys.map((k) => [k, getCellValue(row, k)])),
+        row_status: "pending",
+        error_messages: [],
+      }));
+      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload);
+
+      // 3. Run import. It answers 202 and keeps working, so wait it out by polling
+      // rather than by holding the request open past the proxy timeout.
+      const importRes = await hrmsApi.post<{
+        success: boolean;
+        processing?: boolean;
+        data?: { importedRows?: number; errorRows?: number; staged?: number; failed?: number };
+      }>(
+        `/api/bulk-upload/batches/${newBatchId}/import`,
+        { rpc_name: rpcName },
+        60000,
+      );
+
+      let outcome: Record<string, unknown> = importRes.data ?? {};
+      if (isBatchJobStarted(importRes)) {
+        const final = await pollBatchJob(`/api/bulk-upload/batches/${newBatchId}/import-status`);
+        if (final.phase === "failed") {
+          throw new Error(final.error || final.message || "Import action failed.");
+        }
+        outcome = ((final.result as { data?: Record<string, unknown> })?.data) ?? {
+          importedRows: final.progress?.succeeded ?? 0,
+          errorRows: final.progress?.failed ?? 0,
+        };
+      }
+
+      setResubmitResult({
+        // Gated types report `staged`/`failed`, the rest `importedRows`/`errorRows`.
+        importedRows: Number(outcome.importedRows ?? outcome.staged ?? 0),
+        errorRows: Number(outcome.errorRows ?? outcome.failed ?? 0),
+        newBatchNo,
+      });
+      setEditMode(false);
+      onBatchListRefresh?.();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResubmitError(`Resubmit failed: ${msg}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const displayRows = activeTab === "success" ? successRows : failedRows;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
-        <div className="flex items-start justify-between gap-4">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">
-              Upload Batch Rows
+            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">Upload Batch</p>
+            <h3 className="mt-0.5 text-xl font-semibold text-slate-950">{batch.upload_batch_no}</h3>
+            <p className="mt-0.5 text-sm text-slate-500">{batch.original_file_name}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeTab === "failed" && failedRows.length > 0 && !resubmitResult && (
+              <>
+                <button
+                  onClick={downloadFailedCsv}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Download CSV
+                </button>
+                {!editMode ? (
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                  >
+                    Edit & Resubmit
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setEditMode(false); setEdits({}); }}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      disabled={submitting}
+                    >
+                      Cancel Edit
+                    </button>
+                    <button
+                      onClick={handleResubmit}
+                      disabled={submitting}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {submitting ? "Submitting…" : `Submit ${failedRows.length} Fixed Row${failedRows.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        {/* Summary pills */}
+        <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-3">
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+            {successRows.length} Successful
+          </span>
+          <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
+            {failedRows.length} Failed
+          </span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+            {rows.length} Total
+          </span>
+          {editMode && (
+            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+              Edit mode — fix cells, then Submit
+            </span>
+          )}
+        </div>
+
+        {/* Resubmit result banner */}
+        {resubmitResult && (
+          <div className="mx-6 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-800">
+              Resubmit complete — batch {resubmitResult.newBatchNo}
             </p>
-            <h3 className="mt-1 text-xl font-semibold text-slate-950">
-              {batch.upload_batch_no}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              {batch.original_file_name}
+            <p className="mt-0.5 text-xs text-emerald-700">
+              {resubmitResult.importedRows} imported successfully
+              {resubmitResult.errorRows > 0 && `, ${resubmitResult.errorRows} still failed — check the new batch in the list`}
             </p>
           </div>
+        )}
+        {resubmitError && (
+          <div className="mx-6 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <p className="text-xs text-rose-700">{resubmitError}</p>
+          </div>
+        )}
 
+        {/* Tabs */}
+        <div className="flex gap-0 border-b border-slate-200 px-6">
           <button
-            onClick={onClose}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            onClick={() => setActiveTab("success")}
+            className={`border-b-2 px-4 py-3 text-sm font-semibold transition-colors ${
+              activeTab === "success"
+                ? "border-emerald-500 text-emerald-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
           >
-            Close
+            Successful ({successRows.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("failed")}
+            className={`border-b-2 px-4 py-3 text-sm font-semibold transition-colors ${
+              activeTab === "failed"
+                ? "border-rose-500 text-rose-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Failed ({failedRows.length})
+            {failedRows.length > 0 && activeTab !== "failed" && (
+              <span className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white">
+                !
+              </span>
+            )}
           </button>
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+        {/* Table */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {rows.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
-              No staged rows found for this batch.
+            <div className="py-12 text-center text-sm text-slate-500">No staged rows found for this batch.</div>
+          ) : displayRows.length === 0 ? (
+            <div className="py-12 text-center text-sm text-slate-500">
+              {activeTab === "success" ? "No successful rows." : "No failed rows — all rows imported successfully."}
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="min-w-full divide-y divide-slate-200 text-xs">
-                <thead className="bg-slate-50">
+                <thead className="sticky top-0 bg-slate-50">
                   <tr>
-                    <Th>Row No</Th>
-                    <Th>Status</Th>
-                    <Th>Raw Data</Th>
-                    <Th>Errors</Th>
-                    <Th>Created</Th>
+                    <Th>#</Th>
+                    {dataKeys.map((k) => <Th key={k}>{k}</Th>)}
+                    {activeTab === "failed" && (
+                      <Th><span className="text-rose-600">Errors</span></Th>
+                    )}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {rows.map((row) => (
-                    <tr key={row.id}>
-                      <Td>{row.row_no}</Td>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {displayRows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={
+                        activeTab === "failed"
+                          ? editMode ? "bg-amber-50/40 hover:bg-amber-50" : "bg-rose-50/40 hover:bg-rose-50"
+                          : "hover:bg-emerald-50/30"
+                      }
+                    >
                       <Td>
-                        <StatusBadge status={row.row_status} small />
+                        <span className="font-mono text-slate-500">{row.row_no}</span>
                       </Td>
-                      <Td>
-                        <pre className="max-w-xl whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-[11px] text-slate-700">
-                          {JSON.stringify(row.raw_data, null, 2)}
-                        </pre>
-                      </Td>
-                      <Td>
-                        {row.error_messages?.length ? (
-                          <ul className="list-disc pl-4 text-rose-600">
-                            {row.error_messages.map((error, index) => (
-                              <li key={`${error.slice(0, 30)}-${index}`}>{error}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          "-"
-                        )}
-                      </Td>
-                      <Td>{formatDateTime(row.created_at)}</Td>
+                      {dataKeys.map((k) => (
+                        <Td key={k}>
+                          {activeTab === "failed" && editMode ? (
+                            <input
+                              type="text"
+                              value={getCellValue(row, k)}
+                              onChange={(e) => setCellValue(row.id, k, e.target.value)}
+                              className="w-full min-w-[100px] rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                            />
+                          ) : (
+                            <span className="block max-w-[180px] truncate" title={String(row.raw_data?.[k] ?? "")}>
+                              {String(row.raw_data?.[k] ?? "")}
+                            </span>
+                          )}
+                        </Td>
+                      ))}
+                      {activeTab === "failed" && (
+                        <Td>
+                          {row.error_messages?.length ? (
+                            <ul className="space-y-1">
+                              {row.error_messages.map((error, idx) => (
+                                <li key={idx} className="flex items-start gap-1.5 text-rose-700">
+                                  <span className="mt-0.5 shrink-0 text-rose-400">•</span>
+                                  {error}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </Td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -1547,6 +1931,21 @@ function BatchRowsDialog({
             </div>
           )}
         </div>
+
+        {activeTab === "failed" && failedRows.length > 0 && !editMode && !resubmitResult && (
+          <div className="border-t border-slate-100 bg-slate-50 px-6 py-3">
+            <p className="text-xs text-slate-500">
+              Click <span className="font-semibold text-indigo-700">Edit & Resubmit</span> to fix values inline and resubmit directly, or <span className="font-semibold">Download CSV</span> to fix offline and re-upload as a new batch.
+            </p>
+          </div>
+        )}
+        {activeTab === "failed" && editMode && (
+          <div className="border-t border-indigo-100 bg-indigo-50/60 px-6 py-3">
+            <p className="text-xs text-indigo-700">
+              Edit the cells above, then click <span className="font-semibold">Submit Fixed Rows</span>. A new batch will be created and imported automatically.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

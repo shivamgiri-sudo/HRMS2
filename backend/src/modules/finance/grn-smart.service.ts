@@ -23,6 +23,7 @@ import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import {
@@ -2692,6 +2693,7 @@ export const grnSmartService = {
     let paymentId: string | null = null;
     let imprestLedgerEntryId: string | null = null;
     let newStatus = "";
+    let grnNumber: string | null = null;
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
@@ -2789,18 +2791,27 @@ export const grnSmartService = {
            */
           await consumeAllocations(connection, allocations);
           newStatus = grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
+          // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
+          // submission — the number identifies a spend the company has actually committed to,
+          // not merely raised. resolveGrnNumberOnSubmit's own COALESCE-style "if (existing)
+          // return existing" guard makes this idempotent against a re-run of this exact UPDATE
+          // (see the STATE_CHANGED guard just below), and against the legacy migration rows that
+          // already carry a number. A rejected GRN never reaches this branch, so it never gets
+          // one — that is the deliberate, approved behaviour, not an oversight.
+          grnNumber = await resolveGrnNumberOnSubmit(grn);
           // P1-5: Expected status in WHERE for atomic guard.
           const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
                 SET status = ?, accounts_payment_status = ?, finance_head_reviewed_by = ?,
                     finance_head_reviewed_at = NOW(), finance_head_review_note = ?,
                     reviewed_by = ?, reviewed_at = NOW(), review_note = ?, approved_by = ?,
-                    approved_at = NOW(), rejection_reason = NULL
+                    approved_at = NOW(), rejection_reason = NULL,
+                    grn_number = COALESCE(grn_number, ?)
               WHERE id = ? AND status = 'branch_head_approved'`,
             [
               newStatus, grn.grn_type === "vendor" ? "pending" : "not_required",
               actorUserId, reviewNote?.trim() || null, actorUserId,
-              reviewNote?.trim() || null, actorUserId, grnId,
+              reviewNote?.trim() || null, actorUserId, grnNumber, grnId,
             ]
           );
           if (fhUpdateResult.affectedRows !== 1) {
@@ -2885,7 +2896,7 @@ export const grnSmartService = {
       connection.release();
     }
     if (paymentId) await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
-    return { success: true, newStatus, paymentId };
+    return { success: true, newStatus, paymentId, grnNumber };
   },
 
   async cancel(grnId: string, actorUserId: string, actorRole: string) {

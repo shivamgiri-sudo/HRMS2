@@ -541,7 +541,6 @@ export async function tenureDistribution(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   const base = `
     SELECT CASE
@@ -553,13 +552,14 @@ export async function tenureDistribution(
              ELSE '5+ years'
            END AS tenure_bucket,
            COUNT(*) AS headcount,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY tenure_bucket, b.branch_name, p.process_name
+     GROUP BY tenure_bucket, e.active_status, b.branch_name, p.process_name
      ORDER BY b.branch_name, p.process_name, tenure_bucket`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result

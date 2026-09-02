@@ -60,6 +60,9 @@ describe("the imprest endpoints are mounted", () => {
     ["GET", "/api/finance/imprest/allocations"],
     ["POST", "/api/finance/imprest/allocations"],
     ["POST", "/api/finance/imprest/allocations/:id/review"],
+    // The Imprest Adjustment screen — a manual correcting entry for a float wrong because of a
+    // data issue (most commonly a historical migration gap), with no bank transfer behind it.
+    ["POST", "/api/finance/imprest/managers/:id/adjustment"],
     ["GET", "/api/finance/imprest/ledger"],
     ["GET", "/api/finance/imprest/reports/balance"],
     // The Imprest Details report, in the supplied workbook's format. It REPLACED a generic
@@ -112,6 +115,16 @@ describe("scope is resolved server-side, never trusted from the query", () => {
     const createBlock = SRC.slice(SRC.indexOf('imprestRouter.post(\n  "/allocations"'));
     expect(createBlock).toContain("scope.mode === \"branches\"");
     expect(createBlock).toContain("403");
+  });
+
+  it("gates the adjustment entry to the same write roles as an allocation and checks the branch", () => {
+    // An adjustment moves the float exactly like an allocation does, so it gets the same
+    // authority (Owner ruling 2026-08-17) and the same branch check before anything is posted.
+    const at = SRC.indexOf('"/managers/:id/adjustment"');
+    const block = SRC.slice(at, at + 900);
+    expect(block).toContain("requireRole(...IMPREST_WRITE_ROLES)");
+    expect(block).toContain("assertManagerBranch");
+    expect(block).toContain("403");
   });
 
   it("restricts allocation entry to Finance Head and Super Admin", () => {

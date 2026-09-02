@@ -568,6 +568,29 @@ async function getClassificationRules(period: string): Promise<ClassificationRul
   );
 }
 
+/**
+ * A5 FIX (2026-09-01): the real date real payroll data is "as of", for getActualPeopleCost().
+ *
+ * salary_prep_run has no single `finalized_at` column, so this takes the latest of the columns
+ * that actually get stamped as a run is closed out — disbursement, then the payroll-window
+ * auto-close, then finance approval, then (for a run still open) its own last update — the same
+ * precedence a reader would use to answer "when was this run last touched toward being final".
+ * NOW() is the last resort only when the period's runs somehow carry none of those (a run that
+ * was only ever INSERTed and never updated), so the caller still gets a real date rather than
+ * silently going back to null.
+ */
+async function getPayrollRunAsOfDate(period: string): Promise<string | null> {
+  if (!(await tableExists("salary_prep_run"))) return null;
+  const rows = await safeRows<RowDataPacket>(
+    `SELECT MAX(COALESCE(disbursed_at, auto_closed_at, finance_approved_at, updated_at, created_at)) AS as_of
+       FROM salary_prep_run
+      WHERE run_month = ?`,
+    [period]
+  );
+  const asOf = rows[0]?.as_of;
+  return asOf ? new Date(asOf).toISOString() : null;
+}
+
 function isSupportRole(person: PayrollPersonRow): boolean {
   const department = lower(person.department_name);
   const designation = lower(person.designation_name);
@@ -868,6 +891,16 @@ export async function getActualPeopleCost(period: string): Promise<PeopleCostByK
 
   const [people, rules] = await Promise.all([getPayrollPeople(period), getClassificationRules(period)]);
   if (people.length === 0) return out;
+  /*
+   * A5 FIX (2026-09-01): stamp a real asOfDate whenever real salary_prep_line payroll data is
+   * being used (people.length > 0, just confirmed above) instead of leaving it hardcoded null.
+   * pnl-statement.service.ts's StatementColumn.peopleCostAsOf / the "No people-cost snapshot"
+   * amber warning read this field to decide whether the people-cost figure is trustworthy — with
+   * it always null, a column backed by real finalized payroll still displayed the warning as if
+   * no data existed at all. getPayrollRunAsOfDate() falls back to NOW() only if the period's runs
+   * somehow carry no date at all, so this is never null again once real rows are present.
+   */
+  out.asOfDate = (await getPayrollRunAsOfDate(period)) ?? new Date().toISOString();
 
   const empty = (): Record<PnlPeopleBucket, number> =>
     ({ agent_salary: 0, dsc_people: 0, bmc_people: 0 });
@@ -1414,11 +1447,10 @@ function statusFrom(row: {
   return "profitable" as const;
 }
 
-async function buildRows(filters: Partial<PnlQueryFilters>) {
-  const normalized = normalizeFilters(filters);
-  const baseRows = await processPnlService.listProcesses(normalized);
+async function computeBranchRows(scope: PnlQueryFilters) {
+  const baseRows = await processPnlService.listProcesses(scope);
   const processIds = baseRows.map((row) => row.processId);
-  const policies = await getAllocationPolicies(normalized.period);
+  const policies = await getAllocationPolicies(scope.period);
   const warnings: ManualAllocationWarning[] = [];
   /*
    * What clients were actually invoiced, as the last-resort revenue source.
@@ -1430,17 +1462,17 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
    * A plausible-looking catastrophe is worse than an obvious blank.
    */
   const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced, rpByProcess, actualPeople] = await Promise.all([
-    getRevenueRules(processIds, normalized.period),
-    getDeliveryActuals(processIds, normalized.period),
-    getRevenueComponents(processIds, normalized.period),
-    getMonthlyPlans(processIds, normalized.period),
-    getPeopleCosts(baseRows, normalized.period, policies, warnings),
-    getCostComponents(baseRows, normalized.period, policies, warnings),
-    getBudgets(baseRows, normalized.period, policies, warnings),
-    getGrnVendorActuals(baseRows, normalized.period, policies, warnings),
+    getRevenueRules(processIds, scope.period),
+    getDeliveryActuals(processIds, scope.period),
+    getRevenueComponents(processIds, scope.period),
+    getMonthlyPlans(processIds, scope.period),
+    getPeopleCosts(baseRows, scope.period, policies, warnings),
+    getCostComponents(baseRows, scope.period, policies, warnings),
+    getBudgets(baseRows, scope.period, policies, warnings),
+    getGrnVendorActuals(baseRows, scope.period, policies, warnings),
     getCostCentres(processIds),
-    getInvoicedRevenueActuals(normalized.period ?? ""),
-    getRewardPenaltyForPeriod(normalized.period ?? ""),
+    getInvoicedRevenueActuals(scope.period ?? ""),
+    getRewardPenaltyForPeriod(scope.period ?? ""),
     /*
      * Direct salary_prep_line read as a safety net for the canonical engine.
      *
@@ -1459,7 +1491,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
      * mapping is incomplete. The statement layer already uses this path; now the canonical
      * engine does too.
      */
-    getActualPeopleCost(normalized.period ?? ""),
+    getActualPeopleCost(scope.period ?? ""),
   ]);
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
@@ -1720,7 +1752,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
   });
 
   return {
-    filters: normalized,
+    filters: scope,
     rows,
     rulesMap,
     deliveryMap,
@@ -1730,6 +1762,89 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     budgets,
     grnActuals,
     warnings,
+  };
+}
+
+/*
+ * bmc_people / shared_service (otherOperatingCost) / budgets / GRN-vendor bmc_non_people pools
+ * computed above are allocated PROPORTIONALLY across ALL of a branch's processes
+ * (allocateBranchPools, called from getPeopleCosts/getCostComponents/getBudgets/
+ * getGrnVendorActuals above). Passing a processId filter straight into
+ * processPnlService.listProcesses() used to prune `baseRows` down to exactly the one requested
+ * process BEFORE any of that allocation ran — every allocator then saw a "branch" of one process
+ * and handed it the ENTIRE branch pool instead of its share.
+ *
+ * Live-proven 2026-09-01 on NOIDA-2 (period 2026-07): every one of the branch's 6 processes'
+ * detail pages showed the identical 807,669.06 branch pool instead of their real proportional
+ * split (Onfido=599,238.33, BTM Ventures=104,215.36, GS1=22,797.10, MNP REJECTION=0,
+ * Finnable=29,310.58, Captureatrip=52,107.68) — an aggregate ₹4.33 crore overstatement swept
+ * across NOIDA/AHMEDABAD-JALDARSHAN/NOIDA-2.
+ *
+ * computeBranchRows() above is now the ONLY thing that talks to processPnlService.listProcesses()
+ * and runs the allocators, and it never receives a processId — allocation always runs across the
+ * branch/client/search scope's FULL row set. buildRows() below is the public entry point every
+ * caller in this module already used (bpoPnlService.getSummary/getProcessDetail): it strips
+ * processId before computing, then narrows the already-correctly-allocated `rows` down to the
+ * single requested process afterwards, so every existing caller keeps seeing exactly the row
+ * shape it asked for — just with the right number in it.
+ *
+ * Short-lived (5s) in-flight-dedup cache, keyed on the allocation scope (period/branchId/
+ * branchIds/clientId/search — deliberately NOT processId, since that no longer changes what this
+ * computes): bpoPnlAllocationOverlayService.getProcessDetail() fires two of these with the
+ * identical scope inside one Promise.all (bpoPnlService.getProcessDetail + this.getSummary) —
+ * without this they would now each redo the whole branch computation instead of the single
+ * process that used to make them cheap. 5s only smooths that same-request duplication and
+ * near-simultaneous requests for the same branch/period; it is deliberately much shorter than the
+ * 60s getCachedAllocationSummary cache one layer up (canonical-pnl.service.ts), so it is safe to
+ * leave outside processPnlService.invalidateCaches()/governance-save invalidation — a config
+ * change is visible here within 5s regardless.
+ */
+const BRANCH_ROWS_CACHE_TTL_MS = 5_000;
+const branchRowsCache = new Map<string, {
+  expiresAt: number;
+  value?: Awaited<ReturnType<typeof computeBranchRows>>;
+  promise?: Promise<Awaited<ReturnType<typeof computeBranchRows>>>;
+}>();
+
+function branchRowsCacheKey(scope: PnlQueryFilters): string {
+  return [
+    scope.period,
+    scope.branchId ?? "",
+    (scope.branchIds ?? []).slice().sort().join(","),
+    scope.clientId ?? "",
+    scope.search?.trim() ?? "",
+  ].join("|");
+}
+
+async function getCachedBranchRows(scope: PnlQueryFilters) {
+  const key = branchRowsCacheKey(scope);
+  const now = Date.now();
+  const cached = branchRowsCache.get(key);
+  if (cached?.value && cached.expiresAt > now) return cached.value;
+  if (cached?.promise) return cached.promise;
+
+  const promise = computeBranchRows(scope);
+  branchRowsCache.set(key, { expiresAt: now + BRANCH_ROWS_CACHE_TTL_MS, promise });
+  try {
+    const value = await promise;
+    branchRowsCache.set(key, { expiresAt: Date.now() + BRANCH_ROWS_CACHE_TTL_MS, value });
+    return value;
+  } catch (error) {
+    const current = branchRowsCache.get(key);
+    if (current?.promise === promise) branchRowsCache.delete(key);
+    throw error;
+  }
+}
+
+async function buildRows(filters: Partial<PnlQueryFilters>) {
+  const normalized = normalizeFilters(filters);
+  const { processId: requestedProcessId, ...scope } = normalized;
+  const bundle = await getCachedBranchRows(scope);
+  if (!requestedProcessId) return { ...bundle, filters: normalized };
+  return {
+    ...bundle,
+    filters: normalized,
+    rows: bundle.rows.filter((row) => row.processId === requestedProcessId),
   };
 }
 
@@ -1768,6 +1883,13 @@ async function auditConfigSave(
 }
 
 export const bpoPnlService = {
+  /** Clears the 5s branch-rows cache above. Exported for canonicalPnlService.recalculate()
+   *  (an explicit "force fresh" action, mirroring processPnlService.invalidateCaches() which it
+   *  already calls) and for tests that need two calls in the same process not to collide. */
+  invalidateCaches() {
+    branchRowsCache.clear();
+  },
+
   async getSummary(filters: Partial<PnlQueryFilters>) {
     const bundle = await buildRows(filters);
     const rows = bundle.rows;

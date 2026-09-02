@@ -878,6 +878,9 @@
     "fix_noida_branch_head_assignment.sql",
     "review_only_cleanup_test_demo_hrms2.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql"
+    "verify_ats_fix.sql",
+    "1645_bgv_report_permissions_hr_variants.sql",
+    "1646_report_permissions_hr_variants.sql",
+    "1649_employee_master_template_required_columns.sql"
   ]
 }

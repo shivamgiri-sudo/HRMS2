@@ -430,7 +430,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
 async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
 
-  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "DATE_FORMAT(gr.bill_date, '%Y-%m') = ?"];
+  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "gr.accounting_period = ?"];
   const appParams: unknown[] = [period];
   if (s.costCentreIds.length) {
     appWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
@@ -1055,7 +1055,7 @@ async function buildFocus(
            JOIN grn_request gr ON gr.id = a.grn_request_id
            LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
           WHERE a.lifecycle_status = 'consumed'
-            AND DATE_FORMAT(gr.bill_date, '%Y-%m') = ?
+            AND gr.accounting_period = ?
             AND ccm.branch_id = ?`,
         [period, branchId],
       );

@@ -462,7 +462,6 @@ export async function certificationStatus(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   if (typeof filters.status === "string" && filters.status) {
     clauses.push("lcs.status = ?");
@@ -487,7 +486,8 @@ export async function certificationStatus(
            lcs.expiry_date,
            lcs.status AS certification_status,
            DATEDIFF(lcs.expiry_date, CURDATE()) AS days_to_expiry,
-           lcs.synced_at
+           lcs.synced_at,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM lms_certification_snapshot lcs
       JOIN employees e            ON e.id = lcs.employee_id
       LEFT JOIN branch_master b   ON b.id = e.branch_id

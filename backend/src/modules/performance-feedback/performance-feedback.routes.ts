@@ -52,7 +52,11 @@ router.post("/development-plans", requireRole("admin", "hr", "manager"), h(c.cre
 router.get("/development-plans", h(c.getDevelopmentPlans));
 router.get("/development-plans/:id", h(c.getDevelopmentPlanById));
 router.patch("/development-plans/:id", requireRole("admin", "hr", "manager"), h(c.updateDevelopmentPlan));
-router.patch("/development-plans/:planId/goals/:goalId", h(c.updateGoal));
+// Had no requireRole at all — the frontend (NativePerformanceFeedbackDevelopmentPlan.tsx)
+// gates its Start/Mark-Complete buttons behind isManager client-side only, but the route
+// accepted the PATCH from any authenticated user. Matched to the sibling create route's
+// role list. Fixed 2026-09-01.
+router.patch("/development-plans/:planId/goals/:goalId", requireRole("admin", "hr", "manager"), h(c.updateGoal));
 router.delete("/development-plans/:id", requireRole("admin", "hr"), h(c.deleteDevelopmentPlan));
 
 // ================== Quality Data Integration (3 routes) ==================

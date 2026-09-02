@@ -342,9 +342,18 @@ export async function bankAdvice(
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
-  // Bank fields are always present but masked when caller lacks canViewSensitiveFields
-  const bankField = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***' AS bank_account_number";
-  const ifscField = scope.canViewSensitiveFields ? "e.ifsc_code"           : "'***MASKED***' AS ifsc_code";
+  // Bank fields are always present but masked when caller lacks canViewSensitiveFields.
+  //
+  // Held as bare expressions and aliased at each use, because this report has to emit the
+  // same value under two names. The catalogs declare BOTH the ICICI transfer-file block
+  // (beneficiary_ac_no / amt / pay_mod) and a legacy descriptive block
+  // (account_number / net_pay / payment_mode); only the first was ever produced, so on a
+  // payment file the Account Number, Net Pay and Payment Mode columns rendered as em-dashes
+  // for every row. Aliasing rather than renaming keeps any consumer of the old names working.
+  const bankAccountExpr = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***'";
+  const ifscExpr        = scope.canViewSensitiveFields ? "e.ifsc_code"           : "'***MASKED***'";
+  const bankField = `${bankAccountExpr} AS bank_account_number`;
+  const ifscField = `${ifscExpr} AS ifsc_code`;
   const bankName  = scope.canViewSensitiveFields ? "e.bank_name"           : "'***MASKED***' AS bank_name";
 
   const clauses: string[] = ["e.id IS NOT NULL"];
@@ -417,6 +426,11 @@ export async function bankAdvice(
            ${bankName},
            ${ACCOUNT_SOURCE_STATUS},
            COALESCE(spl.net_salary,0) AS amount,
+           -- Catalog-declared names for the legacy descriptive block. Same values as
+           -- beneficiary_ac_no / amt / pay_mod below; see the note on bankAccountExpr.
+           ${bankAccountExpr} AS account_number,
+           COALESCE(spl.net_salary,0) AS net_pay,
+           CASE WHEN UPPER(LEFT(COALESCE(e.ifsc_code,''),4)) = 'ICIC' THEN 'Y' ELSE 'N' END AS payment_mode,
            spr.run_month,
            /**
             * ICICI transfer-file columns, in the shared "Bank Transfer File" shape.

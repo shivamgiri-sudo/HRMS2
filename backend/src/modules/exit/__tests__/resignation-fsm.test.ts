@@ -46,7 +46,8 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
 }));
 
 vi.mock("../exit.controller.js", () => ({ exitController: { createExitRequest: vi.fn() } }));
-vi.mock("../exit.service.js", () => ({ exitService: { updateExitStatus: vi.fn(), getExitRequest: vi.fn() } }));
+const { updateExitStatus } = vi.hoisted(() => ({ updateExitStatus: vi.fn() }));
+vi.mock("../exit.service.js", () => ({ exitService: { updateExitStatus, getExitRequest: vi.fn() } }));
 
 const { getEmployeeForUser, hasRole } = vi.hoisted(() => ({
   getEmployeeForUser: vi.fn().mockResolvedValue(null),
@@ -74,9 +75,57 @@ function mockStatusThenUpdate(currentStatus: string) {
 
 beforeEach(() => {
   dbExecute.mockReset();
+  updateExitStatus.mockReset().mockResolvedValue({ id: EXIT_ID, status: "accepted" });
   getEmployeeForUser.mockReset().mockResolvedValue(null);
   hasRole.mockReset().mockResolvedValue(true);
   authUser = { id: ACTOR_ID, role: "hr", roles: ["hr"] };
+});
+
+/**
+ * /:exitId/accept was the one lifecycle route on this router with NO FSM precondition at
+ * all — every sibling below reads the current status and calls assertValidExitTransition()
+ * first; this one went straight to exitService.updateExitStatus(). That function's own
+ * expectedStatus check only guards a race (the row changing between read and write), not
+ * transition legality — its UPDATE runs `WHERE status = <whatever the row currently is>`
+ * unconditionally. So this endpoint could silently flip an exit request already 'closed',
+ * 'exited', 'rejected', 'revoked' or 'withdrawn' back to 'accepted'.
+ */
+describe("POST /:exitId/accept", () => {
+  it("409s an already-'closed' request instead of silently reopening it", async () => {
+    mockStatusThenUpdate("closed");
+
+    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+
+    expect(res.status).toBe(409);
+    expect(updateExitStatus).not.toHaveBeenCalled();
+  });
+
+  it("409s an already-'exited' request — the exact split-state bug this closes", async () => {
+    mockStatusThenUpdate("exited");
+
+    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+
+    expect(res.status).toBe(409);
+    expect(updateExitStatus).not.toHaveBeenCalled();
+  });
+
+  it("succeeds from 'manager_review' and passes the read status as expectedStatus for race safety", async () => {
+    mockStatusThenUpdate("manager_review");
+
+    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+
+    expect(res.status).toBe(200);
+    expect(updateExitStatus).toHaveBeenCalledWith(EXIT_ID, "accepted", "Resignation accepted", ACTOR_ID, "manager_review");
+  });
+
+  it("404s when the exit request does not exist, before any transition check", async () => {
+    dbExecute.mockResolvedValueOnce([[], []]);
+
+    const res = await request(app()).post(`/api/exit/resignation/${EXIT_ID}/accept`);
+
+    expect(res.status).toBe(404);
+    expect(updateExitStatus).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /:exitId/mark-clearance-pending", () => {

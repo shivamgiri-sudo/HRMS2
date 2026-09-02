@@ -20,6 +20,18 @@ export interface PnlStatementColumn {
   peopleCostCoveragePct?: number;
   peopleCostActiveEmployees?: number;
   peopleCostCoveredEmployees?: number;
+  /**
+   * Manual Adjustments: APPROVED Projected Revenue / Penalty / Reward entries for this process,
+   * folded into a figure shown ALONGSIDE the system-calculated revenue — never in place of it.
+   * Absent for a branch/LOB column (adjustments are process-scoped) or when none exist.
+   */
+  manualAdjustment?: {
+    approvedProjectedRevenue: number;
+    approvedRewards: number;
+    approvedPenalties: number;
+    adjustedTotal: number;
+    pendingAdjustmentCount: number;
+  };
 }
 
 export interface PnlStatementRow {

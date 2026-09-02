@@ -129,6 +129,11 @@ export const reimbursementService = {
     const [claimRows] = await db.execute<ReimbursementClaim[]>("SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1", [claimId]);
     const claim = claimRows[0]; if (!claim) throw new Error("Claim not found"); if (claim.status !== "submitted") throw new Error(`Only submitted claims can be rejected`);
     const employee = await getEmployeeDetails(claim.employee_id); if (!employee) throw new Error("Employee not found");
+    // managerApprove (above) checks the actor is this employee's reporting manager;
+    // managerReject had no equivalent check at all — any authenticated user hitting this
+    // route could reject any other employee's claim. Fixed 2026-09-01.
+    const managerId = employee.reporting_manager_id ?? employee.manager_id; if (!managerId) throw new Error("Employee has no manager");
+    const [mgrRows] = await db.execute<RowDataPacket[]>("SELECT user_id FROM employees WHERE id = ? LIMIT 1", [managerId]); if ((mgrRows[0]?.user_id as string) !== actorUserId) throw new Error("Only the reporting manager can reject");
     await db.execute<ResultSetHeader>(`UPDATE employee_reimbursement_claim SET status = 'rejected', manager_reviewed_by = ?, manager_reviewed_at = NOW(), rejection_reason = ? WHERE id = ?`, [actorUserId, reason.trim(), claimId]);
     await resolveInboxItems(claimId, ["REIMBURSEMENT_MANAGER_PENDING"]);
     await notifyEmployeeOnDecision(claim, employee, "rejected", "manager", reason.trim());

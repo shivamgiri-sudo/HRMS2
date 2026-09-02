@@ -80,8 +80,8 @@ describe("work inbox derived approval queues", () => {
 
   it("binds every branch's parameters in order", async () => {
     // work_item(userId, role), work_inbox_item(userId), leave(userId, role),
-    // exit clearance(userId, role), bgv(role). Misalignment scopes the inbox to the wrong
-    // person silently rather than raising.
+    // exit clearance(userId, role), bgv(role), grn(role, role), budget(role, role).
+    // Misalignment scopes the inbox to the wrong person silently rather than raising.
     const { params } = await capture("user-7", "manager");
     expect(params).toEqual([
       "user-7", "manager",
@@ -89,6 +89,8 @@ describe("work inbox derived approval queues", () => {
       "user-7", "manager",
       "user-7", "manager",
       "manager",
+      "manager", "manager",
+      "manager", "manager",
     ]);
   });
 
@@ -97,12 +99,26 @@ describe("work inbox derived approval queues", () => {
     expect(code).toContain("CONCAT('leave:', lr.id) AS id");
     expect(code).toContain("CONCAT('exitclr:', t.id) AS id");
     expect(code).toContain("CONCAT('bgv:', b.id) AS id");
+    expect(code).toContain("CONCAT('grn:', g.id) AS id");
+    expect(code).toContain("CONCAT('budget:', fb.id) AS id");
   });
 
-  it("keeps the two original sources and unions five in total", async () => {
+  it("keeps the two original sources and unions five derived queues, seven branches total", async () => {
     const { code } = await capture("user-1", "hr");
     expect(code).toContain("FROM work_item wi");
     expect(code).toContain("FROM work_inbox_item wii");
-    expect(code.match(/UNION ALL/g)?.length).toBe(4);
+    expect(code.match(/UNION ALL/g)?.length).toBe(6);
+  });
+
+  it("derives GRN and Branch Budget approvals, staged by the caller's role", async () => {
+    const { code } = await capture("user-1", "finance_head");
+    expect(code).toContain("FROM grn_request g");
+    expect(code).toContain("FROM finance_budget_header fb");
+    expect(code).toContain("'GRN_APPROVAL_PENDING' AS item_type");
+    expect(code).toContain("'BUDGET_APPROVAL_PENDING' AS item_type");
+    expect(code).toContain("g.status = 'submitted' AND ? IN ('branch_head', 'super_admin')");
+    expect(code).toContain("g.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin')");
+    expect(code).toContain("fb.status = 'submitted' AND ? IN ('branch_head', 'finance_head', 'super_admin')");
+    expect(code).toContain("fb.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin')");
   });
 });

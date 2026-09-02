@@ -891,7 +891,7 @@ function actualGrnStatusExpr(alias: string) {
   return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
 }
 
-async function getVendorDirectCostMap(processIds: string[], start: string, end: string): Promise<Map<string, VendorCostMeta>> {
+async function getVendorDirectCostMap(processIds: string[], start: string, end: string, period: string): Promise<Map<string, VendorCostMeta>> {
   const map = new Map<string, VendorCostMeta>();
   if (processIds.length === 0) return map;
   const costCentreProcessIdSupported = await hasCostCentreProcessId();
@@ -939,9 +939,9 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
           AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'direct'
           AND ${actualGrnStatusExpr("g")}
           AND vpt.id IS NULL
-          AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+          AND g.accounting_period = ?
         GROUP BY ${resolvedProcessExpr}`,
-      [...processIds, start, end]
+      [...processIds, period]
     ).catch(() => []);
 
     for (const row of rows) {
@@ -962,7 +962,8 @@ async function getIndirectAllocationMap(
   processes: ProcessBaseRow[],
   activeHeadcount: NumericMap,
   start: string,
-  end: string
+  end: string,
+  period: string
 ): Promise<Map<string, IndirectAllocationMeta>> {
   const map = new Map<string, IndirectAllocationMeta>();
   if (processes.length === 0) return map;
@@ -1007,9 +1008,9 @@ async function getIndirectAllocationMap(
         WHERE g.branch_id IN (${placeholders(branchIds)})
           AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
           AND ${actualGrnStatusExpr("g")}
-          AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+          AND g.accounting_period = ?
         GROUP BY g.branch_id`,
-      [...branchIds, start, end]
+      [...branchIds, period]
     );
     for (const row of rows) {
       poolByBranch.set(String(row.branch_id), toNumber(row.pool_amount));
@@ -1315,12 +1316,12 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     measurePnlStep("getInvoiceMap", () => getInvoiceMap(processIds, start, end)),
     measurePnlStep("getPayrollMap", () => getPayrollMap(processIds, normalizedFilters.period, end)),
     measurePnlStep("getExpenseMap", () => getExpenseMap(processIds, start, end)),
-    measurePnlStep("getVendorDirectCostMap", () => getVendorDirectCostMap(processIds, start, end)),
+    measurePnlStep("getVendorDirectCostMap", () => getVendorDirectCostMap(processIds, start, end, normalizedFilters.period)),
     measurePnlStep("getApprovedAdjustmentMap", () => getApprovedAdjustmentMap(processIds, normalizedFilters.period)),
   ]);
 
   const indirectAllocations = await measurePnlStep("getIndirectAllocationMap", () =>
-    getIndirectAllocationMap(processes, activeHeadcount, start, end)
+    getIndirectAllocationMap(processes, activeHeadcount, start, end, normalizedFilters.period)
   );
 
   return {
@@ -1491,7 +1492,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
           `SELECT ms.month_key, SUM(COALESCE(g.amount, 0)) AS total
              FROM (${seriesSql}) ms
              LEFT JOIN grn_request g
-               ON COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ms.start_date AND ms.end_date
+               ON g.accounting_period = ms.month_key
              LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
             WHERE ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'indirect'
               AND ${actualGrnStatusExpr("g")}
@@ -1570,8 +1571,8 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
            LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
           WHERE ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
             AND ${actualGrnStatusExpr("g")}
-            AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?`,
-        [start, end]
+            AND g.accounting_period = ?`,
+        [month]
       );
       indirectTotal = toNumber(indirectRows[0]?.total);
     }
@@ -2107,13 +2108,13 @@ export const processPnlService = {
             AND ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'direct'
             AND ${actualGrnStatusExpr("g")}
             AND vpt.id IS NULL
-            AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+            AND g.accounting_period = ?
           ORDER BY entry_date DESC
           LIMIT 250`
         : `SELECT NULL AS id, NULL AS source_type, NULL AS reference, NULL AS entry_date, 0 AS amount, NULL AS description,
                   NULL AS vendor_name, NULL AS status, NULL AS category_name, NULL AS sub_category, NULL AS cost_class
            WHERE 1 = 0`,
-      [processId, start, end]
+      [processId, context.filters.period]
     ).catch(() => []);
 
     const expenses = [...expenseRows, ...vendorRows, ...grnRows]
@@ -2184,10 +2185,10 @@ export const processPnlService = {
            WHERE g.branch_id = ?
              AND ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'indirect'
              AND ${actualGrnStatusExpr("g")}
-             AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+             AND g.accounting_period = ?
            GROUP BY g.head, g.sub_head
            ORDER BY branch_pool_amount DESC`,
-          [branchId, start, end]
+          [branchId, context.filters.period]
         ).catch(() => [])
       : [];
 
@@ -2387,8 +2388,8 @@ export const processPnlService = {
             AND ${directCostClassExpr("g", resolvedGrnProcessExpr)} = 'direct'
             AND ${actualGrnStatusExpr("g")}
             AND vpt.id IS NULL
-            AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?`,
-        [processId, start, end]
+            AND g.accounting_period = ?`,
+        [processId, context.filters.period]
       ).catch(() => []);
 
       for (const row of grnRows) {

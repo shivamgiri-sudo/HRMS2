@@ -16,21 +16,24 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Mock employee data
+// Mock employee data — FICTIONAL. This page is public/unauthenticated, so it must never
+// carry a real employee's identity. A real employee's PII (name, employee code, both
+// mobile numbers, personal email, home address, DOB, manager) was hardcoded here and
+// shipped live; replaced with placeholder data 2026-09-01.
 const MOCK_EMPLOYEE = {
   id: "demo-123",
-  first_name: "Shivam",
-  last_name: "Shiv Giri",
-  employee_code: "MAS47814",
-  official_email: "shivam.giri@teammas.in",
-  mobile: "9999746258",
-  alternate_mobile: "9582602464",
-  city: "Greater Noida",
+  first_name: "Aarav",
+  last_name: "Demo Sharma",
+  employee_code: "DEMO0001",
+  official_email: "demo.user@example.com",
+  mobile: "9000000000",
+  alternate_mobile: "9000000001",
+  city: "Sample City",
   designation: "Manager",
   department: { name: "Training and Quality" },
-  reporting_manager_name: "Vachher Manish Nareshkumar",
+  reporting_manager_name: "Demo Reporting Manager",
   date_of_joining: "2021-03-15",
-  date_of_birth: "1991-02-02",
+  date_of_birth: "1991-01-01",
   status: "Active",
   gender: "Male",
   marital_status: "Married",
@@ -307,10 +310,10 @@ function ProfileTabDemo() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField label="Phone"><Input value={employee.mobile} disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
-              <FormField label="Personal Email"><Input value="shivamshivgiri@gmail.com" disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
-              <FormField label="Address" className="sm:col-span-2"><Input value="RZ2008, Rose Apartment, Flat no 15" disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
+              <FormField label="Personal Email"><Input value="demo.personal@example.com" disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
+              <FormField label="Address" className="sm:col-span-2"><Input value="123 Sample Street, Demo Apartments" disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
               <FormField label="City"><Input value={employee.city} disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
-              <FormField label="Date of Birth"><Input value="1991-02-02" disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
+              <FormField label="Date of Birth"><Input value={employee.date_of_birth} disabled className="h-9 text-sm font-semibold text-gray-800 rounded-lg bg-white border-emerald-200" /></FormField>
             </div>
           </div>
           {/* Schedule Section */}

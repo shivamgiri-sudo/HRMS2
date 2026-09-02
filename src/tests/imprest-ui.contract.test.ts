@@ -27,6 +27,7 @@ const ALLOCATION = read("src/components/finance/grn/imprest/ImprestAllocationPan
 const REPORT = read("src/components/finance/grn/imprest/ImprestReportPanel.tsx");
 const WORKSPACE = read("src/components/finance/grn/imprest/ImprestWorkspace.tsx");
 const MANAGERS = read("src/components/finance/grn/imprest/ImprestManagerPanel.tsx");
+const ADJUSTMENT = read("src/components/finance/grn/imprest/ImprestAdjustmentPanel.tsx");
 const GRN_FORM = read("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
 const VOUCHER = read("src/components/finance/payroll/SalaryVoucherPanel.tsx");
 const QUEUE = read("src/components/finance/grn/ImprestApprovalQueue.tsx");
@@ -103,10 +104,47 @@ describe("the three surfaces share one tab", () => {
     for (const pane of ["approvals", "allocation", "report", "managers"]) {
       expect(WORKSPACE).toContain(`value: "${pane}"`);
     }
+    // "adjustment" is conditional (canAdjust ? [...] : []) rather than a bare literal like the
+    // others — it is offered only to the roles that could actually post one.
+    expect(WORKSPACE).toContain('value: "adjustment" as const');
     expect(WORKSPACE).toContain("ImprestApprovalQueue");
     expect(WORKSPACE).toContain("ImprestAllocationPanel");
     expect(WORKSPACE).toContain("ImprestReportPanel");
     expect(WORKSPACE).toContain("ImprestManagerPanel");
+    expect(WORKSPACE).toContain("ImprestAdjustmentPanel");
+  });
+
+  it("offers the adjustment tab only to the roles that can post one", () => {
+    expect(WORKSPACE).toContain('useHasRole("finance_head", "super_admin")');
+    expect(WORKSPACE).toContain("canAdjust ?");
+  });
+});
+
+describe("the Imprest Adjustment screen (item 5 remediation)", () => {
+  it("posts to the manager-scoped adjustment endpoint, not the allocation endpoint", () => {
+    // A correction is not a funded top-up — it must never go through createAllocation()'s
+    // IMP-numbered, bank-reference path.
+    expect(ADJUSTMENT).toContain("/adjustment");
+    expect(ADJUSTMENT).not.toContain('"/api/finance/imprest/allocations"');
+  });
+
+  it("supports both directions — a float can be over- as well as under-credited", () => {
+    expect(ADJUSTMENT).toContain('direction: "credit"');
+    expect(ADJUSTMENT).toContain('direction: "debit"');
+  });
+
+  it("reads the float from the server, never sums anything locally", () => {
+    expect(ADJUSTMENT).toContain("/api/finance/imprest/reports/balance");
+    expect(ADJUSTMENT).toContain("closing_balance");
+  });
+
+  it("refuses to submit without a manager, a positive amount and a real reason", () => {
+    expect(ADJUSTMENT).toContain("draft.reason.trim().length >= 10");
+    expect(ADJUSTMENT).toContain("Number(draft.amount) > 0");
+  });
+
+  it("warns that this is not a top-up or a voucher, and that the reason is the only record", () => {
+    expect(ADJUSTMENT).toContain("no invoice or bank reference behind this entry");
   });
 });
 

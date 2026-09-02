@@ -22,6 +22,8 @@ import {
   markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeMonth,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
+import { withBulkLockRetry } from "./lock-retry.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 export const ENTITY_TYPE = "employee_deduction_entries";
 
@@ -59,7 +61,7 @@ export async function importDeductionBatch(
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp) validationError = `employee_code "${d.employee_code}" not found or not active`;
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
     else if (!typeCode) validationError = "deduction_type_code is required";
     else if (!types.has(typeCode)) {
       validationError =
@@ -164,26 +166,39 @@ export async function applyDeductionBatch(
   let applied = 0;
   let failed = 0;
 
-  for (const row of rows) {
+  // Bounded parallelism, not a serial loop.
+  //
+  // Every row here is independent in a way the other gated types are not: the UPDATE is
+  // addressed by primary key and guarded on `status = 'pending_approval'`, and nothing it
+  // writes is read by another row of the same batch. There is no per-employee ordering to
+  // preserve, so rows can be run directly rather than grouped first.
+  //
+  // Serially this was one round trip per row with nothing to overlap it against, which is
+  // what made a large deduction batch take minutes of almost pure waiting.
+  // BULK_ROW_CONCURRENCY is derived from the real pool size, so this overlaps without
+  // crowding out live traffic.
+  const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
     try {
       // Guarded on the current status so a replayed approval cannot resurrect a row
       // a later action deactivated.
-      const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE employee_deduction_entries
-            SET status = 'active', updated_at = NOW()
-          WHERE id = ? AND status = 'pending_approval'`,
-        [row.created_entity_id],
-      );
-      if (res.affectedRows === 0) {
-        throw new Error("deduction entry is no longer pending approval");
-      }
-      await lockEntity({
-        entityType: ENTITY_TYPE,
-        entityId: row.created_entity_id,
-        batchId: batch.id,
-        batchNo: batch.upload_batch_no,
-        employeeId: null,
-        lockedBy: approverUserId,
+      await withBulkLockRetry(async () => {
+        const [res] = await db.execute<ResultSetHeader>(
+          `UPDATE employee_deduction_entries
+              SET status = 'active', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [row.created_entity_id],
+        );
+        if (res.affectedRows === 0) {
+          throw new Error("deduction entry is no longer pending approval");
+        }
+        await lockEntity({
+          entityType: ENTITY_TYPE,
+          entityId: row.created_entity_id,
+          batchId: batch.id,
+          batchNo: batch.upload_batch_no,
+          employeeId: null,
+          lockedBy: approverUserId,
+        });
       });
       void logSensitiveAction({
         actor_user_id: approverUserId,
@@ -200,12 +215,22 @@ export async function applyDeductionBatch(
           upload_batch_no: batch.upload_batch_no,
         },
       });
-      applied++;
+      return { ok: true as const };
     } catch (err) {
       const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
-      errors.push(msg);
       await markRowFailed(row.id, msg);
+      return { ok: false as const, msg };
+    }
+  });
+
+  // Tallied after the fact rather than with counters mutated from inside the tasks, so the
+  // error order follows row order regardless of the order the tasks happened to finish in.
+  for (const outcome of outcomes) {
+    if (outcome.ok) {
+      applied++;
+    } else {
       failed++;
+      errors.push(outcome.msg);
     }
   }
 

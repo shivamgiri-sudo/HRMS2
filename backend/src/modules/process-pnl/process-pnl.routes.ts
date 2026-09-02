@@ -18,6 +18,7 @@ import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
 import { getHeadSubHeadCoverage } from "./budget-headroom-gate.service.js";
 import { getCeoOverview, getYtdSummary, type CeoFilters } from "./ceo-overview.service.js";
+import { bpoPnlFullWaterfallService } from "./bpo-pnl-full-waterfall.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
 import { budgetClosureService } from "./budget-closure.service.js";
 import { budgetCostCentreUtilizationService } from "./budget-cost-centre-utilization.service.js";
@@ -42,6 +43,7 @@ import {
   rejectRewardPenaltyEntry,
   getRewardPenaltySummary,
 } from "./reward-penalty.service.js";
+import { pnlManualAdjustmentService } from "./pnl-manual-adjustment.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -1231,10 +1233,14 @@ function readFilters(req: AuthenticatedRequest, scopedBranchId?: string | null) 
 async function fetchCanonicalProfitRow(
   processId: string,
   filters: Partial<import("./process-pnl.types.js").PnlQueryFilters>
-): Promise<Record<string, unknown> | null> {
+): Promise<{ row: Record<string, unknown>; manualAdjustment: unknown } | null> {
   try {
     const canonical = await canonicalPnlService.getProcessDetail(processId, filters);
-    return (canonical as { row?: Record<string, unknown> })?.row ?? null;
+    const typed = canonical as { row?: Record<string, unknown>; manualAdjustment?: unknown };
+    if (!typed?.row) return null;
+    // Part B: manualAdjustment travels alongside `row` rather than being folded into it — a
+    // consumer must be able to tell the system figure from the adjusted one at a glance.
+    return { row: typed.row, manualAdjustment: typed.manualAdjustment ?? null };
   } catch {
     // Canonical detail unavailable for this process (e.g. no revenue rule configured yet) —
     // callers fall back to the legacy figures but flag it so the drift is visible, not silently
@@ -1245,10 +1251,11 @@ async function fetchCanonicalProfitRow(
 
 function mergeCanonicalProfit(
   legacy: object,
-  row: Record<string, unknown> | null
+  canonical: { row: Record<string, unknown>; manualAdjustment: unknown } | null
 ): Record<string, unknown> & { calculationEngine: string } {
   const base = legacy as Record<string, unknown>;
-  if (!row) return { ...base, calculationEngine: "legacy_fallback" };
+  if (!canonical) return { ...base, calculationEngine: "legacy_fallback" };
+  const { row, manualAdjustment } = canonical;
   return {
     ...base,
     contributionMargin: row.contribution,
@@ -1260,6 +1267,9 @@ function mergeCanonicalProfit(
     pbt: row.pbt,
     pat: row.pat,
     calculationEngine: "bpo_allocation_v2",
+    // Part B: never blended into any of the pure system figures above — a separate field the
+    // frontend renders as an explicitly-labelled "Adjusted Total" alongside them.
+    manualAdjustment,
   };
 }
 
@@ -1340,6 +1350,36 @@ router.get(
       processIds: confinedProcess ? [confinedProcess] : requestedProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
     });
+    res.json({ success: true, data });
+  })
+);
+
+/*
+ * Full P&L Waterfall — an ADDITIONAL, supplementary total alongside CEO Overview's headline
+ * Operating Profit above. NOT a replacement, and not the same calculation: this sums the
+ * canonical per-process contribution/EBITDA/depreciation/amortization/EBIT/finance cost/PBT/tax/
+ * PAT fields (bpo-pnl-full-waterfall.service.ts) that ProcessPnlDetailPage's own "Profitability
+ * waterfall" card already shows, so a reader can hand-verify this total against that branch's
+ * individual process pages. getCeoOverview()'s own Operating Profit above is untouched by this
+ * route and by the service it calls.
+ *
+ * Same branch-scope resolution as /pnl/ceo-overview: a branch-restricted user is pinned to their
+ * own branch and cannot widen it via query params; a global user gets the branch they asked for,
+ * or the whole company when none is given.
+ */
+router.get(
+  "/pnl/full-waterfall",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const period = req.query.period ? String(req.query.period) : "";
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: req.userRoles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await bpoPnlFullWaterfallService.getFullWaterfall(period, branchId ?? undefined);
     res.json({ success: true, data });
   })
 );
@@ -1666,6 +1706,58 @@ router.put("/pnl/reward-penalty/:id/reject", requireAuth, requireWriteAccess, re
   const result = await rejectRewardPenaltyEntry(req.params.id, req.authUser.id, reason);
   if (!result.ok) return res.status(400).json({ success: false, error: result.error });
   res.json({ success: true });
+}));
+
+// ── Manual P&L Adjustments (Projected Revenue / Penalty / Reward) ──────────
+// Separate, never-blended adjustment line — see pnl-manual-adjustment.service.ts's file doc.
+// Role sets deliberately mirror RP_WRITE_ROLES/RP_APPROVE_ROLES immediately above: a single-stage
+// maker-checker entry, the same shape as reward-penalty, plus branch_head who can raise one for
+// their own process (budget-topup.service.ts's TOPUP_CREATE_ROLES also includes branch_head).
+const ADJUSTMENT_READ_ROLES = [...PNL_READ_ROLES] as const;
+const ADJUSTMENT_WRITE_ROLES = ["super_admin", "admin", "branch_admin", "branch_head", "finance", "finance_head", "accounts_head"] as const;
+const ADJUSTMENT_APPROVE_ROLES = ["super_admin", "finance_head", "accounts_head"] as const;
+
+router.get("/pnl/manual-adjustments", requireAuth, requireRole(...ADJUSTMENT_READ_ROLES), h(async (req, res) => {
+  const data = await pnlManualAdjustmentService.listManualAdjustments({
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    periodCode: req.query.period ? String(req.query.period) : undefined,
+    status: req.query.status ? (String(req.query.status) as never) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/manual-adjustments/adjusted-total", requireAuth, requireRole(...ADJUSTMENT_READ_ROLES), h(async (req, res) => {
+  const processId = String(req.query.processId ?? "");
+  const period = String(req.query.period ?? "");
+  const systemRevenue = Number(req.query.systemRevenue ?? 0);
+  const data = await pnlManualAdjustmentService.getAdjustedTotal(processId, period, systemRevenue);
+  res.json({ success: true, data });
+}));
+
+router.post("/pnl/manual-adjustments", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_WRITE_ROLES), h(async (req, res) => {
+  const data = await pnlManualAdjustmentService.createManualAdjustment(
+    {
+      processId: String(req.body?.processId ?? ""),
+      periodCode: String(req.body?.periodCode ?? ""),
+      adjustmentType: req.body?.adjustmentType,
+      amount: Number(req.body?.amount),
+      reason: String(req.body?.reason ?? ""),
+    },
+    req.authUser.id
+  );
+  res.status(201).json({ success: true, data });
+}));
+
+router.put("/pnl/manual-adjustments/:id/approve", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_APPROVE_ROLES), h(async (req, res) => {
+  const data = await pnlManualAdjustmentService.reviewManualAdjustment(req.params.id, "approve", req.authUser.id);
+  res.json({ success: true, data });
+}));
+
+router.put("/pnl/manual-adjustments/:id/reject", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_APPROVE_ROLES), h(async (req, res) => {
+  const reason = String(req.body?.reason ?? "");
+  const data = await pnlManualAdjustmentService.reviewManualAdjustment(req.params.id, "reject", req.authUser.id, reason);
+  res.json({ success: true, data });
 }));
 
 export { router as processPnlRouter };

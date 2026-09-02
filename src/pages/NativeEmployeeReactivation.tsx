@@ -139,8 +139,13 @@ function InitiateDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
     setSearchLoading(true);
     setSearchError(null);
     try {
+      // `status` maps to employment_status (exact match against values like "Active"/
+      // "Probation"/"Resigned") — it is not a synonym for "inactive". The active/inactive
+      // record filter is `recordStatus`, which defaults to active-only when omitted. Using
+      // status=inactive here produced a self-contradicting WHERE clause that matched zero
+      // of the 57,517 inactive employees. Fixed 2026-09-01.
       const res = await hrmsApi.get<{ success: boolean; data: InactiveEmployee[] }>(
-        `/api/employees?status=inactive&search=${encodeURIComponent(search)}&limit=20`
+        `/api/employees?recordStatus=inactive&search=${encodeURIComponent(search)}&limit=20`
       );
       const inactive = (res.data ?? []).filter(
         (e: any) => e.employment_status !== "Active" && e.active_status !== 1

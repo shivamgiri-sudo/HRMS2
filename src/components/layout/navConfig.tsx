@@ -159,11 +159,9 @@ export const navGroups: NavGroup[] = [
           { label: "Joining Documents",   href: "/ats/joining-documents-tracker", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Joining doc formalities" },
           { label: "Document Verification",href: "/document-verification",   icon: ic(FileCheck),   roles: ["admin","hr"],         description: "Documents" },
           { label: "Statutory Detail Approvals", href: "/statutory-change-approvals", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "PAN/Aadhaar/UAN/ESI change requests" },
-          { label: "BGV Verification",    href: "/ats/bgv",                  icon: ic(FileCheck),   pageCode: "ATS_BGV",           roles: ["admin","hr","payroll_hr","payroll"], description: "BGV center" },
-          { label: "Enhanced BGV", href: "/ats/bgv-enhanced", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "Enhanced verification workflow" },
-          { label: "BGV Reports",         href: "/ats/bgv-report",           icon: ic(FileCheck),   roles: ["admin","hr","payroll_hr","payroll"],         description: "BGV" },
-          { label: "BGV API Monitor",     href: "/ats/bgv-api-monitor",      icon: ic(Activity),    roles: ["admin","hr","super_admin"],                  description: "BGV API monitoring" },
-          { label: "Employee BGV Status", href: "/employees/bgv-status",     icon: ic(ShieldCheck), roles: ["admin","hr","payroll_hr","payroll","super_admin"], description: "Employee BGV status" },
+          { label: "BGV Verification",    href: "/ats/bgv",                  icon: ic(FileCheck),   pageCode: "ATS_BGV",           roles: ["admin","hr","branch_hr","hr_admin","ho_hr","process_hr","recruitment_hr","payroll_hr","payroll"], description: "Background verification queue & reports" },
+          { label: "BGV API Monitor",     href: "/ats/bgv-api-monitor",      icon: ic(Activity),    roles: ["admin","super_admin"],                       description: "BGV API monitoring" },
+          { label: "Employee BGV Status", href: "/employees/bgv-status",     icon: ic(ShieldCheck), roles: ["admin","hr","branch_hr","hr_admin","ho_hr","process_hr","recruitment_hr","payroll_hr","payroll","super_admin"], description: "Employee BGV status" },
           { label: "Bulk Upload",         href: "/bulk-upload",              icon: ic(Package),     roles: ["admin","hr","super_admin","wfm","payroll","payroll_hr"], description: "Bulk data import" },
           // Added 2026-08-28. This is a live approval gate — BULK_UPLOAD is in page_catalog
           // with 6 roles and 51 users holding it, and /api/bulk-upload/approvals/* is mounted

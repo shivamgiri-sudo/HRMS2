@@ -21,6 +21,8 @@ import {
   markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeDate,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
+import { withBulkLockRetry } from "./lock-retry.js";
 
 export const ENTITY_TYPE = "attendance_regularization";
 
@@ -109,7 +111,7 @@ export async function importRegularizationBatch(
       continue;
     }
     if (!emp) {
-      const msg = `Row ${row.rowNo}: employee_code "${d.employee_code}" not found or not active`;
+      const msg = `Row ${row.rowNo}: employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
       errors.push(msg);
       await markRowFailed(row.rowId, msg);
       failed++;
@@ -152,14 +154,25 @@ interface LinkedRow extends RowDataPacket {
   id: string;
   row_no: number;
   created_entity_id: string;
+  employee_id: string | null;
 }
 
+/**
+ * The staged regularizations this batch created, each carrying the employee it
+ * belongs to.
+ *
+ * The employee_id is joined in rather than looked up per row because the apply below
+ * groups by it: two corrections for the SAME employee must run one after the other
+ * (they read and rewrite the same attendance_daily_record days and would deadlock or
+ * race), while different employees touch disjoint rows and can run together.
+ */
 async function linkedRows(batchId: string): Promise<LinkedRow[]> {
   const [rows] = await db.execute<LinkedRow[]>(
-    `SELECT id, row_no, created_entity_id
-       FROM upload_batch_row
-      WHERE upload_batch_id = ? AND created_entity_type = ? AND created_entity_id IS NOT NULL
-      ORDER BY row_no ASC`,
+    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id, ar.employee_id
+       FROM upload_batch_row ubr
+       LEFT JOIN attendance_regularization ar ON ar.id = ubr.created_entity_id
+      WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ? AND ubr.created_entity_id IS NOT NULL
+      ORDER BY ubr.row_no ASC`,
     [batchId, ENTITY_TYPE],
   );
   return rows as LinkedRow[];
@@ -175,45 +188,79 @@ export async function applyRegularizationBatch(
   let applied = 0;
   let failed = 0;
 
+  // Row by row, one at a time, this is the slowest of the four apply paths:
+  // reviewRegularization opens a transaction and runs roughly eight queries per row,
+  // so a 217-row branch-month batch ran for minutes and used to be cut off by the
+  // proxy timeout. Employees are independent of each other — a correction only ever
+  // touches that employee's own attendance days — so their groups run concurrently,
+  // bounded by BULK_ROW_CONCURRENCY so the shared connection pool keeps its headroom.
+  //
+  // Within a group the rows stay strictly serial: consecutive dates for one employee
+  // are exactly the case that deadlocks on attendance_daily_record, which is what
+  // withBulkLockRetry below exists for. This mirrors applyLeaveBatch's grouping.
+  const byEmployee = new Map<string, LinkedRow[]>();
   for (const row of rows) {
-    try {
-      // The same call the manual approver makes. This is what writes the corrected
-      // status and punch times into the attendance record.
-      await wfmService.reviewRegularization(
-        row.created_entity_id,
-        {
-          status: "approved",
-          reviewerNote: remarks
-            ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
-            : `Branch Head bulk approval (${batch.upload_batch_no})`,
-        },
-        approverUserId,
-      );
-      await lockEntity({
-        entityType: ENTITY_TYPE,
-        entityId: row.created_entity_id,
-        batchId: batch.id,
-        batchNo: batch.upload_batch_no,
-        employeeId: null,
-        lockedBy: approverUserId,
-      });
-      void logSensitiveAction({
-        actor_user_id: approverUserId,
-        actor_role: "branch_head",
-        action_type: "REGULARIZATION_APPROVED",
-        module_key: "attendance",
-        entity_type: ENTITY_TYPE,
-        entity_id: row.created_entity_id,
-        reason: remarks ?? undefined,
-        new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
-      });
-      applied++;
-    } catch (err) {
-      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
-      errors.push(msg);
-      await markRowFailed(row.id, msg);
-      failed++;
-    }
+    const key = row.employee_id ? String(row.employee_id) : `__unresolved_${row.row_no}`;
+    if (!byEmployee.has(key)) byEmployee.set(key, []);
+    byEmployee.get(key)!.push(row);
+  }
+
+  const groupResults = await mapWithConcurrency(
+    [...byEmployee.values()],
+    BULK_ROW_CONCURRENCY,
+    async (empRows) => {
+      let grpApplied = 0;
+      let grpFailed = 0;
+      const grpErrors: string[] = [];
+
+      for (const row of empRows) {
+        try {
+          await withBulkLockRetry(() =>
+            wfmService.reviewRegularization(
+              row.created_entity_id,
+              {
+                status: "approved",
+                reviewerNote: remarks
+                  ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
+                  : `Branch Head bulk approval (${batch.upload_batch_no})`,
+              },
+              approverUserId,
+            )
+          );
+          await lockEntity({
+            entityType: ENTITY_TYPE,
+            entityId: row.created_entity_id,
+            batchId: batch.id,
+            batchNo: batch.upload_batch_no,
+            employeeId: row.employee_id ? String(row.employee_id) : null,
+            lockedBy: approverUserId,
+          });
+          void logSensitiveAction({
+            actor_user_id: approverUserId,
+            actor_role: "branch_head",
+            action_type: "REGULARIZATION_APPROVED",
+            module_key: "attendance",
+            entity_type: ENTITY_TYPE,
+            entity_id: row.created_entity_id,
+            reason: remarks ?? undefined,
+            new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
+          });
+          grpApplied++;
+        } catch (err) {
+          const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+          grpErrors.push(msg);
+          await markRowFailed(row.id, msg);
+          grpFailed++;
+        }
+      }
+      return { grpApplied, grpFailed, grpErrors };
+    },
+  );
+
+  for (const r of groupResults) {
+    applied += r.grpApplied;
+    failed += r.grpFailed;
+    errors.push(...r.grpErrors);
   }
 
   return { applied, failed, errors };

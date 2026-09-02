@@ -19,15 +19,20 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
     pan_number: '', aadhaar_number: '', passport_number: '', dl_number: '',
   });
   const [verifying, setVerifying] = useState<string | null>(null);
+  // PAN on file, shown as a hint only — never fed back into the editable `pan_number`
+  // field. Seeding the input with the masked value used to cause the autosave below to
+  // POST the mask itself as if it were the real PAN on every reload, silently corrupting
+  // pan_number_hash for anyone who already had one saved. Fixed 2026-09-01.
+  const [panOnFile, setPanOnFile] = useState<string | null>(null);
 
   const initializedRef = useRef(false);
 
   useEffect(() => {
     if (initialData && !initializedRef.current) {
       initializedRef.current = true;
+      setPanOnFile(initialData.pan_number_masked ? String(initialData.pan_number_masked) : null);
       setForm(prev => ({
         ...prev,
-        pan_number: String(initialData.pan_number_masked ?? ''),
         passport_number: String(initialData.passport_number ?? ''),
         dl_number: String(initialData.dl_number ?? ''),
       }));
@@ -80,7 +85,10 @@ export function S3_KYCDocuments({ token, initialData, saveSection, verifyBgv, pa
         <div className="flex items-end gap-2">
           <div className="flex-1">
             <label className={lbl}>PAN Number *</label>
-            <input className={inp} value={form.pan_number} onChange={set('pan_number')} placeholder="ABCDE1234F" maxLength={10} style={{ textTransform: 'uppercase' }} />
+            <input className={inp} value={form.pan_number} onChange={set('pan_number')} placeholder={panOnFile ? `On file: ${panOnFile}` : "ABCDE1234F"} maxLength={10} style={{ textTransform: 'uppercase' }} />
+            {panOnFile && !form.pan_number && (
+              <p className="mt-1 text-xs text-slate-500">PAN already on file ({panOnFile}). Leave blank to keep it, or enter a new PAN to update it.</p>
+            )}
           </div>
           <button
             type="button"

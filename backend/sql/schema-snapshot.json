@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1063,
-  "columnCount": 15309,
+  "tableCount": 1064,
+  "columnCount": 15323,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -398,7 +398,8 @@
       "notes",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "attendance_logic"
     ],
     "apr_manual_upload": [
       "id",
@@ -12118,6 +12119,22 @@
       "created_by",
       "updated_by",
       "created_at",
+      "updated_at"
+    ],
+    "pnl_manual_adjustment": [
+      "id",
+      "process_id",
+      "branch_id",
+      "period_code",
+      "adjustment_type",
+      "amount",
+      "reason",
+      "status",
+      "created_by",
+      "created_at",
+      "approved_by",
+      "approved_at",
+      "rejection_reason",
       "updated_at"
     ],
     "pnl_period_signoff": [

@@ -69,6 +69,21 @@ const MAX_UPLOAD_MB = 2;
  */
 const INSERT_CHUNK_SIZE = 300;
 
+/**
+ * The two read-only pre-checks below (locked days, already-synced days) were
+ * chunked at INSERT_CHUNK_SIZE as well, but they are lookups, not writes: there
+ * is no atomicity to preserve and nothing to report at chunk granularity, so the
+ * only thing 300 bought there was round trips. A month of dialler data runs to
+ * tens of thousands of rows, and at 300 per statement the two checks alone cost
+ * hundreds of sequential queries — enough, with the writes behind them, to push
+ * the whole request past nginx's 120s proxy_read_timeout, which is what produced
+ * the "Unexpected token '<'" the uploader saw (nginx's HTML 504 page parsed as
+ * JSON). Both plans are primary/unique-key range scans (verified against the
+ * live DB), so widening the batch does not change how MySQL resolves them; it
+ * just asks the same question a sixth as often.
+ */
+const SELECT_CHUNK_SIZE = 2000;
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
@@ -269,7 +284,7 @@ router.post(
 
     const lockedSet = new Set<string>();
     const protectedReasonByKey = new Map<string, string>();
-    for (const pairChunk of chunkArray(lockPairs, INSERT_CHUNK_SIZE)) {
+    for (const pairChunk of chunkArray(lockPairs, SELECT_CHUNK_SIZE)) {
       const placeholders = pairChunk.map(() => '(?,?)').join(',');
       const params = pairChunk.flat();
       let lockedRows: RowDataPacket[];
@@ -356,7 +371,7 @@ router.post(
     // parameterised (never an injection risk), but one statement covering every
     // row in a several-thousand-row file is unnecessarily large. Same chunk size,
     // same row-constructor form.
-    for (const rowChunk of chunkArray(csvRows, INSERT_CHUNK_SIZE)) {
+    for (const rowChunk of chunkArray(csvRows, SELECT_CHUNK_SIZE)) {
       const pairParams: string[] = [];
       const pairPlaceholders = rowChunk.map((r) => {
         pairParams.push(r.employee_code, r.attendance_date);

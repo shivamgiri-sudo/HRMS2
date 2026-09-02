@@ -43,14 +43,16 @@ router.get(
   h(rosterCapacityController.getAllocations)
 );
 
-// ========== Notifications (Employee can view own) ==========
+// ========== Notifications (Employee can view own; manager/admin can view any) ==========
 router.get(
   '/notifications/:employeeId',
+  requireRole('employee', 'process_manager', 'wfm', 'admin', 'super_admin', 'branch_head'),
   h(rosterCapacityController.getNotifications)
 );
 
 router.patch(
   '/notifications/:notificationId/read',
+  requireRole('employee', 'process_manager', 'wfm', 'admin', 'super_admin', 'branch_head'),
   h(rosterCapacityController.markNotificationRead)
 );
 

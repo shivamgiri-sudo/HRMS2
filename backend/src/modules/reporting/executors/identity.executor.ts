@@ -69,7 +69,6 @@ export async function employeeDocumentCompliance(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   const base = `SELECT e.id AS _cursor,
          e.employee_code,
@@ -92,7 +91,8 @@ export async function employeeDocumentCompliance(
          CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.verified_cl,0) ELSE SUM(CASE WHEN ed.verified=1 THEN 1 ELSE 0 END) END AS verified_docs,
          CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.missing_cl,0)  ELSE SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url='' THEN 1 ELSE 0 END) END AS missing_docs,
          COALESCE(e.joining_document_completion_pct, 0) AS completion_pct,
-         e.joining_document_status
+         e.joining_document_status,
+         CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
     FROM employees e
     LEFT JOIN employee_documents ed ON ed.employee_id = e.id
     LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -113,7 +113,7 @@ export async function employeeDocumentCompliance(
    GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, d.dept_name,
             p.process_name, cc.cost_centre_code, cc.cost_centre_name,
             cl_agg.total_cl, cl_agg.verified_cl, cl_agg.missing_cl,
-            e.joining_document_completion_pct, e.joining_document_status
+            e.joining_document_completion_pct, e.joining_document_status, e.active_status
    ORDER BY missing_docs DESC, employee_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -210,7 +210,6 @@ export async function missingDocumentsReport(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   // Requirement list as an inline relation, cross-joined against employees. One pass — the
   // alternative, a UNION ALL branch per document, rescans employee_documents once per branch,
@@ -244,7 +243,8 @@ export async function missingDocumentsReport(
            req.document_type,
            1 AS mandatory,
            CASE WHEN e.date_of_joining IS NULL THEN NULL
-                ELSE DATEDIFF(CURDATE(), e.date_of_joining) END AS days_since_joining
+                ELSE DATEDIFF(CURDATE(), e.date_of_joining) END AS days_since_joining,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
       JOIN (${reqRelation}) req
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
@@ -285,7 +285,6 @@ export async function uanStatusReport(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   if (filters.status) {
     if (filters.status === "MISSING_UAN") {
@@ -315,7 +314,8 @@ export async function uanStatusReport(
              ELSE 'MISSING_UAN'
            END AS uan_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -347,7 +347,6 @@ export async function esicStatusReport(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   // `employees` has no esic_applicable column, so every branch below threw "Unknown column
   // 'e.esic_applicable'" and the report 500'd outright. There is no stored applicability flag
@@ -401,7 +400,8 @@ export async function esicStatusReport(
            -- cost_centre_master was already joined here and never selected, so the mandatory
            -- cost centre columns were absent from a report that had them one line away.
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name
+           COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -433,7 +433,6 @@ export async function panVerificationStatus(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   if (filters.status) {
     if (filters.status === "MISSING_PAN") {
@@ -465,7 +464,8 @@ export async function panVerificationStatus(
              ELSE 'UNVERIFIED'
            END AS pan_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -500,7 +500,6 @@ export async function bankAccountVerification(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1");
 
   if (filters.status) {
     if (filters.status === "MISSING_BANK") {
@@ -539,7 +538,8 @@ export async function bankAccountVerification(
              ELSE 'UNVERIFIED'
            END AS bank_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id

@@ -552,7 +552,24 @@ async function _performReview(
   const pre = (preRows as RowDataPacket[])[0] as any;
   if (!pre) return { httpStatus: 404, payload: { success: false, message: "Regularization not found" } };
 
-  const payrollFrozen = await isPayrollFrozenForDate(String(pre.session_date ?? "").slice(0, 10));
+  // Block approval of future-dated regularizations. Employees cannot yet have
+  // attendance for a date that hasn't happened — approving one would write a
+  // fabricated ADR record and distort payable days.
+  const sessionDateStr = String(pre.session_date ?? "").slice(0, 10);
+  if (sessionDateStr > new Date().toISOString().slice(0, 10)) {
+    return {
+      httpStatus: 400,
+      payload: { success: false, message: `Cannot approve a regularization for a future date (${sessionDateStr}). The attendance date must have already passed.` },
+    };
+  }
+  if (sessionDateStr === "1970-01-01" || !sessionDateStr) {
+    return {
+      httpStatus: 400,
+      payload: { success: false, message: "Regularization has an invalid session date and cannot be approved." },
+    };
+  }
+
+  const payrollFrozen = await isPayrollFrozenForDate(sessionDateStr);
   const status = nextRegularizationStatus(reviewRole, String(pre.reg_status ?? ""), requestedReviewStatus, payrollFrozen);
   if (!status) {
     return { httpStatus: 400, payload: { success: false, message: "Invalid approval step for current regularization status" } };

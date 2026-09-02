@@ -178,6 +178,23 @@ export function AprBulkUpload() {
         },
         body: formData,
       });
+
+      // A large file can outrun the reverse proxy's read timeout. nginx then
+      // answers with its own HTML error page, and calling res.json() on that
+      // threw `Unexpected token '<', "<html> <h"... is not valid JSON` — which
+      // reads as a broken app rather than as what it is. The route writes in
+      // chunks as it goes, so a timeout is NOT a no-op: some rows are already
+      // saved, and re-uploading the same file is safe (the writes are keyed
+      // ON DUPLICATE KEY UPDATE) but starts the clock again.
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(
+          res.status === 504 || res.status === 502
+            ? "The upload ran past the server's time limit before it could report back. Some rows may already be saved — reload this page to check, and if rows are missing, split the file into smaller uploads (about 2,000 rows each) and try again."
+            : `The server returned an unexpected ${res.status} response instead of a result. Please retry, and report this if it keeps happening.`
+        );
+      }
+
       const json = await res.json();
       if (!json.success) throw new Error(json.message ?? "Upload failed");
       setResult(json);
