@@ -169,6 +169,9 @@ leaveRouter.get("/balance", h(async (req: AuthenticatedRequest, res: Response) =
 
 leaveRouter.get("/holidays",                      h(leaveController.listHolidays.bind(leaveController)));  // All can view
 leaveRouter.post("/holidays",                     requireRole("admin", "hr", "super_admin"), h(leaveController.createHoliday.bind(leaveController)));
+// Replace a holiday's cost-centre/designation narrowing. Same authority as
+// creating one — it decides who is paid for the day.
+leaveRouter.put("/holidays/:id/scope",            requireRole("admin", "hr", "super_admin"), h(leaveController.updateHolidayScope.bind(leaveController)));
 
 // POST /balance/seed — bulk seed leave balances during onboarding
 //

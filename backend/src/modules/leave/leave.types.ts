@@ -42,6 +42,14 @@ export interface LeaveHoliday {
   branch_id: string | null;
   active_status: number;
   created_at: string;
+  /**
+   * Scope narrowing, resolved from holiday_cost_centre_mapping /
+   * holiday_designation_mapping. An EMPTY array means the holiday applies to
+   * the whole branch — that is the engine's own rule, not a "not loaded"
+   * marker. Absent when a query did not resolve the mappings.
+   */
+  cost_centre_ids?: string[];
+  designation_ids?: string[];
 }
 
 export interface LeavePolicyConfig {

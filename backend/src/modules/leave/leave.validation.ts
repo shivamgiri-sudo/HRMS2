@@ -50,11 +50,32 @@ export const leaveRequestFiltersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+// Scope narrowing for a holiday. The attendance engine's rule (see
+// attendance-engine.service.ts resolveOverridePriority and
+// shared/leaveChargeableDays.ts) is "no mapping rows for this holiday => it
+// applies to everyone in the branch". So an EMPTY array and an OMITTED field
+// mean the same thing — branch-wide — and narrowing only takes effect once at
+// least one id is supplied.
+const holidayScopeShape = {
+  costCentreIds: z.array(z.string().uuid()).max(500).optional(),
+  designationIds: z.array(z.string().uuid()).max(500).optional(),
+};
+
 export const createHolidaySchema = z.object({
   holidayName: z.string().trim().min(1).max(255),
   holidayDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   holidayType: z.enum(["national", "regional", "optional"]).default("national"),
   branchId: z.string().uuid().nullable().optional(),
+  ...holidayScopeShape,
+});
+
+// Both arrays are required on update so the caller always states the full
+// intended scope. A partial update would be ambiguous: omitting a key could
+// mean "leave it alone" or "clear it", and getting that wrong silently widens
+// a holiday to the whole branch.
+export const updateHolidayScopeSchema = z.object({
+  costCentreIds: z.array(z.string().uuid()).max(500),
+  designationIds: z.array(z.string().uuid()).max(500),
 });
 
 export type CreateLeaveTypeInput = z.infer<typeof createLeaveTypeSchema>;
@@ -62,3 +83,4 @@ export type LeaveRequestInput = z.infer<typeof leaveRequestSchema>;
 export type ReviewLeaveInput = z.infer<typeof reviewLeaveSchema>;
 export type LeaveRequestFilters = z.infer<typeof leaveRequestFiltersSchema>;
 export type CreateHolidayInput = z.infer<typeof createHolidaySchema>;
+export type UpdateHolidayScopeInput = z.infer<typeof updateHolidayScopeSchema>;
