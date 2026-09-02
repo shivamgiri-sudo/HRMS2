@@ -380,8 +380,7 @@ jobs:
             done
             echo "Backend did not become healthy within 120 attempts."
             echo "Last response from /api/health (no timeout, for the record):"
-            curl -s -o /dev/null -w 'status=%{http_code} time=%{time_total}s
-' http://127.0.0.1:5055/api/health || true
+            curl -s -o /dev/null -w 'status=%{http_code} time=%{time_total}s\n' http://127.0.0.1:5055/api/health || true
             return 1
           }
 
