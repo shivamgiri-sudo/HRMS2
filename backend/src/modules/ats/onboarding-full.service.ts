@@ -1957,6 +1957,23 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     );
   }
 
+  // Aadhaar NUMBER is required, not just the card document above -- those are
+  // different things. findMissingMandatoryDocuments only proves the card image
+  // was captured (uploaded, or via DigiLocker); it says nothing about whether
+  // the 12 digits were ever entered into aadhaar_number_hash/_encrypted. Step 3
+  // (Address & KYC) already marks the field `required` in the UI
+  // (OnboardingSteps1to5V2.tsx), but nothing enforced it server-side -- the
+  // same client/server parity gap the qualification check below was already
+  // added to close. Decided explicitly 2026-09-02, tradeoff accepted: a
+  // candidate who verified via DigiLocker without ever typing the number
+  // manually is blocked here until they do.
+  if (!profile.aadhaar_number_hash) {
+    throw Object.assign(
+      new Error("Aadhaar number is required before submitting. Please go to the Address & KYC step and enter your Aadhaar number."),
+      { statusCode: 400, code: "MISSING_AADHAAR_NUMBER" },
+    );
+  }
+
   // At least one qualification is required. The client gates this too
   // (validateStep7Education), but the gate has to exist here as well: Step 7's
   // "Add Qualification" button POSTs on its own, so a candidate who never
