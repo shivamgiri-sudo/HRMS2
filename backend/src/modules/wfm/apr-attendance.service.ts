@@ -117,7 +117,10 @@ export async function getAprMonthly(
   toDate: string,
 ): Promise<AprDailyRecord[]> {
   const userIds = resolveAprUserIds(emp);
-  if (userIds.length === 0) return [];
+  if (userIds.length === 0) {
+    console.warn(`[APR] No UserID candidates found for employee: call_centre_code=${emp.call_centre_code}, employee_code=${emp.employee_code}, biometric_code=${emp.biometric_code}`);
+    return [];
+  }
 
   const placeholders = userIds.map(() => '?').join(', ');
   // Sargable range predicate on ReportDate (leading column of the apr primary key).

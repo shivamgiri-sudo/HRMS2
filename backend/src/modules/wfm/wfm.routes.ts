@@ -2130,3 +2130,17 @@ wfmRouter.get("/wow-impact-simulator/finalized", requireRole("super_admin", "adm
   const result = await simulateWowFinalizedImpact(from, to);
   return res.json({ success: true, data: result });
 }));
+
+// Diagnostic: why does HRMS show Present but APR says Absent?
+wfmRouter.post("/attendance/diagnose-mismatch", requireRole("super_admin", "admin", "wfm"), h(async (req, res) => {
+  const { batchDiagnose } = await import("./attendance-diagnostic.service.js");
+  const { emp_codes, date_from, date_to } = req.body as { emp_codes?: string[]; date_from?: string; date_to?: string };
+  if (!emp_codes?.length || !date_from || !date_to) {
+    return res.status(400).json({
+      success: false,
+      message: "Need emp_codes (array), date_from, date_to (YYYY-MM-DD)",
+    });
+  }
+  const results = await batchDiagnose(emp_codes, date_from, date_to);
+  return res.json({ success: true, data: results });
+}));

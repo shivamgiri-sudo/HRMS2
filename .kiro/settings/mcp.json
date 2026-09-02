@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "hrms-db": {
+      "command": "node",
+      "args": ["/home/shuvam/Downloads/HRMS2-main/mcp-server/index.mjs"],
+      "env": { "HRMS_ROLE": "full" },
+      "disabled": false,
+      "autoApprove": ["list_allowed_tables", "describe_table", "get_role_info", "get_hrms_stats"]
+    }
+  }
+}
