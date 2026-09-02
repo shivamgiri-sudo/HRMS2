@@ -111,7 +111,7 @@ export async function importRegularizationBatch(
       continue;
     }
     if (!emp) {
-      const msg = `Row ${row.rowNo}: employee_code "${d.employee_code}" not found or not active`;
+      const msg = `Row ${row.rowNo}: employee_code "${d.employee_code}" is not in the employee master, or has left (Resigned/terminated)`;
       errors.push(msg);
       await markRowFailed(row.rowId, msg);
       failed++;

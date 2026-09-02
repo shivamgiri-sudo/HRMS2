@@ -117,6 +117,34 @@ export interface ResolvedEmployee {
 }
 
 /**
+ * Employment statuses a bulk upload will NOT accept a row for.
+ *
+ * This used to be the inverse — `employment_status = 'active'` — and that was wrong, because
+ * the column is not reliable enough to gate an upload on.
+ *
+ * Measured on live 2026-09-02, from BATCH-1788287542227: 86 of its 90 rejected rows were
+ * refused as "not found or not active", and every one of those employees was marked
+ * `inactive` while still plainly working — 43 to 45 attendance days each in the preceding
+ * 60, all with a punch on 18 Aug 2026. They were not ex-staff; the flag was simply wrong on
+ * them. Gating on it meant HR could not correct attendance for people who were coming to
+ * work every day, and the upload gave no clue that a stale flag was the reason.
+ *
+ * The wider shape of the column says the same thing: of 58,975 rows it holds 'Active'
+ * (1,115), 'inactive' (27,052), 'Resigned' (30,309) and 'terminated' (499), and
+ * `date_of_leaving` is NULL for 30,307 of the 30,309 Resigned — so nothing corroborates a
+ * status, and 'inactive' in particular carries no exit evidence at all.
+ *
+ * So the gate now names only the two statuses that are an explicit, deliberate statement
+ * that someone has left. 'inactive' is not one of them: it is the ambiguous bucket, and the
+ * live data shows it contains active staff.
+ *
+ * This is a denylist, not an allowlist, on purpose. A status nobody has thought of yet —
+ * or a casing variant — should let a real employee's correction through rather than silently
+ * reject it; the failure mode of the old allowlist was rejecting people who were present.
+ */
+const NON_UPLOADABLE_STATUSES = ["Resigned", "terminated"];
+
+/**
  * Resolve employee codes in one query rather than one per row — a branch-month
  * upload is thousands of rows, and a per-row SELECT is what made earlier bulk
  * imports exceed the frontend request timeout.
@@ -130,11 +158,14 @@ export async function resolveEmployees(codes: string[]): Promise<Map<string, Res
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
     const [rows] = await db.execute<RowDataPacket[]>(
+      // The comparison is case-insensitive under this schema's collation, so 'Active' and
+      // 'active' — both present in the column — are matched by one spelling either way.
       `SELECT id, employee_code, branch_id, process_id, first_name, last_name
          FROM employees
         WHERE employee_code IN (${slice.map(() => "?").join(",")})
-          AND employment_status = 'active'`,
-      slice,
+          AND (employment_status IS NULL
+               OR employment_status NOT IN (${NON_UPLOADABLE_STATUSES.map(() => "?").join(",")}))`,
+      [...slice, ...NON_UPLOADABLE_STATUSES],
     );
     for (const r of rows as RowDataPacket[]) {
       map.set(String(r.employee_code).trim().toUpperCase(), {
