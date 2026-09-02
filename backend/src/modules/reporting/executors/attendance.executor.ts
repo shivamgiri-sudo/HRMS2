@@ -13,8 +13,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
-import { findSlabMaxWeekoffs, loadWeekoffSlabs } from "../../payroll/weekoff-eligibility.service.js";
-type WeekoffSlab = { from: number; to: number; max_weekoffs: number };
+import { calculateWeekoffEligibility } from "../../payroll/weekoff-eligibility.service.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -117,34 +116,20 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * Verified as a no-op on the data by checksumming all 1,124 rows x 50 columns before and after.
  */
 /**
- * Week-off eligibility.
+ * Week-off eligibility is NOT computed here.
  *
- * This used to keep its own copy of the slab table, "mirroring" payroll to avoid an async
- * import. It drifted: payroll gained a sixth slab (26-31 -> max 5) for 5-Sunday months, the
- * copy here kept five ending at 25, and the two answers diverged for any paidBase above 25.
+ * There is one engine for it — calculateWeekoffEligibility() in
+ * payroll/weekoff-eligibility.service.ts — and this report is an add-on to that, not a second
+ * opinion. It used to carry its own copy of the rule (its own slab table and its own
+ * available-working-days check) "to avoid an async import", and the copy drifted: payroll
+ * gained a sixth slab for 5-Sunday months, this one kept five ending at 25, and for 25 present
+ * days plus a half-day (paidBase 25.5) the register said 5 week-offs where payroll pays 4.
  *
- * A month with 25 present days and one half-day gives paidBase 25.5. In payroll the 24-25 slab
- * is no longer last, so the continuous-range branch matches (24 <= 25.5 < 26) and returns 4.
- * Here it WAS last, so `25.5 <= 25` failed, no slab matched, and an unmatched paidBase falls
- * through to full eligibility -- the register showed 5 week-offs where payroll pays 4.
- *
- * So there is no second table any more. The slabs are loaded from the payroll module, which
- * reads them from policy (payroll/weekoff_eligibility/slabs) and falls back to its own
- * defaults, and the lookup is payroll's own exported function. A policy override now moves the
- * register and the payslip together, which a hardcoded copy could never do.
+ * The engine already expresses the rule the right way round — entitlement is relative to the
+ * month, not to fixed day counts: you earn every week-off by covering
+ * daysInMonth - actualWeekoffs. That is 26 days in a 31-day month with 5 Sundays, and 25 in a
+ * 30-day month with 5 Sundays. Anything the engine learns later, this report inherits.
  */
-function calcEligibleWeekoffs(
-  paidBase: number,
-  actualSundays: number,
-  daysInMonth: number,
-  slabs: WeekoffSlab[],
-): number {
-  const availableWorkingDays = daysInMonth - actualSundays;
-  if (paidBase >= availableWorkingDays) return actualSundays;
-  const slabMax = findSlabMaxWeekoffs(paidBase, slabs);
-  if (slabMax === undefined) return actualSundays; // above the top slab -> full eligibility
-  return Math.min(slabMax, actualSundays);
-}
 
 export async function attendanceRegisterMonthly(
   filters: ExecFilters,
@@ -156,12 +141,6 @@ export async function attendanceRegisterMonthly(
   const daysInMonth = new Date(yr, mo, 0).getDate();
   const firstDay = `${month}-01`;
   const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
-
-  // Count Sundays in the reporting month (payroll week-off denominator).
-  let actualSundays = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    if (new Date(yr, mo - 1, d).getDay() === 0) actualSundays++;
-  }
 
   // Scope and filter conditions apply to the employees table (alias "e").
   // The attendance date range moves to the LEFT JOIN ON clause so employees
@@ -269,6 +248,7 @@ export async function attendanceRegisterMonthly(
   for (const row of attRows) {
     if (!empMap.has(row.employee_id)) {
       empMap.set(row.employee_id, {
+        employee_id:     row.employee_id,
         emp_code:        row.employee_code,
         bio_code:        row.bio_code,
         emp_name:        row.emp_name,
@@ -294,11 +274,7 @@ export async function attendanceRegisterMonthly(
   const todayTs = new Date();
   todayTs.setHours(0, 0, 0, 0);
 
-  // Loaded once for the whole report, not per employee: this reads the payroll policy and a
-  // register can hold thousands of rows.
-  const weekoffSlabs = await loadWeekoffSlabs();
-
-  const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
+  const pivotRows = await Promise.all(Array.from(empMap.values()).map(async (emp, idx) => {
     // Normalise date_of_joining to midnight for day-boundary comparisons.
     const dojRaw = emp.date_of_joining;
     const doj = dojRaw ? new Date(dojRaw) : null;
@@ -332,9 +308,10 @@ export async function attendanceRegisterMonthly(
       else if (v === "H")  holiday++;
     }
 
-    // Payroll-aligned eligible week-offs (slab-based, mirrors payrollCalculate.service.ts).
+    // Straight from the payroll engine — same function the payslip uses, same policy-backed
+    // slabs, same month-relative "worked every available day" rule.
     const paidBase   = present + hd * 0.5 + od;
-    const eligibleWO = calcEligibleWeekoffs(paidBase, actualSundays, daysInMonth, weekoffSlabs);
+    const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, month);
 
     // Capped at the length of the month. Week-offs are credited on top of paid days, and an
     // employee who worked every day of the month — including their week-offs — still earns the
@@ -370,7 +347,7 @@ export async function attendanceRegisterMonthly(
       sal_days:      salDays,
       total:         daysInMonth,
     };
-  });
+  }));
 
   // Slice the caller's page out of the pivot.
   //
