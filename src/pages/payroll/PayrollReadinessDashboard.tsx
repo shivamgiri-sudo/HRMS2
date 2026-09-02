@@ -682,6 +682,14 @@ function BranchDetailDrawer({
         </div>
 
         <div className="px-5 py-4 space-y-4">
+          {/* The HO route into the same cost-centre sign-off the branch uses — the Payroll Head's
+              final approval happens on that screen, one cost centre at a time. */}
+          <Button variant="outline" className="w-full rounded-xl" asChild>
+            <Link to={`/payroll/readiness/cost-centres?branchId=${branch.branch_id}&month=${month}`}>
+              <Layers className="mr-1.5 h-4 w-4" /> Cost-Centre Attendance Sign-Off
+            </Link>
+          </Button>
+
           {processQuery.isLoading ? (
             <div className="space-y-3">{[1, 2, 3].map((i) => <div key={i} className="h-28 rounded-2xl bg-slate-100 animate-pulse" />)}</div>
           ) : processes.length === 0 ? (
@@ -1530,6 +1538,17 @@ function BranchScopeOwnView({ month, processOnly = false }: { month: string; pro
 
             {/* Actions */}
             <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row">
+              {/* The cost-centre sign-off behind "Attendance Data Ready": the checklist item is an
+                  attestation, this is the underlying per-employee data it attests to. */}
+              <Button
+                variant="outline"
+                className="flex-1 rounded-xl"
+                asChild
+              >
+                <Link to={`/payroll/readiness/cost-centres?branchId=${branchId}&month=${month}`}>
+                  <Layers className="mr-1.5 h-4 w-4" /> Cost-Centre Attendance
+                </Link>
+              </Button>
               {canEditChecklist && !branch.attendance_frozen && (
                 <Button
                   variant="outline"

@@ -50,6 +50,7 @@ const PfManagement              = lazy(() => import("@/pages/payroll/PfManagemen
 // Merged consolidated pages
 const PaymentDisbursalCenter    = lazy(() => import("@/pages/payroll/PaymentDisbursalCenter"));
 const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollReadinessDashboard"));
+const BranchCostCentreAttendance = lazy(() => import("@/pages/payroll/BranchCostCentreAttendance"));
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
 const PayrollVarianceAnalysis   = lazy(() => import("@/pages/payroll/PayrollVarianceAnalysis"));
 const PayrollRunLifecycle       = lazy(() => import("@/pages/payroll/PayrollRunLifecycle"));
@@ -192,6 +193,11 @@ export const payrollRouteElements = (
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><Gate pageCode="PAYROLL_NOC"><NocManagement /></Gate></ProtectedRoute>} />
       {/* Payroll Readiness Dashboard — merged page with scope toggle for branch/process */}
       <Route path="/payroll/readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','payroll_hr','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><PayrollReadinessDashboard /></Gate></ProtectedRoute>} />
+      {/* Cost-centre attendance sign-off — the drill-down behind the readiness page's
+          "Attendance Data Ready" item. Same page code as its parent, so the RBAC grants that
+          already exist for PAYROLL_BRANCH_READINESS govern it and no role can reach one but
+          not the other. */}
+      <Route path="/payroll/readiness/cost-centres" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','payroll_hr','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><BranchCostCentreAttendance /></Gate></ProtectedRoute>} />
       <Route path="/payroll/branch-readiness"   element={<ReadinessScopeRedirect scope="branch" />} />
       <Route path="/payroll/process-readiness"  element={<ReadinessScopeRedirect scope="process" />} />
       <Route path="/payroll/salary-verification" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','wfm','process_manager','admin']}><Gate pageCode="PAYROLL_SALARY_VERIFICATION"><ProcessSalaryVerify /></Gate></ProtectedRoute>} />

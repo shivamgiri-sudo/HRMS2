@@ -15,6 +15,14 @@ import { db } from "../../../db/mysql.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import { calculateWeekoffEligibility } from "../../payroll/weekoff-eligibility.service.js";
 import {
+  ATTENDANCE_STATUS_CODE,
+  resolveMissingDayCell,
+  countDayCodes,
+  computePaidBase,
+  computeSalDays,
+  computeTotalWorkingDays,
+} from "../../../shared/attendanceDayCounts.js";
+import {
   appendScopeConditions,
   appendFilterConditions,
   dateParam,
@@ -224,24 +232,11 @@ export async function attendanceRegisterMonthly(
 
   const attRows = await query(attSql, params);
 
-  // Status code mapping.
-  // missing_punch = no biometric record for the date → Absent.
-  // week_off_worked = employee worked on their week-off day → Present
-  //   (the attendance engine sets half_day when hours < threshold on any day,
-  //   so week_off_worked always represents a full day worked on week off).
-  // unreconciled = anomalous punch data → Absent (same as legacy).
-  const statusCode: Record<string, string> = {
-    present:        "P",
-    absent:         "A",
-    half_day:       "HD",
-    week_off:       "A",
-    holiday:        "H",
-    leave_approved: "L",
-    on_duty:        "OD",
-    missing_punch:  "A",
-    week_off_worked:"P",
-    unreconciled:   "A",
-  };
+  // Status code mapping, the fill rule below, and the paid-base/sal-days arithmetic further down
+  // now live in shared/attendanceDayCounts.ts — extracted verbatim so the cost-centre attendance
+  // finalization screen, where Payroll HR signs these same eight columns off, cannot drift into a
+  // second opinion on what a month's attendance is. See that file's header.
+  const statusCode = ATTENDANCE_STATUS_CODE;
 
   // Pivot: fold attendance rows into one map entry per employee.
   const empMap = new Map<string, any>();
@@ -280,47 +275,31 @@ export async function attendanceRegisterMonthly(
     const doj = dojRaw ? new Date(dojRaw) : null;
     if (doj) doj.setHours(0, 0, 0, 0);
 
-    // Fill in cells that have no attendance record.
-    // Rule: blank only for pre-joining dates and future dates.
-    // Every other date with no record → A (absent).
+    // Fill in cells that have no attendance record (rule in shared/attendanceDayCounts.ts:
+    // blank only for pre-joining and future dates, every other empty date → A).
     // Week-off days come from actual attendance_daily_record rows (status = week_off).
     for (let d = 1; d <= daysInMonth; d++) {
       if (emp[`day_${d}`] !== undefined) continue; // already populated
-
-      const dayDate = new Date(yr, mo - 1, d);
-      if (doj && dayDate < doj) {
-        emp[`day_${d}`] = ""; // before joining date → blank
-      } else if (dayDate > todayTs) {
-        emp[`day_${d}`] = ""; // future date → blank
-      } else {
-        emp[`day_${d}`] = "A"; // no record for an active date → absent
-      }
+      emp[`day_${d}`] = resolveMissingDayCell(new Date(yr, mo - 1, d), doj, todayTs);
     }
 
-    let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const v = emp[`day_${d}`];
-      if      (v === "A")  absent++;
-      else if (v === "P")  present++;
-      else if (v === "OD") od++;
-      else if (v === "HD") hd++;
-      else if (v === "L")  leave++;
-      else if (v === "H")  holiday++;
-    }
+    const counts = countDayCodes((d) => emp[`day_${d}`], daysInMonth);
+    const { absent, present, od, hd, leave, holiday } = counts;
 
     // Straight from the payroll engine — same function the payslip uses, same policy-backed
     // slabs, same month-relative "worked every available day" rule.
-    const paidBase   = present + hd * 0.5 + od;
+    const paidBase   = computePaidBase(counts);
     const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, month);
 
-    // Capped at the length of the month. Week-offs are credited on top of paid days, and an
-    // employee who worked every day of the month — including their week-offs — still earns the
-    // week-off entitlement (a worked Sunday is paid AND counts toward entitlement). Added
-    // together that produced sal_days above the calendar month: 31 present + 5 week-offs = 36
-    // in a 31-day August, on 15 rows of the live August register. Salary days can never exceed
-    // the days that exist to be paid for, so the sum is a ceiling, not a running total.
-    const rawSalDays = paidBase + eligibleWO + holiday;
-    const salDays    = Math.round(Math.min(rawSalDays, daysInMonth) * 100) / 100;
+    // Uncapped — the same raw sum salDays below ceilings at daysInMonth, kept here as-is so it
+    // can legitimately exceed the calendar month. This is what surfaces who worked extra days
+    // (week-offs worked on top of a full month), not what payroll pays for. See
+    // computeTotalWorkingDays() in shared/attendanceDayCounts.ts.
+    const totalWorkingDays = computeTotalWorkingDays(paidBase, eligibleWO, holiday);
+
+    // Capped at the length of the month — see computeSalDays() in shared/attendanceDayCounts.ts
+    // for why the sum is a ceiling and not a running total.
+    const salDays = computeSalDays(paidBase, eligibleWO, holiday, daysInMonth);
 
     return {
       sno:             idx + 1,
@@ -344,6 +323,7 @@ export async function attendanceRegisterMonthly(
       leave_count:   leave,
       holiday_count: holiday,
       weekoff_count: eligibleWO,
+      total_working_days: totalWorkingDays,
       sal_days:      salDays,
       total:         daysInMonth,
     };
