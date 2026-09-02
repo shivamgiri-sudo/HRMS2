@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1064,
-  "columnCount": 15324,
+  "tableCount": 1067,
+  "columnCount": 15378,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -17455,6 +17455,65 @@
     "zz_vpt_due_date_backup_20260827": [
       "id",
       "due_date"
+    ],
+    "payroll_cc_attendance_finalization": [
+      "id",
+      "process_month",
+      "branch_id",
+      "cost_centre_id",
+      "cost_centre_name",
+      "status",
+      "cycle_no",
+      "total_employees",
+      "hr_finalized_by",
+      "hr_finalized_at",
+      "hr_remarks",
+      "branch_head_approved_by",
+      "branch_head_approved_at",
+      "branch_head_remarks",
+      "ho_approved_by",
+      "ho_approved_at",
+      "ho_remarks",
+      "last_rejected_by",
+      "last_rejected_at",
+      "last_rejected_stage",
+      "last_rejected_reason",
+      "created_at",
+      "updated_at"
+    ],
+    "payroll_cc_attendance_line": [
+      "id",
+      "finalization_id",
+      "cycle_no",
+      "employee_id",
+      "employee_code",
+      "employee_name",
+      "emp_location",
+      "total_days",
+      "absent_days",
+      "present_days",
+      "od_days",
+      "half_days",
+      "leave_days",
+      "holiday_days",
+      "weekoff_days",
+      "sal_days",
+      "captured_at"
+    ],
+    "payroll_cc_attendance_unlock_request": [
+      "id",
+      "finalization_id",
+      "cycle_no",
+      "process_month",
+      "branch_id",
+      "cost_centre_id",
+      "reason",
+      "status",
+      "requested_by",
+      "requested_at",
+      "reviewed_by",
+      "reviewed_at",
+      "review_notes"
     ]
   }
 }
