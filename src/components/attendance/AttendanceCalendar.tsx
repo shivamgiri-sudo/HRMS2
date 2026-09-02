@@ -648,6 +648,11 @@ function DayDetailSheet({
                   )}
                 </div>
 
+                {apr.login_time == null && apr.logout_time == null ? (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                    Punch times not available — only net login hours recorded (manual upload or APR bulk).
+                  </div>
+                ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-lg bg-white border border-amber-100 p-2.5">
                     <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
@@ -668,6 +673,7 @@ function DayDetailSheet({
                     </p>
                   </div>
                 </div>
+                )}
 
                 <div className="flex items-center gap-2 rounded-lg bg-white border border-amber-100 px-3 py-2">
                   <Clock className="h-4 w-4 text-indigo-600" />
