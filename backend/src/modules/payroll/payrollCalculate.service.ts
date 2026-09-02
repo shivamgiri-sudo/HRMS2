@@ -637,6 +637,37 @@ export function buildStatutoryRow(statConfig: Record<string, number>): Statutory
   };
 }
 
+/**
+ * The Payroll Head's stated payable days for this employee+month, or null (migration 1653).
+ *
+ * Returns the paid-base substitute only — the caller still caps it at the employee's active
+ * calendar days, so this can never pay for days outside the employment window.
+ *
+ * A missing table means migration 1653 has not run in this environment, and the correct reading
+ * of that is "nobody has overridden anything" — the computed value, which is what every run
+ * before this feature used. Any other error is rethrown: a payroll run that silently ignores a
+ * Payroll Head's override because a query failed would pay the wrong salary while reporting
+ * success, which is worse than not running at all.
+ */
+async function getPayableDaysOverride(employeeId: string, runMonth: string): Promise<number | null> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT payable_days
+         FROM payroll_payable_days_override
+        WHERE employee_id = ? AND run_month = ? AND active_status = 1
+        LIMIT 1`,
+      [employeeId, runMonth]
+    );
+    const row = rows[0] as any;
+    if (!row) return null;
+    const days = Number(row.payable_days);
+    return Number.isFinite(days) ? days : null;
+  } catch (err: any) {
+    if (err?.code === 'ER_NO_SUCH_TABLE' || err?.errno === 1146) return null;
+    throw err;
+  }
+}
+
 export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
   return calculatePayrollRunScoped(runId, userId);
 }
@@ -1155,7 +1186,18 @@ export async function calculatePayrollRunScoped(
       ) + 1;
       return Math.max(1, Math.min(days, daysInMonth));
     })();
-    const finalPayableDays = Math.min(calculatedPayable, activeCals);
+    // Payroll Head month-level payable-days override (migration 1653).
+    //
+    // Replaces the COMPUTED term only. The active-calendar cap below is re-applied on top and is
+    // not overridable: a typed 45 in a 30-day month, or a full month for someone who joined on
+    // the 20th, still pays only the days the employee was actually employed. Everything after
+    // this line — proration, statutory, payslip — is unchanged. Deliberately no new column on
+    // salary_prep_line: the fact that a month was overridden, by whom and why, lives in
+    // payroll_payable_days_override and sensitive_action_log, and the screen reads it from there.
+    // Keeping this file's footprint to one lookup and one MIN() is the point.
+    const payableDaysOverride = await getPayableDaysOverride(emp.employee_id, run.run_month);
+    const basePayableDays = payableDaysOverride ?? calculatedPayable;
+    const finalPayableDays = Math.min(basePayableDays, activeCals);
 
     // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
     // fall back to salary_structure_component via structure_id.

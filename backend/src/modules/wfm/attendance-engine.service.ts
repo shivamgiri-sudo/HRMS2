@@ -262,13 +262,55 @@ export function classifyOperationsNetLogin(
   return { status: 'absent', lwpValue: 1.0 };
 }
 
+// ── Per-employee attendance exceptions (migration 1652) ──────────────────────
+// The COSEC full day, for everyone who has no explicit override on them.
+export const COSEC_DEFAULT_FULL_DAY_MINUTES = 540;
+
+/**
+ * fullDayMinutes defaults to 540 (9h) — the threshold every employee was judged on before
+ * employee_attendance_exception_bucket existed (migration 1652). Only a bucketed employee is
+ * ever passed anything else, so an unbucketed employee's classification is bit-for-bit what it
+ * was. It is a parameter for the same reason halfDayFloor already is: this stays synchronous
+ * and safe to call per row, and the caller resolves the value once.
+ */
 export function classifyCosecMinutes(
   biometricMinutes: number,
-  halfDayFloor = 240
+  halfDayFloor = 240,
+  fullDayMinutes = COSEC_DEFAULT_FULL_DAY_MINUTES
 ): { status: 'present' | 'half_day' | 'absent'; lwpValue: number } {
-  if (biometricMinutes >= 540) return { status: 'present', lwpValue: 0.0 };
+  if (biometricMinutes >= fullDayMinutes) return { status: 'present', lwpValue: 0.0 };
   if (biometricMinutes >= halfDayFloor) return { status: 'half_day', lwpValue: 0.5 };
   return { status: 'absent', lwpValue: 1.0 };
+}
+
+export interface AttendanceExceptionBucket {
+  employeeId: string;
+  /** A day with at least one punch but no matching pair counts as a full present day. */
+  singlePunchCountsAsPresent: boolean;
+  /** Minutes that make a full day for this employee; null = use COSEC_DEFAULT_FULL_DAY_MINUTES. */
+  fullDayThresholdMinutes: number | null;
+}
+
+function mapBucketRow(row: any): AttendanceExceptionBucket {
+  const threshold = row.full_day_threshold_minutes;
+  return {
+    employeeId: String(row.employee_id),
+    singlePunchCountsAsPresent: Number(row.single_punch_counts_as_present ?? 0) === 1,
+    fullDayThresholdMinutes:
+      threshold === null || threshold === undefined ? null : Number(threshold),
+  };
+}
+
+/**
+ * A missing employee_attendance_exception_bucket table means the environment has not run
+ * migration 1652 yet, and the correct reading of that is "nobody is bucketed" — the exact
+ * behaviour this file had before the feature existed. Any OTHER error is a real fault and is
+ * rethrown: swallowing it would turn a broken lookup into silently unapplied exceptions, which
+ * is the failure mode where a privileged employee's day quietly reverts to missing_punch and
+ * nobody is told.
+ */
+function isMissingBucketTable(err: any): boolean {
+  return err?.code === 'ER_NO_SUCH_TABLE' || err?.errno === 1146;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -573,6 +615,75 @@ export const attendanceEngineService = {
     return (await this.getBiometricEvidence(employeeId, date)).minutes;
   },
 
+  // ── Exception bucket lookups (migration 1652) ───────────────────────────────
+
+  /** One employee's active exception row, or null. Used by callers outside processDateBatch. */
+  async getExceptionBucket(employeeId: string): Promise<AttendanceExceptionBucket | null> {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id, single_punch_counts_as_present, full_day_threshold_minutes
+           FROM employee_attendance_exception_bucket
+          WHERE employee_id = ? AND active_status = 1
+          LIMIT 1`,
+        [employeeId]
+      );
+      const row = (rows as RowDataPacket[])[0];
+      return row ? mapBucketRow(row) : null;
+    } catch (err: any) {
+      if (isMissingBucketTable(err)) return null;
+      throw err;
+    }
+  },
+
+  /**
+   * Every active exception row, keyed by employee_id — one query for a whole batch run rather
+   * than one per employee. processDateBatch sweeps ~1,100 employees; the bucket is a handful of
+   * people, so this is a small map that answers the question for all of them.
+   */
+  async getExceptionBucketMap(): Promise<Map<string, AttendanceExceptionBucket>> {
+    const map = new Map<string, AttendanceExceptionBucket>();
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id, single_punch_counts_as_present, full_day_threshold_minutes
+           FROM employee_attendance_exception_bucket
+          WHERE active_status = 1`
+      );
+      for (const row of rows as RowDataPacket[]) {
+        const bucket = mapBucketRow(row);
+        map.set(bucket.employeeId, bucket);
+      }
+    } catch (err: any) {
+      if (!isMissingBucketTable(err)) throw err;
+    }
+    return map;
+  },
+
+  /**
+   * Did COSEC see any punch at all for this employee on this date?
+   *
+   * This is the evidence behind the single-punch exception, and it has to be asked of
+   * biometric_attendance_log rather than of the minutes, because the minutes are exactly what a
+   * single punch destroys: cosec-sync.service.ts writes assessAggregatePunches()'s
+   * effectiveWorkingMinutes (0 for reason 'single_punch') into raw_minutes, but writes the real
+   * punch count and timestamps alongside it. total_punches >= 1 is therefore still true on a day
+   * whose minutes are zero — which is precisely the day this exception is about.
+   *
+   * A person with no punch whatsoever has total_punches = 0 or no row, gets false here, and
+   * still lands on missing_punch. The exception credits a partial punch, never an absent one.
+   */
+  async hasAnyBiometricPunch(employeeId: string, date: string): Promise<boolean> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1
+         FROM biometric_attendance_log
+        WHERE employee_id = ?
+          AND punch_date = ?
+          AND (COALESCE(total_punches, 0) >= 1 OR first_punch_in IS NOT NULL)
+        LIMIT 1`,
+      [employeeId, date]
+    );
+    return (rows as RowDataPacket[]).length > 0;
+  },
+
   async getBiometricEvidence(
     employeeId: string,
     date: string
@@ -799,7 +910,17 @@ export const attendanceEngineService = {
   },
 
   // Per-employee orchestrator
-  async processEmployee(employeeId: string, date: string): Promise<EngineResult> {
+  //
+  // exceptionBucket (migration 1652) is tri-state on purpose:
+  //   undefined — not resolved yet, so this function looks it up itself. Every existing caller
+  //               that passes two arguments lands here and keeps working unchanged.
+  //   null      — already resolved, this employee has no exception. Skips a redundant query.
+  //   object    — already resolved, apply it. processDateBatch resolves the whole batch at once.
+  async processEmployee(
+    employeeId: string,
+    date: string,
+    exceptionBucket?: AttendanceExceptionBucket | null
+  ): Promise<EngineResult> {
     // Fetch employee info including dept/designation/department_id for APR determination
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id, e.cost_centre_id,
@@ -823,6 +944,14 @@ export const attendanceEngineService = {
     const costCentreId: string | null = emp.cost_centre_id ?? null;
     const dateOfJoining: string | null = emp.date_of_joining ?? null;
     const shiftWindow = await this.getShiftWindow(employeeId, date);
+
+    // Per-employee COSEC exceptions. Resolved once here and used at every biometric
+    // classification point below; an employee with no row behaves exactly as before.
+    const bucket = exceptionBucket === undefined
+      ? await this.getExceptionBucket(employeeId)
+      : exceptionBucket;
+    const cosecFullDayMinutes =
+      bucket?.fullDayThresholdMinutes ?? COSEC_DEFAULT_FULL_DAY_MINUTES;
 
     // Resolve rule
     let rule = await this.resolveRule(designationId, processId, branchId, date);
@@ -951,7 +1080,7 @@ export const attendanceEngineService = {
     if (isAprEmployee) {
       // G4: Classify biometric independently for mismatch comparison
       if (biometricMinutes > 0) {
-        biometricStatusRaw = classifyCosecMinutes(biometricMinutes, halfDayFloor).status;
+        biometricStatusRaw = classifyCosecMinutes(biometricMinutes, halfDayFloor, cosecFullDayMinutes).status;
       }
 
       const aprMinutes = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
@@ -999,7 +1128,7 @@ export const attendanceEngineService = {
         rawMinutes = biometricMinutes;
         sourceSystem = biometricEvidence.sourceSystem;
         sourceReference = biometricEvidence.sourceReference;
-        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
+        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
       }
 
       // Third logic: APR validated by COSEC.
@@ -1025,10 +1154,10 @@ export const attendanceEngineService = {
         // was consulted first and lost.
         sourceReference = `APR tally: apr=${aprMinutesForTrail}min (${aprStatusRaw}), `
           + `biometric=${biometricMinutes}min (${biometricStatusRaw}) — biometric used`;
-        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
+        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
       }
     } else {
-      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
+      rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
       rawMinutes = biometricMinutes;
     }
 
@@ -1046,6 +1175,41 @@ export const attendanceEngineService = {
     // lwpDeduction = 0 and lets absent days reduce finalPayableDays, so absent and
     // missing_punch both pay zero for the day; what changes is that the deduction
     // is now stated rather than left as an unresolved queue item.
+    // Single-punch exception (migration 1652) — must be asked BEFORE the missing_punch return
+    // below, because that is the branch a single punch actually lands in. assessAggregatePunches
+    // zeroes the minutes for reason 'single_punch', so rawMinutes is 0 here and the day would
+    // otherwise go to the review queue rather than to any classifier.
+    //
+    // Scoped to the biometric path (!classifyAsApr): the exception is about what COSEC saw, and
+    // an employee being judged on dialler net login has no COSEC punch pair to be missing.
+    if (bucket?.singlePunchCountsAsPresent
+        && rawMinutes === 0
+        && !classifyAsApr
+        && await this.hasAnyBiometricPunch(employeeId, date)) {
+      const lateResult = await this.calculateLateArrival(employeeId, date, rule);
+      return {
+        employeeId, date, processId, branchId,
+        source: 'biometric',
+        // Named so the row itself says why it is present on zero minutes. A reader who finds a
+        // present day backed by no working time can tell this was a standing Payroll Head
+        // exception and not the engine miscounting.
+        sourceSystem: 'cosec_single_punch_exception',
+        sourceRecordDate: date,
+        sourceReference: 'employee_attendance_exception_bucket: single punch counted as present',
+        diallerMinutes: null,
+        biometricMinutes: null,
+        rawMinutes: 0,
+        status: 'present',
+        lwpValue: 0.0,
+        lateMark: lateResult.lateMark,
+        lateByMinutes: lateResult.lateByMinutes,
+        ruleConfigId: rule.id === 'fallback' ? null : rule.id,
+        biometricStatus: null,
+        aprStatus: aprStatusRaw,
+        mismatchFlag: 0,
+      };
+    }
+
     if (rawMinutes === 0 && !(isAprEmployee && aprFeedCoversEmployee)) {
       const lateResult = await this.calculateLateArrival(employeeId, date, rule);
       return {
@@ -1076,7 +1240,7 @@ export const attendanceEngineService = {
     // against (540/half-day floor), not APR's net-login ones (480/240).
     const classification = classifyAsApr
       ? classifyOperationsNetLogin(rawMinutes, netLoginHalfDayFloor)
-      : classifyCosecMinutes(rawMinutes, halfDayFloor);
+      : classifyCosecMinutes(rawMinutes, halfDayFloor, cosecFullDayMinutes);
 
     // Late arrival
     const lateResult = await this.calculateLateArrival(employeeId, date, rule);
@@ -1207,6 +1371,9 @@ export const attendanceEngineService = {
     );
     const lockedSet = new Set((lockedRows as RowDataPacket[]).map((r: any) => r.employee_id as string));
 
+    // Per-employee COSEC exceptions for the whole run — one query, not one per employee.
+    const bucketMap = await this.getExceptionBucketMap();
+
     let processed = 0, skipped = 0, failed = 0;
     const errors: string[] = [];
 
@@ -1215,7 +1382,10 @@ export const attendanceEngineService = {
       const results = await Promise.allSettled(
         chunk.map(async (emp: any) => {
           if (lockedSet.has(emp.employee_id)) { skipped++; return; }
-          const result = await this.processEmployee(emp.employee_id, date);
+          // ?? null, never undefined: undefined would make processEmployee re-query per employee.
+          const result = await this.processEmployee(
+            emp.employee_id, date, bucketMap.get(emp.employee_id) ?? null
+          );
           await this.upsertDailyRecord(result, 'system');
           // Fire notifications non-blocking
           this.checkAndNotifyBiometricMismatch(emp.employee_id, date, result).catch(() => {});

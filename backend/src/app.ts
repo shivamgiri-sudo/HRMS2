@@ -47,6 +47,7 @@ import { payrollSignoffRouter } from "./modules/payroll/payroll-signoff.routes.j
 import { payrollCertificatesRouter } from "./modules/payroll/payroll-certificates.routes.js";
 import { reimbursementsRouter } from "./modules/payroll/reimbursements.routes.js";
 import { payrollStatutoryOverrideRouter } from "./modules/payroll/payroll-statutory-override.routes.js";
+import { payableDaysOverrideRouter } from "./modules/payroll/payable-days-override.routes.js";
 import { chequeValidationRouter } from "./modules/payroll/cheque-validation.routes.js";
 import { disbursalRouter } from "./modules/payroll/disbursal.routes.js";
 import { payrollWindowCronRouter } from "./modules/payroll/payroll-window.routes.js";
@@ -423,6 +424,7 @@ app.use("/api/payroll/signoff", listEndpointLimiter, payrollSignoffRouter);
 app.use("/api/payroll/salary-certificates", listEndpointLimiter, payrollCertificatesRouter);
 app.use("/api/payroll/reimbursements", listEndpointLimiter, reimbursementsRouter);
 app.use("/api/payroll/statutory-overrides", payrollStatutoryOverrideRouter);
+app.use("/api/payroll/payable-days-overrides", payableDaysOverrideRouter);
 app.use("/api/payroll/cheque-validation", chequeValidationRouter);
 app.use("/api/payroll", disbursalRouter);
 app.use("/api/payroll", payrollWindowCronRouter);

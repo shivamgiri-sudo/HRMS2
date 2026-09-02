@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Download, FileWarning, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { money } from "@/components/finance/grn/grn-format";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import {
   GRN_TR, GrnAlert, GrnCard, GrnCardHeader, GrnChip, GrnEmptyState, GrnIconButton,
   GrnKv, GrnKvList, GrnMetric, GrnMetricStrip, GrnSelect, GrnTable, GrnTd, GrnTh,
@@ -153,11 +154,15 @@ export function GstTallyExportPanel() {
           </label>
           <label className="text-[11px] font-semibold text-grn-ink">
             Period
-            <input
-              type="month"
-              className="mt-1 block w-[160px] rounded-md border border-grn-line bg-white px-2.5 py-1.5 text-[12.5px] text-grn-ink outline-none focus:border-grn-brand"
+            {/* MonthYearPicker, not <input type="month">: Safari has never implemented the
+                native control and degrades it to a bare text box. selectClassName carries the
+                GRN design system's own tokens so the picker doesn't look borrowed from the
+                default theme — same approach as FinanceReportsWorkspace.tsx. */}
+            <MonthYearPicker
               value={periodMonth}
-              onChange={(e) => setPeriodMonth(e.target.value)}
+              onChange={setPeriodMonth}
+              className="mt-1 w-[220px]"
+              selectClassName="rounded-[8px] border border-grn-line bg-grn-card px-[10px] text-grn-ink h-[34px] text-[12.5px] focus:border-grn-brand focus:outline-none focus:ring-2 focus:ring-grn-brand/15 disabled:cursor-not-allowed disabled:bg-grn-line-soft disabled:text-grn-ink-soft"
             />
           </label>
           <GrnChip

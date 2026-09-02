@@ -30,6 +30,10 @@ function setupAprNightShiftBase() {
       shift_start_time: "21:00:00",
       shift_end_time: "06:00:00",
     }], []])
+    // Slot for the per-employee exception-bucket lookup (migration 1652), which
+    // processEmployee resolves immediately after the shift window. Empty = this employee
+    // has no exception, which is every employee in these fixtures, so no outcome changes.
+    .mockResolvedValueOnce([[], []])
     .mockResolvedValueOnce([[{
       id: "rule-1",
       rule_name: "Ops Rule",
@@ -134,6 +138,10 @@ describe("attendance engine night-shift process flow", () => {
         shift_start_time: "21:00:00",
         shift_end_time: "06:00:00",
       }], []])
+      // Slot for the per-employee exception-bucket lookup (migration 1652), which
+      // processEmployee resolves immediately after the shift window. Empty = this employee
+      // has no exception, which is every employee in these fixtures, so no outcome changes.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{
         id: "rule-1",
         rule_name: "Ops Rule",
@@ -194,6 +202,10 @@ describe("attendance engine night-shift process flow", () => {
         shift_start_time: "21:00:00",
         shift_end_time: "06:00:00",
       }], []])
+      // Slot for the per-employee exception-bucket lookup (migration 1652), which
+      // processEmployee resolves immediately after the shift window. Empty = this employee
+      // has no exception, which is every employee in these fixtures, so no outcome changes.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{
         id: "rule-1",
         rule_name: "Ops Rule",
@@ -248,6 +260,10 @@ describe("attendance engine night-shift process flow", () => {
         shift_start_time: "21:00:00",
         shift_end_time: "06:00:00",
       }], []])
+      // Slot for the per-employee exception-bucket lookup (migration 1652), which
+      // processEmployee resolves immediately after the shift window. Empty = this employee
+      // has no exception, which is every employee in these fixtures, so no outcome changes.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{
         id: "rule-1",
         rule_name: "Ops Rule",
@@ -334,6 +350,10 @@ describe("attendance engine night-shift process flow", () => {
         shift_start_time: "21:00:00",
         shift_end_time: "06:00:00",
       }], []])
+      // Slot for the per-employee exception-bucket lookup (migration 1652), which
+      // processEmployee resolves immediately after the shift window. Empty = this employee
+      // has no exception, which is every employee in these fixtures, so no outcome changes.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{
         id: "rule-1",
         rule_name: "Ops Rule",
@@ -394,6 +414,10 @@ describe("attendance engine night-shift process flow", () => {
         shift_start_time: null,
         shift_end_time: null,
       }], []])
+      // Slot for the per-employee exception-bucket lookup (migration 1652), which
+      // processEmployee resolves immediately after the shift window. Empty = this employee
+      // has no exception, which is every employee in these fixtures, so no outcome changes.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{
         id: "arc-apr-ops-exec",
         rule_name: "APR Rule",
@@ -449,6 +473,10 @@ describe("attendance engine night-shift process flow", () => {
         shift_start_time: null,
         shift_end_time: null,
       }], []])
+      // Slot for the per-employee exception-bucket lookup (migration 1652), which
+      // processEmployee resolves immediately after the shift window. Empty = this employee
+      // has no exception, which is every employee in these fixtures, so no outcome changes.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{
         id: "arc-apr-ops-exec",
         rule_name: "Operations Executive APR Rule",
