@@ -342,6 +342,30 @@ export const gstExportService = {
     }
   },
 
+  /**
+   * The registrations a batch can actually be generated for — every distinct (entity, GSTIN)
+   * branch_master currently carries a real GSTIN for, with the branch count and most recent
+   * invoice date behind each so the picker shows which registrations are live, not just which
+   * ones exist. Exists so the frontend never hardcodes a GSTIN: the moment a new one is
+   * backfilled (Delhi's, eventually), it appears here with no frontend change.
+   */
+  async listRegistrations() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT bm.gstin AS company_gstin,
+              bm.gst_state_code,
+              MIN(bm.company_name) AS company_name,
+              COUNT(DISTINCT bm.id) AS branch_count,
+              MAX(ci.invoice_date) AS latest_invoice_date
+         FROM branch_master bm
+         LEFT JOIN cost_centre_master cm ON cm.branch_id = bm.id
+         LEFT JOIN client_invoice ci ON ci.cost_centre_id = cm.id
+        WHERE bm.gstin IS NOT NULL AND bm.gstin <> ''
+        GROUP BY bm.gstin, bm.gst_state_code
+        ORDER BY company_name, bm.gstin`
+    );
+    return rows;
+  },
+
   async listBatches(filters: { exportType?: string; companyGstin?: string; periodMonth?: string; limit?: number }) {
     const where: string[] = [];
     const params: unknown[] = [];

@@ -17,6 +17,7 @@ const AnnualBudgetSummaryPage      = lazy(() => import("@/pages/finance/AnnualBu
 const UnlinkedGrnReviewPage        = lazy(() => import("@/pages/finance/UnlinkedGrnReviewPage"));
 const BudgetConsolidationPage      = lazy(() => import("@/pages/finance/BudgetConsolidationPage"));
 const SalaryVoucherPage      = lazy(() => import("@/pages/finance/SalaryVoucherPage"));
+const GstTallyExportPage      = lazy(() => import("@/pages/finance/GstTallyExportPage"));
 const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
 const ProcessPnlDetailPage         = lazy(() => import("@/pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage  = lazy(() => import("@/pages/finance/ProcessPnlConfigurationPage"));
@@ -68,6 +69,10 @@ export const financeRouteElements = (
       {/* Roles match migration 1104's grants and the API's VOUCHER_ROLES exactly. A salary
           voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}
       <Route path="/finance/salary-voucher"          element={<ProtectedRoute roles={['super_admin','finance_head','payroll_hr']}><Gate pageCode="FINANCE_SALARY_VOUCHER"><SalaryVoucherPage /></Gate></ProtectedRoute>} />
+      {/* Roles must match GST_READ_ROLES in backend/src/modules/gst/gst-export.routes.ts and the
+          grant in backend/sql/1652_gst_tally_export_page_access.sql — write actions (generate,
+          mark downloaded) are further gated inside the page/API to GST_WRITE_ROLES. */}
+      <Route path="/finance/gst-export"               element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','admin','finance','branch_admin']}><Gate pageCode="FINANCE_GST_EXPORT"><GstTallyExportPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
       {/* Roles must match ALLOWED_ROLES in annual-budget-summary.routes.ts exactly — an
           all-branches rollup is more exposure than the single-branch screen above, so it is
