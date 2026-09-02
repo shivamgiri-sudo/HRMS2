@@ -117,32 +117,42 @@ export interface ResolvedEmployee {
 }
 
 /**
- * Employment statuses a bulk upload will NOT accept a row for.
+ * How recently an employee must appear in attendance to be treated as still on staff.
  *
- * This used to be the inverse — `employment_status = 'active'` — and that was wrong, because
- * the column is not reliable enough to gate an upload on.
+ * WHY ACTIVITY AND NOT `employment_status`
  *
- * Measured on live 2026-09-02, from BATCH-1788287542227: 86 of its 90 rejected rows were
- * refused as "not found or not active", and every one of those employees was marked
- * `inactive` while still plainly working — 43 to 45 attendance days each in the preceding
- * 60, all with a punch on 18 Aug 2026. They were not ex-staff; the flag was simply wrong on
- * them. Gating on it meant HR could not correct attendance for people who were coming to
- * work every day, and the upload gave no clue that a stale flag was the reason.
+ * This gate was `employment_status = 'active'`, then briefly a denylist of
+ * ('Resigned','terminated'). Both were wrong, because that column does not describe reality
+ * in either direction. Counted live 2026-09-02, with attendance in the preceding 90 days:
  *
- * The wider shape of the column says the same thing: of 58,975 rows it holds 'Active'
- * (1,115), 'inactive' (27,052), 'Resigned' (30,309) and 'terminated' (499), and
- * `date_of_leaving` is NULL for 30,307 of the 30,309 Resigned — so nothing corroborates a
- * status, and 'inactive' in particular carries no exit evidence at all.
+ *     status       employees   still attending
+ *     Active           1,115             1,112
+ *     inactive        27,052               586
+ *     Resigned        30,309               195
+ *     terminated         499                38
  *
- * So the gate now names only the two statuses that are an explicit, deliberate statement
- * that someone has left. 'inactive' is not one of them: it is the ambiguous bucket, and the
- * live data shows it contains active staff.
+ * So 'inactive' contains 586 people who are at work — that is the bug HR hit, where 86 rows
+ * of BATCH-1788287542227 were refused as "not active" for employees recording 43-45
+ * attendance days in the previous 60. And 'Resigned'/'terminated' contain another 233 who
+ * are also still attending, which a denylist would have gone on refusing. Nothing
+ * corroborates any of it: `date_of_leaving` is NULL for 30,307 of the 30,309 Resigned, and
+ * the exit tables hold 8 rows against ~57,000 supposed leavers.
  *
- * This is a denylist, not an allowlist, on purpose. A status nobody has thought of yet —
- * or a casing variant — should let a real employee's correction through rather than silently
- * reject it; the failure mode of the old allowlist was rejecting people who were present.
+ * Attendance is the honest signal. The nightly engine writes a row per employee it still
+ * treats as staff — present or absent — so recent rows mean the system considers them
+ * employed, independently of who last edited a status field. Being absent, or never enrolled
+ * on biometric, does not exclude anyone: the row still exists. Verified on the batch that
+ * prompted this — all 164 employees behind its imported rows had attendance, and so did all
+ * 46 behind its rejected ones.
+ *
+ * 180 days, not 90, because an upload legitimately corrects months in the past; a narrower
+ * window would refuse a correction for someone who left after the month being fixed.
+ *
+ * Net effect measured live: 1,935 employees may appear in a batch, against 1,115 under the
+ * original rule (it refused 820 working people) and 28,167 under the denylist (which
+ * admitted 26,232 with no sign of employment at all).
  */
-const NON_UPLOADABLE_STATUSES = ["Resigned", "terminated"];
+const ACTIVITY_WINDOW_DAYS = 180;
 
 /**
  * Resolve employee codes in one query rather than one per row — a branch-month
@@ -158,14 +168,33 @@ export async function resolveEmployees(codes: string[]): Promise<Map<string, Res
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
     const [rows] = await db.execute<RowDataPacket[]>(
-      // The comparison is case-insensitive under this schema's collation, so 'Active' and
-      // 'active' — both present in the column — are matched by one spelling either way.
+      // The status test is a fast path only — 'active' means admit without looking further.
+      // It is deliberately NOT wrapped in COALESCE: a NULL status is an unknown, not an
+      // assertion that someone is on staff, so it should have to clear the same attendance
+      // evidence as any other non-active value. `NULL = 'active'` yields NULL, and
+      // `NULL OR TRUE` is TRUE while `NULL OR FALSE` is NULL, so an unknown status is
+      // admitted on evidence and excluded without it — exactly the intent. (This is safe
+      // here precisely because it is an OR; the same NULL would have been a trap under the
+      // `NOT IN` denylist this replaced, which is why that one needed an explicit IS NULL.)
+      // Comparison is case-insensitive under this schema's collation, so 'Active' and
+      // 'active' — both present in the column — match the one spelling.
+      //
+      // EXISTS rather than a JOIN so an employee with 200 attendance rows is still one
+      // result row, and it stops at the first match. Covered by idx_adr_emp_date
+      // (employee_id, record_date).
       `SELECT id, employee_code, branch_id, process_id, first_name, last_name
-         FROM employees
+         FROM employees e
         WHERE employee_code IN (${slice.map(() => "?").join(",")})
-          AND (employment_status IS NULL
-               OR employment_status NOT IN (${NON_UPLOADABLE_STATUSES.map(() => "?").join(",")}))`,
-      [...slice, ...NON_UPLOADABLE_STATUSES],
+          AND (
+            LOWER(employment_status) = 'active'
+            OR EXISTS (
+                 SELECT 1
+                   FROM attendance_daily_record a
+                  WHERE a.employee_id = e.id
+                    AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+               )
+          )`,
+      [...slice, ACTIVITY_WINDOW_DAYS],
     );
     for (const r of rows as RowDataPacket[]) {
       map.set(String(r.employee_code).trim().toUpperCase(), {

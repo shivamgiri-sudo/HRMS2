@@ -108,7 +108,7 @@ export async function importIncentiveBatch(
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has left (Resigned/terminated)`;
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
     else if (!code) validationError = "incentive_code is required";
     else if (!master) {
       validationError =
