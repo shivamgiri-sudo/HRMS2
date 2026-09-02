@@ -339,6 +339,35 @@ const KNOWN_MISSING: Record<string, string> = {
   // its Escalation Signals and Process Utilization sections are hardcoded to empty arrays
   // behind "mock for now - replace with real endpoints" comments. Two working feeds do not
   // make half a stubbed screen worth advertising. See app-shell-routing.contract.test.ts.
+
+  // ── KPI Studio (src/hooks/useKpiStudio.ts) ────────────────────────────────────────────
+  // A KPI-definition builder: data sources, formula validation/preview/compute, coverage
+  // checking, employee scope, and a manual-value upload flow. Genuinely absent, not a prefix
+  // mismatch -- there is no backend/src/modules/kpi-studio directory at all, no route file
+  // under any name, nothing to repoint to. The hook's own StudioCapability check
+  // ({tables, resolution}) suggests the UI is meant to degrade gracefully when this 401s,
+  // but that has not been verified against a real KPI Studio page render.
+  "/api/kpi-studio/capability": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/formula-help": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/metrics": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/scope-options": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/data-sources": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/data-sources/:x": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/data-sources/:x/columns": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/data-sources/:x/fields": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/definitions": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/definitions/:x": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/definitions/:x/coverage": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/definitions/validate": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/employees": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/fields/:x": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/validate-formula": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/preview": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/compute": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/manual-value": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/upload/preview": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/upload/commit": "No backend module exists for KPI Studio. See the block comment above this list.",
+  "/api/kpi-studio/explain/:x/:x": "No backend module exists for KPI Studio. See the block comment above this list.",
 };
 
 /**
