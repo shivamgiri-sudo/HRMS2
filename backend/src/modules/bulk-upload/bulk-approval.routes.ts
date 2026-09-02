@@ -18,6 +18,7 @@ import { applyRegularizationBatch, rejectRegularizationBatch } from "./attendanc
 import { applyLeaveBatch, rejectLeaveBatch } from "./leave-application-bulk.service.js";
 import { applyIncentiveBatch, rejectIncentiveBatch } from "./incentive-bulk.service.js";
 import { applyDeductionBatch, rejectDeductionBatch } from "./deduction-bulk.service.js";
+import { queueApprovalJob, getApprovalJob } from "./bulk-approval-async.js";
 
 export const bulkApprovalRouter = Router();
 bulkApprovalRouter.use(requireAuth);
@@ -233,60 +234,15 @@ async function runDecision(
   }
 
   try {
-    let outcome;
-    if (decision === "approve") {
-      switch (batch.upload_type_code) {
-        case "ATTENDANCE_REGULARIZATION_BULK":
-          outcome = await applyRegularizationBatch(batch, userId, remarks || null); break;
-        case "LEAVE_APPLICATION_BULK":
-          outcome = await applyLeaveBatch(batch, userId, remarks || null); break;
-        case "INCENTIVE_BULK":
-          outcome = await applyIncentiveBatch(batch, userId, remarks || null); break;
-        case "DEDUCTION_BULK":
-          outcome = await applyDeductionBatch(batch, userId, remarks || null); break;
-        default:
-          throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
-      }
-    } else {
-      switch (batch.upload_type_code) {
-        case "ATTENDANCE_REGULARIZATION_BULK":
-          outcome = await rejectRegularizationBatch(batch, userId, remarks); break;
-        case "LEAVE_APPLICATION_BULK":
-          outcome = await rejectLeaveBatch(batch, userId, remarks); break;
-        case "INCENTIVE_BULK":
-          outcome = await rejectIncentiveBatch(batch, userId, remarks); break;
-        case "DEDUCTION_BULK":
-          outcome = await rejectDeductionBatch(batch, userId, remarks); break;
-        default:
-          throw new BulkUploadError(`No reject handler for ${batch.upload_type_code}`, 501);
-      }
-    }
+    // Queue job and return 202 Accepted immediately
+    const jobId = await queueApprovalJob(batch, userId, decision, remarks || null);
 
-    const finalStatus =
-      decision === "reject" ? "rejected" : outcome.failed > 0 ? "partially_applied" : "approved";
-    const summary =
-      decision === "reject"
-        ? `Rejected by Branch Head: ${outcome.applied} row(s) cancelled. ${remarks}`
-        : `${outcome.applied} row(s) applied, ${outcome.failed} failed.` +
-          (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
-
-    await markDecided(batch.id, finalStatus, userId, remarks || null, summary);
-    await auditBatchAction({
-      userId,
-      actionType: decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
-      batch,
-      reason: remarks || undefined,
-      detail: { applied: outcome.applied, failed: outcome.failed, final_status: finalStatus },
-      req,
-    });
-
-    return res.json({
-      success: outcome.failed === 0,
-      approval_status: finalStatus,
-      applied: outcome.applied,
-      failed: outcome.failed,
-      errors: outcome.errors.slice(0, 100),
-      message: summary,
+    return res.status(202).json({
+      success: true,
+      status: "queued",
+      job_id: jobId,
+      batch_id: batch.id,
+      message: `Approval queued. Poll /approvals/jobs/${jobId} for status.`,
     });
   } catch (err) {
     // Put the batch back in the queue rather than leaving it stuck in 'approving'.
@@ -297,3 +253,18 @@ async function runDecision(
 
 bulkApprovalRouter.post("/approvals/batches/:id/approve", h((req, res) => runDecision("approve", req, res)));
 bulkApprovalRouter.post("/approvals/batches/:id/reject", h((req, res) => runDecision("reject", req, res)));
+
+// GET /approvals/jobs/:jobId — poll job status
+bulkApprovalRouter.get("/approvals/jobs/:jobId", h(async (req, res) => {
+  const job = getApprovalJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, message: "Job not found." });
+  }
+  return res.json({
+    success: true,
+    job_id: job.id,
+    status: job.status,
+    error: job.error,
+    result: job.result,
+  });
+}));

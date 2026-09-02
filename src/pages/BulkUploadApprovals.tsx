@@ -223,26 +223,56 @@ export default function BulkUploadApprovals() {
       setDeciding(decision);
       setError("");
       try {
-        // The decision runs every domain engine row by row, which for a large batch
-        // takes far longer than the default client timeout.
         const res = await hrmsApi.post<{
           success: boolean;
-          approval_status?: string;
-          applied?: number;
-          failed?: number;
-          errors?: string[];
+          status?: string;
+          job_id?: string;
+          batch_id?: string;
           message?: string;
         }>(
           `/api/bulk-upload/approvals/batches/${openBatch.id}/${decision}`,
           { remarks: remarks.trim() },
-          300000,
         );
-        if (res.message && res.failed) {
-          setError(`${res.message} First errors: ${(res.errors ?? []).slice(0, 3).join(" | ")}`);
+
+        // Job is queued async (202), now poll for completion
+        if (res.status === "queued" && res.job_id) {
+          setNotice(`${decision === "approve" ? "Approving" : "Rejecting"} batch ${openBatch.upload_batch_no}...`);
+          let pollCount = 0;
+          const maxPolls = 600; // 10 min at 1s intervals
+          while (pollCount < maxPolls) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            pollCount++;
+
+            try {
+              const jobRes = await hrmsApi.get<{
+                success: boolean;
+                status: string;
+                error?: string;
+                result?: { applied: number; failed: number; final_status: string };
+              }>(`/api/bulk-upload/approvals/jobs/${res.job_id}`);
+
+              if (jobRes.status === "completed") {
+                const final = jobRes.result;
+                setNotice(`✓ Batch ${decision}d. ${final?.applied ?? 0} row(s) applied.`);
+                setOpenBatch(null);
+                await load();
+                return;
+              }
+              if (jobRes.status === "failed") {
+                setError(`Job failed: ${jobRes.error ?? "Unknown error"}`);
+                return;
+              }
+              // Still running, keep polling
+            } catch (err) {
+              console.warn("Poll error:", err);
+            }
+          }
+          setError("Approval is taking too long. Check the batch status manually.");
+        } else {
+          setNotice(res.message ?? `Batch ${decision}d.`);
+          setOpenBatch(null);
+          await load();
         }
-        setNotice(res.message ?? `Batch ${decision}d.`);
-        setOpenBatch(null);
-        await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : `Could not ${decision} this batch.`);
       } finally {
