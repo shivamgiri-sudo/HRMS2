@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { EMPLOYMENT_END_DATE_SELECT, payableThrough } from "./employment-end-date.js";
 
 // ─── Internal types ───────────────────────────────────────────────────────────
 
@@ -9,6 +10,7 @@ interface EmployeeMasterRow {
   branch_id: string | null;
   process_id: string | null;
   designation_id: string | null;
+  employment_end_date: string | null;
 }
 
 interface HolidayRow {
@@ -57,7 +59,8 @@ export async function resolveHolidaysForEmployeeV2(
   // ── Step 1: Employee master data ──────────────────────────────────────────
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.date_of_joining, e.salary_start_date, e.branch_id,
-            e.process_id, e.designation_id
+            e.process_id, e.designation_id,
+            ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date
      FROM employees e
      WHERE e.id = ?
      LIMIT 1`,
@@ -93,16 +96,35 @@ export async function resolveHolidaysForEmployeeV2(
     return { eligibleHolidayCount: 0, eligibleHolidayDates: [], holidayWorkExtraPayout: 0 };
   }
 
+  // The last date of this month the employee is payable through: their last working day when
+  // it falls inside the month, otherwise month end. Compared as 'YYYY-MM-DD' strings so the
+  // result is timezone-independent — a local Date read back as UTC shifts the day, and on a
+  // leaver bound that is the difference between granting and withholding a holiday.
+  const payableThroughDate = payableThrough(emp.employment_end_date, dateTo);
+
   // ── Step 4 & 5: Per-holiday eligibility check ─────────────────────────────
   let eligibleHolidayCount = 0;
   const eligibleHolidayDates: string[] = [];
 
   for (const holiday of holidays) {
     const holidayDate = new Date(holiday.holiday_date);
+    const holidayDateStr = String(holiday.holiday_date).slice(0, 10);
 
     // Date-of-joining and salary start checks
     if (holidayDate < effectiveSalaryStart) continue;
     if (holidayDate < dateOfJoining)        continue;
+
+    // Leaver bound. This resolver had a lower bound but no upper one, so a holiday falling AFTER
+    // an employee's last working day was still granted to them: a leaver who finished on the
+    // 25th was credited a holiday on the 28th. Since calculateWeekoffEligibility subtracts
+    // holidays from available working days, it also judged them against an easier attendance
+    // threshold for a month they had already left.
+    //
+    // Bounded by the same resolver payroll prorates with — exit_request's confirmed or proposed
+    // last working day, then date_of_exit, then date_of_leaving — so a leaver cannot be granted
+    // a holiday on one definition of their end date and paid on another. date_of_leaving is NULL
+    // on every row in this database, which is why it is never read on its own.
+    if (holidayDateStr > payableThroughDate) continue;
 
     // Cost-centre mandatory work override check
     if (emp.branch_id || emp.process_id) {

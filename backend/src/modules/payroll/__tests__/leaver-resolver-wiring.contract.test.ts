@@ -29,6 +29,7 @@ const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*--.*$/gm, "");
 
 const CALC = stripComments(read("src/modules/payroll/payrollCalculate.service.ts"));
+const HOL = stripComments(read("src/modules/payroll/holiday-work.service.ts"));
 
 describe("the calculation service is wired to the one resolver", () => {
   it("selects the run population with employmentWindowPredicate()", () => {
@@ -79,5 +80,38 @@ describe("the resolver keeps its timezone-safe shape", () => {
     // the difference between a paid and an unpaid final working day.
     expect(String(EMPLOYMENT_END_DATE_SELECT)).toContain("DATE_FORMAT");
     expect(String(EMPLOYMENT_END_DATE_SELECT)).toContain("%Y-%m-%d");
+  });
+});
+
+describe("the holiday resolver is bounded by the same leaver definition", () => {
+  /**
+   * resolveHolidaysForEmployeeV2 had a lower bound (joining date, salary start) and no upper one,
+   * so a holiday falling AFTER an employee's last working day was still granted: a leaver who
+   * finished on 25 August was credited a holiday on the 28th. It also fed
+   * calculateWeekoffEligibility, which subtracts holidays from available working days — so the
+   * phantom holiday additionally lowered the attendance threshold for a month already left.
+   *
+   * The §9 ruling is that selection and payment must not diverge on what "employed" means. A
+   * holiday grant is a payment, so it belongs under the same bound.
+   */
+  it("fetches the end date with the shared resolver", () => {
+    expect(HOL).toContain("EMPLOYMENT_END_DATE_SELECT");
+    expect(HOL).toContain("AS employment_end_date");
+  });
+
+  it("bounds holidays through payableThrough, not a hand-rolled date", () => {
+    expect(HOL).toContain("payableThrough(emp.employment_end_date");
+  });
+
+  it("resolves the bound before the per-holiday loop uses it", () => {
+    const resolved = HOL.indexOf("payableThrough(emp.employment_end_date");
+    const used = HOL.indexOf("payableThroughDate) continue");
+    expect(resolved).toBeGreaterThan(-1);
+    expect(used).toBeGreaterThan(resolved);
+  });
+
+  it("has no second leaver definition of its own", () => {
+    expect(HOL).not.toMatch(/date_of_leaving\s*(IS\s+NULL|>=|<=|<|>)/i);
+    expect(HOL).not.toMatch(/e\.date_of_exit/);
   });
 });

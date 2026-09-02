@@ -84,21 +84,53 @@ export async function resolveActualWeekoffCount(
 
 /**
  * Returns the number of eligible week-offs for payroll computation.
- * If employee worked all available working days (calendar - actual weekoffs),
+ * If employee worked all available working days (calendar - weekoffs - holidays),
  * they earn all weekoffs. Otherwise apply the paid-base slab cap.
+ *
+ * `holidayCount` is the company holidays that fall in the month for THIS employee — the
+ * eligible count from resolveHolidaysForEmployeeV2, which reads leave_holiday_master.
+ * A holiday is not a day the employee could have worked, so counting it against them in the
+ * "did you work everything available" test punishes people for a day the company closed.
+ *
+ * It was doing exactly that. paidBase scores present/late/half/leave but never holidays, so in
+ * a month with H holidays the highest paid base anyone can reach is (daysInMonth - weekoffs - H).
+ * Compared against an availableWorkingDays that ignored holidays, the full-attendance branch
+ * became unreachable: August 2026 had 5 Sundays and 2 holidays, so a perfect attendance record
+ * capped at 24 against a threshold of 26 and fell to the slab — 4 week-offs instead of 5. Six of
+ * seventeen HEAD OFFICE employees lost a day that way, including one present every working day
+ * of the month. November 2026 is worse: 30 days, 5 Sundays, and 2 holidays would put a perfect
+ * record at 23 — into the wide 18-23 slab, losing 2 of 5.
+ *
+ * Subtracting holidays here rather than adding them to paidBase is deliberate. paidBase is
+ * derived from attendance_daily_record, while the holiday credit payroll pays comes from
+ * leave_holiday_master via resolveHolidaysForEmployeeV2. Folding holidays into paidBase would
+ * make the entitlement depend on the engine having written 'holiday' rows — and on 2026-09-02
+ * it had written none at all for August across the whole company, which would have stripped the
+ * holiday from everyone rather than granting the week-off.
  */
 export async function calculateWeekoffEligibility(
   employeeId: string,
   paidBase: number,
-  runMonth: string
+  runMonth: string,
+  holidayCount: number
 ): Promise<number> {
   const actualCount = await resolveActualWeekoffCount(employeeId, runMonth);
 
   const [year, month] = runMonth.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
 
-  // Calculate available working days (calendar days minus actual weekoffs)
-  const availableWorkingDays = daysInMonth - actualCount;
+  // Validate, do not clamp. Clamping an absurd count DOWN to workingDays still drives
+  // availableWorkingDays to zero, and `paidBase >= 0` is true for everyone — which would grant a
+  // full week-off entitlement to an employee who worked three days. An unusable holiday count
+  // therefore falls back to 0, reverting to the pre-existing behaviour: conservative, never free
+  // pay. Only a count that is finite and strictly inside the month's working days is applied.
+  const workingDays = daysInMonth - actualCount;
+  const holidaysAreUsable =
+    Number.isFinite(holidayCount) && holidayCount >= 0 && holidayCount < workingDays;
+  const safeHolidays = holidaysAreUsable ? holidayCount : 0;
+
+  // Calculate available working days (calendar days minus weekoffs minus company holidays)
+  const availableWorkingDays = workingDays - safeHolidays;
 
   // If employee worked all available working days, they get all weekoffs
   if (paidBase >= availableWorkingDays) {

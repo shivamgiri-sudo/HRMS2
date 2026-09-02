@@ -289,7 +289,10 @@ export async function attendanceRegisterMonthly(
     // Straight from the payroll engine — same function the payslip uses, same policy-backed
     // slabs, same month-relative "worked every available day" rule.
     const paidBase   = computePaidBase(counts);
-    const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, month);
+    // Holiday count passed for the same reason as the sign-off grid: the eligibility test
+    // measures paid base against (days - weekoffs - holidays), and this report is an add-on to
+    // that engine, not a second implementation of it.
+    const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, month, holiday);
 
     // Uncapped — the same raw sum salDays below ceilings at daysInMonth, kept here as-is so it
     // can legitimately exceed the calendar month. This is what surfaces who worked extra days
