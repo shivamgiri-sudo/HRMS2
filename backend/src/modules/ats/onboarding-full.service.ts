@@ -1375,7 +1375,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   // Encrypted at rest — added 2026-09-02 for EPFO KYC/UAN seeding, which needs the
   // complete Aadhaar number. Same treatment as PAN/bank account: only the server
   // decrypts it, the browser only ever receives the masked value. See
-  // sql/1650_aadhaar_encrypted_storage_candidate_onboarding.sql for the compliance
+  // sql/1651_aadhaar_encrypted_storage_candidate_onboarding.sql for the compliance
   // context (Aadhaar Act s.29) this decision accepts.
   const aadhaarEncrypted = /^[0-9]{12}$/.test(rawAadhaar) ? encrypt(rawAadhaar) : null;
 

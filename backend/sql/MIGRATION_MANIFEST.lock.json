@@ -705,7 +705,7 @@
     "migrations/440_salary_date_revision_requests.sql"
   ],
   "knownUnlisted": [
-    "1650_aadhaar_encrypted_storage_candidate_onboarding.sql",
+    "1651_aadhaar_encrypted_storage_candidate_onboarding.sql",
     "1640_statutory_pf_esi_establishment.sql",
     "607_user_report_permissions.sql",
     "000_ai_supplemental.sql",
