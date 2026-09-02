@@ -6,6 +6,7 @@ import {
   createLeaveTypeSchema,
   leaveRequestFiltersSchema,
   leaveRequestSchema,
+  updateHolidayScopeSchema,
 } from "./leave.validation.js";
 
 export const leaveController = {
@@ -56,7 +57,22 @@ export const leaveController = {
 
   async createHoliday(req: AuthenticatedRequest, res: Response) {
     const input = createHolidaySchema.parse(req.body);
-    const data = await leaveService.createHoliday(input);
+    const data = await leaveService.createHoliday(input, req.authUser?.id ?? null);
     return res.status(201).json({ success: true, data, message: "Holiday created" });
+  },
+
+  async updateHolidayScope(req: AuthenticatedRequest, res: Response) {
+    const input = updateHolidayScopeSchema.parse(req.body);
+    try {
+      const data = await leaveService.updateHolidayScope(
+        req.params.id!, input, req.authUser?.id ?? null
+      );
+      return res.json({ success: true, data, message: "Holiday scope updated" });
+    } catch (err) {
+      if (err instanceof Error && err.message === "Holiday not found") {
+        return res.status(404).json({ success: false, error: "Holiday not found" });
+      }
+      throw err;
+    }
   },
 };
