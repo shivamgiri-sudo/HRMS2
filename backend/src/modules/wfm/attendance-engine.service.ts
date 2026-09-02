@@ -1,6 +1,7 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
+import { EMPLOYMENT_END_DATE_SELECT } from '../payroll/employment-end-date.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { toIST, minutesOfDay } from '../../shared/timezone.js';
 import { logger } from '../../logger.js';
@@ -448,7 +449,8 @@ export const attendanceEngineService = {
     branchId: string | null,
     dateOfJoining?: string | null,
     costCentreId?: string | null,
-    designationId?: string | null
+    designationId?: string | null,
+    employmentEndDate?: string | null
   ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean } | null> {
     // 1. Approved leave
     const [leaveRows] = await db.execute<RowDataPacket[]>(
@@ -470,6 +472,23 @@ export const attendanceEngineService = {
     if (dojExclusionEnabled && dateOfJoining) {
       holidaySql += ` AND lhm.holiday_date >= ?`;
       holidayParams.push(dateOfJoining);
+    }
+    // Leaver exclusion, the mirror image of the DOJ one above. A holiday falling AFTER an
+    // employee's last working day is not theirs: someone who finished on 8 August is owed
+    // neither the 15th nor the 28th, someone who finished on the 17th is owed the 15th only,
+    // and someone who finished on the 30th is owed both.
+    //
+    // Without this the engine wrote a 'holiday' row for days after the employee had gone, and
+    // because the cost-centre sign-off grid and the attendance register count those rows, a
+    // leaver's salary days read higher on screen than payroll pays. Payroll resolves holidays
+    // from leave_holiday_master and is separately bounded, so the two disagreed on the same
+    // person: 10 salary days on the grid against the 8 payroll pays.
+    //
+    // Bounded on the same resolved last working day payroll prorates with, so attendance,
+    // reports and the payslip cannot part company on when someone stopped being employed.
+    if (employmentEndDate) {
+      holidaySql += ` AND lhm.holiday_date <= ?`;
+      holidayParams.push(String(employmentEndDate).slice(0, 10));
     }
     // Cost centre scope: if mapping exists, employee's cost centre must be mapped
     holidaySql += `
@@ -931,6 +950,7 @@ export const attendanceEngineService = {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id, e.cost_centre_id,
          e.date_of_joining, e.reporting_manager_id,
+         ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date,
          LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
          LOWER(COALESCE(desig.designation_name,'')) AS designation_name
        FROM employees e
@@ -949,6 +969,9 @@ export const attendanceEngineService = {
     const branchId: string | null = emp.branch_id ?? null;
     const costCentreId: string | null = emp.cost_centre_id ?? null;
     const dateOfJoining: string | null = emp.date_of_joining ?? null;
+    // Resolved last working day — exit_request's confirmed/proposed date, then date_of_exit,
+    // then date_of_leaving. Null for anyone still employed.
+    const employmentEndDate: string | null = emp.employment_end_date ?? null;
     const shiftWindow = await this.getShiftWindow(employeeId, date);
 
     // Per-employee COSEC exceptions. Resolved once here and used at every biometric
@@ -997,7 +1020,9 @@ export const attendanceEngineService = {
     }
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
-    const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
+    const override = await this.resolveOverridePriority(
+      employeeId, date, branchId, dateOfJoining, costCentreId, designationId, employmentEndDate
+    );
 
     if (override) {
       // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked.
