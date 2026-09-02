@@ -160,8 +160,15 @@ export const budgetCostCentreUtilizationService = {
     // 78,000" from a hand-summed subset; the actual sum of all 5 affected budgets is Rs 90,629 —
     // re-verified independently against live data before correcting this comment.)
     //
-    // RESIDUAL, deliberately not chased further — re-verified 2026-09-01, not caused by this
-    // query or by the simple-GRN fallback below:
+    // RESOLVED 2026-09-02 — see verify-budget-line-money-ledger-parity.ts. The four "Rs
+    // 2,159/1,143/958/710" Consumed-side lines noted below were traced to the SAME root cause as
+    // that day's larger GRN-to-budget period-mismatch bug: one-off backfill/remediation scripts
+    // writing finance_budget_line.reserved_amount/consumed_amount directly, without checking the
+    // result still equalled the sum of the line's real grn_cost_allocation rows. All were
+    // reconciled to their real backing rows via that script; run it any time (dry-run by default)
+    // to catch the next one before it surfaces as a support question. The one Reserved-side
+    // disagreement (Rs 4,662, multi-month GRNs) predates and is unrelated to that fix and was left
+    // as originally found:
     //   - One budget's Reserved figure still disagrees by Rs 4,662 (two lines, Rs 4,275 + Rs 387).
     //     Traced to two GRNs (is_multi_month = 1) whose grn_cost_allocation.pnl_cost_amount is the
     //     GRN's full committed amount (matches what reserve() should charge — confirmed via
@@ -169,15 +176,11 @@ export const budgetCostCentreUtilizationService = {
     //     months for reporting only, not the reservation itself), while finance_budget_line's own
     //     reserved_amount counter is short by exactly that much. The discrepancy is in whatever
     //     wrote the line counter historically (2026-08-24/27), not in how either figure is read
-    //     here — no reserve()/consume() call arguments survive to reconstruct why.
-    //   - Four budgets' Consumed figures disagree by a combined Rs 4,970 (Rs 2,159/1,143/958/710),
-    //     each spanning 3-5 small GRNs with no multi-month or funded-elsewhere involvement — same
-    //     "allocation sum exceeds the line counter" shape, no common cause found.
-    //   - Total unreconciled: Rs 9,632 across 5 of the ~29 live budgets. Small enough, and old
-    //     enough (all pre-dating this session), that it reads as accumulated historical drift
-    //     rather than a live bug — but it is real money that does not currently reconcile, and a
-    //     one-time correction script (in the fix-imprest-reattribute.ts / fix-grn-*.ts family)
-    //     would be the right way to close it if Finance wants it closed rather than monitored.
+    //     here — no reserve()/consume() call arguments survive to reconstruct why. A fresh full-DB
+    //     scan on 2026-09-02 (verify-budget-line-money-ledger-parity.ts) found this one already
+    //     resolved on its own (likely the GRN progressed to consume()/release() since), so it was
+    //     left as-is rather than force a write against a live figure that no longer disagrees —
+    //     run that script any time to confirm current state or catch a recurrence.
     const [spendRows] = await db.query<RowDataPacket[]>(
       `SELECT g.cost_centre_id AS cost_centre_id, l.head AS head, l.sub_head AS sub_head,
               SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,

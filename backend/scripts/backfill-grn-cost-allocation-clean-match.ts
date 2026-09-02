@@ -90,12 +90,23 @@ interface TargetGrn {
 }
 
 async function findCleanMatches(hrms: mysql.Connection): Promise<TargetGrn[]> {
+  // h.period_code = g.accounting_period is load-bearing, not redundant with financial_year: a
+  // (cost_centre, head, sub_head) combination is usually native-budgeted for only ONE month within
+  // the financial year (whichever month the new budgeting workflow has actually reached), so
+  // without this the "exactly one unambiguous match" check below picked that one real month's line
+  // as the "clean match" for every OTHER month's GRN too -- confirmed live 2026-09-02: 52 GRNs from
+  // April-July silently drew against August's budget line this way (see
+  // remediate-clean-match-wrong-period-linkage.ts, which reverses the damage from the first run).
+  // A GRN whose own month has no budget line of its own is a real governance gap now, same bucket
+  // as "branch has no FY2026-27 budget at all" -- not something this backfill should paper over by
+  // borrowing a different month's line.
   const [rows] = await hrms.query<any[]>(`
     SELECT g.id AS grn_id, g.grn_number, g.status, g.amount_with_tax, g.branch_id,
            g.cost_centre_id, MIN(l.id) AS budget_line_id, MIN(l.budget_id) AS budget_id
     FROM grn_request g
     JOIN finance_budget_line l ON l.cost_centre_id = g.cost_centre_id AND l.head = g.head AND (l.sub_head <=> g.sub_head)
     JOIN finance_budget_header h ON h.id = l.budget_id AND h.branch_id = g.branch_id AND h.financial_year = g.financial_year
+      AND h.period_code = g.accounting_period
     WHERE g.accounting_period >= '2026-04' AND g.accounting_period <= '2027-03'
       AND g.bill_source_id IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation gca WHERE gca.grn_request_id = g.id)
