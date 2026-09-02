@@ -10,6 +10,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { hasScopedAccess, buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
 import { env } from "../../config/env.js";
 import {
   getBgvStatusByToken,
@@ -388,6 +389,34 @@ router.post("/report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_
       [completedBy, completedAt, candidate_id],
     );
   }
+
+  // Was previously unlogged: this handler is the only writer of the manual per-category
+  // verification fields (including Address, which has no automated provider and is
+  // HR-judgment-only), and it wrote directly to candidate_bgv_report with no audit trail
+  // at all — not even to the BGV-internal candidate_bgv_verification_event table other
+  // BGV actions use. Logged here to audit_action_log so who-changed-what for a BGV report
+  // save actually shows up on the platform's Audit Log screen, not just in a siloed table
+  // nobody looks at. Non-throwing (writeAuditLog swallows its own failures), so a logging
+  // hiccup can never block an HR user from saving a BGV report.
+  await writeAuditLog({
+    actor_user_id: req.authUser!.id,
+    action_type: locked ? "BGV_REPORT_LOCKED" : "BGV_REPORT_SAVED",
+    module_key: "bgv",
+    entity_type: "candidate_bgv_report",
+    entity_id: candidate_id,
+    change_summary: {
+      aadhaar_status: fields.aadhaar_status ?? "not_run",
+      pan_status: fields.pan_status ?? "not_run",
+      bank_status: fields.bank_status ?? "not_run",
+      education_status: fields.education_status ?? "not_run",
+      employment_status: fields.employment_status ?? "not_run",
+      address_status: fields.address_status ?? "not_run",
+      criminal_status: fields.criminal_status ?? "not_run",
+      esignature_status: fields.esignature_status ?? "not_done",
+      locked: !!locked,
+    },
+    req: req as any,
+  });
 
   return res.status(201).json({ success: true, message: locked ? "BGV report locked" : "BGV report saved" });
 }));

@@ -379,7 +379,7 @@ function deriveOverallStatus(
  * profile/designation are counted. DigiLocker verified = covers both
  * aadhaar and pan so manual checks for those are not additionally required.
  */
-export async function computeAndSaveScore(candidateId: string): Promise<number> {
+export async function computeAndSaveScore(candidateId: string): Promise<{ score: number; overallStatus: string }> {
   const { includeEmployment, includeCriminal, denominator } = await getApplicableChecks(candidateId);
 
   const [rawChecks] = await db.execute<RowDataPacket[]>(
@@ -479,7 +479,7 @@ export async function computeAndSaveScore(candidateId: string): Promise<number> 
     [candidateId, scorePct, nextOverallStatus]
   );
 
-  return scorePct;
+  return { score: scorePct, overallStatus: nextOverallStatus };
 }
 
 export async function saveBgvConsentByToken(token: string, input: { consentText?: string; purposes?: unknown }, meta?: { ip?: string; userAgent?: string }) {
@@ -542,7 +542,6 @@ export async function getBgvStatusForCandidate(candidateId: string) {
 
   const required = ["aadhaar", "pan"];
   const clearChecks = new Set(checks.filter((c) => ["verified", "waived"].includes(String(c.status))).map((c) => String(c.check_type)));
-  const criticalMismatch = checks.some((c) => ["aadhaar", "pan", "bank"].includes(String(c.check_type)) && String(c.status) === "mismatch");
   const bankClear = bankRows.some((b) => ["verified", "waived"].includes(String(b.verification_status)));
   const missing = required.filter((check) => !clearChecks.has(check));
   // Was a second, disagreeing formula (bank weighted 20 here vs 15 in computeAndSaveScore,
@@ -551,8 +550,15 @@ export async function getBgvStatusForCandidate(candidateId: string) {
   // the admin Onboarding Request page, and the BGV Report view could each show a
   // different score for the same candidate. computeAndSaveScore is the single canonical
   // formula now; call it here too instead of recalculating independently.
-  const score = await computeAndSaveScore(candidateId);
+  const { score, overallStatus } = await computeAndSaveScore(candidateId);
 
+  // overall_status/employee_creation_ready used to be a THIRD, even narrower formula:
+  // `required = ["aadhaar", "pan"]` only, so a candidate with Bank/Education/Address/
+  // Employment/Criminal still unverified could show "clear" and "ready to convert to
+  // employee" the moment just Aadhaar+PAN cleared — even though the score itself (from
+  // computeAndSaveScore, above) already reflected all applicable categories and could sit
+  // well under 100%. Now deferring to the same canonical overallStatus the score was just
+  // computed and persisted from, so the two can no longer disagree on this screen either.
   return {
     candidate_id: candidateId,
     consent: consents[0] ?? null,
@@ -560,10 +566,10 @@ export async function getBgvStatusForCandidate(candidateId: string) {
     documents,
     bank_verifications: bankRows,
     score,
-    overall_status: criticalMismatch ? "refer" : missing.length === 0 ? "clear" : score >= 60 ? "conditional" : "pending",
+    overall_status: overallStatus,
     missing_mandatory_checks: missing,
-    employee_creation_ready: !criticalMismatch && missing.length === 0,
-    payroll_activation_ready: !criticalMismatch && clearChecks.has("pan") && bankClear,
+    employee_creation_ready: overallStatus === "clear",
+    payroll_activation_ready: overallStatus !== "refer" && overallStatus !== "negative" && clearChecks.has("pan") && bankClear,
   };
 }
 
