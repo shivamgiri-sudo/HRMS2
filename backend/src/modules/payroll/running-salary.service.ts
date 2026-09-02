@@ -223,11 +223,21 @@ export async function computeRunningSalary(
 
   const paidWorkingDaysTillDate = presentTillDate + paidLeaveTillDate;
 
+  // Resolved before the week-off calls below, which need the month's holiday count: the
+  // eligibility test measures paid base against (days - weekoffs - holidays), so a projection
+  // that passed 0 here would show fewer week-offs than the locked run will actually grant.
+  // The FULL-month count is the right input even mid-month, because availableWorkingDays is
+  // itself a full-month figure — the final engine compares against the same denominator.
+  const runMonthYM = `${y}-${String(m).padStart(2, "0")}`;
+  const { eligibleHolidayDates } = await resolveHolidaysForEmployeeV2(employeeId, runMonthYM);
+  const eligibleHolidayCountMonth = eligibleHolidayDates.length;
+
   // Eligible week-offs till date — use the same slab logic as final payroll
   const eligibleWeekoffTillDate = await calculateWeekoffEligibility(
     employeeId,
     paidWorkingDaysTillDate,
     runMonth,
+    eligibleHolidayCountMonth,
   );
 
   // Eligible holidays till date.
@@ -239,8 +249,6 @@ export async function computeRunningSalary(
   // one found 0, silently, no error). Net effect: this function never counted a
   // holiday for any employee, ever. Fixed by resolving the month's eligible holiday
   // dates once, correctly, and filtering by date range instead of re-querying per day.
-  const runMonthYM = `${y}-${String(m).padStart(2, "0")}`;
-  const { eligibleHolidayDates } = await resolveHolidaysForEmployeeV2(employeeId, runMonthYM);
   const eligibleHolidaysTillDate = eligibleHolidayDates.filter(
     (d) => d >= monthStart && d <= tillDate
   ).length;
@@ -358,6 +366,7 @@ export async function computeRunningSalary(
     employeeId,
     paidWorkingDaysTillDate,
     runMonth,
+    eligibleHolidayCountMonth,
   );
 
   const projectedPayableDaysRaw = presentTillDate + paidLeaveTillDate +

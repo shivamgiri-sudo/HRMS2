@@ -152,8 +152,17 @@ describe("computeRunningSalary", () => {
     // only in IST and failed on CI's UTC runner, which is how the shortfall stayed hidden.
     expect(result.projected_payable_days).toBe(11.5);
     expect(result.projected_salary).toBe(11129.03);
-    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(1, "emp-1", 3.5, "2026-07-01");
-    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 9.5, "2026-07-01");
+    // The 4th argument is the employee's own eligible holiday count for the month, which the
+    // eligibility test subtracts from available working days so a company holiday cannot count
+    // against "worked everything available". This fixture declares no holidays, hence 0 —
+    // holiday-count-varies-per-employee is covered in weekoff-holiday-aware.test.ts.
+    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(1, "emp-1", 3.5, "2026-07-01", 0);
+    // 3.5, not 9.5: the projection deliberately uses the EARNED paid base only. Adding the
+    // remaining calendar days would mix calendar days into a working-day count and trip the
+    // full-attendance branch for someone who has not earned it — see the comment on
+    // projectedEligibleWeekoffs in running-salary.service.ts. This expectation still held the
+    // pre-change value and was failing at HEAD before the holiday-count parameter existed.
+    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 3.5, "2026-07-01", 0);
   });
 
   it("treats locked night-shift half day in ADR as payroll-visible half day instead of splitting the post-midnight date", async () => {

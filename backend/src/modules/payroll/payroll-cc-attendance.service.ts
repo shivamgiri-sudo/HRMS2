@@ -449,7 +449,9 @@ export async function getLiveEmployeeGrid(
       const counts = countDayCodes((d) => emp.cells[d] ?? "", daysInMonth);
       const paidBase = computePaidBase(counts);
       // The payroll engine's own function — same slabs, same month-relative rule as the payslip.
-      const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, m);
+      // counts.holiday is passed so this grid applies the same holiday-aware eligibility test
+      // as the engine that pays. Omitting it showed fewer week-offs here than payroll grants.
+      const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, m, counts.holiday);
       return {
         employee_id: emp.employee_id,
         employee_code: emp.employee_code,

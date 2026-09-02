@@ -1106,7 +1106,15 @@ export async function calculatePayrollRunScoped(
     if (!hasEngineData) paidBase = att.present_days + att.leave_days;
 
     // Step 4: Week-off eligibility and holiday resolution
-    const eligibleWeekoffs = await calculateWeekoffEligibility(emp.employee_id, paidBase, run.run_month);
+    //
+    // Holidays are resolved BEFORE the week-off calculation because the eligibility test needs
+    // them: a company holiday is not a day the employee could have worked, so it must not count
+    // against "did you work every available working day". This used to be resolved further down,
+    // after the week-off call, which is why the test could never see it.
+    const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
+    const eligibleWeekoffs = await calculateWeekoffEligibility(
+      emp.employee_id, paidBase, run.run_month, eligibleHolidayCount
+    );
 
     // Check if auto-generation of holiday work payouts is enabled
     let holidayWorkExtraPayout = 0;
@@ -1144,8 +1152,6 @@ export async function calculatePayrollRunScoped(
       holidayWorkExtraPayout = legacyResult.holidayWorkExtraPayout;
     }
 
-    const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
-
     // Step 5: Leave reversal
     const reversalResult = await checkAndReverseLeave({
       employeeId: emp.employee_id,
@@ -1160,7 +1166,9 @@ export async function calculatePayrollRunScoped(
     const effectivePaidBase = reversalResult.newPaidBase;
     // Recalculate week-offs and holidays with new paid base if reversal happened
     const finalWeekoffs = reversalResult.reversed
-      ? await calculateWeekoffEligibility(emp.employee_id, effectivePaidBase, run.run_month)
+      ? await calculateWeekoffEligibility(
+          emp.employee_id, effectivePaidBase, run.run_month, eligibleHolidayCount
+        )
       : eligibleWeekoffs;
     const finalHolidays = reversalResult.reversed ? eligibleHolidayCount : eligibleHolidayCount;
 
