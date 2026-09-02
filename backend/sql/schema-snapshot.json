@@ -398,7 +398,8 @@
       "notes",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "attendance_logic"
     ],
     "apr_manual_upload": [
       "id",
