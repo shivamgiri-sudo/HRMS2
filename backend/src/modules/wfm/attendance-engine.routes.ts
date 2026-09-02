@@ -527,6 +527,32 @@ router.delete('/rules/:id', requireRole('admin'), h(async (req, res) => {
   return res.status(204).send();
 }));
 
+// GET /attendance-logic - per-process attendance logic (which feed decides the day).
+// Readable by the same roles that can open the rules master.
+router.get('/attendance-logic', requireRole('admin', 'hr', 'wfm'), h(async (_req, res) => {
+  const data = await attendanceEngineService.listProcessAttendanceLogic();
+  return res.json({ success: true, data });
+}));
+
+// PUT /attendance-logic/:processId - set the logic for one process (admin only).
+//
+// This is the write that actually changes which feed builds a process's attendance, so it
+// is restricted to admin and validated against the enum rather than passed through.
+router.put('/attendance-logic/:processId', requireRole('admin'), h(async (req, res) => {
+  const { attendance_logic: logic } = req.body as { attendance_logic?: string };
+  const allowed = ['apr', 'cosec', 'apr_validated_by_cosec'];
+  if (!logic || !allowed.includes(logic)) {
+    return res.status(400).json({
+      success: false,
+      message: `attendance_logic must be one of: ${allowed.join(', ')}`,
+    });
+  }
+  const actor = req.authUser?.id ?? 'system';
+  const result = await attendanceEngineService.setProcessAttendanceLogic(
+    req.params.processId, logic as 'apr' | 'cosec' | 'apr_validated_by_cosec', actor);
+  return res.json({ success: true, data: result });
+}));
+
 // Attendance Processing
 
 // POST /process - manual trigger for a date (admin, hr, wfm)
