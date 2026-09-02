@@ -129,6 +129,12 @@ export function nextIstDate(date: string): string {
   return (toIST(d) ?? d.toISOString())!.slice(0, 10);
 }
 
+export function prevIstDate(date: string): string {
+  const d = new Date(`${date}T00:00:00+05:30`);
+  d.setDate(d.getDate() - 1);
+  return (toIST(d) ?? d.toISOString())!.slice(0, 10);
+}
+
 export function buildShiftWindowInfo(
   date: string,
   shiftStartTime: string | null | undefined,
@@ -994,25 +1000,66 @@ export const attendanceEngineService = {
     const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
 
     if (override) {
-      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked
+      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked.
+      //
+      // Night-shift cross-midnight guard: a night-shift worker whose roster is e.g. 22:00–07:00
+      // punches out at 03:xx on the next calendar day. That next calendar day may be a week-off.
+      // The biometric/APR evidence on the week-off date belongs to the previous night's shift —
+      // it was already credited when the engine ran for the shift-start date. Firing week_off_worked
+      // here would double-count the session and incorrectly penalise the employee.
+      //
+      // Guard logic: check whether the previous calendar day's roster shift is a cross-midnight
+      // (night) shift whose end date lands on `date`. If yes, the evidence on `date` is carryover
+      // — skip week_off_worked and fall through to the regular week_off result.
       if (override.isRosterWeekOff) {
-        // Get APR minutes if applicable to check for actual work on this day
-        let actualMinutesOnWeekOff = biometricMinutes;
+        // For APR-strict employees biometric is not the attendance source.
+        // Start from zero; only APR minutes count toward week_off_worked for these employees.
+        let actualMinutesOnWeekOff = isAprEmployee ? 0 : biometricMinutes;
+
         if (isAprEmployee) {
-          const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
-          if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
+          // Check whether previous day's night shift tail is landing on this week-off date.
+          const prevDate = prevIstDate(date);
+          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
+          const isNightShiftCarryover =
+            prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
+
+          if (!isNightShiftCarryover) {
+            // Genuine new APR activity on the week-off day — check for it.
+            const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+            if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
+          }
+          // If isNightShiftCarryover: leave actualMinutesOnWeekOff = 0 → falls through to week_off.
+        } else {
+          // Biometric employee: same carryover guard applies.
+          const prevDate = prevIstDate(date);
+          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
+          const isNightShiftCarryover =
+            prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
+          if (isNightShiftCarryover) {
+            // Early-morning biometric sessions are carryover from previous night shift.
+            // Only count sessions that started on/after midnight of this week-off date itself
+            // (i.e. a genuinely new session, not the tail of yesterday's shift).
+            const [weekOffSessions] = await db.execute<RowDataPacket[]>(
+              `SELECT COALESCE(SUM(total_login_minutes), 0) AS mins
+               FROM wfm_attendance_session
+               WHERE employee_id = ? AND session_date = ?
+               AND login_time >= CONCAT(?, ' 07:00:00')`,
+              [employeeId, date, date]
+            );
+            actualMinutesOnWeekOff = Number((weekOffSessions[0] as any).mins ?? 0);
+          }
         }
 
         if (actualMinutesOnWeekOff > 0) {
-          // Employee worked on their roster week-off — flag for WFM review
+          // Employee genuinely worked on their roster week-off — flag for WFM review
           const wowResult: EngineResult = {
             employeeId, date, processId, branchId,
             source: isAprEmployee ? 'dialler' : 'biometric',
-            sourceSystem: biometricEvidence.sourceSystem,
+            sourceSystem: isAprEmployee ? 'apr' : biometricEvidence.sourceSystem,
             sourceRecordDate: date,
-            sourceReference: biometricEvidence.sourceReference,
+            sourceReference: isAprEmployee ? null : biometricEvidence.sourceReference,
             diallerMinutes: isAprEmployee ? actualMinutesOnWeekOff : null,
-            biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
+            biometricMinutes: isAprEmployee ? null : (biometricMinutes > 0 ? biometricMinutes : null),
             rawMinutes: actualMinutesOnWeekOff,
             status: 'week_off_worked',
             lwpValue: 0.0,
