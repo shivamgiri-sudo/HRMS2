@@ -16,6 +16,7 @@ import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from 
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
+import { startClientBillingDbBillSyncWorker, stopClientBillingDbBillSyncWorker } from "./client-billing-db-bill-sync.worker.js";
 import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sync.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
@@ -164,6 +165,15 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // appeared.
     name: "db-bill-finance-sync",
     start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
+  },
+  {
+    // Sibling of db-bill-finance-sync above, same db_bill source, different target: this keeps
+    // client_invoice/client_credit_note current (the GST/Tally export's own source table),
+    // where db-bill-finance-sync keeps billing_invoice_snapshot current (the P&L's). Registered
+    // before gst-export-auto below so a day's invoicing is synced before that worker builds the
+    // day's export batch.
+    name: "client-billing-db-bill-sync",
+    start: () => { startClientBillingDbBillSyncWorker(); return Promise.resolve(); },
   },
   {
     name: "db-bill-hr-sync",
@@ -452,6 +462,7 @@ function shutdown(): void {
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
   stopDbBillFinanceSyncWorker();
+  stopClientBillingDbBillSyncWorker();
   stopDbBillHrSyncWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
