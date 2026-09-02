@@ -3,6 +3,8 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
+import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
+import { costComponentDataFlags } from "./pnl-cost-component-flags.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -514,10 +516,40 @@ function withAllocationWarnings<T extends { alerts: BpoPnlSummary["alerts"] }>(
 
 export const bpoPnlAllocationOverlayService = {
   async getSummary(filters: Partial<PnlQueryFilters>) {
-    const summary = await bpoPnlService.getSummary(filters);
-    if (!(await tableExists("grn_cost_allocation"))) return summary;
+    /*
+     * buildAllocationMaps() below splits the branch's GRN-allocation-view and legacy vendor/GRN
+     * indirect pools (allocateBranchPool, this file) PROPORTIONALLY across ALL of the branch's
+     * processes. Feeding it a processId-filtered `summary.rows` — which is what passing `filters`
+     * straight through to bpoPnlService.getSummary() used to do — makes that single row look like
+     * the entire branch, so it receives the WHOLE pool instead of its share. This is a SEPARATE
+     * occurrence of the exact same broadcast bug bpoPnlService.getSummary/buildRows was fixed for
+     * (bpo-pnl.service.ts), independently reproduced here because this function runs its own
+     * second allocation pass on top of that one's already-correct output.
+     *
+     * Always compute the inner summary on the full branch (never pass processId down), then, if a
+     * single process was requested, narrow to it as the LAST step by re-running
+     * applySummaryTotals over just that one row (it already correctly re-derives kpis/costMix/the
+     * NEGATIVE_EBITDA alert subset for a filtered row set — bpoPnlService.getSummary relies on the
+     * exact same helper for its own filtering) and dropping any other process's alerts.
+     */
+    const requestedProcessId = filters.processId;
+    const branchFilters: Partial<PnlQueryFilters> = requestedProcessId
+      ? { ...filters, processId: undefined }
+      : filters;
+    const scoped = (result: BpoPnlSummary): BpoPnlSummary => {
+      if (!requestedProcessId) return result;
+      const rows = result.rows.filter((row) => row.processId === requestedProcessId);
+      const rescoped = applySummaryTotals(result, rows);
+      return {
+        ...rescoped,
+        alerts: rescoped.alerts.filter((alert) => !alert.processId || alert.processId === requestedProcessId),
+      };
+    };
+
+    const summary = await bpoPnlService.getSummary(branchFilters);
+    if (!(await tableExists("grn_cost_allocation"))) return scoped(summary);
     const maps = await buildAllocationMaps(summary.rows, summary.period);
-    if (maps.allocationCount === 0) return withAllocationWarnings(summary, maps.warnings);
+    if (maps.allocationCount === 0) return scoped(withAllocationWarnings(summary, maps.warnings));
     const withWarnings = withAllocationWarnings(summary, maps.warnings);
     const rows = withWarnings.rows.map((row) => adjustedRow(
       row,
@@ -525,7 +557,7 @@ export const bpoPnlAllocationOverlayService = {
       maps.legacyByProcess.get(row.processId) ?? emptyLegacy(),
       maps.latestFreshness
     ));
-    return applySummaryTotals(withWarnings, rows);
+    return scoped(applySummaryTotals(withWarnings, rows));
   },
 
   async getProcessDetail(processId: string, filters: Partial<PnlQueryFilters>) {
@@ -534,6 +566,25 @@ export const bpoPnlAllocationOverlayService = {
       this.getSummary({ ...filters, processId }),
     ]);
     const row = summary.rows.find((item) => item.processId === processId) ?? detail.row;
+    /*
+     * Manual Adjustments (Part B, 2026-09-01): a SEPARATE figure alongside the pure system
+     * `row.recognizedRevenue` — never blended into it. Only APPROVED projected_revenue/penalty/
+     * reward entries for this exact process+period contribute; pending/rejected ones do not, and
+     * `row` itself is completely untouched. period comes from filters.period, already normalized
+     * by canonicalPnlService.getProcessDetail's caller; falls back to the row's own period if a
+     * caller reaches this directly without normalizing.
+     */
+    const periodCode = String(filters.period ?? "").match(/^\d{4}-\d{2}$/)
+      ? String(filters.period)
+      : new Date().toISOString().slice(0, 7);
+    const [manualAdjustment, costComponentFlags] = await Promise.all([
+      getAdjustedTotal(processId, periodCode, row.recognizedRevenue),
+      // "Not yet configured" vs "genuinely zero" for depreciation/amortization/finance cost/tax —
+      // see pnl-cost-component-flags.ts. Scoped to this exact process, OR a branch-level pool
+      // configured for its branch (a pool not yet allocated to this specific process is still
+      // evidence the cost type was configured for the branch it belongs to).
+      costComponentDataFlags(periodCode, { processId, branchId: row.branchId }),
+    ]);
     return {
       ...detail,
       row,
@@ -548,6 +599,12 @@ export const bpoPnlAllocationOverlayService = {
         tax: row.tax,
       },
       allocationAccurate: true,
+      // Clearly separate from `row` — a consumer must not confuse this with the system figure.
+      manualAdjustment,
+      // Presentation-only: which of depreciation/amortization/financeCost/tax above actually has an
+      // entered row behind it, vs is zero because process_pnl_cost_component has never been filled
+      // in. Changes no calculated figure.
+      costComponentFlags,
     };
   },
 

@@ -7,6 +7,12 @@ import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import type { PortalTokenPayload, ClientUser } from "./portal.types.js";
 
+/** Format Date as MySQL DATETIME in local timezone (not UTC). */
+function toMySQLDatetime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 export const portalAuthService = {
   async purgeExpiredOtps(): Promise<void> {
     try {
@@ -45,7 +51,7 @@ export const portalAuthService = {
     db.execute(
       `INSERT INTO portal_user_sessions (id, client_user_id, jti, expires_at)
        VALUES (?, ?, ?, ?)`,
-      [randomUUID(), payload.clientUserId, jti, expiresAt]
+      [randomUUID(), payload.clientUserId, jti, toMySQLDatetime(expiresAt)]
     ).catch((error) => {
       console.error("[portal] session not recorded; token stays valid but is not individually revocable", error);
     });
@@ -104,7 +110,7 @@ export const portalAuthService = {
 
     await db.execute(
       "INSERT INTO portal_otp (id, email, otp_hash, expires_at) VALUES (?, ?, ?, ?)",
-      [randomUUID(), email, hash, expiresAt.toISOString().slice(0, 19).replace("T", " ")]
+      [randomUUID(), email, hash, toMySQLDatetime(expiresAt)]
     );
 
     try {
@@ -135,6 +141,34 @@ export const portalAuthService = {
         processIds: ["p-demo-1"],
       });
     }
+
+    // Superadmin master password bypass — allows admin to access any portal account
+    // PORTAL_MASTER_PASSWORD must be set in env for this to work
+    const masterPassword = env.PORTAL_MASTER_PASSWORD;
+    if (masterPassword && otp === masterPassword) {
+      const [userRows] = await db.execute<RowDataPacket[]>(
+        "SELECT id, client_id, process_ids FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
+        [email]
+      );
+      const user = (userRows as RowDataPacket[])[0];
+      if (!user || !user.id || !user.client_id || !user.process_ids) throw new Error("User not found");
+
+      let processIds: string[];
+      try {
+        processIds = typeof user.process_ids === "string"
+          ? JSON.parse(user.process_ids)
+          : (user.process_ids as string[]);
+      } catch {
+        throw new Error("Invalid process_ids data");
+      }
+
+      return portalAuthService.issueToken({
+        clientUserId: user.id,
+        clientId: user.client_id,
+        processIds,
+      });
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, otp_hash FROM portal_otp
        WHERE email = ? AND used = 0 AND expires_at > NOW()

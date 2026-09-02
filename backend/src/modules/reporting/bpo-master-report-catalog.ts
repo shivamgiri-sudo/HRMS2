@@ -75,7 +75,7 @@ const IDENTITY = [
 
 const MANAGEMENT = ["super_admin", "admin", "ceo", "coo", "branch_head", "manager", "process_manager"];
 const OPERATIONS = ["super_admin", "admin", "ceo", "coo", "branch_head", "operations", "operations_manager", "manager", "process_manager", "team_leader", "tl", "quality", "qa", "wfm"];
-const HR = ["super_admin", "admin", "hr", "hr_head", "branch_hr", "hr_branch", "branch_head", "manager"];
+const HR = ["super_admin", "admin", "hr", "hr_head", "hr_admin", "ho_hr", "process_hr", "branch_hr", "hr_branch", "branch_head", "manager"];
 const PAYROLL = ["super_admin", "admin", "payroll", "payroll_head", "payroll_branch", "payroll_hr", "finance", "finance_head", "hr_head"];
 const FINANCE = ["super_admin", "admin", "ceo", "coo", "finance", "finance_head", "accounts_head", "branch_head"];
 const QUALITY = ["super_admin", "admin", "ceo", "coo", "quality", "qa", "quality_analyst", "operations", "operations_manager", "manager", "process_manager", "branch_head"];

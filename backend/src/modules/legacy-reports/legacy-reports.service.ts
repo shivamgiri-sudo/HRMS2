@@ -8,6 +8,7 @@
  * Column names verified against actual mas_hrms table schemas (2026-08-22).
  */
 import type { RowDataPacket } from "mysql2/promise";
+import * as XLSX from "xlsx";
 import { db } from "../../db/mysql.js";
 
 export type LegacyFilter = {
@@ -1838,17 +1839,57 @@ export const legacyReportsService = {
   },
 
   toCsv(result: LegacyReportResult): string {
-    const esc = (v: unknown) => {
-      const s = String(v ?? "");
+    // Excel's CSV importer auto-detects any long digit-only field as a number. Bank
+    // account numbers, UAN, EPF/ESIC numbers and cheque numbers are long digit
+    // strings, so on open Excel silently rewrites them into scientific notation
+    // (e.g. "925010001011519" -> "9.2501E+14") and drops leading zeros — the on-screen
+    // report is fine because the grid renders them as plain text; only the exported
+    // file round-trips them through Excel's float parser.
+    //
+    // Fix: prepend a literal leading apostrophe to `format: "text"` columns whose
+    // value is 6+ digits, matching the legacy db_bill export's own convention (see the
+    // reported screenshot — "A/C No." reads '2512995843, apostrophe included). Once a
+    // field is no longer all-digits, Excel's CSV importer leaves it as text and shows
+    // the apostrophe as a literal character, keeping every digit and any leading
+    // zeros. IFSC/alphanumeric columns already start with a letter, so they are
+    // untouched, and numeric/currency columns are untouched so totals still sum.
+    const LONG_DIGIT_RE = /^\d{6,}$/;
+    const esc = (v: unknown, isTextCol: boolean) => {
+      let s = String(v ?? "");
+      if (isTextCol && LONG_DIGIT_RE.test(s)) {
+        s = `'${s}`;
+      }
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const warning = result.truncated && result.displayLimit
       ? `"WARNING: Export capped at ${result.displayLimit.toLocaleString()} rows. Apply branch/date/employee filters and re-export to get the full dataset."\n`
       : "";
-    const header = result.columns.map(c => esc(c.label)).join(",");
+    const header = result.columns.map(c => esc(c.label, false)).join(",");
     const body   = result.rows.map(r =>
-      result.columns.map(c => esc(r[c.key])).join(",")
+      result.columns.map(c => esc(r[c.key], c.format === "text")).join(",")
     ).join("\n");
     return warning + header + "\n" + body;
+  },
+
+  // Column keys whose values are account/identity codes — prefix with ' so Excel
+  // renders them as text (no scientific notation, no leading-zero stripping).
+  toXlsb(result: LegacyReportResult, sheetName = "Report"): Buffer {
+    const TEXT_PREFIX_KEYS = new Set([
+      "ac_no", "account_number", "uan", "epf_no", "esic_no",
+      "cheque_no", "ifsc_code",
+    ]);
+    const header = result.columns.map(c => c.label);
+    const dataRows = result.rows.map(r =>
+      result.columns.map(c => {
+        const v = r[c.key];
+        const s = v != null ? String(v) : "";
+        if (TEXT_PREFIX_KEYS.has(c.key) && s.trim() !== "") return `'${s}`;
+        return v ?? "";
+      })
+    );
+    const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    return XLSX.write(wb, { type: "buffer", bookType: "xlsb" }) as Buffer;
   },
 };

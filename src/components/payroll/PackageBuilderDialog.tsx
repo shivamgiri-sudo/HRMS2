@@ -200,8 +200,9 @@ export function PackageBuilderDialog({
   const similarPkg = useMemo(() => {
     if (!draft.ctc || existingPkgs.length === 0) return null;
     return existingPkgs.find(p => {
-      const monthly = p.package_amount / 12;
-      return Math.abs(monthly - draft.ctc) / draft.ctc < 0.05; // within ±5%
+      // package_amount is stored as monthly CTC (same unit as draft.ctc)
+      const monthly = Number(p.ctc ?? p.package_amount);
+      return monthly > 0 && Math.abs(monthly - draft.ctc) / draft.ctc < 0.05; // within ±5%
     });
   }, [draft.ctc, existingPkgs]);
 
@@ -228,7 +229,8 @@ export function PackageBuilderDialog({
     const esic_employer = o.includeEsic && gross <= 21000 ? r2(gross * 0.0325) : 0;
     const gratuity      = r2((d.basic || 0) * (15 / 26 / 12));
     const admin_charges = o.includePf ? r2(pfBase * ADMIN_RATE) : 0;
-    const ctc = r2(gross + epf_employer + esic_employer + gratuity + admin_charges);
+    // Gratuity is a statutory accrual shown as a P&L provision — NOT part of monthly CTC.
+    const ctc = r2(gross + epf_employer + esic_employer + admin_charges);
     return { ...d, gross, epf_employee, esic_employee, professional_tax, net_in_hand, epf_employer, esic_employer, gratuity, admin_charges, ctc, package_amount: ctc };
   }, [getOpts]);
 
@@ -607,7 +609,6 @@ export function PackageBuilderDialog({
                 ['epf_employer',  includePf ? 'PF Employer (12%)' : 'PF Employer (off)'],
                 ['esic_employer', includeEsic && draft.gross <= 21000 ? 'ESIC Employer (3.25%)' : 'ESIC Employer (off/exempt)'],
                 ['admin_charges', includePf ? 'Admin Charges (1%)' : 'Admin Charges (off)'],
-                ['gratuity',      'Gratuity Monthly Provision'],
               ].map(([field, label]) => (
                 <div key={field} className="flex items-center gap-2">
                   <Label className="text-[11px] w-32 shrink-0 text-slate-500 truncate">{label}</Label>
@@ -633,11 +634,6 @@ export function PackageBuilderDialog({
                 <p className="text-slate-400 mb-0.5">Annual Take-Home</p>
                 <p className="font-bold text-base text-emerald-400 tabular-nums">{inr(draft.net_in_hand * 12)}</p>
                 <p className="text-slate-500 text-[10px]">{takeHomePct}% of gross</p>
-              </div>
-              <div>
-                <p className="text-slate-400 mb-0.5">Annual Gratuity</p>
-                <p className="font-semibold tabular-nums text-amber-300">{inr(draft.gratuity * 12)}</p>
-                <p className="text-slate-500 text-[10px]">P&L provision</p>
               </div>
               <div>
                 <p className="text-slate-400 mb-0.5">Annual Bonus (Bonus Act)</p>

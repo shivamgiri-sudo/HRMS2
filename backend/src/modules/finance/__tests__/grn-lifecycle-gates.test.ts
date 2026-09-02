@@ -317,15 +317,18 @@ describe("Submit gate", () => {
     expect(stateRef.current.grn.status).toBe("draft");
   });
 
-  it("allocates the GRN number at submission and nowhere else", async () => {
+  it("does NOT allocate a GRN number — that now happens at Finance Head approval", async () => {
+    // Owner ruling: a number identifies approved spend, not merely raised spend. Submitting
+    // used to allocate one (2026-08-27 fix); it no longer does, on the same request/response
+    // shape as before so callers keying off result.grnNumber still get a sensible (null) value.
     stateRef.current = makeState({ grn: baseGrn(), validations: PASSING });
     const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     const result = await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
-    expect(result.grnNumber).toBe("GRN/BR1/2026-27/0007");
+    expect(result.grnNumber).toBeNull();
     expect(result.newStatus).toBe("submitted");
   });
 
-  it("keeps an existing number — a re-submit after return must never renumber", async () => {
+  it("still reports an existing number — a re-submit after return must never renumber, and never hides one that already exists", async () => {
     stateRef.current = makeState({ grn: baseGrn({ grn_number: "GRN/BR1/2026-27/0001" }), validations: PASSING });
     const { grnValidationControlService } = await import("../grn-validation-control.service.js");
     const result = await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
@@ -516,6 +519,72 @@ describe("What each approval stage actually does to the money", () => {
     expect(sideEffects.approvalEvents).toEqual([
       { action: "approve", fromStatus: "submitted", toStatus: "branch_head_approved", actorRole: "branch_head" },
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("GRN numbering happens at Finance Head approval, not before — Owner ruling", () => {
+  it("Branch Head approval does NOT allocate a number — the GRN is still pending final approval", async () => {
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
+    expect(result.newStatus).toBe("branch_head_approved");
+    expect(result.grnNumber).toBeNull();
+  });
+
+  it("Finance Head approval DOES allocate one, on a VENDOR GRN", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
+    expect(result.newStatus).toBe("pending_accounts_payment");
+    expect(result.grnNumber).toBe("GRN/BR1/2026-27/0007");
+  });
+
+  it("Finance Head approval DOES allocate one, on an IMPREST GRN too — both types share one final stage", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({
+        grn_type: "imprest", status: "branch_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+      }),
+      imprestManagers: [{ id: "mgr-1" }],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
+    expect(result.newStatus).toBe("approved");
+    expect(result.grnNumber).toBe("GRN/BR1/2026-27/0007");
+  });
+
+  it("a Finance Head REJECTION never allocates one — the deliberate, approved consequence", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+      allocations: [reservedAllocation()],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-fh", "finance_head");
+    expect(result.newStatus).toBe("rejected");
+    expect(result.grnNumber).toBeNull();
+  });
+
+  it("a Branch Head REJECTION never allocates one either — it never reaches Finance Head at all", async () => {
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-bh", "branch_head");
+    expect(result.newStatus).toBe("rejected");
+    expect(result.grnNumber).toBeNull();
+  });
+
+  it("an existing number (a legacy migrated row, or a retried approval) is kept, never reissued", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({
+        status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+        grn_number: "GRN/BR1/2026-27/0001",
+      }),
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
+    expect(result.grnNumber).toBe("GRN/BR1/2026-27/0001");
   });
 });
 

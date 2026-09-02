@@ -185,3 +185,128 @@ export async function reviewRevisionRequest(
     connection.release();
   }
 }
+
+export interface BulkValidateInput {
+  employee_codes: string[];          // raw codes from textarea, may have whitespace
+  requested_effective_from: string;  // YYYY-MM-DD
+}
+
+export interface BulkValidateRow {
+  code: string;
+  status: 'ok' | 'error';
+  employee_id?: string;
+  name?: string;
+  reason?: string;
+}
+
+export async function bulkValidate(input: BulkValidateInput): Promise<BulkValidateRow[]> {
+  // Validate date format (same pattern as createRevisionRequest)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.requested_effective_from) ||
+    isNaN(Date.parse(input.requested_effective_from))
+  ) {
+    throw httpError("requested_effective_from must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
+  }
+
+  // Deduplicate and trim input codes
+  const codes = Array.from(
+    new Set(input.employee_codes.map((c) => c.trim()).filter((c) => c.length > 0))
+  );
+
+  const results: BulkValidateRow[] = [];
+
+  for (const code of codes) {
+    // Check 1: employee lookup
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, TRIM(COALESCE(full_name, CONCAT(COALESCE(first_name,''), ' ', COALESCE(last_name,'')))) AS name, date_of_joining
+         FROM employees WHERE employee_code = ? LIMIT 1`,
+      [code]
+    );
+
+    if (!empRows.length) {
+      results.push({ code, status: 'error', reason: 'Employee not found' });
+      continue;
+    }
+
+    const emp = empRows[0];
+    const employee_id = String(emp.id);
+    const name = emp.name as string;
+    const doj = emp.date_of_joining as string;
+
+    // Check 2: date before date of joining
+    if (new Date(input.requested_effective_from) < new Date(doj)) {
+      results.push({ code, status: 'error', employee_id, name, reason: 'Date is before date of joining' });
+      continue;
+    }
+
+    // Check 3: active salary assignment
+    const [assignRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 LIMIT 1`,
+      [employee_id]
+    );
+
+    if (!assignRows.length) {
+      results.push({ code, status: 'error', employee_id, name, reason: 'No active salary assignment' });
+      continue;
+    }
+
+    // Check 4: no existing pending revision
+    const [pendingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_salary_date_revision_requests WHERE employee_id = ? AND status = 'pending' LIMIT 1`,
+      [employee_id]
+    );
+
+    if (pendingRows.length) {
+      results.push({ code, status: 'error', employee_id, name, reason: 'Pending request already exists' });
+      continue;
+    }
+
+    results.push({ code, status: 'ok', employee_id, name });
+  }
+
+  return results;
+}
+
+export interface BulkCreateInput {
+  employee_ids: string[];
+  requested_effective_from: string;
+  reason: string;
+  requested_by: string;
+}
+
+export interface BulkCreateDetailRow {
+  employee_id: string;
+  status: 'ok' | 'error';
+  request_id?: number;
+  reason?: string;
+}
+
+export interface BulkCreateResult {
+  submitted: number;
+  failed: number;
+  details: BulkCreateDetailRow[];
+}
+
+export async function bulkCreate(input: BulkCreateInput): Promise<BulkCreateResult> {
+  const details: BulkCreateDetailRow[] = [];
+
+  for (const employee_id of input.employee_ids) {
+    try {
+      const { id } = await createRevisionRequest({
+        employee_id,
+        requested_effective_from: input.requested_effective_from,
+        reason: input.reason,
+        requested_by: input.requested_by,
+      });
+      details.push({ employee_id, status: 'ok', request_id: id });
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      details.push({ employee_id, status: 'error', reason });
+    }
+  }
+
+  const submitted = details.filter((d) => d.status === 'ok').length;
+  const failed = details.filter((d) => d.status === 'error').length;
+
+  return { submitted, failed, details };
+}

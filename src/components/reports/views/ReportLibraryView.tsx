@@ -1,4 +1,4 @@
-/**
+﻿/**
  * NativeReportsCenterV2 — Production-Grade Report Framework
  *
  * Addresses ALL architectural issues from the audit:
@@ -192,6 +192,26 @@ const STATUS_FILTER: FilterDef = {
     { value: "rejected", label: "Rejected" },
   ],
 };
+/**
+ * Employee population, NOT an approval state.
+ *
+ * Distinct from STATUS_FILTER above, which offers Pending/Approved/Rejected — those are
+ * workflow states on a request and mean nothing for an employee register. employee-master
+ * was given STATUS_FILTER, so it showed a Status dropdown whose three options could never
+ * match anything, on top of the backend ignoring the parameter entirely.
+ *
+ * Blank means both populations, which is the default the executors now apply: a report
+ * scoped to a period should show everyone in force during that period, not only whoever is
+ * still active on the day it happens to be run.
+ */
+const EMPLOYEE_STATUS_FILTER: FilterDef = {
+  key: "employeeStatus", label: "Employee Status", type: "select",
+  options: [
+    { value: "all", label: "Active + Inactive" },
+    { value: "active", label: "Active only" },
+    { value: "inactive", label: "Inactive only" },
+  ],
+};
 const COST_CENTRE_FILTER: FilterDef = { key: "costCentreId", label: "Cost Centre", type: "text", placeholder: "Cost Centre ID" };
 /**
  * The slice for attrition-deep-dive. Values match the allow-list keys in the backend
@@ -234,22 +254,29 @@ function buildFiltersForReport(code: string): FilterDef[] {
   const branchOnly = [BRANCH_FILTER];
 
   const filterMap: Record<string, FilterDef[]> = {
-    "headcount": [...branchProcess, DEPT_FILTER],
-    "employee-master": [...branchProcess, DEPT_FILTER, STATUS_FILTER, ...dateFilters],
-    "manager-mapping": branchProcess,
-    "org-structure-snapshot": branchOnly,
-    "cost-centre-headcount": branchOnly,
+    "headcount": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER],
+    // From/To are honoured now (tenure window in employeeMaster) — they previously did
+    // nothing. STATUS_FILTER replaced by EMPLOYEE_STATUS_FILTER: see the note on that const.
+    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER, ...dateFilters],
+    "manager-mapping": [...branchProcess, EMPLOYEE_STATUS_FILTER],
+    "org-structure-snapshot": [...branchOnly, EMPLOYEE_STATUS_FILTER],
+    "cost-centre-headcount": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "employee-movement": [...dateFilters, ...branchProcess],
     "confirmation-due-list": branchProcess,
     "contract-expiry-list": branchOnly,
     "lifecycle-events": [...branchProcess, ...dateFilters],
     "increment-promotion-history": [...branchOnly, ...dateFilters],
-    "birthday-list": [...branchOnly, MONTH_FILTER],
-    "anniversary-list": [...branchOnly, MONTH_FILTER],
+    // No MONTH filter, deliberately. Both reports are ordered by a "days until" column that
+    // only means anything across a whole year, which is why the executors stopped filtering
+    // to a single month (see the notes in report-suite.routes.ts). The Month control was left
+    // behind after that change and did nothing — selecting a month returned identical rows.
+    "birthday-list": [...branchOnly, EMPLOYEE_STATUS_FILTER],
+    "anniversary-list": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "attendance-daily": [...dateFilters, ...branchProcess],
     "daily-hc-shift": [...dateFilters, ...branchProcess],
     "shift-adherence-detail": [...dateFilters, ...branchProcess],
     "attendance-summary": [...monthFilter, ...branchProcess],
+    "attendance-register-monthly": [...monthFilter, ...branchProcess],
     "attendance-register-grid": [...monthFilter, ...branchProcess],
     "late-arrival-summary": [...monthFilter, ...branchProcess],
     "overtime-summary": [...monthFilter, ...branchProcess],
@@ -358,9 +385,55 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "pan-verification-status": branchOnly,
     "bank-account-verification": branchOnly,
     "identity-source-snapshot": branchOnly,
+
+    // ─── Previously unlisted: these fell through to the default below ─────────
+    //
+    // The default used to hand out From/To pickers to every code not named above, whether or
+    // not the executor read them. Verified against live mas_hrms by running each report over
+    // two months that both hold data: the first group changes with the range, the second
+    // returns a byte-identical result set, so its date controls were decoration.
+    //
+    // Reports that DO honour a date range — keep the pickers:
+    "left-employee-export":                    [...dateFilters, ...branchProcess],
+    "new-join-export":                         [...dateFilters, ...branchProcess],
+    "payroll-population-reconciliation":       [...dateFilters, ...branchProcess],
+    "attendance-enrollment-gap":               [...dateFilters, ...branchProcess],
+    "leave-trend-monthly":                     [...dateFilters, ...branchProcess],
+    "leave-lwp-reconciliation":                [...dateFilters, ...branchProcess],
+    "salary-sheet-export":                     [...dateFilters, ...branchProcess],
+    "aon-overall-attrition-rate":              [...dateFilters, ...branchProcess, COST_CENTRE_FILTER],
+    "leave-attendance-reconciliation":         [...dateFilters, ...branchProcess],
+    "attendance-issues-register":              [...dateFilters, ...branchProcess],
+    "doj-change-register":                     [...dateFilters, ...branchOnly],
+    // "leave-balance-export" and "increment-requests" are declared earlier in this map.
+    //
+    // Reports that do NOT read a date range. These are masters, point-in-time snapshots and
+    // exception worklists — a period genuinely does not apply, so offering one only invites
+    // the reading that the report is broken when nothing changes:
+    "org-mapping-gaps":                        [...branchProcess],
+    "employee-status-conflicts":               [...branchProcess],
+    "process-master-report":                   [...branchOnly],
+    "cost-centre-master-report":               [...branchOnly],
+    "headcount-by-cost-centre-and-process":    [...branchProcess, COST_CENTRE_FILTER],
+    "cost-centre-vs-billing-reconciliation":   [...branchOnly, COST_CENTRE_FILTER],
+    "leave-ledger-vs-requests-reconciliation": [...branchProcess],
+    "leave-lapse-summary":                     [...branchProcess],
+    "aon-drilldown-employees":                 [...branchProcess, COST_CENTRE_FILTER],
+    "attrition-risk-score":                    [...branchProcess],
+    "loan-register":                           [...branchOnly],
+    "bank-account-register":                   [...branchOnly],
+    "nominee-register":                        [...branchOnly],
   };
 
-  return filterMap[code] ?? [...dateFilters, ...branchProcess];
+  // Branch/process only, NOT date pickers.
+  //
+  // The previous default was `[...dateFilters, ...branchProcess]`, which silently gave a
+  // From/To control to every report absent from the map above. Twenty reports relied on it
+  // and eight of them never read a date, so the control sat there doing nothing — a large
+  // part of the "date filters don't work" reports. Branch and process are safe to offer by
+  // default because appendFilterConditions applies both for every executor; a date range is
+  // per-report and has to be opted into deliberately.
+  return filterMap[code] ?? [...branchProcess];
 }
 
 // ─── Build CATALOG from central source + local filters ────────────────────────
@@ -1022,7 +1095,11 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
     setCurrentPage(1);
     setReportState("idle");
     setErrorMessage("");
-    setFilterValues({});
+    setFilterValues(
+      r.defaultFilters
+        ? Object.fromEntries(Object.entries(r.defaultFilters).map(([k, v]) => [k, String(v)]))
+        : {}
+    );
     setDuplicateInfo({ hasDuplicates: false, duplicateCount: 0 });
     const next = [r.code, ...recentCodes.filter(c => c !== r.code)].slice(0, 8);
     setRecentCodes(next);
@@ -1111,7 +1188,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
       a.href = URL.createObjectURL(blob);
       const cd = resp.headers.get("content-disposition") ?? "";
       const match = cd.match(/filename[^;=\n]*=\s*(?:['"]?)([^'"\n;]+)/i);
-      a.download = match?.[1] ?? `${selectedReport.code}.xlsx`;
+      a.download = match?.[1] ?? `${selectedReport.name.replace(/[^A-Za-z0-9]+/g, "_")}.xlsx`;
       a.click();
       URL.revokeObjectURL(a.href);
       setDownloadState("idle");
@@ -1469,6 +1546,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                                       : ""
                                 }`}
                                 title={String(row[col.key] ?? "")}
+                                style={{ minWidth: col.width }}
                               >
                                 {formatReportCell(row[col.key], col, selectedReport)}
                               </td>

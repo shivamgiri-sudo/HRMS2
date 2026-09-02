@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
+import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
 
 type QueueRow = {
   candidate_id: string;
@@ -531,25 +532,30 @@ export default function NativeJoiningControlRoom() {
                   <TabsContent value="documents"><SecureDocumentList candidateId={selectedId} /></TabsContent>
 
                   <TabsContent value="bgv" className="grid gap-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
-                        <div className="text-sm font-semibold">BGV Status</div>
-                        <div className="mt-2">{statusBadge(detail.summary.bgv_status)}</div>
-                      </div>
-                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
-                        <div className="text-sm font-semibold">Name/Document Match</div>
-                        <div className="mt-2 text-sm text-slate-600">Review per-document name match in Documents tab.</div>
-                      </div>
+                    {/* PDF shortcut — same button present in BGV Verification Center */}
+                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <span className="text-sm font-semibold text-slate-700">BGV Report PDF</span>
+                      <a href={`/bgv-report-view/${detail.summary.candidate_id}`} target="_blank" rel="noopener noreferrer">
+                        <Button size="sm" variant="outline" className="gap-2">
+                          <FileText className="h-4 w-4" />
+                          View / Download PDF
+                        </Button>
+                      </a>
+                    </div>
+                    <AddressBgvPanel candidateId={detail.summary.candidate_id} />
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+                      <div className="text-sm font-semibold">Name/Document Match</div>
+                      <div className="mt-2 text-sm text-slate-600">Review per-document name match in Documents tab.</div>
                     </div>
                     {detail.summary.bgv_status !== "verified" && detail.summary.bgv_status !== "completed" && (
                       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                         <div className="mb-2 font-semibold text-amber-900">BGV Not Complete</div>
                         <p className="mb-3 text-sm text-amber-800">
-                          If automated BGV failed or is unavailable, you can manually verify and override from the{" "}
-                          <a href={`/ats/bgv-enhanced`} className="font-medium underline">Enhanced BGV</a> page.
+                          For Aadhaar/PAN/Bank/Criminal checks or DigiLocker, use the full{" "}
+                          <a href={`/ats/bgv`} className="font-medium underline">BGV Verification Center</a>.
                         </p>
                         <Button type="button" variant="outline" size="sm" asChild>
-                          <a href="/ats/bgv-enhanced"><ExternalLink className="mr-2 h-4 w-4" />Open BGV Enhanced</a>
+                          <a href="/ats/bgv"><ExternalLink className="mr-2 h-4 w-4" />Open BGV Verification Center</a>
                         </Button>
                       </div>
                     )}

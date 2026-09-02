@@ -264,7 +264,7 @@ async function readGrn(period: string): Promise<Map<string, number>> {
        FROM grn_cost_allocation a
        JOIN grn_request gr ON gr.id = a.grn_request_id
       WHERE a.lifecycle_status = 'consumed'
-        AND DATE_FORMAT(gr.bill_date, '%Y-%m') = ?
+        AND gr.accounting_period = ?
       GROUP BY a.cost_centre_id`,
     [period],
   );

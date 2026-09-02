@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
-import type { BpoPnlRow } from "./bpo-pnl.service.js";
+import { bpoPnlService, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { processLobService } from "./process-lob.service.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
@@ -429,6 +429,7 @@ export const canonicalPnlService = {
       throw Object.assign(new Error("Locked period cannot be recalculated"), { statusCode: 400 });
     }
     processPnlService.invalidateCaches();
+    bpoPnlService.invalidateCaches();
     const summary = await this.getSummary({ period });
     return {
       period,

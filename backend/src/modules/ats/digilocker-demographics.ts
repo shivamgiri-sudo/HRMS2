@@ -117,6 +117,7 @@ export async function applyDigilockerDemographics(
   };
 
   put("employee_name", demographics.fullName);
+  put("full_name_aadhaar", demographics.fullName);
   put("gender", demographics.gender);
   put("aadhaar_number_masked", demographics.aadhaarLast4 ? `XXXXXXXX${demographics.aadhaarLast4}` : null, "aadhaar_masked");
 
@@ -144,6 +145,17 @@ export async function applyDigilockerDemographics(
     `UPDATE candidate_onboarding_profile SET ${set.join(", ")}, updated_at = NOW() WHERE candidate_id = ?`,
     [...params, candidateId],
   );
+
+  // Aadhaar is the identity authority — overwrite whatever the recruiter typed at
+  // registration, since that is the most common source of garbage names like "ON NF".
+  if (demographics.fullName) {
+    await db.execute(
+      `UPDATE ats_candidate SET full_name = ?, updated_at = NOW() WHERE id = ?`,
+      [demographics.fullName.toUpperCase(), candidateId],
+    );
+    filled.push("ats_candidate.full_name");
+  }
+
   return filled;
 }
 

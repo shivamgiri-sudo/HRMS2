@@ -201,6 +201,9 @@ export function PnlStatementView({
                   // be stated on the column that carries it.
                   const coverage = column.peopleCostCoveragePct;
                   const underCovered = coverage !== undefined && coverage < 100;
+                  // Manual Adjustments (Part B): a SEPARATE figure, never the pure system revenue
+                  // on the rows below — labelled explicitly so it cannot be mistaken for it.
+                  const adj = column.manualAdjustment;
                   return (
                     <th
                       key={column.id}
@@ -216,6 +219,15 @@ export function PnlStatementView({
                           title={`Salary cost covers ${column.peopleCostCoveredEmployees} of ${column.peopleCostActiveEmployees} active employees. Operating Profit is overstated until the rest have attendance and salary data for this month.`}
                         >
                           ⚠ {coverage}% salary covered
+                        </span>
+                      )}
+                      {adj && (
+                        <span
+                          className="mt-1 block text-[10px] font-medium text-indigo-600"
+                          title={`System revenue ${formatValue(adj.adjustedTotal - adj.approvedRewards + adj.approvedPenalties, "CURRENCY")} + approved rewards ${formatValue(adj.approvedRewards, "CURRENCY")} − approved penalties ${formatValue(adj.approvedPenalties, "CURRENCY")} = Adjusted Total. Manual adjustments never change the figures below.`}
+                        >
+                          Adjusted: {formatValue(adj.adjustedTotal, "CURRENCY")}
+                          {adj.pendingAdjustmentCount > 0 && ` (${adj.pendingAdjustmentCount} pending)`}
                         </span>
                       )}
                     </th>

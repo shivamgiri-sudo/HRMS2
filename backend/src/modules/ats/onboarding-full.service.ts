@@ -1327,14 +1327,24 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   }
 
   const id = randomUUID();
-  const panMasked = maskPan(input.panNumber ?? input.pan_number ?? input.pan_number_masked);
-  const panHash = hashValue(input.panNumber ?? input.pan_number);
+  // The frontend's KYC step (onboarding-v2/sections/S3_KYCDocuments.tsx) seeds its PAN
+  // input from the server's own MASKED value on mount so the field isn't blank on reload,
+  // then autosaves ~800ms later even with no user edit — sending the masked string
+  // ("ABCXXXX4F" shape) straight back as if it were the real PAN. Without this guard that
+  // silently overwrote pan_number_hash/pan_number_encrypted with a hash of the mask,
+  // breaking hash-based PAN lookup/duplicate detection for anyone who reopened the step.
+  // Fixed 2026-09-01: treat an incoming value that already matches our own mask shape as
+  // "no new PAN provided" so COALESCE below preserves whatever was already on file.
+  const incomingPanRaw = String(input.panNumber ?? input.pan_number ?? "").trim().toUpperCase();
+  const incomingPanIsMasked = /^[A-Z0-9]{3}XXXX[A-Z0-9]{2}$/.test(incomingPanRaw);
+  const rawPan = incomingPanIsMasked ? "" : incomingPanRaw;
+  const panMasked = rawPan ? maskPan(rawPan) : maskPan(input.pan_number_masked);
+  const panHash = rawPan ? hashValue(rawPan) : null;
   // Encrypted at rest so PAN verification can actually run. The masked form is not
   // a PAN and the hash is one-way, so neither can be sent to a provider - which is
   // why automatic PAN verification could never fire. Same treatment bank account
   // numbers already get: only the server decrypts it, and the browser still only
   // ever receives the masked value.
-  const rawPan = String(input.panNumber ?? input.pan_number ?? "").trim().toUpperCase();
   const panEncrypted = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan) ? encrypt(rawPan) : null;
   const aadhaarMasked = maskAadhaar(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
   const aadhaarHash = hashValue(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);

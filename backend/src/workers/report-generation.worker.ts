@@ -379,7 +379,7 @@ async function processOneRequest(): Promise<void> {
       totalRows:             totalWritten,
     });
 
-    const filename = buildSecureFilename(req.report_code, req.request_reference);
+    const filename = buildSecureFilename(req.report_name_snapshot, req.request_reference);
 
     // ── Store file ─────────────────────────────────────────────────────────────
     const stored = await storeReportFile({

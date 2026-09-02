@@ -169,11 +169,15 @@ export default function EmployeeJourney() {
   const { user } = useAuth();
   const [employeeId, setEmployeeId] = useState<string | null>(null);
 
-  // Fetch employee profile
+  // Fetch employee profile.
+  // `/api/employees/by-user/:userId` does not exist anywhere in the backend — this query
+  // always errored, so the page permanently showed "Employee profile not found."
+  // `/api/employees/me` is the real self-scoped equivalent (resolves the employee from the
+  // auth token server-side, same endpoint Profile.tsx uses). Fixed 2026-09-01.
   const { data: profile, isLoading: profileLoading } = useQuery<EmployeeProfile>({
     queryKey: ["employee-profile", user?.id],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any }>(`/api/employees/by-user/${user?.id}`);
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(`/api/employees/me`);
       return res.data;
     },
     enabled: !!user?.id,

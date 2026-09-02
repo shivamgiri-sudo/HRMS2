@@ -1175,8 +1175,26 @@ export default function PnlMasterControlCenterPage() {
                 <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
                   <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-800">Rewards &amp; Penalties</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Per cost centre, per period. Approved entries flow into the PnL engine.</p>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-800">Rewards &amp; Penalties</h3>
+                        <Badge variant="outline" className="rounded-full border-amber-300 bg-amber-50 px-2 py-0 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Legacy</Badge>
+                      </div>
+                      {/*
+                        Two reward/penalty mechanisms now exist. This one is the original: approved
+                        entries blend straight into the process's recognized revenue (rewardRevenue /
+                        penalty in bpo-pnl.service.ts) with no separate line on the P&L. It is NOT the
+                        same as "Manual Adjustments" on each process's P&L detail page — that one is
+                        maker-checker approved and shown as its own "Adjusted Total", never blended
+                        into system-calculated actuals. Using both for the same cost centre/period does
+                        not combine automatically and can double-count. See
+                        docs note on cost_centre_reward_penalty (migration 1215) vs pnl_manual_adjustment
+                        (migration 1645).
+                      */}
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Per cost centre, per period. Approved entries blend directly into revenue here —
+                        this is a different mechanism from the approval-gated "Manual Adjustments" shown
+                        separately on each process's P&amp;L page; the two do not combine automatically.
+                      </p>
                     </div>
                     <Button size="sm" className="rounded-xl" onClick={() => { setRpForm((f) => ({ ...f, period_code: period, cost_centre_id: "", description: "", amount_inr: 0, client_reference: "" })); setRpFormOpen(true); }}>
                       + Add entry

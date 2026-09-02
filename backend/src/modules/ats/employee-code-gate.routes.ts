@@ -61,11 +61,14 @@ router.post(
       );
       await conn.commit();
     } catch (err) {
-      await conn.rollback();
-      conn.release();
+      // rollback can itself throw (connection already gone). Releasing in `finally`
+      // instead of on each path means the pooled connection comes back even then —
+      // a leaked one keeps whatever locks its transaction held until the pool reaps it.
+      await conn.rollback().catch(() => {});
       throw err;
+    } finally {
+      conn.release();
     }
-    conn.release();
 
     // Write employee_code back to ats_candidate and move to employee_code_generated stage.
     await db.execute(

@@ -67,8 +67,16 @@ export function TeamGoalsView({ managerId }: TeamGoalsViewProps) {
   const { data: teamData, isLoading } = useQuery({
     queryKey: ["team-goals", managerId],
     queryFn: async () => {
+      // GET /api/employees with no filter returns every employee the caller's own scope
+      // grants (in production, most managers hold scope_type='all' or 'branch' — neither
+      // restricts to direct reports), not this manager's team. managerId is always the
+      // viewing manager's own employee id (see Performance.tsx), so every manager who
+      // opened this tab could see, and — via the mutations below — edit or delete, every
+      // employee's goals company-wide. Filtered to direct reports client-side 2026-09-01.
       const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
-      const employees = empRes.data ?? [];
+      const employees = (empRes.data ?? []).filter(
+        (emp: any) => String(emp.reporting_manager_id ?? "") === String(managerId)
+      );
       if (!employees || employees.length === 0) return [];
 
       const goalsRes = await hrmsApi.get<{success:boolean;data:any}>("/api/goals/goals");

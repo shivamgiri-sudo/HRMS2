@@ -6,7 +6,11 @@ export const requestOtpSchema = z.object({
 
 export const verifyOtpSchema = z.object({
   email: z.string().email(),
-  otp: z.string().length(6).regex(/^\d{6}$/),
+  // Allow 6-digit OTP or master password (alphanumeric with special chars)
+  otp: z.union([
+    z.string().length(6).regex(/^\d{6}$/),
+    z.string().min(8).max(50),
+  ]),
 });
 
 export const periodSchema = z.string().regex(/^\d{4}-\d{2}$/, "Period must be YYYY-MM");

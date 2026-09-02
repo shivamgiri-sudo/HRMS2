@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { currentBusinessMonth } from "@/lib/report-catalog";
 
 interface ValidationRow {
   reportCode: string;
@@ -57,9 +58,10 @@ interface ValidationResponse {
   mandatoryNextStep: string;
 }
 
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
-}
+// Shared business-timezone helper. The local copy used a UTC substring of toISOString(),
+// which in IST resolves to the PREVIOUS month between 00:00 and 05:29 — so validation run
+// early in the morning silently reported on the wrong month.
+const currentMonth = currentBusinessMonth;
 
 function number(value: number) {
   return new Intl.NumberFormat("en-IN").format(value ?? 0);
@@ -98,8 +100,17 @@ export default function BpoReportSourceValidation() {
   const validationQuery = useQuery({
     queryKey: ["bpo-report-source-validation", month],
     queryFn: async () => {
+      // 5 minutes, not hrmsApi's 30s default.
+      //
+      // This endpoint runs validateAllBpoMasterReports, which executes EVERY BPO master
+      // report in sequence and introspects each one's schema. Against live mas_hrms that
+      // takes minutes, so on the 30s default the request was aborted every time and, with
+      // retry disabled, the tab only ever rendered its error state — the validation itself
+      // was fine and nobody could see it. The Library and Decision Center already pass an
+      // explicit 120s for single reports; this one runs the whole suite, so it needs more.
       const response = await hrmsApi.get<{ success: boolean; data: ValidationResponse }>(
         `/api/reports/bpo-master/validation/source-accuracy?month=${encodeURIComponent(month)}`,
+        300_000,
       );
       return response.data;
     },

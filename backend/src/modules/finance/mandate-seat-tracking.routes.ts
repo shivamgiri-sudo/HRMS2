@@ -140,7 +140,9 @@ router.put("/:costCenter", requireAuth, requireRole(...WRITE_ROLES), async (req:
       return res.status(400).json({ error: "periodMonth and mandateSeats required" });
     }
 
-    const userId = (req as any).user?.id || "system";
+    // Was reading req.user, which authMiddleware never sets (it sets req.authUser) —
+    // this always evaluated to "system" regardless of who made the change. Fixed 2026-09-01.
+    const userId = (req as any).authUser?.id || "system";
     const result = await updateMandateSeats(
       costCenter,
       periodMonth,

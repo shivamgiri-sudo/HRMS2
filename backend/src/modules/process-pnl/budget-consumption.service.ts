@@ -57,8 +57,12 @@ export async function lockActiveBudgetLine(connection: PoolConnection, lineId: s
 
 function availability(line: RowDataPacket) {
   return {
+    // P&L budget ceiling: pnl_cost_amount = base for ITC lines, gross for non-ITC/imprest.
+    // reserved_amount / consumed_amount accumulate the P&L cost (consumptionBasis returns net
+    // for ITC invoices). Comparing like-for-like here; gross_amount was a mixed-unit ceiling
+    // that silently allowed ~(1/costRatio - 1) over-spend on ITC budget lines.
     amount: roundMoney(
-      Number(line.gross_amount ?? 0)
+      Number(line.pnl_cost_amount ?? 0)
       - Number(line.reserved_amount ?? 0)
       - Number(line.consumed_amount ?? 0)
     ),
@@ -73,16 +77,15 @@ function availability(line: RowDataPacket) {
 /**
  * Which invoice figure to charge against this budget line.
  *
- * GRN books the GST-inclusive amount, which is right for a tax-bearing budget line because its
- * gross_amount includes the same tax. A non-taxable line's gross_amount is net of tax, so charging
- * it the inclusive figure compares unlike things: a Rs 1,00,000 purchase carrying Rs 18,000 GST
- * consumed Rs 1,18,000 against a Rs 1,02,000 line and reserve() then REFUSED it — legitimate
- * purchases were hard-blocked at Branch Head approval, not merely shown as overspent.
+ * For ITC-eligible lines (ratio < 1): charge the invoice's taxable base (netAmount). The budget
+ * ceiling is pnl_cost_amount — what Finance approved as P&L spend — and only the base hits P&L.
+ * GST is recovered as ITC and never charged to the budget.
  *
- * The rule itself lives in budget-tax-basis.ts, because the headroom gate has to apply the same
- * one when it decides whether a line can carry an invoice at SAVE time and was applying the
- * opposite. Falls back to the gross figure when no net is supplied, so a caller that has not been
- * updated keeps its previous behaviour rather than silently consuming zero.
+ * For non-ITC / exempt / imprest lines (ratio = 1, gross = net): charge the full gross.
+ * pnl_cost_amount = gross_amount for these lines, so it makes no difference.
+ *
+ * Falls back to gross when no net is supplied (conservative: charges the inclusive figure
+ * rather than silently consuming zero if the caller did not supply a net).
  */
 function consumptionBasis(line: RowDataPacket, grossAmount: number, netAmount?: number): number {
   const ratio = budgetCostRatio(line.tax_treatment, grossAmount, netAmount);

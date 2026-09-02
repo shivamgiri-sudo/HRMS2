@@ -18,6 +18,7 @@ import { excludeEmployeeShapedCandidatesSql } from "../../ats/ats-reporting-scop
 import {
   appendScopeConditions,
   appendFilterConditions,
+  businessToday,
   dateParam,
   monthParam,
   applyPagination,
@@ -340,19 +341,59 @@ export async function sourceEffectiveness(
   // toward zero, because those rows carry no recruitment status.
   clauses.push(excludeEmployeeShapedCandidatesSql("c"));
 
+  // The From/To controls the Library offers for this report were never read, so changing the
+  // range returned a byte-identical six rows. Applied to created_at, which is this table's
+  // real applied_date (37,630 rows filled against 4,903 on created_date — see the header note).
+  // DATE() so a DATETIME value on the closing day is not excluded by an inclusive bound.
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, businessToday());
+  clauses.push("DATE(c.created_at) BETWEEN ? AND ?");
+  params.push(from, to);
+
+  /**
+   * Column names follow the catalogs, which BOTH declared
+   * source / applications / shortlisted / interviewed / offered / joined / conversion_rate /
+   * avg_time_to_hire / cost_per_hire while this query emitted
+   * source_channel / total_applications / selections / selection_rate_pct.
+   *
+   * Not one name overlapped, so the grid drew nine headers and nine em-dashes on every row —
+   * the report looked completely empty despite returning data. The catalogs also declared
+   * `source` as the primaryKey, so with it absent every row hashed to the same empty key and
+   * the duplicate detector flagged the whole result set as duplicates.
+   *
+   * The funnel stages are now derived from ats_candidate.status rather than left unmapped:
+   *   shortlisted  status reached shortlist or beyond
+   *   interviewed  status reached interview or beyond
+   *   offered      offer extended
+   *   joined       actually onboarded/joined
+   * conversion_rate is joined/applications, which is what a source-effectiveness reading
+   * wants — the previous selection_rate_pct counted offers as successes.
+   *
+   * cost_per_hire has no source in this schema: there is no spend-per-channel table anywhere
+   * in mas_hrms. It is emitted as NULL rather than a fabricated number, so the column reads
+   * as "not captured" instead of implying a cost the business never recorded.
+   */
+  const SHORTLISTED = "LOWER(c.status) IN ('shortlisted','interview','interviewed','selected','offered','onboarded','joined')";
+  const INTERVIEWED = "LOWER(c.status) IN ('interview','interviewed','selected','offered','onboarded','joined')";
+  const OFFERED     = "LOWER(c.status) IN ('offered','onboarded','joined')";
+  const JOINED      = "LOWER(c.status) IN ('onboarded','joined')";
+
   const base = `
-    SELECT COALESCE(c.sourcing_channel, 'Unknown') AS source_channel,
-           COUNT(*) AS total_applications,
-           SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) AS selections,
-           ROUND(
-             SUM(CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN 1 ELSE 0 END) * 100.0
-             / NULLIF(COUNT(*), 0),
-             2
-           ) AS selection_rate_pct
+    SELECT COALESCE(c.sourcing_channel, 'Unknown') AS source,
+           COUNT(*) AS applications,
+           SUM(CASE WHEN ${SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,
+           SUM(CASE WHEN ${INTERVIEWED} THEN 1 ELSE 0 END) AS interviewed,
+           SUM(CASE WHEN ${OFFERED}     THEN 1 ELSE 0 END) AS offered,
+           SUM(CASE WHEN ${JOINED}      THEN 1 ELSE 0 END) AS joined,
+           ROUND(SUM(CASE WHEN ${JOINED} THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS conversion_rate,
+           -- Days from application to joining, averaged over the rows where both dates exist.
+           ROUND(AVG(CASE WHEN ${JOINED} AND c.offer_doj IS NOT NULL AND c.created_at IS NOT NULL
+                          THEN DATEDIFF(c.offer_doj, c.created_at) END), 1) AS avg_time_to_hire,
+           NULL AS cost_per_hire
       FROM ats_candidate c
      WHERE ${clauses.join(" AND ")}
-     GROUP BY source_channel
-     ORDER BY total_applications DESC`;
+     GROUP BY source
+     ORDER BY applications DESC`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire

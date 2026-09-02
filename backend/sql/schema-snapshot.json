@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1051,
-  "columnCount": 15145,
+  "tableCount": 1064,
+  "columnCount": 15323,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -398,7 +398,8 @@
       "notes",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "attendance_logic"
     ],
     "apr_manual_upload": [
       "id",
@@ -1848,6 +1849,27 @@
       "conducted_by",
       "active_status"
     ],
+    "attendance_adjustment_request": [
+      "id",
+      "variance_record_id",
+      "employee_id",
+      "target_date",
+      "target_pay_month",
+      "requested_classification",
+      "requested_lwp_value",
+      "requesting_user_id",
+      "requesting_reviewer_role",
+      "justification",
+      "approval_state",
+      "approver_user_id",
+      "approved_at",
+      "decision_note",
+      "superseded_classification",
+      "superseded_lwp_value",
+      "arrear_pay_month",
+      "created_at",
+      "updated_at"
+    ],
     "attendance_billing_config": [
       "id",
       "scope_type",
@@ -2178,6 +2200,82 @@
       "rule_id",
       "dimension",
       "value_id"
+    ],
+    "attendance_source_rule_proposal": [
+      "id",
+      "applied_in_pay_month",
+      "status",
+      "generated_by",
+      "generated_at",
+      "decided_by",
+      "decided_at",
+      "decision_note",
+      "department_merge_confirmed",
+      "source_rows_deactivated_at",
+      "created_at",
+      "updated_at"
+    ],
+    "attendance_source_rule_proposal_day_threshold": [
+      "id",
+      "proposal_id",
+      "proposal_key",
+      "canonical_signature",
+      "rule_name",
+      "full_day_minutes",
+      "half_day_minutes",
+      "grace_minutes",
+      "effective_from",
+      "effective_to",
+      "change_reason",
+      "active_status",
+      "is_unconstrained_default",
+      "undated_source",
+      "ordinal",
+      "created_at"
+    ],
+    "attendance_source_rule_proposal_day_threshold_dimension_value": [
+      "rule_id",
+      "dimension",
+      "value_id"
+    ],
+    "attendance_source_rule_proposal_finding": [
+      "id",
+      "proposal_id",
+      "finding_kind",
+      "severity",
+      "subject_ref",
+      "detail",
+      "detail_json",
+      "ordinal",
+      "created_at"
+    ],
+    "attendance_source_rule_proposal_rule": [
+      "id",
+      "proposal_id",
+      "proposal_key",
+      "canonical_signature",
+      "rule_name",
+      "attendance_source",
+      "effective_from",
+      "effective_to",
+      "change_reason",
+      "active_status",
+      "is_system_default",
+      "undated_source",
+      "ordinal",
+      "created_at"
+    ],
+    "attendance_source_rule_proposal_rule_dimension_value": [
+      "rule_id",
+      "dimension",
+      "value_id"
+    ],
+    "attendance_source_rule_proposal_source_row": [
+      "proposal_id",
+      "target_kind",
+      "target_id",
+      "legacy_table",
+      "legacy_row_id"
     ],
     "attendance_state_snapshot": [
       "id",
@@ -4149,7 +4247,9 @@
       "subscription_status",
       "api_key",
       "webhook_url",
-      "updated_at"
+      "updated_at",
+      "portal_session_days",
+      "portal_default_access_days"
     ],
     "client_po_number": [
       "id",
@@ -4168,6 +4268,16 @@
       "invoice_id",
       "amount_consumed",
       "consumed_at"
+    ],
+    "client_portal_invite": [
+      "id",
+      "client_user_id",
+      "process_id",
+      "token_hash",
+      "expires_at",
+      "used_at",
+      "created_by",
+      "created_at"
     ],
     "client_provision": [
       "id",
@@ -4205,7 +4315,15 @@
       "login_count",
       "deactivated_by",
       "deactivated_at",
-      "deactivation_reason"
+      "deactivation_reason",
+      "password_hash",
+      "password_set_at",
+      "failed_login_attempts",
+      "locked_until",
+      "is_shared_account",
+      "shared_account_reason",
+      "shared_flagged_by",
+      "shared_flagged_at"
     ],
     "coaching_session": [
       "id",
@@ -5538,6 +5656,25 @@
       "corroborated_by_payment",
       "phase",
       "written_at"
+    ],
+    "employee_bank_detail_pre_benefix_20260830143243": [
+      "id",
+      "employee_id",
+      "is_primary",
+      "account_seq",
+      "bank_name",
+      "account_holder_name",
+      "bank_branch",
+      "account_number",
+      "account_number_enc",
+      "ifsc_code",
+      "account_type",
+      "upi_id",
+      "verified",
+      "created_at",
+      "updated_at",
+      "active_status",
+      "account_number_blind_index"
     ],
     "employee_biometric_enrollment": [
       "id",
@@ -11200,7 +11337,34 @@
       "reviewed_at",
       "review_note",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "first_reviewer_role",
+      "first_review_outcome",
+      "first_review_comment",
+      "second_reviewer_user_id",
+      "second_reviewed_at",
+      "second_reviewer_role",
+      "second_review_outcome",
+      "second_review_comment",
+      "contested_at",
+      "override_approver_user_id",
+      "presented_at",
+      "escalation_age_days",
+      "escalation_interval_days",
+      "last_escalated_at",
+      "variance_risk_score",
+      "queue_state",
+      "is_floor_absence",
+      "manager_substitution_applied",
+      "substitute_spoc_user_id",
+      "biometric_minutes",
+      "canonical_productive_minutes",
+      "applied_corroboration_threshold",
+      "applied_variance_tolerance",
+      "resolved_attendance_source",
+      "deciding_rule_id",
+      "pay_month",
+      "carried_forward_from_pay_month"
     ],
     "payroll_bank_exception": [
       "id",
@@ -11268,7 +11432,11 @@
       "leave_finalized_by",
       "regularization_complete",
       "regularization_complete_at",
-      "regularization_complete_by"
+      "regularization_complete_by",
+      "pending_leave_count",
+      "pending_regularization_count",
+      "employees_without_attendance",
+      "incentive_batch_status"
     ],
     "payroll_calculation_audit": [
       "id",
@@ -11951,6 +12119,22 @@
       "created_by",
       "updated_by",
       "created_at",
+      "updated_at"
+    ],
+    "pnl_manual_adjustment": [
+      "id",
+      "process_id",
+      "branch_id",
+      "period_code",
+      "adjustment_type",
+      "amount",
+      "reason",
+      "status",
+      "created_by",
+      "created_at",
+      "approved_by",
+      "approved_at",
+      "rejection_reason",
       "updated_at"
     ],
     "pnl_period_signoff": [
@@ -13335,6 +13519,16 @@
       "active_status",
       "created_at",
       "backed_up_at"
+    ],
+    "role_report_permissions": [
+      "id",
+      "role_key",
+      "report_code",
+      "can_view",
+      "can_export",
+      "granted_by",
+      "granted_at",
+      "active_status"
     ],
     "roster_assignment": [
       "id",
@@ -15849,6 +16043,17 @@
       "new_permissions",
       "notes",
       "created_at"
+    ],
+    "user_report_permissions": [
+      "id",
+      "user_id",
+      "report_code",
+      "can_view",
+      "can_export",
+      "granted_by",
+      "granted_at",
+      "expires_at",
+      "active_status"
     ],
     "user_roles": [
       "id",

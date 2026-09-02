@@ -71,11 +71,20 @@ function isTextColumn(columnName: string): boolean {
 
 // ── Filename sanitiser ─────────────────────────────────────────────────────────
 
-export function buildSecureFilename(reportCode: string, requestReference: string): string {
+/**
+ * Builds the download filename for a report export.
+ *
+ * `reportName` must be the human-readable report name shown in the UI (e.g.
+ * catalogEntry.name / report_name_snapshot) — NOT the internal report code.
+ * The file a user downloads must read as the same report they picked on
+ * screen; using the code here produced filenames like "PUNCH_RAW_EXPORT_..."
+ * for a report the UI labelled "Punch Raw Data Export".
+ */
+export function buildSecureFilename(reportName: string, requestReference: string): string {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const code = reportCode.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+  const name = reportName.toUpperCase().trim().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   const ref = requestReference.replace(/[^A-Z0-9_\-]/gi, '_');
-  return `${code}_${ref}_${dateStr}.xlsx`;
+  return `${name}_${ref}_${dateStr}.xlsx`;
 }
 
 // ── Main builder ───────────────────────────────────────────────────────────────

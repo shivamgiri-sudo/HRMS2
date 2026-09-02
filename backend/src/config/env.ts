@@ -113,6 +113,7 @@ const envSchema = z.object({
   EXIT_PASS_QR_SECRET: z.string().min(32).optional(),
   OTP_HMAC_SECRET: z.string().min(32).default('change-me-otp-hmac-secret-32chars!'),
   PORTAL_DEMO_BYPASS: z.string().default("false"),
+  PORTAL_MASTER_PASSWORD: z.string().optional(),
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),
   ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be a 64-character hex string').default('0000000000000000000000000000000000000000000000000000000000000000'),
   COMM_SECRET: z.string().min(16).optional(),

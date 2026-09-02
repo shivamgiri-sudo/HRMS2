@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Library, Brain, Building2, Clock, Shield, ScrollText, CalendarClock, Archive } from "lucide-react";
+import { Library, Brain, Building2, Clock, Shield, ScrollText, CalendarClock, Archive, ShieldCheck } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -12,11 +12,12 @@ const BpoMasterView        = lazy(() => import("@/components/reports/views/BpoMa
 const ReportRequestsView   = lazy(() => import("@/components/reports/views/ReportRequestsView"));
 const SourceValidationView = lazy(() => import("@/components/reports/views/SourceValidationView"));
 const AuditTrailView       = lazy(() => import("@/components/reports/views/AuditTrailView"));
-const AonAnalyticsView       = lazy(() => import("@/components/reports/views/AonAnalyticsView"));
-const LegacyHrmsReportsView = lazy(() => import("@/components/reports/views/LegacyHrmsReportsView"));
+const AonAnalyticsView           = lazy(() => import("@/components/reports/views/AonAnalyticsView"));
+const LegacyHrmsReportsView      = lazy(() => import("@/components/reports/views/LegacyHrmsReportsView"));
+const ReportAccessGrantsView     = lazy(() => import("@/components/reports/views/ReportAccessGrantsView"));
 
 // ── View and role constants ───────────────────────────────────────────────────
-const VIEWS = ['library', 'control-room', 'bpo', 'aon', 'requests', 'validation', 'audit', 'legacy'] as const;
+const VIEWS = ['library', 'control-room', 'bpo', 'aon', 'requests', 'validation', 'audit', 'legacy', 'access-grants'] as const;
 type ReportView = typeof VIEWS[number];
 
 const REPORT_ROLES = [
@@ -26,6 +27,7 @@ const REPORT_ROLES = [
 ];
 const REPORT_VALIDATION_ROLES = ['super_admin','admin'];
 const AUDIT_ROLES = ['super_admin'];
+const ACCESS_GRANT_ROLES = ['super_admin','admin'];
 
 function hasAnyRole(userRoles: string[], required: string[]): boolean {
   return required.some(r => userRoles.includes(r));
@@ -45,8 +47,9 @@ function resolvePermittedView(requested: string | null, userRoles: string[]): Re
   if (view === 'bpo'          && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
   if (view === 'aon'          && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
   if (view === 'validation'   && !hasAnyRole(userRoles, REPORT_VALIDATION_ROLES)) return def;
-  if (view === 'audit'        && !hasAnyRole(userRoles, AUDIT_ROLES))             return def;
-  if (view === 'legacy'       && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
+  if (view === 'audit'          && !hasAnyRole(userRoles, AUDIT_ROLES))             return def;
+  if (view === 'legacy'         && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
+  if (view === 'access-grants'  && !hasAnyRole(userRoles, ACCESS_GRANT_ROLES))      return def;
   return view;
 }
 
@@ -65,8 +68,9 @@ const TABS: TabDef[] = [
   { key: 'aon',          label: 'AON & Attrition',  Icon: CalendarClock, requiredRoles: REPORT_ROLES },
   { key: 'requests',     label: 'My Requests',      Icon: Clock },
   { key: 'validation',   label: 'Source Validation',Icon: Shield,      requiredRoles: REPORT_VALIDATION_ROLES },
-  { key: 'audit',        label: 'Audit Trail',      Icon: ScrollText,  requiredRoles: AUDIT_ROLES },
-  { key: 'legacy',       label: 'Legacy HRMS Reports', Icon: Archive,  requiredRoles: REPORT_ROLES },
+  { key: 'audit',         label: 'Audit Trail',         Icon: ScrollText,  requiredRoles: AUDIT_ROLES },
+  { key: 'legacy',        label: 'Legacy HRMS Reports', Icon: Archive,     requiredRoles: REPORT_ROLES },
+  { key: 'access-grants', label: 'Access Grants',       Icon: ShieldCheck, requiredRoles: ACCESS_GRANT_ROLES },
 ];
 
 // ── Loader ────────────────────────────────────────────────────────────────────
@@ -140,8 +144,9 @@ export default function ReportsHub() {
               {activeView === 'aon'          && <AonAnalyticsView />}
               {activeView === 'requests'     && <ReportRequestsView />}
               {activeView === 'validation'   && <SourceValidationView />}
-              {activeView === 'audit'        && <AuditTrailView />}
-              {activeView === 'legacy'       && <LegacyHrmsReportsView />}
+              {activeView === 'audit'         && <AuditTrailView />}
+              {activeView === 'legacy'        && <LegacyHrmsReportsView />}
+              {activeView === 'access-grants' && <ReportAccessGrantsView />}
             </Suspense>
           </ErrorBoundary>
         </div>

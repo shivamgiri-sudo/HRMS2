@@ -107,7 +107,9 @@ function classifyBiometricStatus(minutes: number) {
   return "absent";
 }
 
+let reviewTableEnsured = false;
 async function ensureReviewTable() {
+  if (reviewTableEnsured) return;
   await db.execute(
     `CREATE TABLE IF NOT EXISTS payroll_attendance_conflict_review (
       id              CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -128,6 +130,7 @@ async function ensureReviewTable() {
       KEY idx_payroll_att_conflict_manager (manager_user_id)
     )`,
   );
+  reviewTableEnsured = true;
 }
 
 async function attachReviewState(gaps: AttendanceControlGap[]) {
@@ -498,12 +501,23 @@ async function crossEvidencePenaltyConflicts(from: string, to: string, params: C
        ) apr ON apr.UserID = e.employee_code AND apr.ReportDate = adr.record_date
        LEFT JOIN integration_biometric_daily ibd
               ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
+       LEFT JOIN wfm_roster_assignment wra
+              ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
       WHERE adr.record_date BETWEEN ? AND ?
         AND adr.regularization_id IS NULL
         ${scope.sql}
         AND (
           COALESCE(apr.apr_minutes, 0) > 0
           OR COALESCE(ibd.biometric_minutes, 0) > 0
+        )
+        -- Exclude night-shift rostered employees: their punches cross midnight so
+        -- COSEC attributes them to the roster start date while APR may log to the
+        -- calendar date, producing apparent conflicts that are not real discrepancies.
+        AND NOT (
+          wra.id IS NOT NULL
+          AND wra.shift_start_time IS NOT NULL
+          AND wra.shift_end_time IS NOT NULL
+          AND TIME(wra.shift_end_time) < TIME(wra.shift_start_time)
         )
       LIMIT ${SOURCE_ROW_CAP + 1}`,
     [from, to, from, to, ...scope.values],
@@ -1201,7 +1215,7 @@ export const payrollAttendanceControlService = {
     const searchScoped = allSources.filter((gap) => matchesSearch(gap, params));
 
     const allGapsBeforeReview = searchScoped.filter((gap) => matchesIssueType(gap, params));
-    const reviewedGaps = await attachResolutionState(await attachReviewState(allGapsBeforeReview));
+    const reviewedGaps = await attachReviewState(allGapsBeforeReview);
     const visibleFilter = (gap: AttendanceControlGap) => {
       const status = String(gap.reviewStatus ?? "open");
       if (params.reviewStatus && params.reviewStatus !== "all") {
@@ -1239,6 +1253,7 @@ export const payrollAttendanceControlService = {
     }
 
     const start = (page - 1) * limit;
+    const pageGaps = await attachResolutionState(visibleGaps.slice(start, start + limit));
     return {
       runMonth,
       from,
@@ -1261,7 +1276,7 @@ export const payrollAttendanceControlService = {
         sourceRowCap: SOURCE_ROW_CAP,
       },
       readiness,
-      gaps: visibleGaps.slice(start, start + limit),
+      gaps: pageGaps,
       total: visibleGaps.length,
       page,
       limit,
@@ -1317,12 +1332,41 @@ export const payrollAttendanceControlService = {
   }) {
     const runMonth = params.runMonth ?? new Date().toISOString().slice(0, 7);
     const range = monthRange(runMonth);
+    // Only need to fetch cross-evidence conflicts for their manager metadata.
+    // All other key types (apr:, ncosec:, regularization:, salary:) are valid
+    // targets for review-status changes too — build a fallback gap object from
+    // the key itself so they are not silently dropped.
     const conflicts = await crossEvidencePenaltyConflicts(range.from, range.to, {});
     const byKey = new Map(conflicts.map((gap) => [gap.id, gap]));
     let updated = 0;
     for (const key of params.conflictKeys) {
-      const gap = byKey.get(key);
-      if (!gap) continue;
+      let gap = byKey.get(key);
+      if (!gap) {
+        // Non-conflict key: parse employeeId + issueDate from the key
+        const parts = String(key).split(":");
+        let employeeId: string | null = null;
+        let issueDate: string | null = null;
+        if (parts[0] === "regularization" && parts[1]) {
+          const [rows] = await db.execute<RowDataPacket[]>(
+            `SELECT employee_id, DATE_FORMAT(session_date,'%Y-%m-%d') AS session_date
+               FROM attendance_regularization WHERE id = ? LIMIT 1`,
+            [parts[1]],
+          );
+          const row = (rows as any[])[0];
+          if (row) { employeeId = String(row.employee_id); issueDate = String(row.session_date); }
+        } else if (parts[0] === "conflict") {
+          employeeId = parts[2] ?? null; issueDate = parts[3] ?? null;
+        } else {
+          employeeId = parts[1] ?? null; issueDate = parts[2] ?? null;
+        }
+        if (!employeeId || !issueDate) continue;
+        gap = {
+          id: key, issueDate, employeeId, employeeCode: null, employeeName: null,
+          branchName: null, processName: null, issueType: parts[0] ?? "unknown",
+          severity: "blocker", source: "adr", sourceMinutes: null,
+          adrMinutes: null, adrStatus: null, payrollImpact: "", actionNeeded: "",
+        } as AttendanceControlGap;
+      }
       await upsertReview(gap, params.status, params.actorUserId, params.note ?? null);
       updated += 1;
     }
@@ -1349,6 +1393,121 @@ export const payrollAttendanceControlService = {
     }
 
     return { runMonth, updated, requested: params.conflictKeys.length, status: params.status };
+  },
+
+  async lockUnlockedRegularizations(params: { conflictKeys: string[]; actorUserId: string | null }) {
+    let locked = 0;
+    let skipped = 0;
+
+    for (const key of params.conflictKeys) {
+      const parts = String(key).split(":");
+      if (parts[0] !== "regularization" || !parts[1]) { skipped++; continue; }
+      const regId = parts[1];
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT ar.id, ar.employee_id,
+                DATE_FORMAT(ar.session_date,'%Y-%m-%d') AS session_date,
+                ar.requested_status,
+                e.branch_id, e.process_id,
+                adr.id AS adr_id, adr.is_locked,
+                adr.regularization_id AS existing_reg_id
+           FROM attendance_regularization ar
+           JOIN employees e ON e.id = ar.employee_id
+           LEFT JOIN attendance_daily_record adr
+                  ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
+          WHERE ar.id = ? AND ar.status = 'approved'
+          LIMIT 1`,
+        [regId],
+      );
+      const row = (rows as any[])[0];
+      if (!row) { skipped++; continue; }
+
+      // Already correctly locked to this regularization — nothing to do
+      if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id === regId) { skipped++; continue; }
+
+      // Locked to a different regularization — don't overwrite
+      if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id && row.existing_reg_id !== regId) { skipped++; continue; }
+
+      const requestedStatus = String(row.requested_status ?? "present");
+      const lwpValue = requestedStatus === "present" ? 0 : requestedStatus === "half_day" ? 0.5 : 1;
+
+      await db.execute(
+        `INSERT INTO attendance_daily_record
+           (id, employee_id, record_date, branch_id, process_id, attendance_source, source_system,
+            source_record_date, source_reference, attendance_status, lwp_value,
+            regularization_id, is_locked, late_mark, late_by_minutes, processed_at, created_by)
+         VALUES (UUID(), ?, ?, ?, ?, 'manual', 'attendance_regularization',
+                 ?, ?, ?, ?, ?, 1, 0, 0, NOW(), 'payroll_attendance_control')
+         ON DUPLICATE KEY UPDATE
+           attendance_status = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(attendance_status), attendance_status),
+           lwp_value         = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(lwp_value), lwp_value),
+           regularization_id = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(regularization_id), regularization_id),
+           source_system     = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'attendance_regularization', source_system),
+           is_locked         = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 1, is_locked),
+           processed_at      = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), NOW(), processed_at),
+           created_by        = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'payroll_attendance_control', created_by)`,
+        [row.employee_id, row.session_date, row.branch_id ?? null, row.process_id ?? null,
+         row.session_date, regId, requestedStatus, lwpValue, regId],
+      );
+      locked++;
+    }
+
+    if (locked > 0) {
+      await logSensitiveAction({
+        actor_user_id: params.actorUserId ?? "system",
+        action_type: "REGULARIZATION_ADR_LOCKED",
+        module_key: "payroll",
+        entity_type: "attendance_daily_record",
+        entity_id: `lock:${locked}`,
+        change_summary: {
+          requested: params.conflictKeys.length, locked, skipped,
+          conflict_keys: params.conflictKeys,
+        },
+      });
+    }
+
+    return { requested: params.conflictKeys.length, locked, skipped };
+  },
+
+  async getMissingAdrKeys(from: string, to: string, employeeCode?: string) {
+    const empFilter = employeeCode ? " AND e.employee_code = ?" : "";
+    const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id,
+              DATE_FORMAT(ibd.activity_date, '%Y-%m-%d') AS activity_date
+         FROM integration_biometric_daily ibd
+         JOIN employees e ON e.employee_code = ibd.employee_code
+         LEFT JOIN attendance_daily_record adr
+                ON adr.employee_id = e.id AND adr.record_date = ibd.activity_date
+        WHERE ibd.activity_date BETWEEN ? AND ?
+          AND ibd.biometric_minutes > 0
+          ${empFilter}
+          AND adr.id IS NULL
+          AND (
+            e.active_status = 1
+            OR (e.date_of_leaving IS NOT NULL AND e.date_of_leaving >= ibd.activity_date)
+          )
+        LIMIT 500`,
+      values,
+    );
+    return (rows as any[]).map((row) => `ncosec:${row.employee_id}:${row.activity_date}`);
+  },
+
+  async snapshotCosecState(from: string, to: string, employeeCode?: string) {
+    const empFilter = employeeCode ? " AND ibd.employee_code = ?" : "";
+    const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ibd.employee_code,
+              DATE_FORMAT(ibd.activity_date, '%Y-%m-%d') AS activity_date,
+              ibd.first_punch, ibd.last_punch, ibd.total_punches, ibd.biometric_minutes,
+              ibd.source_table
+         FROM integration_biometric_daily ibd
+        WHERE ibd.activity_date BETWEEN ? AND ?
+          ${empFilter}
+        ORDER BY ibd.employee_code, ibd.activity_date`,
+      values,
+    );
+    return rows as any[];
   },
 
   async repairMissingAdr(params: { conflictKeys: string[]; actorUserId: string | null }) {

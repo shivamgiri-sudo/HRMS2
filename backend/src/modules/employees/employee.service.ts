@@ -396,6 +396,7 @@ export const employeeService = {
            e.first_name, e.last_name,
            e.mobile, e.avatar_url, e.photo_url,
            e.date_of_joining, e.salary_start_date, e.employment_status, e.employment_type,
+           e.active_status, e.date_of_exit,
            e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
            e.reporting_manager_id,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,

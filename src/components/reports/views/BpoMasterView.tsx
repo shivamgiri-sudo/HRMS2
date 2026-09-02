@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { HrmsModernShell } from "@/components/ui/hrms-modern";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { currentBusinessMonth, businessFirstDayOfMonth, businessToday } from "@/lib/report-catalog";
 
 type ColumnFormat =
   | "text" | "number" | "currency" | "percentage" | "date" | "month"
@@ -136,18 +137,13 @@ const DOMAIN_ICONS: Record<string, typeof BarChart3> = {
   "DATA GOVERNANCE / REPORT ACCURACY": FileSearch,
 };
 
-function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
-}
-
-function firstDayOfMonth() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
+// Shared business-timezone helpers rather than UTC substrings of toISOString(). The local
+// copies these replace were wrong in IST: firstDayOfMonth() returned the last day of the
+// PREVIOUS month on every call, so every BPO report's default From date started in the wrong
+// month. See the notes in lib/report-catalog.ts.
+const currentMonth = currentBusinessMonth;
+const firstDayOfMonth = businessFirstDayOfMonth;
+const today = businessToday;
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -185,7 +181,9 @@ function duplicateCount(rows: Record<string, unknown>[], keys: string[]) {
 }
 
 function reportFileName(code: string) {
-  return `${code.toUpperCase()}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  // businessToday(), not a UTC substring: in IST a download taken before 05:30 was stamped
+  // with the previous day's date, so the filename disagreed with the data inside it.
+  return `${code.toUpperCase()}_${businessToday()}.xlsx`;
 }
 
 export default function BpoMasterReports() {

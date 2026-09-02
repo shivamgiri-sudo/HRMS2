@@ -198,6 +198,20 @@ performanceDashboardRouter.get('/ratings', requireRole('admin', 'hr', 'super_adm
 performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'quality_analyst'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     try {
+      // Reachable by scoped roles (manager, process_manager, qa, quality_analyst) but had
+      // no row-level restriction at all — unlike /agent-matrix, /trend, /ops, /utilization
+      // in this same file, which all use getScopeFilter. A manager saw org-wide totals/
+      // avg-rating/high-low-performer counts, not their own team's. Fixed 2026-09-01.
+      const scope = await getScopeFilter(req)
+      let scopeSql = ''
+      const scopeParams: string[] = []
+      if (scope.codes !== null) {
+        if (scope.codes.length === 0) {
+          return res.json({ success: true, summary: { total_employees: 0, employees_with_goals: 0, employees_rated: 0, avg_rating: null, high_performers: 0, low_performers: 0 }, data: null })
+        }
+        scopeSql = ` AND e.employee_code IN (${scope.codes.map(() => '?').join(',')})`
+        scopeParams.push(...scope.codes)
+      }
       const [summary] = await db.execute<RowDataPacket[]>(
         `SELECT
            COUNT(DISTINCT e.id) AS total_employees,
@@ -209,7 +223,8 @@ performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'super_adm
          FROM employees e
          LEFT JOIN goal g ON e.id = g.employee_id AND g.status = 'active'
          LEFT JOIN appraisal_rating ar ON e.id = ar.employee_id
-         WHERE e.active_status = 1`
+         WHERE e.active_status = 1${scopeSql}`,
+        scopeParams
       )
       return res.json({ success: true, summary: summary[0], data: summary[0] })
     } catch (err) {

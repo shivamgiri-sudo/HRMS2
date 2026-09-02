@@ -2,7 +2,11 @@
 
 // ─── Slab helper ──────────────────────────────────────────────────────────────
 
-const DEFAULT_SLABS_JSON = '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4}]';
+// The last slab previously ended at 25 (max 4 week-offs). Months with 5 Sundays have
+// availableWorkingDays=26, so paidBase 24–25 was capped at 4 by the slab instead of
+// falling through to the "full attendance → all week-offs" path at line 100. Adding a
+// slab for 26–31 (max 5) covers 5-Sunday months correctly.
+const DEFAULT_SLABS_JSON = '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4},{"from":26,"to":31,"max_weekoffs":5}]';
 const DEFAULT_SLABS: Array<{ from: number; to: number; max_weekoffs: number }> = JSON.parse(DEFAULT_SLABS_JSON);
 
 async function loadWeekoffSlabs(): Promise<Array<{ from: number; to: number; max_weekoffs: number }>> {

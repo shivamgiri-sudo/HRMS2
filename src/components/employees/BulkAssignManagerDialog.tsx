@@ -54,7 +54,11 @@ export function BulkAssignManagerDialog({
     mutationFn: async ({ employeeIds, managerId }: { employeeIds: string[]; managerId: string }) => {
       await Promise.all(
         employeeIds.map((id) =>
-          hrmsApi.patch(`/api/employees/${id}`, { reporting_manager_id: managerId })
+          // updateEmployeeSchema (employee.validation.ts) only recognizes camelCase
+          // reportingManagerId — snake_case was silently stripped by Zod, so this call
+          // returned 200 with a success toast but never actually changed anyone's
+          // manager. Fixed 2026-09-01.
+          hrmsApi.patch(`/api/employees/${id}`, { reportingManagerId: managerId })
         )
       );
       return { updatedCount: employeeIds.length };

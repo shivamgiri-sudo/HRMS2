@@ -51,6 +51,37 @@ export type ImprestPosting = {
 const toPaise = (value: number) => Math.round(Number(value) * 100);
 const fromPaise = (paise: number) => paise / 100;
 
+/**
+ * The date every windowed read filters and orders on.
+ *
+ * `transaction_date` is `NOT NULL DATE`, which on a non-strict connection means a failed insert
+ * does not error — it stores `'0000-00-00'`. The db_bill imprest backfill did exactly that for
+ * 22,800 of 25,616 rows (89% of the ledger, ₹2.38 crore of voucher debits), because it derived
+ * the date with `String(row.bill_date).slice(0, 10)` on a value mysql2 had already turned into a
+ * JS Date — producing `"Sat Jul 14"`, which MySQL cannot parse.
+ *
+ * The damage was not that those rows disappeared. It is that `'0000-00-00'` sorts BEFORE every
+ * real date, so `transaction_date < :from` — the opening-balance predicate — matched all 22,800
+ * of them for every window anyone opened. Any manager, any month, any year: the movements list
+ * showed the allocation credits only, and the opening balance carried the whole of history's
+ * spend. That is the "previous months and years look wrong" symptom, and it was wrong in the one
+ * direction guaranteed to look alarming.
+ *
+ * `period_code` is `'YYYY-MM'` and is populated on 100% of rows, including all 22,800, so it is a
+ * complete fallback. Resolving here rather than only backfilling the data means a future writer
+ * with the same bug cannot poison the report again: a row with no usable date is windowed by the
+ * finance month it was booked into, which is the month a reader would expect to find it in.
+ *
+ * MySQL rejects `transaction_date = '0000-00-00'` under strict mode, so the test is `YEAR() < 1900`
+ * — no date literal, and it also catches any other pre-epoch garbage.
+ */
+const EFFECTIVE_DATE = (alias: string) => `
+  CASE
+    WHEN ${alias}transaction_date IS NULL OR YEAR(${alias}transaction_date) < 1900
+      THEN STR_TO_DATE(CONCAT(COALESCE(NULLIF(${alias}period_code, ''), '1900-01'), '-01'), '%Y-%m-%d')
+    ELSE ${alias}transaction_date
+  END`;
+
 export const imprestLedgerService = {
   /**
    * The float balance, derived from the entries rather than read from a column.
@@ -62,7 +93,7 @@ export const imprestLedgerService = {
     const params: unknown[] = [imprestManagerId];
     let dateFilter = "";
     if (asOfDate) {
-      dateFilter = " AND transaction_date <= ?";
+      dateFilter = ` AND ${EFFECTIVE_DATE("")} <= ?`;
       params.push(asOfDate);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -212,21 +243,21 @@ export const imprestLedgerService = {
       params.push(filters.branchId);
     }
     if (filters.from) {
-      conditions.push("l.transaction_date >= ?");
+      conditions.push(`${EFFECTIVE_DATE("l.")} >= ?`);
       params.push(filters.from);
     }
     if (filters.to) {
-      conditions.push("l.transaction_date <= ?");
+      conditions.push(`${EFFECTIVE_DATE("l.")} <= ?`);
       params.push(filters.to);
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = Math.min(1000, Math.max(1, filters.limit ?? 500));
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT l.*, bm.branch_name
+      `SELECT l.*, ${EFFECTIVE_DATE("l.")} AS effective_date, bm.branch_name
          FROM imprest_transaction_ledger l
          LEFT JOIN branch_master bm ON bm.id = l.branch_id
          ${where}
-        ORDER BY l.transaction_date ASC, l.created_at ASC, l.id ASC
+        ORDER BY effective_date ASC, l.created_at ASC, l.id ASC
         LIMIT ${limit}`,
       params,
     );
@@ -273,7 +304,7 @@ export const imprestLedgerService = {
          COALESCE(SUM(CASE WHEN direction='credit' THEN amount ELSE 0 END),0) AS credits,
          COALESCE(SUM(CASE WHEN direction='debit'  THEN amount ELSE 0 END),0) AS debits
        FROM imprest_transaction_ledger
-      WHERE transaction_date < ?${scopeSql}`,
+      WHERE ${EFFECTIVE_DATE("")} < ?${scopeSql}`,
       [filters.from, ...scopeParams],
     );
     const opening =
@@ -283,7 +314,7 @@ export const imprestLedgerService = {
       `SELECT entry_type, direction,
               COALESCE(SUM(amount),0) AS total
          FROM imprest_transaction_ledger
-        WHERE transaction_date >= ? AND transaction_date <= ?${scopeSql}
+        WHERE ${EFFECTIVE_DATE("")} >= ? AND ${EFFECTIVE_DATE("")} <= ?${scopeSql}
         GROUP BY entry_type, direction`,
       [filters.from, filters.to, ...scopeParams],
     );
@@ -376,14 +407,15 @@ export const imprestLedgerService = {
       `SELECT COALESCE(SUM(CASE WHEN l.direction='credit' THEN l.amount ELSE 0 END),0) AS credits,
               COALESCE(SUM(CASE WHEN l.direction='debit'  THEN l.amount ELSE 0 END),0) AS debits
          FROM imprest_transaction_ledger l
-        WHERE l.transaction_date < ?${scopeSql}`,
+        WHERE ${EFFECTIVE_DATE("l.")} < ?${scopeSql}`,
       [filters.from, ...scopeParams],
     );
     const opening =
       toPaise(Number(openingRows[0]?.credits ?? 0)) - toPaise(Number(openingRows[0]?.debits ?? 0));
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.id, l.transaction_date, l.direction, l.amount, l.narration, l.entry_type,
+      `SELECT l.id, ${EFFECTIVE_DATE("l.")} AS transaction_date, l.period_code,
+              l.direction, l.amount, l.narration, l.entry_type,
               g.grn_number, g.head AS expense_head, g.sub_head AS expense_sub_head,
               a.payment_mode, a.reference_no, a.bank_name
          FROM imprest_transaction_ledger l
@@ -391,8 +423,8 @@ export const imprestLedgerService = {
                 ON l.reference_type = 'grn_request' AND g.id = l.reference_id
          LEFT JOIN imprest_allocation a
                 ON l.reference_type = 'imprest_allocation' AND a.id = l.reference_id
-        WHERE l.transaction_date >= ? AND l.transaction_date <= ?${scopeSql}
-        ORDER BY l.transaction_date ASC, l.created_at ASC, l.id ASC`,
+        WHERE ${EFFECTIVE_DATE("l.")} >= ? AND ${EFFECTIVE_DATE("l.")} <= ?${scopeSql}
+        ORDER BY transaction_date ASC, l.created_at ASC, l.id ASC`,
       [filters.from, filters.to, ...scopeParams],
     );
 

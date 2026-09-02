@@ -22,6 +22,7 @@ import {
   useUnreadNotificationsCount,
 } from "@/hooks/useNotifications";
 import { cn } from "@/lib/utils";
+import { resolveNotificationIcon } from "@/lib/notification-icons";
 
 const filters = [
   { key: "all", label: "All" },
@@ -178,7 +179,9 @@ export default function Notifications() {
               <p className="mt-1 text-sm text-slate-500">No notifications match this view.</p>
             </div>
           ) : (
-            visible.map((notification) => (
+            visible.map((notification) => {
+              const { icon: TypeIcon } = resolveNotificationIcon(notification.type);
+              return (
               <button
                 key={notification.id}
                 type="button"
@@ -189,7 +192,7 @@ export default function Notifications() {
                 )}
               >
                 <div className={cn("flex size-11 shrink-0 items-center justify-center rounded-2xl border", priorityStyle[notification.priority])}>
-                  <Bell className="size-5" />
+                  <TypeIcon className="size-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -209,7 +212,8 @@ export default function Notifications() {
                 </div>
                 {notification.link && <ChevronRight className="mt-3 size-5 shrink-0 text-slate-400" />}
               </button>
-            ))
+              );
+            })
           )}
         </section>
       </main>

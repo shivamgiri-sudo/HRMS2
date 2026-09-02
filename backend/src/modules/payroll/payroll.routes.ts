@@ -32,6 +32,7 @@ import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
 import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
+import { cosecSyncService } from "../wfm/cosec-sync.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -401,6 +402,168 @@ router.post(
       actorUserId: req.authUser?.id ?? null,
     });
     return res.json({ success: true, data, message: "ADR repair attempt completed" });
+  }),
+);
+
+router.post(
+  "/attendance-control-tower/lock-regularizations",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const conflictKeys = Array.isArray(req.body.conflictKeys) ? req.body.conflictKeys.map(String).filter(Boolean) : [];
+    if (conflictKeys.length === 0) {
+      return res.status(400).json({ success: false, message: "Select at least one regularization gap row" });
+    }
+    const invalid = conflictKeys.some((key) => !String(key).startsWith("regularization:"));
+    if (invalid) {
+      return res.status(400).json({ success: false, message: "Only approved_regularization_not_locked_in_adr rows can be locked from this action" });
+    }
+    const data = await payrollAttendanceControlService.lockUnlockedRegularizations({
+      conflictKeys,
+      actorUserId: req.authUser?.id ?? null,
+    });
+    return res.json({ success: true, data, message: "Regularization lock attempt completed" });
+  }),
+);
+
+// ── Async job store for COSEC re-sync (avoids browser HTTP timeout on full-month pulls) ──
+interface CosecResyncJob {
+  id: string;
+  status: "running" | "done" | "error";
+  startedAt: number;
+  from: string;
+  to: string;
+  employeeCode: string | null;
+  autoRepair: boolean;
+  result: any | null;
+  error: string | null;
+}
+const cosecResyncJobs = new Map<string, CosecResyncJob>();
+function pruneCosecJobs() {
+  const cutoff = Date.now() - 3_600_000;
+  for (const [id, job] of cosecResyncJobs) {
+    if (job.startedAt < cutoff) cosecResyncJobs.delete(id);
+  }
+}
+
+async function runCosecResyncJob(job: CosecResyncJob, actorUserId: string | null) {
+  try {
+    const before = await payrollAttendanceControlService.snapshotCosecState(job.from, job.to, job.employeeCode ?? undefined);
+
+    let syncResult: any = null;
+    let syncError: string | null = null;
+    try {
+      syncResult = await cosecSyncService.sync({ from: job.from, to: job.to });
+    } catch (err: any) {
+      syncError = err?.message ?? String(err);
+    }
+
+    const after = await payrollAttendanceControlService.snapshotCosecState(job.from, job.to, job.employeeCode ?? undefined);
+
+    const beforeMap = new Map<string, any>();
+    for (const row of before) beforeMap.set(`${row.employee_code}__${row.activity_date}`, row);
+    const diff: Array<{ employeeCode: string; date: string; status: string; before: any; after: any }> = [];
+    const seen = new Set<string>();
+    for (const row of after) {
+      const key = `${row.employee_code}__${row.activity_date}`;
+      seen.add(key);
+      const b = beforeMap.get(key) ?? null;
+      let s = "unchanged";
+      if (!b) s = "added";
+      else if (Number(b.biometric_minutes) !== Number(row.biometric_minutes) || Number(b.total_punches) !== Number(row.total_punches)) s = "changed";
+      diff.push({ employeeCode: String(row.employee_code), date: String(row.activity_date), status: s, before: b, after: row });
+    }
+    for (const row of before) {
+      const key = `${row.employee_code}__${row.activity_date}`;
+      if (!seen.has(key)) diff.push({ employeeCode: String(row.employee_code), date: String(row.activity_date), status: "removed", before: row, after: null });
+    }
+    diff.sort((a, b) => `${a.employeeCode}__${a.date}`.localeCompare(`${b.employeeCode}__${b.date}`));
+
+    let repairResult: { requested: number; repaired: number; skipped: number } | null = null;
+    if (job.autoRepair && !syncError) {
+      const missingKeys = await payrollAttendanceControlService.getMissingAdrKeys(job.from, job.to, job.employeeCode ?? undefined);
+      repairResult = missingKeys.length > 0
+        ? await payrollAttendanceControlService.repairMissingAdr({ conflictKeys: missingKeys, actorUserId })
+        : { requested: 0, repaired: 0, skipped: 0 };
+    }
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId ?? "system",
+      action_type: "COSEC_BIOMETRIC_RESYNCED",
+      module_key: "payroll",
+      entity_type: "integration_biometric_daily",
+      entity_id: `${job.from}__${job.to}${job.employeeCode ? `__${job.employeeCode}` : ""}`,
+      change_summary: {
+        from: job.from, to: job.to, employeeCode: job.employeeCode,
+        beforeCount: before.length, afterCount: after.length,
+        added: diff.filter((d) => d.status === "added").length,
+        changed: diff.filter((d) => d.status === "changed").length,
+        syncError, autoRepair: job.autoRepair, repairResult,
+      },
+    });
+
+    job.result = {
+      from: job.from, to: job.to, employeeCode: job.employeeCode,
+      syncResult, syncError,
+      beforeCount: before.length, afterCount: after.length,
+      added: diff.filter((d) => d.status === "added").length,
+      changed: diff.filter((d) => d.status === "changed").length,
+      removed: diff.filter((d) => d.status === "removed").length,
+      unchanged: diff.filter((d) => d.status === "unchanged").length,
+      diff, repairResult,
+    };
+    job.status = "done";
+  } catch (err: any) {
+    job.error = err?.message ?? String(err);
+    job.status = "error";
+  }
+}
+
+router.post(
+  "/attendance-control-tower/resync-cosec",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const dateInput = typeof req.body.date === "string" ? req.body.date.trim() : null;
+    const fromInput = typeof req.body.from === "string" ? req.body.from.trim() : null;
+    const toInput = typeof req.body.to === "string" ? req.body.to.trim() : null;
+    const employeeCode = typeof req.body.employeeCode === "string" ? req.body.employeeCode.trim() || null : null;
+    const autoRepair = req.body.autoRepair === true || req.body.autoRepair === "true";
+
+    const from = dateInput ?? fromInput ?? "";
+    const to = dateInput ?? toInput ?? from;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ success: false, message: "Provide a valid date (YYYY-MM-DD)" });
+    }
+    const daysDiff = Math.ceil((new Date(to).getTime() - new Date(from).getTime()) / 86400000);
+    if (daysDiff < 0 || daysDiff > 31) {
+      return res.status(400).json({ success: false, message: "Date range must be 1–31 days" });
+    }
+    if (cosecSyncService.isRunning()) {
+      return res.status(409).json({ success: false, message: "A COSEC sync is already in progress. Try again in a few minutes." });
+    }
+
+    pruneCosecJobs();
+    const jobId = randomUUID();
+    const job: CosecResyncJob = {
+      id: jobId, status: "running", startedAt: Date.now(),
+      from, to, employeeCode, autoRepair, result: null, error: null,
+    };
+    cosecResyncJobs.set(jobId, job);
+
+    // Fire-and-forget — returns immediately so the browser never times out
+    void runCosecResyncJob(job, req.authUser?.id ?? null);
+
+    return res.json({ success: true, data: { jobId, status: "running", from, to } });
+  }),
+);
+
+router.get(
+  "/attendance-control-tower/resync-cosec/status/:jobId",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const job = cosecResyncJobs.get(String(req.params.jobId ?? ""));
+    if (!job) return res.status(404).json({ success: false, message: "Job not found or expired" });
+    return res.json({ success: true, data: { jobId: job.id, status: job.status, from: job.from, to: job.to, result: job.result, error: job.error } });
   }),
 );
 

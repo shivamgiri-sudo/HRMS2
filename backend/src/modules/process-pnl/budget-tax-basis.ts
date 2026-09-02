@@ -1,43 +1,37 @@
 /**
- * Which figure of an invoice a budget line is actually charged: the tax-inclusive one, or the
- * taxable value alone.
+ * Which figure of an invoice a budget line is actually charged: the taxable value (base), or the
+ * GST-inclusive gross.
  *
- * A GRN books the GST-inclusive amount. That is the right thing to charge a tax-bearing budget
- * line, whose own `gross_amount` was planned inclusive of the same tax. It is the wrong thing to
- * charge a line planned as `non_gst` or `exempt`, whose `gross_amount` is net of tax: a
- * ₹1,00,000 purchase carrying ₹18,000 of GST would consume ₹1,18,000 against a ₹1,02,000 line.
+ * Budgets represent P&L cost — what the company actually spends. For vendor tax invoices, GST is
+ * input tax credit (ITC) and never hits P&L, so only the taxable base should consume the budget
+ * regardless of the budget line's own planned tax treatment.
  *
- * Two independent gates have to agree on this and, until now, did not:
+ * Examples:
+ *   ₹10,000 budget + ₹10,000 base / ₹11,800 gross invoice at 18% → base (₹10,000) consumed, OK
+ *   ₹10,000 budget + ₹10,000 gross / ₹10,000 gross invoice at 0% → full gross consumed (same)
  *
- *   reserve()             charged the taxable value, correctly, via consumptionBasis().
- *   the headroom gate     charged the inclusive figure, and so refused invoices at SAVE time
- *                         that Branch Head approval would have accepted moments later. Reported
- *                         live: a ₹21,000 budget refusing a ₹21,000 invoice whose taxable value
- *                         was well under ₹21,000, because the GST was being weighed against a
- *                         plan that never contained any.
+ * Two independent gates must agree on this (reserve() and the headroom gate); the rule lives here
+ * so there is one definition only.
  *
- * The rule lives here — a leaf module with no dependencies — rather than in either gate, so there
- * is one definition and neither service has to import the other to reach it.
+ * Returns 1 whenever the taxable value is unknown or unusable, so a caller that cannot supply it
+ * keeps the conservative inclusive behaviour rather than silently under-charging a budget.
  */
 
 /** Budget lines whose planned amount carries no tax, so tax must not be consumed against them. */
 export const NON_TAXABLE_TREATMENTS = new Set(["non_gst", "exempt"]);
 
 /**
- * How much BUDGET one rupee of invoice gross costs on a line with this tax treatment.
+ * How much BUDGET one rupee of invoice gross costs.
  *
- * 1 for a tax-bearing line — the invoice and the plan both include tax, so they compare directly.
- * net/gross for a non-taxable line, because only the taxable value is ever charged to it.
- *
- * Returns 1 whenever the taxable value is unknown or unusable, so a caller that cannot supply it
- * keeps the conservative inclusive behaviour rather than silently under-charging a budget.
+ * net/gross when the taxable value is known and less than the gross — budget tracks P&L (base),
+ * not cash-out (gross). ITC-recoverable GST is never charged against the budget.
+ * 1 otherwise — falls back to the inclusive figure when net is unavailable or equal to gross.
  */
 export function budgetCostRatio(
-  taxTreatment: unknown,
+  _taxTreatment: unknown,
   grossAmount: number,
   netAmount?: number
 ): number {
-  if (!NON_TAXABLE_TREATMENTS.has(String(taxTreatment ?? ""))) return 1;
   if (!Number.isFinite(netAmount) || !((netAmount as number) > 0)) return 1;
   if (!Number.isFinite(grossAmount) || !(grossAmount > 0)) return 1;
   // Never above 1: a taxable value larger than the gross is nonsense, and letting it through

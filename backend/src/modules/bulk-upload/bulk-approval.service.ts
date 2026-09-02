@@ -19,6 +19,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { emailService } from "../communication/email.service.js";
 
 /** Upload types that must not apply until a branch head approves them. */
 export const APPROVAL_GATED_TYPES = new Set([
@@ -116,6 +117,44 @@ export interface ResolvedEmployee {
 }
 
 /**
+ * How recently an employee must appear in attendance to be treated as still on staff.
+ *
+ * WHY ACTIVITY AND NOT `employment_status`
+ *
+ * This gate was `employment_status = 'active'`, then briefly a denylist of
+ * ('Resigned','terminated'). Both were wrong, because that column does not describe reality
+ * in either direction. Counted live 2026-09-02, with attendance in the preceding 90 days:
+ *
+ *     status       employees   still attending
+ *     Active           1,115             1,112
+ *     inactive        27,052               586
+ *     Resigned        30,309               195
+ *     terminated         499                38
+ *
+ * So 'inactive' contains 586 people who are at work — that is the bug HR hit, where 86 rows
+ * of BATCH-1788287542227 were refused as "not active" for employees recording 43-45
+ * attendance days in the previous 60. And 'Resigned'/'terminated' contain another 233 who
+ * are also still attending, which a denylist would have gone on refusing. Nothing
+ * corroborates any of it: `date_of_leaving` is NULL for 30,307 of the 30,309 Resigned, and
+ * the exit tables hold 8 rows against ~57,000 supposed leavers.
+ *
+ * Attendance is the honest signal. The nightly engine writes a row per employee it still
+ * treats as staff — present or absent — so recent rows mean the system considers them
+ * employed, independently of who last edited a status field. Being absent, or never enrolled
+ * on biometric, does not exclude anyone: the row still exists. Verified on the batch that
+ * prompted this — all 164 employees behind its imported rows had attendance, and so did all
+ * 46 behind its rejected ones.
+ *
+ * 180 days, not 90, because an upload legitimately corrects months in the past; a narrower
+ * window would refuse a correction for someone who left after the month being fixed.
+ *
+ * Net effect measured live: 1,935 employees may appear in a batch, against 1,115 under the
+ * original rule (it refused 820 working people) and 28,167 under the denylist (which
+ * admitted 26,232 with no sign of employment at all).
+ */
+const ACTIVITY_WINDOW_DAYS = 180;
+
+/**
  * Resolve employee codes in one query rather than one per row — a branch-month
  * upload is thousands of rows, and a per-row SELECT is what made earlier bulk
  * imports exceed the frontend request timeout.
@@ -129,11 +168,33 @@ export async function resolveEmployees(codes: string[]): Promise<Map<string, Res
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
     const [rows] = await db.execute<RowDataPacket[]>(
+      // The status test is a fast path only — 'active' means admit without looking further.
+      // It is deliberately NOT wrapped in COALESCE: a NULL status is an unknown, not an
+      // assertion that someone is on staff, so it should have to clear the same attendance
+      // evidence as any other non-active value. `NULL = 'active'` yields NULL, and
+      // `NULL OR TRUE` is TRUE while `NULL OR FALSE` is NULL, so an unknown status is
+      // admitted on evidence and excluded without it — exactly the intent. (This is safe
+      // here precisely because it is an OR; the same NULL would have been a trap under the
+      // `NOT IN` denylist this replaced, which is why that one needed an explicit IS NULL.)
+      // Comparison is case-insensitive under this schema's collation, so 'Active' and
+      // 'active' — both present in the column — match the one spelling.
+      //
+      // EXISTS rather than a JOIN so an employee with 200 attendance rows is still one
+      // result row, and it stops at the first match. Covered by idx_adr_emp_date
+      // (employee_id, record_date).
       `SELECT id, employee_code, branch_id, process_id, first_name, last_name
-         FROM employees
+         FROM employees e
         WHERE employee_code IN (${slice.map(() => "?").join(",")})
-          AND employment_status = 'active'`,
-      slice,
+          AND (
+            LOWER(employment_status) = 'active'
+            OR EXISTS (
+                 SELECT 1
+                   FROM attendance_daily_record a
+                  WHERE a.employee_id = e.id
+                    AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+               )
+          )`,
+      [...slice, ACTIVITY_WINDOW_DAYS],
     );
     for (const r of rows as RowDataPacket[]) {
       map.set(String(r.employee_code).trim().toUpperCase(), {
@@ -228,6 +289,58 @@ export async function lockEntity(params: {
   );
 }
 
+/**
+ * Lock many entities in one statement instead of one statement per row.
+ *
+ * `lockEntity` above is right where the lock is written inside a per-row transaction that
+ * has other work to do anyway. It is the wrong shape where a batch locks every row it just
+ * applied as a final step: that is a bare INSERT per row, so a 1,000-row batch paid 1,000
+ * sequential round trips for what is a single write. At the measured ~1.8 ms round trip to
+ * this database that alone is most of a minute of pure waiting, and - worse - it holds a
+ * pooled connection for the whole of it and keeps re-entering `bulk_upload_locked_entity`,
+ * widening the window in which a concurrent batch can collide with it.
+ *
+ * Chunked rather than one enormous statement so a very large batch cannot exceed
+ * `max_allowed_packet` or hold a single lock long enough to stall other writers.
+ *
+ * Semantics are identical to calling `lockEntity` per row, including the
+ * `ON DUPLICATE KEY UPDATE locked_at = locked_at` no-op that makes a re-approval idempotent.
+ */
+const LOCK_INSERT_CHUNK = 500;
+
+export async function lockEntities(
+  entries: readonly {
+    entityType: string;
+    entityId: string;
+    batchId: string;
+    batchNo: string | null;
+    employeeId: string | null;
+    lockedBy: string;
+    reason?: string;
+  }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  for (let i = 0; i < entries.length; i += LOCK_INSERT_CHUNK) {
+    const slice = entries.slice(i, i + LOCK_INSERT_CHUNK);
+    const values: unknown[] = [];
+    for (const e of slice) {
+      values.push(
+        randomUUID(), e.entityType, e.entityId, e.batchId,
+        e.batchNo, e.employeeId, e.lockedBy,
+        e.reason ?? "Created by an approved bulk upload",
+      );
+    }
+    await db.query(
+      `INSERT INTO bulk_upload_locked_entity
+         (id, entity_type, entity_id, upload_batch_id, upload_batch_no, employee_id, locked_by, lock_reason)
+       VALUES ${slice.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
+       ON DUPLICATE KEY UPDATE locked_at = locked_at`,
+      values,
+    );
+  }
+}
+
 export interface EntityLock {
   upload_batch_no: string | null;
   locked_at: Date | string;
@@ -298,6 +411,10 @@ export async function getBatch(batchId: string): Promise<BatchRecord> {
  * same file, and hasAnyRole returns true for super_admin unconditionally.
  */
 export async function assertCanApprove(userId: string, batch: BatchRecord): Promise<void> {
+  // super_admin is both maker and checker — can approve their own uploads and
+  // any batch regardless of branch scope.
+  if (await hasAnyRole(userId, "super_admin")) return;
+
   if (batch.uploaded_by && batch.uploaded_by === userId) {
     throw new BulkUploadError(
       "You uploaded this batch, so you cannot approve it. A different Branch Head must review it.",
@@ -312,9 +429,6 @@ export async function assertCanApprove(userId: string, batch: BatchRecord): Prom
       403,
     );
   }
-
-  // super_admin reaches every branch queue; the self-approval check above already ran.
-  if (await hasAnyRole(userId, "super_admin")) return;
 
   const inScope = await hasScopedAccess(
     userId,
@@ -377,7 +491,19 @@ export async function markDecided(
  * timeout cannot run the domain engines twice and double-deduct a leave balance.
  * Mirrors the claim the existing import dispatcher uses.
  */
+// A claim older than this is assumed to be from a crashed server and is safe to release.
+const STALE_CLAIM_MINUTES = 5;
+
 export async function claimForDecision(batchId: string): Promise<boolean> {
+  // Auto-release any claim that has been stuck in 'approving' for more than
+  // STALE_CLAIM_MINUTES — this happens when the server restarts mid-approval.
+  await db.execute(
+    `UPDATE upload_batch
+        SET batch_status = 'pending_approval', updated_at = NOW()
+      WHERE id = ? AND batch_status = 'approving'
+        AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [batchId, STALE_CLAIM_MINUTES],
+  );
   const [res] = await db.execute<ResultSetHeader>(
     `UPDATE upload_batch
         SET batch_status = 'approving', updated_at = NOW()
@@ -393,6 +519,16 @@ export async function releaseClaim(batchId: string): Promise<void> {
       WHERE id = ? AND batch_status = 'approving'`,
     [batchId],
   );
+}
+
+/** Force-releases a stuck claim regardless of age. Super-admin only. */
+export async function releaseStuckClaim(batchId: string): Promise<boolean> {
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE upload_batch SET batch_status = 'pending_approval', updated_at = NOW()
+      WHERE id = ? AND batch_status = 'approving'`,
+    [batchId],
+  );
+  return res.affectedRows > 0;
 }
 
 export async function auditBatchAction(params: {
@@ -418,6 +554,147 @@ export async function auditBatchAction(params: {
     },
     req: params.req,
   });
+}
+
+interface FailedRowForEmail {
+  row_no: number;
+  raw_data: Record<string, unknown>;
+  error_messages: string[];
+}
+
+/**
+ * Sends an email to the batch uploader listing the rows that failed during
+ * partial approval, so they can fix and re-upload only the failed records.
+ */
+export async function sendPartialApplyEmail(params: {
+  batch: BatchRecord;
+  appliedCount: number;
+  failedCount: number;
+  approverName: string;
+  remarks: string | null;
+}): Promise<void> {
+  if (!emailService.isConfigured()) return;
+
+  // Fetch uploader email
+  const [userRows] = await db.execute<RowDataPacket[]>(
+    "SELECT email, full_name FROM auth_user WHERE id = ? LIMIT 1",
+    [params.batch.uploaded_by],
+  );
+  const uploader = (userRows as RowDataPacket[])[0];
+  if (!uploader?.email) return;
+
+  // Fetch failed rows
+  const [rowData] = await db.execute<RowDataPacket[]>(
+    `SELECT row_no, raw_data, error_messages
+       FROM upload_batch_row
+      WHERE upload_batch_id = ?
+        AND (row_status = 'error' OR row_status = 'failed')
+      ORDER BY row_no ASC
+      LIMIT 200`,
+    [params.batch.id],
+  );
+  const failedRows = (rowData as RowDataPacket[]).map((r) => ({
+    row_no: r.row_no as number,
+    raw_data: (typeof r.raw_data === "string" ? JSON.parse(r.raw_data) : r.raw_data) as Record<string, unknown>,
+    error_messages: (typeof r.error_messages === "string" ? JSON.parse(r.error_messages) : r.error_messages ?? []) as string[],
+  })) as FailedRowForEmail[];
+
+  if (!failedRows.length) return;
+
+  // Derive column headers from the first row's keys
+  const dataKeys = Object.keys(failedRows[0].raw_data);
+
+  const tableRows = failedRows.map((row) => {
+    const cells = dataKeys.map(
+      (k) => `<td style="padding:6px 10px;border:1px solid #e2e8f0;white-space:nowrap">${String(row.raw_data[k] ?? "")}</td>`,
+    ).join("");
+    const errors = (row.error_messages || []).map((e) => `<li>${e}</li>`).join("");
+    return `<tr>
+      <td style="padding:6px 10px;border:1px solid #e2e8f0;font-weight:600;color:#64748b">${row.row_no}</td>
+      ${cells}
+      <td style="padding:6px 10px;border:1px solid #e2e8f0;color:#dc2626"><ul style="margin:0;padding-left:14px">${errors}</ul></td>
+    </tr>`;
+  }).join("");
+
+  const headerCells = [`<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">Row #</th>`,
+    ...dataKeys.map((k) => `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">${k}</th>`),
+    `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left;color:#dc2626">Errors (fix & re-upload)</th>`,
+  ].join("");
+
+  const typeLabel: Record<string, string> = {
+    LEAVE_APPLICATION_BULK: "Leave Application",
+    ATTENDANCE_REGULARIZATION_BULK: "Attendance Regularization",
+    INCENTIVE_BULK: "Incentive",
+    DEDUCTION_BULK: "Deduction",
+  };
+
+  const html = `
+<div style="font-family:Inter,Arial,sans-serif;max-width:900px;margin:0 auto;color:#1e293b">
+  <div style="background:#1e293b;padding:20px 28px;border-radius:12px 12px 0 0">
+    <h2 style="margin:0;color:#fff;font-size:18px">MAS Callnet PeopleOS — Partial Approval Notice</h2>
+  </div>
+  <div style="background:#fff;border:1px solid #e2e8f0;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px">
+    <p>Hi ${uploader.full_name || uploader.email},</p>
+    <p>Your bulk upload batch <strong>${params.batch.upload_batch_no}</strong> (${typeLabel[params.batch.upload_type_code] ?? params.batch.upload_type_code}) has been <strong>partially approved</strong> by ${params.approverName}.</p>
+
+    <table style="border-collapse:collapse;width:100%;margin:12px 0">
+      <tr>
+        <td style="padding:6px 12px;background:#f0fdf4;border-radius:6px;font-weight:600;color:#16a34a">✓ ${params.appliedCount} row(s) applied successfully</td>
+      </tr>
+      <tr><td style="height:6px"></td></tr>
+      <tr>
+        <td style="padding:6px 12px;background:#fef2f2;border-radius:6px;font-weight:600;color:#dc2626">✗ ${params.failedCount} row(s) failed — listed below</td>
+      </tr>
+    </table>
+
+    ${params.remarks ? `<p style="background:#f8fafc;border-left:3px solid #94a3b8;padding:8px 12px;margin:12px 0;font-size:13px"><strong>Approver remarks:</strong> ${params.remarks}</p>` : ""}
+
+    <h3 style="font-size:14px;margin:20px 0 8px;color:#dc2626">Failed Rows — Fix and Re-Upload</h3>
+    <p style="font-size:13px;color:#64748b;margin:0 0 10px">Correct the highlighted errors in each row below and submit a new upload batch.</p>
+
+    <div style="overflow-x:auto">
+      <table style="border-collapse:collapse;font-size:12px;width:100%">
+        <thead><tr>${headerCells}</tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:20px;font-size:13px;color:#64748b">
+      Log in to <a href="https://mcnhrms.teammas.in/bulk-upload" style="color:#4f46e5">PeopleOS Bulk Upload</a>, create a new batch with only the failed rows above (corrected), and submit for re-approval.
+    </p>
+    <hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0">
+    <p style="font-size:11px;color:#94a3b8">MAS Callnet PeopleOS · Automated notification — do not reply</p>
+  </div>
+</div>`;
+
+  // Build CSV attachment — headers + data + errors column
+  const csvHeaders = ["Row No", ...dataKeys, "Errors"];
+  const csvLines = [
+    csvHeaders.map((h) => `"${h}"`).join(","),
+    ...failedRows.map((row) => {
+      const cells = [
+        row.row_no,
+        ...dataKeys.map((k) => `"${String(row.raw_data[k] ?? "").replace(/"/g, '""')}"`),
+        `"${(row.error_messages || []).join("; ").replace(/"/g, '""')}"`,
+      ];
+      return cells.join(",");
+    }),
+  ];
+  const csvContent = csvLines.join("\n");
+
+  await emailService.send({
+    to: uploader.email as string,
+    subject: `[PeopleOS] Partial Approval — ${params.batch.upload_batch_no} (${params.failedCount} row(s) need correction)`,
+    html,
+    text: `Hi ${uploader.full_name || uploader.email},\n\nYour batch ${params.batch.upload_batch_no} was partially approved.\n${params.appliedCount} row(s) succeeded, ${params.failedCount} row(s) failed.\n\nFailed rows are attached as a CSV. Fix the errors and re-upload a new batch.\n\nMAS Callnet PeopleOS`,
+    attachments: [
+      {
+        filename: `failed_rows_${params.batch.upload_batch_no}.csv`,
+        content: Buffer.from(csvContent, "utf8"),
+        contentType: "text/csv",
+      },
+    ],
+  }).catch(() => { /* email failure must not block the approval response */ });
 }
 
 /**

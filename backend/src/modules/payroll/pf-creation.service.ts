@@ -506,7 +506,7 @@ export const pfCreationService = {
       params.push(filters.branchId);
     }
     if (filters.search) {
-      whereClauses.push("(e.employee_code LIKE ? OR e.full_name LIKE ?)");
+      whereClauses.push("(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)");
       params.push(`%${filters.search}%`, `%${filters.search}%`);
     }
 
@@ -518,7 +518,9 @@ export const pfCreationService = {
       `SELECT bi.id, bi.batch_id, bi.employee_id, bi.item_status, bi.error_count,
               bi.validation_errors, bi.validation_warnings,
               bi.epfo_uan_assigned, bi.epfo_member_id_assigned,
-              e.employee_code, e.full_name, e.date_of_joining,
+              e.employee_code,
+              CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
+              e.date_of_joining,
               p.uan_masked, p.aadhaar_masked, p.pan_masked,
               p.basic_wage, p.pf_wage, p.pf_applicable,
               p.previous_pf_member, p.previous_eps_member,
@@ -571,7 +573,7 @@ export const pfCreationService = {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.*, br.branch_name, est.establishment_name,
-              u.full_name AS created_by_name
+              CONCAT(u.first_name,' ',COALESCE(u.last_name,'')) AS created_by_name
          FROM pf_creation_batch b
          LEFT JOIN branch_master br ON br.id = b.branch_id
          LEFT JOIN pf_establishment_master est ON est.id = b.establishment_id
@@ -592,7 +594,7 @@ export const pfCreationService = {
     if (batchRows.length === 0) return null;
 
     const [items] = await db.execute<RowDataPacket[]>(
-      `SELECT bi.*, e.employee_code, e.full_name, e.date_of_joining,
+      `SELECT bi.*, e.employee_code, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name, e.date_of_joining,
               p.uan_masked, p.aadhaar_masked, p.pan_masked, p.basic_wage
          FROM pf_creation_batch_item bi
          JOIN employees e ON e.id = bi.employee_id
@@ -895,7 +897,7 @@ export const pfCreationService = {
     const [contributorRows] = await db.query<any[]>(
       `SELECT
          e.employee_code,
-         e.full_name                  AS member_name,
+         CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS member_name,
          ROUND(spl.gross_salary)      AS gross_wages,
          ROUND(spl.pf_employee / 0.12) AS epf_wages,
          ROUND(spl.pf_employee)       AS epf_contri,

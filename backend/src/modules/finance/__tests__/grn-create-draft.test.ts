@@ -216,6 +216,36 @@ describe("Budget-line-specific checks", () => {
     ).rejects.toThrow(/Bill date must fall within approved budget period/);
   });
 
+  it("accepts an explicit accountingPeriod override into a past, already-budgeted month", async () => {
+    // The cut-off-booking case grn.routes.ts's periodOverrideRoles gate exists for: a bill dated
+    // TODAY (the current month has no budget line yet) booked against a past month that IS
+    // budgeted. Reaching createDraft with accountingPeriod set at all means the route already
+    // verified the actor holds one of finance_head/accounts_head/branch_admin/super_admin.
+    stateRef.current = makeState({
+      lines: [budgetedLine({ period_code: "2026-07" })],
+      vendors: [{ id: "vendor-1", vendor_name: "Acme", is_active: 1 }],
+    });
+    const { grnService } = await import("../grn.service.js");
+    const result = await grnService.createDraft(
+      { ...VALID_PAYLOAD, billDate: "2026-08-05", accountingPeriod: "2026-07" },
+      "u1",
+      "branch_admin"
+    );
+    expect(result.id).toBeTruthy();
+  });
+
+  it("still refuses an accountingPeriod override that does not match any approved line period", async () => {
+    stateRef.current = makeState({ lines: [budgetedLine({ period_code: "2026-07" })] });
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.createDraft(
+        { ...VALID_PAYLOAD, billDate: "2026-08-05", accountingPeriod: "2026-06" },
+        "u1",
+        "branch_admin"
+      )
+    ).rejects.toThrow(/Bill date must fall within approved budget period/);
+  });
+
   it("refuses when the accounting period is locked for P&L close", async () => {
     stateRef.current = makeState({ lines: [budgetedLine()] });
     periodLocked.mockResolvedValue(true);

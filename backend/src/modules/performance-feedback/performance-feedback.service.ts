@@ -204,6 +204,7 @@ export class PerformanceFeedbackService {
     status?: string;
     manager_id?: string;
     employee_id?: string;
+    reviewer_id?: string;
   }): Promise<PerformanceFeedbackRequest[]> {
     let query = "SELECT * FROM performance_feedback_request WHERE 1=1";
     const params: any[] = [];
@@ -226,6 +227,11 @@ export class PerformanceFeedbackService {
     if (filters.employee_id) {
       query += " AND employee_id = ?";
       params.push(filters.employee_id);
+    }
+
+    if (filters.reviewer_id) {
+      query += " AND reviewer_id = ?";
+      params.push(filters.reviewer_id);
     }
 
     query += " ORDER BY created_at DESC";

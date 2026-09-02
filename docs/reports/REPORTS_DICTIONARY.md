@@ -68,7 +68,7 @@ Day-wise and monthly attendance reports, exception handling, BPO shrinkage metri
 - **Total Login Hours**: `TIMESTAMPDIFF(MINUTE, login_time, logout_time)` formatted as HH:mm
 - **Late Minutes**: `GREATEST(0, punch_in - shift_start - grace_minutes)`
 - **Adherence %**: `(actual_within_shift_minutes / scheduled_shift_minutes) × 100`
-- **Shift**: From date-specific `wfm_roster_assignment` — shows "Roster Not Assigned" when missing
+- **Shift**: From date-specific `wfm_roster_assignment` (shift template, shift master, or the row's own imported start/end time, in that order) — shows "Roster Not Assigned" only when no roster row exists for that employee/date
 
 #### Monthly Reports
 

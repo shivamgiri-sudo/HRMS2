@@ -424,13 +424,25 @@ router.post("/assignments/:id/dispute", h(async (req: AuthenticatedRequest, res:
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM roster_daily_assignment WHERE id = ? LIMIT 1",
+    `SELECT rda.*, wrc.status AS cycle_status
+       FROM roster_daily_assignment rda
+       JOIN weekly_roster_cycle wrc ON wrc.id = rda.cycle_id
+      WHERE rda.id = ? LIMIT 1`,
     [req.params.id]
   );
   const assignment = rows[0];
   if (!assignment) return res.status(404).json({ error: "Assignment not found" });
   if (assignment.employee_id !== emp.id) {
     return res.status(403).json({ success: false, message: "You can only dispute your own assignments" });
+  }
+
+  // Block disputes on locked/closed cycles — a dispute raised here would have no resolution path
+  // since the manager resolve route also refuses attendance_locked/payroll_input_ready/closed.
+  if (DISPUTE_LOCKED_STATUSES.has(assignment.cycle_status)) {
+    return res.status(409).json({
+      success: false,
+      message: `Cannot raise a dispute on a ${assignment.cycle_status} cycle — the roster is locked.`,
+    });
   }
 
   await db.execute(

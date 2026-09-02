@@ -12,6 +12,7 @@ import { journeyAuditReportRouter } from './journey-audit-report.routes.js';
 import { reportSuiteHighRiskRouter } from "./report-suite-highrisk.routes.js";
 import { reportSuiteRouter } from "./report-suite.routes.js";
 import { reportRequestRouter } from "./report-request.routes.js";
+import { reportAccessGrantsRouter } from "./report-access-grants.routes.js";
 import { REPORT_CATALOG } from './report-catalog.js';
 import type { SensitivityLevel, ReportAvailabilityStatus } from './report-catalog.js';
 import { resolveFullScope } from './reporting.scope.js';
@@ -20,6 +21,8 @@ import type { RowDataPacket } from 'mysql2';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from './report-audit.service.js';
 
 const router = Router();
+// Per-employee report access grants (admin only — must be before wildcard routes)
+router.use("/access-grants", reportAccessGrantsRouter);
 // Secure request → generate → email platform routes (must be mounted before :code wildcard routes)
 router.use("/", reportRequestRouter);
 router.use("/bpo-master", bpoMasterReportRouter);
@@ -67,6 +70,34 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
   const scope    = await resolveFullScope(userId);
   const userRoles = new Set(scope.roles);
 
+  // Fetch all active per-user grants in one query for O(1) lookups below
+  const [grantRows] = await db.execute<RowDataPacket[]>(
+    `SELECT report_code, can_view, can_export FROM user_report_permissions
+     WHERE user_id = ? AND active_status = 1
+       AND (expires_at IS NULL OR expires_at > NOW())`,
+    [userId]
+  );
+  const grantMap = new Map<string, { can_view: number; can_export: number }>(
+    (grantRows as any[]).map(g => [g.report_code as string, g])
+  );
+
+  // Fetch all active role-based grants for the user's roles
+  const userRolesList = [...userRoles];
+  let roleGrantMap = new Map<string, { can_view: number; can_export: number }>();
+  if (userRolesList.length) {
+    const placeholders = userRolesList.map(() => '?').join(',');
+    const [roleGrantRows] = await db.execute<RowDataPacket[]>(
+      `SELECT report_code, MAX(can_view) AS can_view, MAX(can_export) AS can_export
+       FROM role_report_permissions
+       WHERE role_key IN (${placeholders}) AND active_status = 1
+       GROUP BY report_code`,
+      userRolesList
+    );
+    roleGrantMap = new Map<string, { can_view: number; can_export: number }>(
+      (roleGrantRows as any[]).map(g => [g.report_code as string, g])
+    );
+  }
+
   const EXCLUDED_STATUSES = new Set(['deprecated', 'disabled']);
   const SENSITIVE_LEVELS  = new Set<SensitivityLevel>(['restricted', 'highly_restricted']);
   const IMMEDIATE_LEVELS  = new Set<SensitivityLevel>(['internal', 'confidential']);
@@ -78,8 +109,10 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
       const level         = (r.sensitivityLevel ?? 'confidential') as SensitivityLevel;
       const isSensitive   = SENSITIVE_LEVELS.has(level);
       const enabled       = ['validated', 'validated_with_limitations'].includes(r.availabilityStatus ?? 'under_validation');
-      const viewAllowed   = isSuperAdmin || r.viewRoles.length === 0 || r.viewRoles.some(role => userRoles.has(role));
-      const exportAllowed = isSuperAdmin || r.exportRoles.length === 0 || r.exportRoles.some(role => userRoles.has(role));
+      const userGrant     = grantMap.get(r.code);
+      const roleGrant     = roleGrantMap.get(r.code);
+      const viewAllowed   = isSuperAdmin || r.viewRoles.length === 0 || r.viewRoles.some(role => userRoles.has(role)) || Boolean(roleGrant?.can_view) || Boolean(userGrant?.can_view);
+      const exportAllowed = isSuperAdmin || r.exportRoles.length === 0 || r.exportRoles.some(role => userRoles.has(role)) || Boolean(roleGrant?.can_export) || Boolean(userGrant?.can_export);
 
       // super_admin can immediately download ALL reports regardless of sensitivity.
       // All other roles: internal/confidential only.
@@ -186,9 +219,33 @@ router.get('/download/:token', requireAuth, h(async (req, res) => {
   const catalogEntry = REPORT_CATALOG.find(r => r.code === tok.report_code);
   if (catalogEntry) {
     const userRoles = new Set(scope.roles);
-    const viewAllowed = catalogEntry.viewRoles.length === 0 ||
+    const isSuperAdmin = userRoles.has('super_admin');
+    const catalogAllowed = catalogEntry.viewRoles.length === 0 ||
       catalogEntry.viewRoles.some(role => userRoles.has(role));
-    if (!viewAllowed) { res.status(403).json({ error: 'FORBIDDEN_ROLE' }); return; }
+    if (!isSuperAdmin && !catalogAllowed) {
+      // Check role_report_permissions and user_report_permissions as fallback
+      const rolesList = [...userRoles];
+      let grantAllowed = false;
+      if (rolesList.length) {
+        const placeholders = rolesList.map(() => '?').join(',');
+        const [roleRows] = await db.execute<RowDataPacket[]>(
+          `SELECT 1 FROM role_report_permissions
+           WHERE role_key IN (${placeholders}) AND report_code = ? AND active_status = 1 LIMIT 1`,
+          [...rolesList, tok.report_code]
+        );
+        grantAllowed = roleRows.length > 0;
+      }
+      if (!grantAllowed) {
+        const [userRows] = await db.execute<RowDataPacket[]>(
+          `SELECT 1 FROM user_report_permissions
+           WHERE user_id = ? AND report_code = ? AND active_status = 1
+             AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1`,
+          [userId, tok.report_code]
+        );
+        grantAllowed = userRows.length > 0;
+      }
+      if (!grantAllowed) { res.status(403).json({ error: 'FORBIDDEN_ROLE' }); return; }
+    }
   }
 
   // Atomic claim: only proceed if exactly 1 row updated (prevents concurrent reuse)

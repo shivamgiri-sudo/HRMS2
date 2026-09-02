@@ -501,11 +501,13 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
   // HO-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
   // allowedRoleKeys but otherwise absent from this file. Migration 1607.
   // TEAM_KPI_SCORECARD added by migration 1628.
-  ho_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "TEAM_KPI_SCORECARD"],
+  // BGV access added migration 1645 — HO HR oversees cross-branch HR ops.
+  ho_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "TEAM_KPI_SCORECARD", "ATS_BGV", "ATS_BGV_REPORT"],
 
   // Process-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
   // allowedRoleKeys but otherwise absent from this file. Migration 1607.
-  process_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
+  // BGV access added migration 1645 — process HR manages candidate lifecycle for their process.
+  process_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "ATS_BGV", "ATS_BGV_REPORT"],
 
   // Named in dashboardAccessRegistry's PERFORMANCE_SCORECARD allowedRoleKeys
   // alongside branch_head, but no branch_manager entry exists anywhere else in
@@ -696,6 +698,11 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "SALARY_CERTIFICATE",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // BGV visibility for branch HR (migration 1645) — branch_hr is the
+    // primary HR designation at the branch level and must be able to see
+    // and action BGV for candidates applied to their branch.
+    "ATS_BGV",
+    "ATS_BGV_REPORT",
   ],
   branch_payroll: [
     "ATTENDANCE_LOOKUP",
@@ -804,6 +811,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_DEDUCTION_UPLOAD",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // BGV visibility (migration 1645).
+    "ATS_BGV",
+    "ATS_BGV_REPORT",
   ],
   interviewer: [
     "ATS_INTERVIEW_QUEUE",
@@ -884,6 +894,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   recruitment_hr: [
     "ATS_BULK_IMPORT",
     "JOBS",
+    // BGV access (migration 1645) — recruitment HR runs the ATS pipeline and
+    // needs to view and update BGV for candidates they manage.
+    "ATS_BGV",
+    "ATS_BGV_REPORT",
   ],
   wfm: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.

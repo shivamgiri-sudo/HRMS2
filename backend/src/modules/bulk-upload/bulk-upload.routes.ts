@@ -5,6 +5,13 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
+
+/**
+ * A batch left in 'importing' for longer than this is assumed to be from an API that
+ * died mid-import, and is released so the uploader can retry.
+ */
+const STALE_IMPORT_MINUTES = 15;
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -150,6 +157,21 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     });
   }
 
+  // A claim left behind by a crashed or restarted API would otherwise block the batch
+  // forever: the claim below refuses any batch already 'importing', and nothing ever
+  // cleared it. Release one that has not been touched for STALE_IMPORT_MINUTES, the
+  // same treatment the approval claim already gets in bulk-approval.service.ts.
+  //
+  // 'validated' is where a batch sits before an import, and re-importing it is safe:
+  // the importers only pick up rows still in 'valid'/'pending', so whatever the dead
+  // run managed to write is not written twice.
+  await db.execute(
+    `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW()
+      WHERE id = ? AND batch_status = 'importing'
+        AND updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [id, STALE_IMPORT_MINUTES]
+  );
+
   // Atomically claim the batch before running the (possibly long-running) import.
   // Without this, a client retry after a false request-timeout — the import
   // itself keeps running server-side even after the client gives up — can fire
@@ -171,15 +193,87 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     });
   }
 
+  // The permission checks have to run before the request is answered — a 202 must
+  // mean the import is genuinely under way, not that it will fail unseen.
   try {
-    return await dispatchImport(rpc_name, id, req.authUser!.id, res);
+    await assertGatedUploader(rpc_name, req.authUser!.id);
+    await assertDepartmentStructureUploader(rpc_name, req.authUser!.id);
   } catch (err) {
     await db.execute(
-      `UPDATE upload_batch SET batch_status = 'failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
-      [String((err as Error)?.message ?? "Import failed").slice(0, 1000), id]
+      `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW() WHERE id = ?`,
+      [id]
     );
     throw err;
   }
+
+  // Importing runs a domain engine per row — submitRegularization and
+  // submitRequest each open a transaction — so a few hundred rows take minutes.
+  // Waiting for that inside the request meant nginx closed the connection at 60s
+  // and the uploader saw a 502 while the import was still running fine. Detach it
+  // and let the page poll /batches/:id/import-status instead.
+  const [pending] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM upload_batch_row
+      WHERE upload_batch_id = ? AND row_status IN ('valid','pending')`,
+    [id]
+  );
+
+  startBatchJob(
+    id,
+    "import",
+    () => dispatchImport(rpc_name, id, req.authUser!.id),
+    async (err) => {
+      await db.execute(
+        `UPDATE upload_batch SET batch_status = 'failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+        [String((err as Error)?.message ?? "Import failed").slice(0, 1000), id]
+      );
+    },
+  );
+
+  return res.status(202).json({
+    success: true,
+    processing: true,
+    job: "import",
+    batch_id: id,
+    total_rows: Number((pending as RowDataPacket[])[0]?.n ?? 0),
+    message: "Import started. Large files are processed a row at a time — the page will keep itself updated.",
+  });
+}));
+
+/**
+ * GET /batches/:id/import-status — where the upload page collects the import result.
+ *
+ * Terminal state comes from upload_batch rather than the in-process job map, so a
+ * page reloaded (or an API restarted) mid-import still reports the truth.
+ */
+router.get("/batches/:id/import-status", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const [batchRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
+    [id]
+  );
+  const batch = (batchRows as RowDataPacket[])[0];
+  if (!batch) return res.status(404).json({ success: false, error: "Upload batch not found" });
+
+  const job = getBatchJob(id);
+  const progress = await readBatchProgress(id, "import");
+  const running = batch.batch_status === "importing";
+  const phase =
+    running ? "running"
+    : job?.phase === "failed" || batch.batch_status === "failed" ? "failed"
+    : job?.phase === "done" || ["imported", "pending_approval"].includes(String(batch.batch_status)) ? "done"
+    : "idle";
+
+  return res.json({
+    success: true,
+    phase,
+    job: "import",
+    batch_status: batch.batch_status,
+    approval_status: batch.approval_status,
+    progress,
+    error: job?.phase === "failed" ? job.error : undefined,
+    message: job?.phase === "failed" ? job.error : (batch.error_summary ?? null),
+    result: job?.phase === "done" ? job.result : undefined,
+  });
 }));
 
 /**
@@ -231,7 +325,18 @@ async function assertDepartmentStructureUploader(rpc_name: string, userId: strin
   }
 }
 
-async function dispatchImport(rpc_name: string, id: string, userId: string, res: Response) {
+/**
+ * Run one import and return the payload the route used to send.
+ *
+ * It no longer writes the response itself: the import runs after the request has
+ * already been answered with 202 (see the route below), so there is no response left
+ * to write to by the time this finishes.
+ */
+async function dispatchImport(
+  rpc_name: string,
+  id: string,
+  userId: string,
+): Promise<Record<string, unknown>> {
   await assertGatedUploader(rpc_name, userId);
   await assertDepartmentStructureUploader(rpc_name, userId);
 
@@ -240,25 +345,25 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "./attendance-regularization-bulk.service.js"
     );
     const data = await importRegularizationBatch(id, userId);
-    return res.json({ success: true, requires_approval: true, data });
+    return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_leave_application_batch") {
     const { importLeaveBatch } = await import("./leave-application-bulk.service.js");
     const data = await importLeaveBatch(id, userId);
-    return res.json({ success: true, requires_approval: true, data });
+    return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_incentive_bulk_batch") {
     const { importIncentiveBatch } = await import("./incentive-bulk.service.js");
     const data = await importIncentiveBatch(id, userId);
-    return res.json({ success: true, requires_approval: true, data });
+    return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_deduction_bulk_batch") {
     const { importDeductionBatch } = await import("./deduction-bulk.service.js");
     const data = await importDeductionBatch(id, userId);
-    return res.json({ success: true, requires_approval: true, data });
+    return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_official_email_update_batch") {
@@ -266,7 +371,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../it-provisioning/it-provisioning.bulk.service.js"
     );
     const data = await importOfficialEmailBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_pf_uan_batch") {
@@ -274,7 +379,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/pf-uan-bulk.service.js"
     );
     const data = await importPfUanBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_reporting_manager_update_batch") {
@@ -282,7 +387,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/reporting-manager-bulk.service.js"
     );
     const data = await importReportingManagerBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_roster_assignment_batch") {
@@ -290,7 +395,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/roster-assignment-bulk.service.js"
     );
     const data = await importRosterAssignmentBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_weekoff_preference_batch") {
@@ -298,7 +403,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/weekoff-preference-bulk.service.js"
     );
     const data = await importWeekOffPreferenceBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_shift_rotation_type_batch") {
@@ -306,7 +411,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/shift-rotation-type-bulk.service.js"
     );
     const data = await importShiftRotationTypeBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_shift_roster_batch") {
@@ -314,7 +419,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/shift-roster-bulk.service.js"
     );
     const data = await importShiftRosterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_upload_batch") {
@@ -322,7 +427,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/employee-master-bulk.service.js"
     );
     const data = await importEmployeeMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_process_upload_batch") {
@@ -330,7 +435,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/process-master-bulk.service.js"
     );
     const data = await importProcessMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_department_upload_batch") {
@@ -338,7 +443,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/department-master-bulk.service.js"
     );
     const data = await importDepartmentMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_asset_upload_batch") {
@@ -346,7 +451,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/asset-master-bulk.service.js"
     );
     const data = await importAssetMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_branch_upload_batch") {
@@ -354,7 +459,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/branch-master-bulk.service.js"
     );
     const data = await importBranchMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_lob_upload_batch") {
@@ -362,7 +467,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/lob-master-bulk.service.js"
     );
     const data = await importLobMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   if (rpc_name === "import_designation_upload_batch") {
@@ -370,7 +475,7 @@ async function dispatchImport(rpc_name: string, id: string, userId: string, res:
       "../bulk-upload/designation-master-bulk.service.js"
     );
     const data = await importDesignationMasterBatch(id, userId);
-    return res.json({ success: true, data });
+    return { success: true, data };
   }
 
   // Unreachable in practice — rpc_name is checked against KNOWN_IMPORT_RPCS

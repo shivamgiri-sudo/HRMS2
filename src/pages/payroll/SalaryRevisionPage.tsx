@@ -44,6 +44,14 @@ interface EmployeeResult {
   last_name?: string;
 }
 
+interface BulkValidateRow {
+  code: string;
+  status: 'ok' | 'error';
+  employee_id?: string;
+  name?: string;
+  reason?: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(d: string | null): string {
@@ -339,9 +347,191 @@ function RejectDialog({
   );
 }
 
+// ── Bulk Submit Fields ────────────────────────────────────────────────────────
+
+function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
+  const [codes, setCodes]                   = useState('');
+  const [newDate, setNewDate]               = useState('');
+  const [reason, setReason]                 = useState('');
+  const [results, setResults]               = useState<BulkValidateRow[] | null>(null);
+  const [submitSummary, setSubmitSummary]   = useState<{ submitted: number; failed: number } | null>(null);
+  const [failedDetails, setFailedDetails]   = useState<{ employee_id: string; reason?: string }[]>([]);
+  const [err, setErr]                       = useState<string | null>(null);
+
+  function parseCodes(raw: string): string[] {
+    return [...new Set(raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean))];
+  }
+
+  const validateMut = useMutation({
+    mutationFn: (payload: { employee_codes: string[]; requested_effective_from: string }) =>
+      (hrmsApi.post('/api/salary-revision/bulk-validate', payload) as Promise<any>)
+        .then((r: any) => r.results as BulkValidateRow[]),
+    onSuccess: (rows: BulkValidateRow[]) => { setResults(rows); setErr(null); },
+    onError:   (e: any) => setErr(e?.message ?? 'Validation failed.'),
+  });
+
+  const submitMut = useMutation({
+    mutationFn: (payload: { employee_ids: string[]; requested_effective_from: string; reason: string }) =>
+      hrmsApi.post('/api/salary-revision/bulk', payload) as Promise<any>,
+    onSuccess: (res: any) => {
+      setSubmitSummary({ submitted: res.submitted ?? 0, failed: res.failed ?? 0 });
+      setFailedDetails((res.details ?? []).filter((d: any) => d.status === 'error'));
+      setCodes(''); setNewDate(''); setReason(''); setResults(null); setErr(null);
+      onSuccess();
+    },
+    onError: (e: any) => setErr(e?.message ?? 'Submission failed.'),
+  });
+
+  const parsedCodes = parseCodes(codes);
+  const allOk       = results !== null && results.length > 0 && results.every((r) => r.status === 'ok');
+  const canValidate = parsedCodes.length > 0 && !!newDate && reason.trim().length >= 10;
+
+  const handleValidate = () => {
+    setErr(null); setResults(null); setSubmitSummary(null);
+    validateMut.mutate({ employee_codes: parsedCodes, requested_effective_from: newDate });
+  };
+
+  const handleSubmit = () => {
+    if (!results) return;
+    const employee_ids = results.filter((r) => r.status === 'ok').map((r) => r.employee_id!);
+    submitMut.mutate({ employee_ids, requested_effective_from: newDate, reason: reason.trim() });
+  };
+
+  return (
+    <div className="p-5 space-y-4">
+      {err && (
+        <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-3 py-2.5">
+          <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" /> {err}
+        </div>
+      )}
+      {submitSummary && (
+        <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl px-3 py-2.5">
+          <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
+          {submitSummary.submitted} request{submitSummary.submitted !== 1 ? 's' : ''} submitted
+          {submitSummary.failed > 0 && ` · ${submitSummary.failed} failed`}.
+        </div>
+      )}
+      {failedDetails.length > 0 && (
+        <div className="rounded-xl border border-red-200 overflow-hidden">
+          <div className="px-3 py-2 bg-red-50 border-b border-red-200">
+            <p className="text-xs font-bold uppercase tracking-wide text-red-400">Failed Submissions</p>
+          </div>
+          <div className="divide-y divide-red-100 max-h-40 overflow-y-auto">
+            {failedDetails.map((d, i) => (
+              <div key={i} className="flex items-center gap-3 px-3 py-2 text-sm bg-white">
+                <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                <span className="font-mono text-xs text-slate-500 w-20 flex-shrink-0">{d.employee_id}</span>
+                <span className="text-red-600 text-xs flex-1">{d.reason ?? 'Unknown error'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Employee Codes <span className="text-red-500">*</span>
+        </Label>
+        <Textarea
+          value={codes}
+          onChange={(e) => { setCodes(e.target.value); setResults(null); }}
+          placeholder={"EMP001, EMP002\nEMP003"}
+          rows={4}
+          className="rounded-xl resize-none text-sm font-mono"
+        />
+        <p className="text-[11px] text-slate-400">
+          {parsedCodes.length > 0
+            ? `${parsedCodes.length} code${parsedCodes.length !== 1 ? 's' : ''} detected`
+            : 'Comma- or newline-separated employee codes'}
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          New Salary Date <span className="text-red-500">*</span>
+        </Label>
+        <Input
+          type="date"
+          value={newDate}
+          onChange={(e) => { setNewDate(e.target.value); setResults(null); }}
+          className="rounded-xl h-9 text-sm"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Reason <span className="text-red-500">*</span>
+        </Label>
+        <Textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Explain why the salary date needs to change (min 10 characters)…"
+          rows={3}
+          className="rounded-xl resize-none text-sm"
+        />
+        <p className="text-[11px] text-slate-400">{reason.trim().length}/10 minimum</p>
+      </div>
+
+      {results && results.length > 0 && (
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Validation Results</p>
+            <p className="text-xs text-slate-500">
+              {results.filter((r) => r.status === 'ok').length}/{results.length} ready
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
+            {results.map((row, i) => (
+              <div key={i} className={`flex items-center gap-3 px-3 py-2.5 text-sm ${row.status === 'ok' ? 'bg-white' : 'bg-red-50'}`}>
+                {row.status === 'ok'
+                  ? <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                  : <XCircle      className="h-4 w-4 text-red-500 flex-shrink-0" />}
+                <span className="font-mono text-xs text-slate-500 w-20 flex-shrink-0">{row.code}</span>
+                <span className="font-medium text-slate-700 flex-1 truncate">{row.name ?? '—'}</span>
+                <span className={`text-xs flex-shrink-0 ${row.status === 'ok' ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {row.status === 'ok' ? 'Ready' : row.reason}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleValidate}
+          disabled={!canValidate || validateMut.isPending}
+          className="rounded-xl border-slate-200 text-slate-700 cursor-pointer"
+        >
+          {validateMut.isPending
+            ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            : <Search  className="h-4 w-4 mr-1.5" />}
+          Validate Codes
+        </Button>
+        <Button
+          onClick={handleSubmit}
+          disabled={!allOk || submitMut.isPending}
+          className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer"
+          style={{ boxShadow: allOk ? '0 4px 12px rgba(37,99,235,0.3)' : undefined }}
+        >
+          {submitMut.isPending
+            ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            : <Plus    className="h-4 w-4 mr-1.5" />}
+          {allOk
+            ? `Submit ${results!.length} Request${results!.length !== 1 ? 's' : ''}`
+            : 'Submit Requests'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Submit Form (Fixer view) ───────────────────────────────────────────────────
 
 function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
+  const [mode, setMode] = useState<'single' | 'bulk'>('single');
   const [employee, setEmployee] = useState<EmployeeResult | null>(null);
   const [newDate, setNewDate] = useState('');
   const [reason, setReason] = useState('');
@@ -368,12 +558,41 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
     <div className="rounded-2xl border border-blue-200 bg-white/95 backdrop-blur-sm overflow-hidden"
       style={{ boxShadow: '0 1px 3px rgba(37,99,235,0.08), 0 4px 12px rgba(37,99,235,0.06)' }}>
       <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4">
-        <div className="flex items-center gap-2 text-white">
-          <Plus className="h-4 w-4" />
-          <h3 className="text-sm font-semibold">New Revision Request</h3>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-white">
+            <Plus className="h-4 w-4" />
+            <h3 className="text-sm font-semibold">New Revision Request</h3>
+          </div>
+          <div className="flex rounded-lg overflow-hidden border border-white/30 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setMode('single')}
+              className={`px-3 py-1.5 transition-colors duration-150 cursor-pointer ${
+                mode === 'single' ? 'bg-white text-blue-700' : 'bg-white/10 text-white hover:bg-white/20'
+              }`}
+            >
+              Single
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('bulk'); setEmployee(null); setNewDate(''); setReason(''); setErr(null); }}
+              className={`px-3 py-1.5 transition-colors duration-150 cursor-pointer ${
+                mode === 'bulk' ? 'bg-white text-blue-700' : 'bg-white/10 text-white hover:bg-white/20'
+              }`}
+            >
+              Bulk
+            </button>
+          </div>
         </div>
-        <p className="text-blue-100 text-xs mt-0.5">Submit a salary date change for Payroll Head approval</p>
+        <p className="text-blue-100 text-xs mt-0.5">
+          {mode === 'single'
+            ? 'Submit a salary date change for Payroll Head approval'
+            : 'Submit salary date changes for multiple employees at once'}
+        </p>
       </div>
+      {mode === 'bulk' ? (
+        <BulkSubmitFields onSuccess={onSuccess} />
+      ) : (
       <div className="p-5 space-y-4">
         {err && (
           <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-3 py-2.5">
@@ -414,6 +633,7 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }

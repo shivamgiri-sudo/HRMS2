@@ -3,6 +3,8 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { REPORT_CATALOG } from "./report-catalog.js";
 import { resolveBranchScope, resolveFullScope, type BranchScope } from "./reporting.scope.js";
 import { appendScopeConditions, appendFilterConditions, type ExecFilters } from "./executors/types.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 export interface ScopedReportRequest extends AuthenticatedRequest {
   reportBranchScope?: BranchScope;
@@ -15,7 +17,15 @@ const ROLE_ALIASES: Record<string, string[]> = {
   payroll_head: ["payroll"],
   payroll_branch: ["payroll"],
   payroll_hr: ["payroll"],
-  recruitment_hr: ["recruiter"],
+  // HR-family roles that were missing aliases → got zero access to all 20 HR
+  // operational reports and 4-5 BPO master catalog reports. Fixed migration 1646.
+  hr_admin: ["hr"],
+  ho_hr: ["hr"],
+  process_hr: ["hr"],
+  // recruitment_hr gains hr alias in addition to recruiter so it picks up all
+  // HR operational reports that recruitment activity depends on (onboarding
+  // tracker, joining report, BGV status, etc.).
+  recruitment_hr: ["hr", "recruiter"],
   quality_analyst: ["quality"],
   qa: ["quality"],
   visitor_security: ["security"],
@@ -71,29 +81,81 @@ export async function reportScopeMiddleware(
   }
 }
 
-export function reportCatalogAccessMiddleware(
+/** Returns the active per-employee grant for (userId, reportCode), or null. */
+async function getUserReportGrant(userId: string | number, reportCode: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT can_view, can_export FROM user_report_permissions
+     WHERE user_id = ? AND report_code = ? AND active_status = 1
+       AND (expires_at IS NULL OR expires_at > NOW())
+     LIMIT 1`,
+    [userId, reportCode]
+  );
+  return rows.length ? (rows[0] as { can_view: number; can_export: number }) : null;
+}
+
+/** Returns the best role-based grant for any of the user's roles for (reportCode), or null. */
+async function getRoleReportGrant(roles: string[], reportCode: string) {
+  if (!roles.length) return null;
+  const placeholders = roles.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(can_view) AS can_view, MAX(can_export) AS can_export
+     FROM role_report_permissions
+     WHERE role_key IN (${placeholders}) AND report_code = ? AND active_status = 1`,
+    [...roles, reportCode]
+  );
+  const row = rows[0] as { can_view: number | null; can_export: number | null };
+  return row?.can_view != null ? row : null;
+}
+
+export async function reportCatalogAccessMiddleware(
   req: ScopedReportRequest,
   res: Response,
   next: NextFunction
 ) {
-  const code = reportCodeFromRequest(req);
-  const report = REPORT_CATALOG.find((definition) => definition.code === code);
-  if (!report) {
-    return res.status(404).json({ success: false, error: "Report definition not found." });
-  }
+  try {
+    const code = reportCodeFromRequest(req);
+    const report = REPORT_CATALOG.find((definition) => definition.code === code);
+    if (!report) {
+      return res.status(404).json({ success: false, error: "Report definition not found." });
+    }
 
-  const roles = normalisedRoles(req);
-  if (!roles.includes("super_admin") && !report.viewRoles.some((role) => roles.includes(role))) {
-    return res.status(403).json({ success: false, error: "You do not have permission to view this report." });
+    const roles = normalisedRoles(req);
+    const isSuperAdmin = roles.includes("super_admin");
+
+    // 1. Catalog role check (hardcoded)
+    const catalogCanView = isSuperAdmin || report.viewRoles.some((role) => roles.includes(role));
+
+    // 2. DB role-grant fallback (role_report_permissions)
+    const roleGrant = catalogCanView ? null : await getRoleReportGrant(roles, code);
+    const roleCanView = catalogCanView || Boolean(roleGrant?.can_view);
+
+    // 3. Per-employee grant fallback (user_report_permissions)
+    const userGrant = roleCanView ? null : await getUserReportGrant(Number(req.authUser.id), code);
+    const canView = roleCanView || Boolean(userGrant?.can_view);
+
+    if (!canView) {
+      return res.status(403).json({ success: false, error: "You do not have permission to view this report." });
+    }
+
+    if (isExportRequest(req)) {
+      const catalogCanExport = isSuperAdmin || report.exportRoles.some((role) => roles.includes(role));
+      // Fetch DB grants only if catalog alone doesn't allow export
+      const exportRoleGrant = catalogCanExport ? null : (roleGrant ?? await getRoleReportGrant(roles, code));
+      const exportUserGrant = (catalogCanExport || Boolean(exportRoleGrant?.can_export))
+        ? null
+        : (userGrant ?? await getUserReportGrant(Number(req.authUser.id), code));
+      const canExport = catalogCanExport
+        || Boolean(exportRoleGrant?.can_export)
+        || Boolean(exportUserGrant?.can_export);
+      if (!canExport) {
+        return res.status(403).json({ success: false, error: "You do not have permission to export this report." });
+      }
+    }
+
+    return next();
+  } catch (err) {
+    return next(err);
   }
-  if (
-    isExportRequest(req)
-    && !roles.includes("super_admin")
-    && !report.exportRoles.some((role) => roles.includes(role))
-  ) {
-    return res.status(403).json({ success: false, error: "You do not have permission to export this report." });
-  }
-  return next();
 }
 
 function addScopedBranchClause(

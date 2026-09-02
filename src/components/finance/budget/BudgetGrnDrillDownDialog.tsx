@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { ChevronRight, FileText, Loader2, Paperclip, AlertTriangle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { money, dateLabel, dateTimeLabel, labelStatus, grnStatusTone, checkTone } from "@/components/finance/grn/grn-format";
+import { money, dateLabel, dateTimeLabel, grnDisplayNumber, labelStatus, grnStatusTone, checkTone } from "@/components/finance/grn/grn-format";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 
 export type GrnDrillDownContext = {
@@ -20,13 +20,22 @@ export type GrnDrillDownContext = {
 
 type GrnRow = {
   id: string;
-  grn_number: string;
+  /** NULL until Finance Head approves it — render via grnDisplayNumber(grn). */
+  grn_number: string | null;
   invoice_number: string | null;
   vendor_name: string | null;
   bill_date: string | null;
   amount_without_tax: number | null;
   tax_amount: number | null;
   amount_with_tax: number | null;
+  /** Net of recoverable GST — what actually hits P&L cost and feeds the Variance tab's Consumed
+   *  figure. NULL on rows raised before this column existed. */
+  pnl_cost_amount: number | null;
+  /** This drill-down's own cost-centre/head/sub-head SHARE of the GRN, when it was split across
+   *  more than one — NULL for an unsplit GRN, where the header amount already is the whole spend.
+   *  See GET /api/finance/grns's context_alloc join. */
+  context_amount_with_tax: number | null;
+  context_pnl_cost_amount: number | null;
   status: string;
   description: string | null;
   remarks: string | null;
@@ -228,14 +237,19 @@ export function BudgetGrnDrillDownDialog({
                         <td className="px-3 py-2 font-medium text-slate-800">
                           <span className="inline-flex items-center gap-1.5">
                             <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                            {grn.grn_number}
+                            {grnDisplayNumber(grn)}
                             {hasAttachment(grn) && <Paperclip className="h-3 w-3 shrink-0 text-slate-400" />}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-slate-600">{grn.invoice_number ?? "—"}</td>
                         <td className="px-3 py-2 text-slate-600">{grn.vendor_name ?? "—"}</td>
                         <td className="px-3 py-2 text-slate-600">{dateLabel(grn.bill_date)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{money(grn.amount_with_tax)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {/* This drill-down's own share when the GRN was split across cost
+                              centres/heads — the header's amount_with_tax is the WHOLE bill and
+                              overstates every split it appears under otherwise. */}
+                          {money(grn.context_amount_with_tax ?? grn.amount_with_tax)}
+                        </td>
                         <td className="px-3 py-2">
                           <StatusStamp tone={grnStatusTone(grn.status)}>{labelStatus(grn.status)}</StatusStamp>
                         </td>
@@ -366,9 +380,12 @@ function GrnDetailPanel({
           <div className="space-y-1.5">
             {matchingAllocations.map((alloc) => (
               <div key={alloc.id} className="rounded-lg border border-slate-200 bg-white p-2 text-[11px]">
+                {/* P&L cost leads — it is what actually feeds the Variance tab's Consumed figure
+                    (GST recovered as ITC is never a real cost). Leading with the tax-inclusive
+                    amount here made this number look bigger than the Consumed it explains. */}
+                <div className="flex justify-between"><span className="text-slate-500">P&amp;L cost (Consumed basis)</span><span className="font-medium tabular-nums">{money(alloc.pnl_cost_amount)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Amount (with tax)</span><span className="font-medium tabular-nums">{money(alloc.amount_with_tax)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">CGST / SGST / IGST</span><span className="font-medium tabular-nums">{money(alloc.cgst_amount)} / {money(alloc.sgst_amount)} / {money(alloc.igst_amount)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">P&amp;L cost</span><span className="font-medium tabular-nums">{money(alloc.pnl_cost_amount)}</span></div>
                 <div className="mt-1"><StatusStamp tone={lifecycleTone(alloc.lifecycle_status ?? "")}>{labelStatus(alloc.lifecycle_status ?? "unknown")}</StatusStamp></div>
               </div>
             ))}

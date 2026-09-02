@@ -71,6 +71,10 @@
   "modules/portal/client.service.ts": [
     "bulk_operation_jobs"
   ],
+  "modules/reporting/report-access-grants.routes.ts": [
+    "role_report_permissions",
+    "user_report_permissions"
+  ],
   "modules/sales-upload/sales-upload.service.ts": [
     "db_masmis"
   ]

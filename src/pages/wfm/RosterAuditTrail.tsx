@@ -108,6 +108,10 @@ export default function RosterAuditTrail() {
   );
   const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
   const [changeTypeFilter, setChangeTypeFilter] = useState<string>('all');
+  const [amendDialogOpen, setAmendDialogOpen] = useState(false);
+  const [amendCycleId, setAmendCycleId] = useState('');
+  const [amendReason, setAmendReason] = useState('');
+  const [amendSubmitting, setAmendSubmitting] = useState(false);
 
   const { data: trailsData, isLoading: trailsLoading, refetch: refetchTrails } = useQuery({
     queryKey: ['roster-audit-trails', dateFrom, dateTo, changeTypeFilter],
@@ -215,6 +219,14 @@ export default function RosterAuditTrail() {
               >
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAmendDialogOpen(true)}
+                className="bg-amber-500/80 border-amber-400 text-white hover:bg-amber-500"
+              >
+                Record Amendment
               </Button>
             </div>
           </div>
@@ -542,6 +554,62 @@ export default function RosterAuditTrail() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {amendDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
+            <h2 className="font-semibold text-base">Record Post-Publication Amendment</h2>
+            <p className="text-sm text-slate-500">
+              Mandatory: describe what changed and why. Logged in the roster audit trail.
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-600">Cycle ID</label>
+              <input
+                className="w-full border rounded p-2 text-sm"
+                placeholder="e.g. 42"
+                value={amendCycleId}
+                onChange={(e) => setAmendCycleId(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-600">Amendment Reason</label>
+              <textarea
+                className="w-full border rounded p-2 text-sm min-h-[100px]"
+                placeholder="Describe the amendment reason..."
+                value={amendReason}
+                onChange={(e) => setAmendReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setAmendDialogOpen(false); setAmendCycleId(''); setAmendReason(''); }}
+              >Cancel</Button>
+              <Button
+                size="sm"
+                disabled={!amendReason.trim() || !amendCycleId.trim() || amendSubmitting}
+                className="bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
+                onClick={async () => {
+                  if (!amendReason.trim() || !amendCycleId.trim()) return;
+                  setAmendSubmitting(true);
+                  try {
+                    await api.post(`/roster-gov/cycles/${amendCycleId.trim()}/amendments`, {
+                      reason: amendReason.trim(),
+                    });
+                    setAmendDialogOpen(false);
+                    setAmendCycleId('');
+                    setAmendReason('');
+                    void refetchTrails();
+                  } finally {
+                    setAmendSubmitting(false);
+                  }
+                }}
+              >{amendSubmitting ? 'Saving…' : 'Save Amendment'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

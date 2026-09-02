@@ -6,22 +6,29 @@ import {
 } from "./grn-number-monthly.service.js";
 
 /**
- * A GRN gets its number at SUBMISSION — the draft → submitted transition — and nowhere else.
+ * A GRN gets its number at FINAL APPROVAL — Finance Head clearing a `branch_head_approved` GRN —
+ * and nowhere else. The name (`OnSubmit`) is now historical, kept to avoid a mechanical rename
+ * across the half-dozen files that assert this function's name by grep; the CALL SITE is what
+ * moved, not this file's logic.
  *
- * Drafts that are abandoned must never consume a sequence slot, or Finance sees gaps they cannot
- * account for; and the number must exist from the moment the GRN leaves the raiser's hands, so
- * every approver, query and payment reference has something to quote. Neither approval stage
- * assigns it.
+ * Owner ruling, superseding the 2026-08-27 "assign at submission" design this file originally
+ * documented: a number identifies a spend the company has actually approved, not merely raised.
+ * Consequences, all deliberate:
+ *   - A GRN sits with `grn_number IS NULL` all the way through `submitted` and
+ *     `branch_head_approved` — the Branch Head and Finance Head approval screens identify a
+ *     pending GRN by a computed stand-in reference instead (see `pendingGrnReference()` in the
+ *     frontend's grn-format.tsx), never by a real number that does not exist yet.
+ *   - A REJECTED GRN never reaches approval, so it never gets a number — its audit trail shows
+ *     only the stand-in reference, forever. This is intended, not a gap.
+ *   - Re-submission after a return, and legacy migrated rows that already carry a number, are
+ *     unaffected: `if (existing) return existing` below still guards every call.
  *
- * This lives in its own module because there are TWO submit paths and only one of them used to
- * allocate. `grnService.submitForApproval()` did it inline; `grnValidationControlService.submit()`
- * — which is the one that actually runs, because `smartGrnRouter` is mounted on "/grns"
- * (grn.routes.ts) hundreds of lines ABOVE the legacy `POST /grns/:id/submit`, so Express matches
- * it first — did not. The legacy allocator was therefore dead code, and every GRN raised through
- * the current form reached Branch Head and Finance Head approval carrying grn_number = NULL.
- * Six such GRNs were found live on 2026-08-27, including a Rs 28,024.98 vendor GRN.
+ * Called from grn-smart.service.ts's `review()` and grn.service.ts's `reviewGrn()` — the two live
+ * finance_head-approval branches (see grn-number-on-submit.test.ts's routing comment for why both
+ * exist) — inside the same UPDATE that flips the status, via `grn_number = COALESCE(grn_number, ?)`
+ * so a retried/concurrent approval cannot mint two numbers for one GRN.
  *
- * Both paths now call this. Do not re-inline it in either.
+ * Neither submit() implementation calls this any more — see their own comments for why.
  */
 
 /** YYYY-MM → Indian financial year label, e.g. "2026-08" → "2026-27". April starts the year. */
@@ -34,11 +41,11 @@ export function financialYearFromPeriodCode(periodCode: string): string {
 }
 
 /**
- * Returns the number this GRN should carry once submitted.
+ * Returns the number this GRN should carry once Finance Head approves it.
  *
- * An existing number is ALWAYS kept — a re-submit after a return/reopen, and legacy rows migrated
- * from db_bill, must not be renumbered. Callers should still write it with
- * `grn_number = COALESCE(grn_number, ?)` so a concurrent submit cannot overwrite one either.
+ * An existing number is ALWAYS kept — a re-approval race, a re-submit after a return/reopen, and
+ * legacy rows migrated from db_bill, must not be renumbered. Callers should still write it with
+ * `grn_number = COALESCE(grn_number, ?)` so a concurrent approval cannot overwrite one either.
  */
 export async function resolveGrnNumberOnSubmit(grn: RowDataPacket | Record<string, unknown>): Promise<string> {
   const existing = String((grn as Record<string, unknown>).grn_number ?? "").trim();

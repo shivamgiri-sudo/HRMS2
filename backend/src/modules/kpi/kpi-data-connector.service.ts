@@ -320,23 +320,42 @@ export async function syncIntegrationCallMetrics(date: string): Promise<SyncResu
   const metricIds = await getMetricIds(['TALK_TIME', 'DIALS']);
   if (!metricIds.size) return { synced: 0, skipped: 0, errors: [] };
 
-  await db.execute(
-    `UPDATE employees e
-     JOIN (
-       SELECT icd.employee_code, MIN(ipa.process_id) AS process_id
-       FROM integration_call_daily icd
-       JOIN integration_process_alias ipa
-         ON ipa.source_value = UPPER(TRIM(icd.process_name))
-        AND ipa.active_status = 1
-       WHERE icd.activity_date = ?
-       GROUP BY icd.employee_code
-       HAVING COUNT(DISTINCT ipa.process_id) = 1
-     ) mapped
-       ON UPPER(TRIM(mapped.employee_code)) = UPPER(TRIM(e.employee_code))
-     SET e.process_id = mapped.process_id
-     WHERE e.active_status = 1 AND e.process_id IS NULL`,
+  // Assign a process to employees the call feed can place unambiguously.
+  //
+  // This was one `UPDATE employees e JOIN (...) WHERE active_status = 1 AND process_id IS
+  // NULL`. Under REPEATABLE READ that holds a next-key lock over the entire
+  // (active_status, process_id) index range for as long as the join runs — covering every
+  // unassigned active employee, not just the ones it changes. Any other write to one of
+  // those rows (HR saving a profile, the db_bill org backfill) then waits out the server's
+  // 60s innodb_lock_wait_timeout and fails outright.
+  //
+  // Resolving first and updating by primary key locks only the rows that actually change,
+  // each for microseconds. Same rows, same values. The `process_id IS NULL` guard is
+  // repeated on the UPDATE so a process assigned between the SELECT and the write is not
+  // overwritten — this job only ever fills blanks.
+  const [toAssign] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id, mapped.process_id
+       FROM employees e
+       JOIN (
+         SELECT icd.employee_code, MIN(ipa.process_id) AS process_id
+         FROM integration_call_daily icd
+         JOIN integration_process_alias ipa
+           ON ipa.source_value = UPPER(TRIM(icd.process_name))
+          AND ipa.active_status = 1
+         WHERE icd.activity_date = ?
+         GROUP BY icd.employee_code
+         HAVING COUNT(DISTINCT ipa.process_id) = 1
+       ) mapped
+         ON UPPER(TRIM(mapped.employee_code)) = UPPER(TRIM(e.employee_code))
+      WHERE e.active_status = 1 AND e.process_id IS NULL`,
     [date],
   );
+  for (const row of toAssign as any[]) {
+    await db.execute(
+      `UPDATE employees SET process_id = ? WHERE id = ? AND process_id IS NULL`,
+      [row.process_id, row.employee_id],
+    );
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT

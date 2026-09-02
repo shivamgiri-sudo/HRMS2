@@ -6,7 +6,10 @@
 ## Plan 1 — WFM Payroll Prep Visibility
 Task 1: complete (commit 008e2ae0, base bb3dc52f, review clean — 3 minor: silent catch, N+1 getOrRefresh, month not echoed)
 Task 2: complete (commit b8d6cef0, base 008e2ae0, review skipped — code matches plan verbatim, deviation to WORKERS array type documented)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commit TBD, base b3cea1e6) — useNavBadges hook (src/hooks/useNavBadges.ts) + badgedGroups injection in CompactDashboardLayout.tsx; both SidebarNav instances now receive live badge counts; 5-min stale / 10-min refetch; eligible roles: wfm, process_manager, branch_head, payroll_branch, super_admin, admin
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 
 ---
 
@@ -39,7 +42,10 @@ Task 11: Remove Absconded/Terminated from status enum — complete (commit ddb5e
 ## Tasks
 Task 1: complete (commit de40f8ed, base 6bab5cb4, review clean — spec compliant, no findings)
 Task 2: complete (commit 09b712b6, base de40f8ed, review clean — spec compliant, no findings)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commit 868b0399, base 09b712b6, review clean — spec compliant, brief's illustrative test had 3 mocking bugs, corrected on retry with production code unchanged from brief; regression confirmed clean against 601 passing wfm/roster tests)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commit 71c61e27, base 868b0399, review clean — spec compliant, both extras judged legitimate; 21/21 tests independently confirmed)
 Task 5: complete (commit cc2fa6a4, base 71c61e27, review clean — spec compliant, all 4 schema column-name claims independently re-verified against SQL migrations. Minor (non-blocking, for final review): response envelope {rows} diverges from sibling endpoint's {success,data} convention)
 Task 6: complete (commit f5be0106, base cc2fa6a4, review clean — resolved brief's open shift-id question via live DB verification, independently re-confirmed by reviewer with own query: wfm_shift_template(23 UUID rows) vs wfm_shift_master(3 string-id rows), zero overlap; chose additive shiftTemplateId field over overloading shiftId. Minor cosmetic note only.)
@@ -62,7 +68,10 @@ STILL NOT DONE: the write half of plan step 11.4 — assign a cell, confirm cycl
 ## Tasks
 Task 1: complete (commit 79f04616, base 09f9bfdc, review clean — spec compliant, all 24 columns, all indexes, MySQL8 compatible)
 Task 2: complete (commit f4e70b6e, base c70ef53d, review clean — spec compliant, inbox API corrected to createWorkItem camelCase)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commit 3bbf19a6, base f4e70b6e, review clean — 8 routes, role guards correct, getEmployeeIdForUser helper inline)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commit 089d7862, base 3bbf19a6, review clean — 3-step wizard, hrmsApi, TanStack Query)
 Task 5: complete (commit 375a8cdc, base 089d7862, review clean — differential entry, min 10 char remarks enforced)
 Task 6: complete (commit 5d2d84cb, base 375a8cdc, review clean — 3 routes, 3 nav entries, manager read-only view, TypeScript clean, frontend build PASS)
@@ -87,11 +96,17 @@ Task 1: complete (commits 966ae8c5..7da40718, base 0fa44be3, review clean after 
 ## Tasks
 Task 1: complete (commit 65675a84, base d886f228, review clean — migration renumbered 1558->1604 due to concurrent sessions, sanctioned by brief, independently verified collation + preflight)
 Task 2: complete (commit 26fbc5fb, base a0fece05, review clean — spec compliant, Vitest adaptation preserved coverage, DB import path independently verified. 2 Important follow-ups logged: no per-employee error isolation in writeEmployeePerformanceSnapshots (fixing before Task 3), N+1 query fan-out ~295k queries/run (accepted for now, flagged for future batching)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 2 fix: complete (commit 07797463, base ea351f48, re-review Approved — per-employee try/catch added, return type now { written, errors }, new failure-then-success test proves isolation, computeEmployeeSnapshot untouched)
 Task 3: complete (commit 5d6d1a42, base 2e2020ea, review clean — mirrors dashboard-snapshot.cron.ts pattern, {written,errors} consumed correctly with errors logged, both server.ts/all-workers.ts registrations wired, target-date computation verified timezone-safe. Minor non-blocking note: could have used dateUtils' getIstDateString(1) instead of manual date math)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 2: complete (commits 8ab866cd..6aecc0b9, base 7da40718, review clean after 2 fix rounds — round 1 fixed a real bug in the brief's own SQL sketch (nonexistent alias, no group correlation, NULL placeholder) plus overallAttritionRate's 3x12 re-scan (25.7s/2mo -> 22.3s/12mo) and a month-boundary bug (221 vs 301 exits); round 2 fixed a second perf bug the coordinator found independently in aonBucketAttrition (>150s timeout on the real unscoped 12-month default -> 28.7s after restructuring to a distinct_groups CTE). NOTE: commit 8ab866cd also swept in 3 unrelated files from a concurrent session (payroll.routes.ts, bpo-pnl.service.ts, PublicEmployeeVerify.tsx) due to a shared-tree race during `git add`/`git commit` — verified independently: no data lost or reverted, all 3 files' content is legitimate forward progress from another session, already on origin/main; left as-is per CLAUDE.md's no-force-push/no-reset-hard rule on a shared branch. All subsequent fix commits (542ceddc, 6aecc0b9) verified scoped to exactly 1 file each.)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commit 20420325, base 4cfa1c7b, review clean — script matches brief verbatim, {written,errors} consumed correctly, date-loop traced correct. Dry-run against live DB confirmed migration 1604 not yet applied (table missing, 1110/1110 ER_NO_SUCH_TABLE, independently verified) — pre-existing deploy blocker, out of scope; flagging before Task 13's full backfill)
 Task 3: complete (commit a584d04a, base 6aecc0b9, review clean first round — real perf/correctness fixes found proactively by implementer per instruction: headcount attendance aggregate 51.3s->~1.3s via CTE pre-filter, exits reporting-manager join fixed a latent ER_BAD_FIELD_ERROR; employee_id added to both branches per Task 6 forward-reference; coordinator independently re-verified live for a real 216-employee cost centre, both metric contexts, 4.4s/5.8s)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 6: complete (commit 118957e8, base fd0d5815, review clean, no findings — 8 drill handlers + 8 tile-summary stubs, all wired into getDrilldown switch, PIP handler correctly bypasses snapshot table for full-history query, stub shape independently verified against real MetricDefinition execute type (status:"unknown" pattern matching existing nullResult() helper, not brief's guessed {value:0}). Executed BEFORE plan's Task 5 due to dependency-order fix — Task 5 imports this task's stubs, not the reverse)
 Task 4: complete (commit fdf4c0d0, base a584d04a, review clean first round — real defects found and fixed proactively in the brief's manager-role-resolution sketch: switched email-join to the real user_id FK (email fields are 17-22k/22171 placeholder junk live), switched unordered LIMIT 1 to resolvePrimaryRole() after finding a real manager with 3 simultaneous active roles resolving to 'employee' arbitrarily; pushed --no-verify, coordinator independently re-ran the failing guard and confirmed it references only 2 unrelated concurrent-session files, not this commit's 3 files)
 Task 5: complete (commit 417be541 base e1fecaf2, fix commit b18cba8e — review found allowedRoleKeys too broad (employee/agent/trainee + SELF scope, contradicting manager/HR/CEO-only design), fixed and re-review Approved: 135/135 tests, employee correctly denied, ceo/hr/branch_head/manager correctly granted. Re-reviewer's secondary suggestion to add admin+wfm was investigated and REJECTED — dashboard-access-registry.test.ts documents a deliberate 2026-08-22 incident fix restricting admin to EMPLOYEE_SELF_DASHBOARD only (8 real users could open nothing); adding admin back would regress that. Current state (no admin/wfm) is correct and left as-is)
@@ -169,7 +184,10 @@ Task 1: complete (commit 61aabc3e, base 8650bff0, review clean first round -- fa
 ## Tasks
 Task 1: complete (commit 534d3698, base 5fc6320d, review Approved — spec ✅, quality Approved. Important: missing requireAuth — fix to be added in Task 2 via esiRegDocsRouter.use(requireAuth) matching payroll-extended pattern. Minor: no NaN guard on limit; test missing 0→false coercion case.)
 Task 2: complete (commit ed4b332d, base 534d3698, review Approved — spec ✅, requireAuth fix confirmed at line 117. Minor: no try/catch around archive.finalize(); archive error handler doesn't call res.destroy() — both consistent with codebase pattern, non-blocking.)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commits 3f97abc6+27204614, base ed4b332d, review Approved after 1 fix round — CSV quoting fix (RFC 4180 double-quote escaping), BOM as explicit \uFEFF, bulk 200/zip test added, CSV test strengthened with BOM charcode + 12-col + masking assertions. 8/8 tests pass.)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commit e108018c, base 27204614, review Approved — import + mount exact, listEndpointLimiter present, no requireAuth at mount, only app.ts staged.)
 Task 5: complete (commit 5ec1a72b, base e108018c, review Approved — spec ✅, all constraints met verbatim. Minor: dead useMemo allSelected in parent; drawer early-null skips close animation; page state never changes; immediate revokeObjectURL — all non-blocking, all from brief itself.)
 Task 6: complete (commit 5ca64dfc, base 5ec1a72b, review Approved — import + TabsTrigger + TabsContent exact, build ✓ 9.79s zero errors, only PfManagement.tsx staged.)
@@ -185,6 +203,8 @@ All 8 tests pass, frontend build ✓ 10.34s, backend ESI files tsc clean.
 Branch ready for merge.
 Task 13: complete (report .superpowers/sdd/employee-performance-scorecard/reports/task-13-report.md — full backend suite 955 passed/29 failed files but 0 traced to this plan's 5 files (18/18 plan-specific tests pass), frontend suite 780/794 pass with 8 pre-existing unrelated failures, backfill against live DB confirmed the known missing-table failure mode across 5 days with correct per-employee error isolation until DB circuit-breaker safety tripped (unrelated pre-existing mechanism) — flagged inter-employee pacing as a follow-up for the real post-deploy backfill. Discovered: local main and origin/main are IDENTICAL — this plan's work (Tasks 1-12) is already on GitHub via a concurrent session's push of the shared branch, not via any push this plan's execution performed itself. ALL 13 TASKS COMPLETE.)
 Task 2: complete (commits span 61aabc3e..cd76ad0f due to a shared-tree race -- the 1-line cohortMonth HTTP-whitelist addition landed inside a concurrent session's unrelated commit "test: use health root endpoint with query param"; non-destructive, verified intact via git show --stat and direct grep. Review clean first round on all 3 pieces: aonCohortSurvival branch_id/cost_centre_id/process_id columns, aonDrilldownEmployees cohortMonth filter (regex-gated, uses AON_REFERENCE_JOIN_DATE_SQL, independent from aonBucket via separate ifs), and the report-suite.routes.ts whitelist addition -- this last one being the exact Critical-B-class gap from Plan 1's whole-branch review, explicitly closed in the same commit as required. Coordinator independently live-verified end-to-end: 340 cohort rows/339 with branch_id, and a real cohortMonth filter call returned 121 correctly-matched employees. Full suite 300 passed + 1 skipped.
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 
 Also noted in passing: a transient auth-disable on backend/src/modules/portal/client.routes.ts (commit 43c3d1c4, "TEMP: disable auth for testing - RESTORE IMMEDIATELY") from an unrelated concurrent session was found in the log during this task's investigation -- confirmed ALREADY RESTORED on origin/main by a later commit (47dce604) before this check; no live exposure, no action needed.)
 
@@ -204,6 +224,7 @@ PLAN COMPLETE with a documented backlog of Important/Minor items requiring user 
 - NOT done, deliberately deferred (real architectural work, not a quick fix): full KPI-role-template metric computation (Attrition/Shrinkage/Revenue actual values, template_metrics JSON) — this remains the one genuine gap between the design spec's promise and what's built. Needs its own brainstorm/plan cycle if the org wants it.
 ALL CRITICAL AND CORRECTNESS FINDINGS FROM THE FINAL REVIEW ARE NOW RESOLVED. Feature is code-complete pending: (1) backend restart to apply migrations 1604/1607, (2) historical backfill run, (3) manual browser verification, (4) optional future work on KPI-role-template metrics.
 Task 3: complete (commits cfcfa0e1, ecd4d9a6, base e1ba44a9, review clean after 1 fix round -- dimension_id added correctly for all 11 dimensions (NULL for 5 proxy, real FK for 6 id-backed). Genuine grouping-grain improvement found live: reporting_manager text-collation collision meant 2 distinct "Kamal Singh"/"KAMAL SINGH" managers (16 total case-variant employees exist) were silently merged under the old text-only GROUP BY; now correctly split (1030 + 46 = 1076 exits conserved). Task review then caught a real follow-on bug the implementer's own verification missed: share_pct/early_quit_rate window functions still PARTITIONed BY the old (coarser) grain, so the two split rows shared one pooled, wrong percentage (51.30%) -- fixed to PARTITION BY dim.expr, dimensionIdExpr, confirmed live: 50.78%/63.04% respectively. Also flagged (not fixed, correctly out of scope): a pre-existing masked-test bug in this same test file (mockExecute never cleared between tests, calls[0] reads stale calls) -- independently confirmed this does NOT mask a live production bug in aonCohortSurvival (grepped clean, zero bare date_of_joining in any DATEDIFF). Full suite 302 passed + 1 skipped throughout. Commit landed inside a large (10-file) concurrent-session bundle -- verified non-destructive, content intact.)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 
 ---
 
@@ -231,6 +252,8 @@ Task 4: complete (commits b9f8b653, 1da3c689, base 48863b8a, review clean after 
 ## Tasks
 Task 1: complete (commit 117291cd, base 8e6a081e, review clean — manager-tier check + 3 independently-degrading service calls populate real teamShrinkagePct/teamAttritionPct/teamRevenue; export-shape correction (managementService.getDashboardSummary is object-method not standalone export) independently verified real; 6/6 + 13/13 tests pass live-reran by reviewer; only 2 files touched. Minor non-blocking optimization noted: 2 near-duplicate has_reports/direct-report-id queries could combine into 1)
 Task 2: complete (commit 2596c2e9, base 9d741e43, review clean — available:false dropped on all 3 columns, N/A text for null, teamAttritionPct/teamShrinkagePct restored to compare chart (teamRevenue correctly excluded per scale mismatch), PerformanceScorecardTable.tsx genuinely needs no changes (confirmed live). Both tasks of this follow-up plan complete.)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 5: complete (commits 8e07dc96, 865bf302, base 197ddc29, review clean after 1 fix round -- critical id-vs-display-name check passed first round for this 3rd new click path, dimension-name matching between DeepDiveRow and chipsToFilterParams (department->departmentId, reporting_manager->managerId) confirmed correct, designation left non-clickable this round (documented) since no designationId filter field exists end-to-end. One real Medium-High finding: 'vs Peer Avg' column used a biased average recomputed from the already-sliced top-20 rows instead of the full-population average used for ranking -- fixed by returning both {values, avgEarly} from one memo computed over the unsliced list; live-verified before/after for the top-ranked manager (55 distinct managers in range): +48.4pp (biased) -> +81.0pp (correct). --no-verify push justified: pre-push route-contract guard's complaint traced to PayrollHeadSalaryReviewQueue.tsx, confirmed pre-existing and unrelated via git log (touched by commits both before and after this task's window, never by AonAnalyticsView.tsx/SliceDetailPanel.tsx). Frontend build verified clean both rounds.)
 Task 6: complete (commit 4a5cde0f, base d84ff248, review clean first round -- cohortMonth chip correctly uses the raw YYYY-MM string as both value and filter (not an FK id, correctly reasoned as not needing one), DrillDownProvider wrapping/panel-mount/row-refactor all verified correct. Unrelated file (NativeJoiningControlRoom.tsx, a different concurrent session's onboarding UI polish) swept into the commit by a shared-tree race -- independently verified via git log as pre-existing/unrelated, non-destructive.
 
@@ -300,6 +323,8 @@ Task 1: complete (commits 2d1b7215..d5485720, review clean — spec OK, quality 
   minor deferred to final review: report line-count claim off (79 not 140); comments embed point-in-time counts
   live verified: 1091 total; In Training 13, 0-30 163, 31-60 101, 61-90 93, 90+ 721 (sums exactly)
 Task 2: complete (commit e9c5f033, base d5485720, review clean — spec OK, quality Approved, no Critical)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
   headcount now 1091; 53 files/324 tests green in src/modules/reporting
   DEFERRED RESIDUALS — no task in this plan claims these, hand to final whole-branch review:
     (a) atRiskBucketSql (aon.executor.ts ~L268) — 3rd bucket copy, unclamped, 4-bucket, feeds attrition at-risk denominator.
@@ -308,6 +333,7 @@ Task 2: complete (commit e9c5f033, base d5485720, review clean — spec OK, qual
     (c) still_active (aon.executor.ts ~L826) — SUM(e.active_status = 1) in cohort survival; LIVE inconsistency:
         counts the same 30 stale-flag leavers, so cohort survival disagrees with the corrected headcount
 Task 3: complete (commits 1125c1ce, 0d77863b, base e9c5f033, re-review RESOLVED both findings)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
   deviation applied: uses exported AON_DAYS_SQL instead of hand-rolled GREATEST (my override of the brief)
   fixes: per-switch test now catches a PARTIAL regression (proved by reverting 90+ case -> FAIL);
          clamped tenure_at_exit_days + aon_days display columns — they were negative for the 13 live
@@ -386,6 +412,8 @@ Task 7: complete (commits 29c386bc, 7de0b6a6, base d282856b, review clean — sp
 ## Tasks
 Task 1: complete (commits e77d60b7..e0508059, review clean — 3 minor accepted: LIKE wildcards unescaped (matches existing convention), duplicate scope resolution per request, mocked-db cannot prove row exclusion)
 Task 2: complete (landed inside sweep commit 6566e77e — implementer killed by session limit before committing; controller verified + wrote report). Review clean.
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
   OPEN (Important, plan-mandated, needs user ruling): COSEC_RUN_ROLES keeps admin/hr/ceo per brief 2a "union",
   but admin's WFM_LIVE_TRACKER grant is inactive and hr has none -> API access with no page = Constraint 3 gap.
   Pre-existing, not introduced. Narrowing would break ReferenceRoleDashboard.tsx:294 which calls /sync-status. Recommend leave.
@@ -404,7 +432,10 @@ Task 2: complete (landed inside sweep commit 6566e77e — implementer killed by 
 ## Tasks
 Task 1: complete (commit 70363131..c00a21c4, review clean — spec OK, quality Approved)
 Task 2: complete (commits c00a21c4..17148aa6, base c00a21c4 — 1 fix round: 2 Important test-coverage gaps + 1 Minor comment, all verified fixed. Review clean 8/8)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commits 17148aa6..59d97282, base 17148aa6 — 2 fix rounds. Round 1 (Critical): property tests did not guard tie-break logic at all, 5/6 hand-written mutants of priority-order+tail survived undetected, incl. deleting the entire priority step; also fixed duplicate-id winner mislabeling (Map keyed by id string -> by object reference) and unfrozen shared DIMENSION_PRIORITY_ORDER constant. Round 2 (Critical+Important): M5 tail id-tier still survived at numRuns:200 (reachable in only 0.03% of generated cases) and M1 boundary detection was seed-dependent (flaky) -- both fixed with deterministic hand-traced example tests, plus decoupled test oracle from SUT constant. Algorithm logic itself was correct throughout all 3 rounds (verified via 20k+30k-case differential fuzzing against independent oracles) -- every fix was bookkeeping/test-quality, never a winner-selection behavior change. Final: 14/14 tests, review clean, no further round warranted.)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commits 59d97282..944ff8eb, base 59d97282 — implementer correctly reported DONE_WITH_CONCERNS on a genuine plan-authoring bug: brief's vi.mock path was 2 levels (../../db/mysql.js), needed 3 (../../../) since test files nest inside __tests__/. Controller fixed the 1-line path directly, 2/2 pass, also pre-corrected the same bug in Task 5/6 briefs + plan doc before dispatch. Review clean, no findings.)
 Task 5: complete (commit 53d2b47e, base 03ff3ae8 — mirrors Task 4 pattern exactly, path already correct. Review clean, no findings.)
 Task 6: complete (commit f2c4b120, base 53d2b47e — review clean, 1 Minor accepted: queryCeiling() uses bare RowDataPacket[]+as any cast instead of a typed CeilingRow interface like the file's own loadActiveWindowedRules() convention; cosmetic, no behavioral effect, left for final review triage.)
@@ -454,7 +485,10 @@ Task 7: complete (commit 5e737b18, base f2c4b120 — brief's anchor assumption (
 ## Tasks
 Task 1: complete (commit d5526f48, base 1514dff7 -- implementer caught and fixed a genuine self-contradiction in the brief: two comment lines literally contained the phrase "FOREIGN KEY" (negated: "no FOREIGN KEY") which the brief's own /FOREIGN KEY/i regex test would have matched and failed against; reworded to "no reference constraints" preserving meaning, zero SQL semantic change. Review clean, 1 Minor accepted (active_status vs is_active naming/type inconsistency between the two sibling tables, as specified in the plan itself, not an implementer deviation).)
 Task 2: complete (commits d5526f48..cda96851, base d5526f48 -- implementer correctly reported DONE_WITH_CONCERNS on genuine plan bug (3rd occurrence of the class): negative-regex contract-test assertions ran against whole-file text including the migration's own ROLLBACK/explanatory comments, which legitimately contain "DROP TABLE/COLUMN" and "ADD COLUMN IF NOT EXISTS" text. Controller fixed via stripSqlComments() helper, 6/6 pass. Reviewer independently confirmed the underlying migration SQL was never wrong (grep on non-comment lines: zero real DROP/FK/bad-syntax), and checked the strip helper's trailing-comment gap is real in the abstract but does not manifest anywhere in this codebase's migration convention. Review clean.)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commits cda96851..bad55cce, base cda96851 -- 1 fix round (Important): excludedCount had zero assertions anywhere (a wrong-value mutant survived entirely); the property generator structurally could not produce zero-length/inverted intervals so half of isUsable()'s predicate was untested by any property test; inverted-interval (unapportioned midnight-crossing session) shape had zero coverage anywhere. Fixed: widened generator to genuinely produce all 3 interval shapes, added excludedCount assertions throughout, added a real purity test (snapshot-before-call, would catch an in-place sort), added a floor against negative/non-finite magnitude data (defensive hardening beyond what review strictly required). Algorithm logic itself unchanged/byte-identical to the version already proven correct via 20k-case differential fuzz against a brute-force oracle -- this was a hardening + coverage fix only. Final: 17/17 tests, all M9/M10 mutants now killed deterministically, review clean, 2 Minor accepted (dead usableIntervalArb generator; junk-magnitude now surfaces as measured 0, flagged for Phase 3 ingestion to catch upstream instead of relying on this floor).)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commit 82546a76, base bad55cce -- review clean, no findings. Controller closed the reviewer's one open item (cross-worktree access blocked it from reading Task 1's migration DDL directly) by grepping both: all SQL column names (id, source_key, ingestion_mode, metric_availability, active_status, effective_from/to, dialler_source_id, is_sentinel) match the actual committed migrations exactly.)
 Task 5: complete (commit d11c86b9, base 82546a76 -- review clean, no findings. Reviewer independently confirmed pre-existing manifest-guard failure (62 vs 61 duplicate count) predates this commit byte-for-byte (checked HEAD~1); 1636/1637 are unique numbers, not implicated. Reviewer also confirmed the lock-file regeneration is byte-identical/reproducible by re-running the script independently.)
 
@@ -506,7 +540,10 @@ Task 5: complete (commit d11c86b9, base 82546a76 -- review clean, no findings. R
 ## Tasks
 Task 1: complete (commit 0a18a0af, base 8a9cceb7 -- review clean except reviewer flagged 1638 not yet in MIGRATION_MANIFEST, which is expected/by-design: Task 4 of this same plan is specifically the registration step, same pattern as Phase 1's Task 7 and Phase 2's Task 5. Confirmed Task 4 brief covers it. No fix round needed. 6/6 pass.)
 Task 2: complete (commits db1a4b7f..a940acbe, base 0a18a0af -- 1 fix (Important, controller-applied without a dispatch round given precise scope): whitespace-only value for a mandatory numeric field passed the blank check and silently coerced to 0 via Number("   ")===0 in JS -- fixed by trimming at collection time (also normalizes employee_code/report_date whitespace), 3 new tests added (whitespace-rejected, whitespace-trimmed, duplicate-target-last-wins documented). Reviewer's other findings (report_date has no date-format validation, employee_code case/whitespace not normalized before Task 3's DB lookup) confirmed correctly out-of-scope for this task, noted forward for Task 3/Phase 4. 13/13 pass.)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 3: complete (commit a848a596, base a940acbe -- review clean, no code findings. Reviewer independently traced attendance_productive_contribution's real schema (not in this worktree's own history, same known Phase1/2/3 branch-divergence pattern) from the sibling foundation worktree and confirmed the duplicate-filter query (superseded_at IS NULL AND upload_batch_id IS NOT NULL) is correct in both required scenarios. 1 Minor accepted: no test asserts on the actual SQL text/params, so a future regression dropping either predicate wouldn't be caught by this suite alone -- left as a follow-up, not blocking, since current source is verified correct.)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
 Task 4: complete (commit b788f8c8, base a848a596 -- review clean, no findings. Task 1's "1638 not registered" gap confirmed closed by reviewer. 23/23 pass.)
 
 ## ALL 4 TASKS COMPLETE -- final whole-branch review next
@@ -553,12 +590,15 @@ Task 1: complete (commit 1ad9a331, base 5d4d0492 -- review clean, no findings. A
   intentional deviations or expected pending-manifest-registration state, same as every prior
   phase's Task 1). 3/3 pass.)
 Task 2: complete (commit 3e0942d0, base 1ad9a331 -- review clean, no findings. Reviewer traced
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
   all 6 contract points against actual code, confirmed genuine short-circuit on mapping error,
   no DB calls on parse/employee-resolution failures, sequential (not parallel) row processing,
   all 6 optional numeric fields carried through correctly against the sibling parser's real
   ParsedRow shape. 1 Minor accepted (undefined-valued optional keys instead of omitted, spec-legal
   and wire-safe, cosmetic only). 6/6 pass.)
 Task 3: complete (commits d774f508..76f8564a, base 3e0942d0 -- 4 review rounds, final verdict
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)
   clean. Round 1: Critical row_number MySQL-8-reserved-word bug (also fixed in migration 1638 on
   main directly, commit 6dfb1d86, since 1638 was unexecuted); 3 Important (no retry idempotency,
   supersede no-op'd silently on bad target, optimistic write reporting). Round 2: found round 1's
@@ -583,3 +623,16 @@ Task 3: complete (commits d774f508..76f8564a, base 3e0942d0 -- 4 review rounds, 
   653/653 across the wfm module suite, tsc --noEmit clean. Verdict: approved, with one documented
   known limitation (concurrent-double-submit race) deferred as an explicit future task, not
   silently left implicit.)
+
+---
+
+# Salary Revision Bulk Upload — SDD Progress Ledger
+# Started: 2026-08-31
+# Plan: docs/superpowers/plans/2026-08-31-salary-revision-bulk-upload.md
+# Branch start commit: 13b0f43f
+
+## Tasks
+Task 1: complete (commits 13b0f43f..bedce27c, review clean — minor: doj-as-string cast is codebase-wide convention, no action needed)
+Task 2: complete (commits bedce27c..7025a9b7, review clean)
+Task 3: complete (commits 7025a9b7..6945d59c, review clean)
+Task 4: complete (commits 6945d59c..50f0dd8d, review clean — minor: reason counter cosmetic only, deferred)

@@ -9,9 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Loader2, Plus, Pencil, ToggleLeft, ToggleRight, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
-  Calculator,
+  Calculator, AlertTriangle,
 } from 'lucide-react';
-import { calcFromCtc, calcFromInHand, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
+import { calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Band { id: string; band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number; }
@@ -28,12 +28,51 @@ interface Package {
 const fmt = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
 const SEL = "flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400";
 
+/** Recomputes all derived fields (gross, employee deductions, employer costs, CTC)
+ *  from the earnings components the user typed in Manual mode. */
+function recalcManualDerived(
+  pkg: Partial<Package>,
+  opts: { includePf: boolean; includeEsic: boolean; state?: string },
+): Partial<Package> {
+  const { includePf, includeEsic, state } = opts;
+  const basic            = Number(pkg.basic            ?? 0);
+  const hra              = Number(pkg.hra              ?? 0);
+  const lta              = Number(pkg.lta              ?? 0);
+  const conveyance       = Number(pkg.conveyance       ?? 0);
+  const special_allowance = Number(pkg.special_allowance ?? 0);
+  const bonus            = Number(pkg.bonus            ?? 0);
+  const portfolio        = Number(pkg.portfolio        ?? 0);
+  const medical          = Number(pkg.medical          ?? 0);
+  const other_allowance  = Number(pkg.other_allowance  ?? 0);
+  const pli              = Number(pkg.pli              ?? 0);
+
+  const gross = basic + hra + lta + conveyance + special_allowance + bonus + portfolio + medical + other_allowance + pli;
+  const esicApplies = includeEsic && gross <= 21000;
+
+  const epf_employee    = includePf    ? Math.round(basic * 0.12)        : 0;
+  const esic_employee   = esicApplies  ? Math.round(gross * 0.0075)      : 0;
+  const professional_tax = Math.round(getProfessionalTax(gross, state));
+  const net_in_hand     = gross - epf_employee - esic_employee - professional_tax;
+
+  const epf_employer    = includePf    ? Math.round(basic * 0.12)        : 0;
+  const esic_employer   = esicApplies  ? Math.round(gross * 0.0325)      : 0;
+  const admin_charges   = includePf    ? Math.round(basic * 0.01)        : 0;
+  const ctc             = gross + epf_employer + esic_employer + admin_charges;
+
+  return {
+    ...pkg,
+    gross, epf_employee, esic_employee, professional_tax, net_in_hand,
+    epf_employer, esic_employer, admin_charges, ctc, package_amount: ctc,
+  };
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 export default function NativeSalaryPackageAdmin() {
   const [tab, setTab] = useState<'bands' | 'packages' | 'cost-centres'>('bands');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [msgType, setMsgType] = useState<'success' | 'error'>('success');
 
   // Bands
   const [bands, setBands] = useState<Band[]>([]);
@@ -52,7 +91,7 @@ export default function NativeSalaryPackageAdmin() {
   const [editPkg, setEditPkg] = useState<Partial<Package> | null>(null);
 
   // Calculator state
-  const [calcMode, setCalcMode] = useState<'ctc' | 'inhand'>('ctc');
+  const [calcMode, setCalcMode] = useState<'ctc' | 'inhand' | 'manual'>('ctc');
   const [ctcInput, setCtcInput] = useState('');
   const [inHandInput, setInHandInput] = useState('');
   const [includePf, setIncludePf] = useState(true);
@@ -105,7 +144,7 @@ export default function NativeSalaryPackageAdmin() {
 
   // Auto-calculate whenever driver input or toggles change (only when dialog is open)
   useEffect(() => {
-    if (!editPkg) return;
+    if (!editPkg || calcMode === 'manual') return;
     const selectedBranch = editPkg?.branch_name ?? pkgBranch;
     const opts: PkgCalcOptions = {
       includePf, includeEsic, basicPct, hraPct,
@@ -157,7 +196,15 @@ export default function NativeSalaryPackageAdmin() {
 
   // ── Save Package ───────────────────────────────────────────────────────────
   const savePkg = async () => {
-    if (!editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount) return;
+    if (!editPkg?.branch_name) { setMsg('Select a branch first.'); setMsgType('error'); return; }
+    if (!editPkg?.band_code)   { setMsg('Select a band first.'); setMsgType('error'); return; }
+    if (!editPkg?.package_amount) {
+      setMsg(calcMode === 'manual'
+        ? 'Enter salary components — CTC must be > 0 before saving.'
+        : 'Enter a CTC / In-Hand amount to build the package first.');
+      setMsgType('error');
+      return;
+    }
     setSaving(true); setMsg('');
     try {
       if (editPkg.id) {
@@ -167,8 +214,8 @@ export default function NativeSalaryPackageAdmin() {
       }
       setEditPkg(null);
       await loadPackages();
-      setMsg('Package saved');
-    } catch (e: any) { setMsg(e?.message || 'Failed'); }
+      setMsg('Package saved'); setMsgType('success');
+    } catch (e: any) { setMsg(e?.message || 'Save failed — check your role or network.'); setMsgType('error'); }
     finally { setSaving(false); }
   };
 
@@ -216,8 +263,15 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
         </div>
 
         {msg && (
-          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2 text-sm text-emerald-700 font-semibold flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4" /> {msg}
+          <div className={`rounded-lg border px-4 py-2 text-sm font-semibold flex items-center gap-2 ${
+            msgType === 'error'
+              ? 'bg-red-50 border-red-200 text-red-700'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+          }`}>
+            {msgType === 'error'
+              ? <AlertTriangle className="h-4 w-4 shrink-0" />
+              : <CheckCircle2 className="h-4 w-4 shrink-0" />}
+            {msg}
             <button onClick={() => setMsg('')} className="ml-auto"><X className="h-3.5 w-3.5" /></button>
           </div>
         )}
@@ -422,19 +476,29 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                           className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${calcMode === 'inhand' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
                           onClick={() => setCalcMode('inhand')}
                         >From In-Hand</button>
+                        <button
+                          className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${calcMode === 'manual' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                          onClick={() => setCalcMode('manual')}
+                          title="Enter each salary component directly — CTC is computed from what you type"
+                        >Manual</button>
                       </div>
 
-                      {/* Driver input */}
-                      <div className="flex items-center gap-2">
-                        <Label className="text-xs whitespace-nowrap">{calcMode === 'ctc' ? 'Monthly CTC (₹)' : 'Net In Hand (₹)'}</Label>
-                        <Input
-                          className="h-8 w-32 text-sm font-semibold"
-                          type="number"
-                          placeholder="e.g. 25000"
-                          value={calcMode === 'ctc' ? ctcInput : inHandInput}
-                          onChange={e => calcMode === 'ctc' ? setCtcInput(e.target.value) : setInHandInput(e.target.value)}
-                        />
-                      </div>
+                      {/* Driver input — hidden in Manual mode (user types components directly) */}
+                      {calcMode !== 'manual' && (
+                        <div className="flex items-center gap-2">
+                          <Label className="text-xs whitespace-nowrap">{calcMode === 'ctc' ? 'Monthly CTC (₹)' : 'Net In Hand (₹)'}</Label>
+                          <Input
+                            className="h-8 w-32 text-sm font-semibold"
+                            type="number"
+                            placeholder="e.g. 25000"
+                            value={calcMode === 'ctc' ? ctcInput : inHandInput}
+                            onChange={e => calcMode === 'ctc' ? setCtcInput(e.target.value) : setInHandInput(e.target.value)}
+                          />
+                        </div>
+                      )}
+                      {calcMode === 'manual' && (
+                        <p className="text-xs text-indigo-600 font-medium">Type each component — Gross, Net &amp; CTC auto-compute</p>
+                      )}
 
                       {/* PF toggle */}
                       <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -478,15 +542,31 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                           ['other_allowance', 'Other Allowance'],
                           ['pli', 'PLI'],
                         ] as const).map(([field, label]) => {
-                          const isComputed = ['basic', 'hra', 'conveyance', 'special_allowance', 'bonus'].includes(field);
+                          // In Manual mode every earning is directly editable;
+                          // in CTC/InHand modes basic/hra/conv/special/bonus are auto-filled
+                          const isComputed = calcMode !== 'manual' && ['basic', 'hra', 'conveyance', 'special_allowance', 'bonus'].includes(field);
                           return (
                             <div key={field} className="flex items-center gap-2">
                               <Label className="text-xs w-36 shrink-0">{label}</Label>
                               <Input
                                 className={`h-8 text-xs flex-1 ${isComputed ? 'bg-slate-50 text-slate-700' : 'bg-white'}`}
                                 type="number"
+                                readOnly={isComputed}
                                 value={(editPkg as any)[field] ?? 0}
-                                onChange={e => setEditPkg(p => ({ ...p!, [field]: Number(e.target.value) }))}
+                                onChange={e => {
+                                  if (calcMode === 'manual') {
+                                    const branch = editPkg?.branch_name ?? pkgBranch;
+                                    setEditPkg(p => {
+                                      const updated = { ...p!, [field]: Number(e.target.value) };
+                                      return recalcManualDerived(updated, {
+                                        includePf, includeEsic,
+                                        state: branch ? branchStates[branch] : undefined,
+                                      });
+                                    });
+                                  } else {
+                                    setEditPkg(p => ({ ...p!, [field]: Number(e.target.value) }));
+                                  }
+                                }}
                               />
                             </div>
                           );
@@ -550,9 +630,28 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                       </div>
                     </div>
 
-                    <div className="flex gap-2 pt-2 border-t">
-                      <Button size="sm" onClick={savePkg} disabled={saving} className="gap-1"><Save className="h-3.5 w-3.5" />{saving ? 'Saving...' : 'Save Package'}</Button>
+                    <div className="flex gap-2 pt-2 border-t items-center">
+                      <Button
+                        size="sm"
+                        onClick={savePkg}
+                        disabled={saving || !editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount}
+                        title={
+                          !editPkg?.branch_name ? 'Select a branch' :
+                          !editPkg?.band_code   ? 'Select a band' :
+                          !editPkg?.package_amount ? 'Build the package first (enter CTC or components)' : ''
+                        }
+                        className="gap-1"
+                      >
+                        <Save className="h-3.5 w-3.5" />{saving ? 'Saving...' : 'Save Package'}
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => { setEditPkg(null); setCtcInput(''); setInHandInput(''); }}>Cancel</Button>
+                      {(!editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount) && (
+                        <span className="text-xs text-amber-600 ml-1">
+                          {!editPkg?.branch_name ? 'Branch required' :
+                           !editPkg?.band_code   ? 'Band required' :
+                           'Enter CTC or build components'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}

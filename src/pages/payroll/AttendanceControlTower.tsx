@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, RefreshCw, Search, ShieldAlert, UserCheck, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, RefreshCw, RotateCcw, Search, ShieldAlert, UserCheck, X, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -334,6 +334,20 @@ export default function AttendanceControlTower() {
     },
   });
 
+  const lockRegularizations = useMutation({
+    mutationFn: async (conflictKeys: string[]) => {
+      const res = await hrmsApi.post<{ success: boolean; data: { requested: number; locked: number; skipped: number } }>(
+        "/api/payroll/attendance-control-tower/lock-regularizations",
+        { conflictKeys },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      setSelected([]);
+      refetch();
+    },
+  });
+
   const repairMissingAdr = useMutation({
     mutationFn: async (conflictKeys: string[]) => {
       const res = await hrmsApi.post<{ success: boolean; data: { requested: number; repaired: number; skipped: number } }>(
@@ -359,6 +373,7 @@ export default function AttendanceControlTower() {
   const selectableRows = rows.filter((row) =>
     row.issueType === "dialler_missing_adr" ||
     row.issueType === "ncosec_missing_adr" ||
+    row.issueType === "approved_regularization_not_locked_in_adr" ||
     ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType),
   );
   const selectedConflictCount = selected.filter((id) =>
@@ -366,6 +381,9 @@ export default function AttendanceControlTower() {
   ).length;
   const selectedRepairCount = selected.filter((id) =>
     rows.some((row) => row.id === id && (row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr")),
+  ).length;
+  const selectedRegularizationCount = selected.filter((id) =>
+    rows.some((row) => row.id === id && row.issueType === "approved_regularization_not_locked_in_adr"),
   ).length;
   const allSelectableSelected = selectableRows.length > 0 && selectableRows.every((row) => selected.includes(row.id));
   const toggleSelected = (id: string) => {
@@ -393,6 +411,81 @@ export default function AttendanceControlTower() {
   };
 
   const totalIssues = Object.values(data?.summary.issueTypes ?? {}).reduce((a, b) => a + b, 0);
+
+  // ── COSEC Re-sync Panel state ──
+  const [resyncOpen, setResyncOpen] = useState(false);
+  const [resyncDate, setResyncDate] = useState("");
+  const [resyncDateTo, setResyncDateTo] = useState("");
+  const [resyncEmpCode, setResyncEmpCode] = useState("");
+  const [resyncAutoRepair, setResyncAutoRepair] = useState(true);
+  const [resyncJobId, setResyncJobId] = useState<string | null>(null);
+  const [resyncResult, setResyncResult] = useState<null | {
+    from: string; to: string; employeeCode: string | null;
+    syncResult: any; syncError: string | null;
+    beforeCount: number; afterCount: number;
+    added: number; changed: number; removed: number; unchanged: number;
+    diff: Array<{ employeeCode: string; date: string; status: string; before: any; after: any }>;
+    repairResult: { requested: number; repaired: number; skipped: number } | null;
+  }>(null);
+  const resyncDrawerRef = useRef<HTMLDivElement>(null);
+
+  // Poll for job completion every 3 seconds while a job is running.
+  // queryFn unwraps the API envelope so jobPollData = { jobId, status, result, error }.
+  const { data: jobPollData } = useQuery({
+    queryKey: ["cosec-resync-job", resyncJobId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        `/api/payroll/attendance-control-tower/resync-cosec/status/${resyncJobId}`,
+      );
+      return res.data.data as { jobId: string; status: string; result: any; error: string | null };
+    },
+    enabled: !!resyncJobId && !resyncResult,
+    refetchInterval: (q) => {
+      const status = q.state.data?.status;
+      if (status === "done" || status === "error") return false;
+      return 3000;
+    },
+  });
+
+  // Side effect: when job finishes, populate result panel and stop polling.
+  // Must be useEffect (not useMemo) because it calls setState.
+  useEffect(() => {
+    if (!jobPollData) return;
+    if (jobPollData.status === "done" && jobPollData.result) {
+      setResyncResult(jobPollData.result);
+      setResyncJobId(null);
+      refetch();
+    } else if (jobPollData.status === "error") {
+      setResyncJobId(null);
+    }
+  // refetch is stable; only re-run when poll data changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobPollData]);
+
+  const resyncMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {};
+      const dateVal = resyncDate.trim();
+      const dateToVal = resyncDateTo.trim();
+      if (dateVal && dateToVal && dateToVal !== dateVal) {
+        body.from = dateVal;
+        body.to = dateToVal;
+      } else if (dateVal) {
+        body.date = dateVal;
+      }
+      if (resyncEmpCode.trim()) body.employeeCode = resyncEmpCode.trim();
+      body.autoRepair = resyncAutoRepair;
+      const res = await hrmsApi.post<{ success: boolean; data: { jobId: string; status: string } }>(
+        "/api/payroll/attendance-control-tower/resync-cosec",
+        body,
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      setResyncJobId(data.jobId);
+      setResyncResult(null);
+    },
+  });
 
   return (
     <DashboardLayout>
@@ -457,6 +550,15 @@ export default function AttendanceControlTower() {
               </Button>
               <Button
                 size="sm"
+                className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20"
+                variant="outline"
+                onClick={() => { setResyncOpen(true); setResyncResult(null); }}
+              >
+                <RotateCcw className="mr-1.5 h-4 w-4" />
+                Re-sync COSEC
+              </Button>
+              <Button
+                size="sm"
                 className="h-9 bg-white text-blue-800 hover:bg-blue-50"
                 onClick={() => notifyManagers.mutate(undefined)}
                 disabled={notifyManagers.isPending || (selected.length ? selectedConflictCount === 0 : managerConflictCount === 0)}
@@ -491,6 +593,16 @@ export default function AttendanceControlTower() {
         {repairMissingAdr.data && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             ✓ Repaired {repairMissingAdr.data.repaired} ADR rows. {repairMissingAdr.data.skipped} rows skipped.
+          </div>
+        )}
+        {lockRegularizations.data && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            ✓ Locked {lockRegularizations.data.locked} regularizations into ADR. {lockRegularizations.data.skipped} skipped (already locked or protected).
+          </div>
+        )}
+        {lockRegularizations.error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            Failed to lock regularizations into ADR.
           </div>
         )}
         {(notifyManagers.error || repairMissingAdr.error) && (
@@ -720,8 +832,14 @@ export default function AttendanceControlTower() {
                   {selected.length} selected
                   {selectedConflictCount > 0 ? ` · ${selectedConflictCount} conflict` : ""}
                   {selectedRepairCount > 0 ? ` · ${selectedRepairCount} ADR-repair` : ""}
+                  {selectedRegularizationCount > 0 ? ` · ${selectedRegularizationCount} regularization` : ""}
                 </span>
                 <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={() => lockRegularizations.mutate(selected.filter((id) => rows.some((row) => row.id === id && row.issueType === "approved_regularization_not_locked_in_adr")))}
+                    disabled={lockRegularizations.isPending || selectedRegularizationCount === 0}>
+                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Lock Regularizations
+                  </Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs"
                     onClick={() => repairMissingAdr.mutate(selected.filter((id) => rows.some((row) => row.id === id && (row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr"))))}
                     disabled={repairMissingAdr.isPending || selectedRepairCount === 0}>Repair ADR</Button>
@@ -792,13 +910,16 @@ export default function AttendanceControlTower() {
                     >
                       <TableCell className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                         {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr" ||
+                          row.issueType === "approved_regularization_not_locked_in_adr" ||
                           ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType)) ? (
                           <input type="checkbox" className="h-4 w-4 rounded border-slate-300"
                             checked={selected.includes(row.id)} onChange={() => toggleSelected(row.id)}
                             aria-label={`Select ${row.employeeCode ?? row.employeeName ?? "row"}`} />
                         ) : null}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-600">{row.issueDate}</TableCell>
+                      <TableCell className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-600">
+                        {row.issueDate ? row.issueDate.split("-").reverse().join("/") : "—"}
+                      </TableCell>
                       <TableCell className="px-3 py-1.5 min-w-[140px] max-w-[180px]">
                         <p className="text-sm font-semibold text-slate-900 leading-tight truncate">{row.employeeName ?? row.employeeCode ?? "—"}</p>
                         <p className="mt-0.5 text-[11px] text-slate-400 leading-tight truncate">{row.employeeCode} · {row.branchName ?? "—"}</p>
@@ -878,6 +999,11 @@ export default function AttendanceControlTower() {
                                 <RefreshCw className="mr-2 h-4 w-4" /> Repair ADR
                               </DropdownMenuItem>
                             )}
+                            {row.issueType === "approved_regularization_not_locked_in_adr" && (
+                              <DropdownMenuItem onClick={() => lockRegularizations.mutate([row.id])} disabled={lockRegularizations.isPending}>
+                                <CheckCircle2 className="mr-2 h-4 w-4" /> Lock into ADR
+                              </DropdownMenuItem>
+                            )}
                             {row.issueType === "salary_payable_days_mismatch" && row.employeeId && !data?.run?.attendance_snapshot_locked && (
                               <DropdownMenuItem
                                 onClick={() => {
@@ -925,8 +1051,237 @@ export default function AttendanceControlTower() {
         )}
 
         {/* ── Row drill-down ── */}
-        <AttendanceGapDetailDrawer gapKey={detailKey} onClose={() => setDetailKey(null)} />
+        <AttendanceGapDetailDrawer gapKey={detailKey} onClose={() => setDetailKey(null)} runMonth={runMonth} />
       </div>
+
+      {/* ── COSEC Re-sync Drawer ── */}
+      {resyncOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setResyncOpen(false)} />
+          <div ref={resyncDrawerRef} className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Re-sync COSEC Biometric</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Pull fresh punch data from COSEC server into mas_hrms for a specific date</p>
+              </div>
+              <button type="button" onClick={() => setResyncOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <div className="space-y-4 p-5">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">From Date *</label>
+                  <input
+                    type="date"
+                    className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+                    value={resyncDate}
+                    onChange={(e) => setResyncDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">To Date (optional)</label>
+                  <input
+                    type="date"
+                    className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+                    value={resyncDateTo}
+                    min={resyncDate}
+                    onChange={(e) => setResyncDateTo(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Employee Code (optional — blank = all employees)</label>
+                <input
+                  type="text"
+                  className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-800 placeholder:text-slate-300 focus:border-blue-500 focus:outline-none"
+                  placeholder="e.g. MAS1042"
+                  value={resyncEmpCode}
+                  onChange={(e) => setResyncEmpCode(e.target.value)}
+                />
+                <p className="mt-1 text-[11px] text-slate-400">Leave blank to re-sync all employees for the selected date range. The COSEC pull is always org-wide; this field only filters the before/after comparison shown below.</p>
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+                <strong>Safe operation:</strong> Only re-writes <code>integration_biometric_daily</code> rows for the selected date range. Locked ADR rows, regularizations, and other employees/dates are not touched.
+              </div>
+
+              {/* Auto-repair toggle */}
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+                  checked={resyncAutoRepair}
+                  onChange={(e) => setResyncAutoRepair(e.target.checked)}
+                />
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Also repair missing ADR records</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    After syncing, automatically create attendance day records for employees who have biometric minutes but <strong>no ADR entry at all</strong>.
+                    Short working hour rows (where an ADR already exists) are intentionally skipped — those need human review.
+                  </p>
+                </div>
+              </label>
+
+              {(resyncMutation.error || jobPollData?.status === "error") && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
+                  {(resyncMutation.error as any)?.response?.data?.message ?? jobPollData?.error ?? "Re-sync failed. Check if COSEC server is reachable."}
+                </div>
+              )}
+
+              <Button
+                className="w-full h-10 rounded-xl"
+                onClick={() => resyncMutation.mutate()}
+                disabled={!resyncDate || resyncMutation.isPending || !!resyncJobId}
+              >
+                {resyncMutation.isPending ? (
+                  <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Starting sync…</>
+                ) : resyncJobId ? (
+                  <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Syncing from COSEC…</>
+                ) : (
+                  <><RotateCcw className="mr-2 h-4 w-4" /> Start Re-sync</>
+                )}
+              </Button>
+              {resyncJobId && !resyncResult && (
+                <p className="text-center text-xs text-slate-500 mt-1">
+                  Running in background — checking every 3 seconds…
+                </p>
+              )}
+            </div>
+
+            {/* Result */}
+            {resyncResult && (
+              <div className="border-t px-5 py-4 space-y-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Sync Result</p>
+                  {resyncResult.syncError ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
+                      COSEC sync error: {resyncResult.syncError}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { label: "Added", value: resyncResult.added, color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                        { label: "Changed", value: resyncResult.changed, color: "text-amber-700 bg-amber-50 border-amber-200" },
+                        { label: "Removed", value: resyncResult.removed, color: "text-red-700 bg-red-50 border-red-200" },
+                        { label: "Unchanged", value: resyncResult.unchanged, color: "text-slate-600 bg-slate-50 border-slate-200" },
+                      ].map((s) => (
+                        <div key={s.label} className={`rounded-xl border px-3 py-2 text-center ${s.color}`}>
+                          <p className="text-lg font-extrabold">{s.value}</p>
+                          <p className="text-[10px] font-semibold uppercase">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {resyncResult.syncResult && (
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      COSEC pull: {resyncResult.syncResult.pulledEvents ?? "—"} events · {resyncResult.syncResult.migratedDays ?? "—"} days migrated
+                      {resyncResult.syncResult.unmappedUsers?.length > 0 ? ` · ${resyncResult.syncResult.unmappedUsers.length} unmapped` : ""}
+                    </p>
+                  )}
+                </div>
+
+                {/* Repair result */}
+                {resyncResult.repairResult !== null && resyncResult.repairResult !== undefined && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">ADR Repair Result</p>
+                    {resyncResult.repairResult.requested === 0 ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-600">
+                        <CheckCircle2 className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                        No completely missing ADR records found for this date range — nothing to repair.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { label: "Repaired", value: resyncResult.repairResult.repaired, color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                          { label: "Skipped", value: resyncResult.repairResult.skipped, color: "text-amber-700 bg-amber-50 border-amber-200" },
+                          { label: "Requested", value: resyncResult.repairResult.requested, color: "text-slate-600 bg-slate-50 border-slate-200" },
+                        ].map((s) => (
+                          <div key={s.label} className={`rounded-xl border px-3 py-2 text-center ${s.color}`}>
+                            <p className="text-lg font-extrabold">{s.value}</p>
+                            <p className="text-[10px] font-semibold uppercase">{s.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(resyncResult.repairResult.repaired ?? 0) > 0 && (
+                      <p className="mt-2 text-[11px] text-emerald-700 font-medium">
+                        ✓ {resyncResult.repairResult.repaired} attendance day records created from biometric evidence. Payroll will pick these up on the next recalculation.
+                      </p>
+                    )}
+                    {(resyncResult.repairResult.skipped ?? 0) > 0 && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {resyncResult.repairResult.skipped} rows skipped — locked/regularized ADR already exists or biometric minutes were zero.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Before / After table */}
+                {resyncResult.diff.filter(d => d.status !== "unchanged").length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                      Changed rows ({resyncResult.diff.filter(d => d.status !== "unchanged").length})
+                    </p>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-500">Emp Code</th>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-500">Change</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-500">Before (min)</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-500">After (min)</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-500">Punches</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {resyncResult.diff
+                            .filter(d => d.status !== "unchanged")
+                            .slice(0, 200)
+                            .map((row, i) => (
+                              <tr key={i} className={
+                                row.status === "added" ? "bg-emerald-50" :
+                                row.status === "changed" ? "bg-amber-50" :
+                                row.status === "removed" ? "bg-red-50" : ""
+                              }>
+                                <td className="px-3 py-1.5 font-medium text-slate-800">{row.employeeCode}</td>
+                                <td className="px-3 py-1.5 text-slate-600">{row.date}</td>
+                                <td className="px-3 py-1.5">
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    row.status === "added" ? "bg-emerald-100 text-emerald-700" :
+                                    row.status === "changed" ? "bg-amber-100 text-amber-700" :
+                                    "bg-red-100 text-red-700"
+                                  }`}>{row.status}</span>
+                                </td>
+                                <td className="px-3 py-1.5 text-right text-slate-500">{row.before?.biometric_minutes ?? "—"}</td>
+                                <td className="px-3 py-1.5 text-right font-semibold text-slate-800">{row.after?.biometric_minutes ?? "—"}</td>
+                                <td className="px-3 py-1.5 text-right text-slate-500">{row.after?.total_punches ?? row.before?.total_punches ?? "—"}</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                      {resyncResult.diff.filter(d => d.status !== "unchanged").length > 200 && (
+                        <p className="px-3 py-2 text-[11px] text-slate-400">Showing first 200 changed rows.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {resyncResult.diff.filter(d => d.status !== "unchanged").length === 0 && !resyncResult.syncError && (
+                  <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm text-emerald-700">
+                    <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                    COSEC data is already up to date for this date range — no changes needed.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

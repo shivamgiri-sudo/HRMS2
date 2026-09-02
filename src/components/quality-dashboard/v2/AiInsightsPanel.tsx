@@ -89,7 +89,7 @@ export function AiInsightsPanel({ from, to, queryKey }: Props) {
       {(roiQ.isLoading || roiQ.isError || roi) && (
         <PanelShell
           title="ROI Improvement Projections"
-          subtitle="Projected revenue impact of quality improvement scenarios"
+          subtitle="Illustrative scenario, not a measured prediction — see assumptions below"
           action={
             roi && (
               <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
@@ -107,6 +107,11 @@ export function AiInsightsPanel({ from, to, queryKey }: Props) {
             <p className="py-6 text-center text-sm text-slate-400">No ROI projections available</p>
           ) : (
             <>
+              {roi.assumptions_note && (
+                <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-800">
+                  {roi.assumptions_note}
+                </p>
+              )}
               {/* Current baseline */}
               {roi.current_metrics && (
                 <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

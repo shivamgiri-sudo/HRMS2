@@ -56,6 +56,33 @@ nocRouter.get("/required/:employeeId", requireAuth, async (req: AuthenticatedReq
   return res.json({ success: true, data: result });
 });
 
+// GET /api/payroll/noc/:id/document — view/download the uploaded NOC file.
+// The record has always stored doc_path/doc_original_name, but no route ever served the
+// file back — Head Payroll had to Validate/Reject an exit-blocking NOC without being able
+// to see the document itself. Added 2026-09-01.
+nocRouter.get("/:id/document", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  if (!(await hasAnyRole(userId, "payroll_head", "payroll_branch", "payroll", "super_admin", "admin"))) {
+    return res.status(403).json({ success: false, message: "Access denied" });
+  }
+  const noc = await nocService.getNoc(req.params.id);
+  if (!noc || !noc.doc_path) return res.status(404).json({ success: false, message: "NOC document not found" });
+
+  // doc_path is req.file.path from multer, always under NOC_UPLOAD_DIR — resolve and
+  // confirm it stays there before serving, rather than trusting the stored value blindly.
+  const resolved = path.resolve(noc.doc_path);
+  const uploadRoot = path.resolve(NOC_UPLOAD_DIR);
+  if (!resolved.startsWith(uploadRoot + path.sep) && resolved !== uploadRoot) {
+    return res.status(400).json({ success: false, message: "Invalid document path" });
+  }
+  if (!fs.existsSync(resolved)) {
+    return res.status(404).json({ success: false, message: "NOC document file is missing on disk" });
+  }
+  return res.sendFile(resolved, {
+    headers: { "Content-Disposition": `inline; filename="${noc.doc_original_name ?? "noc-document"}"` },
+  });
+});
+
 // POST /api/payroll/noc — Branch Payroll uploads NOC
 nocRouter.post("/", requireAuth, upload.single("noc_document"), async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;

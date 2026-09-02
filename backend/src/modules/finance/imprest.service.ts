@@ -559,4 +559,117 @@ export const imprestService = {
       connection.release();
     }
   },
+
+  // ── Adjustment ────────────────────────────────────────────────────────────
+
+  /**
+   * A manual correcting entry against a manager's float — the "Imprest Adjustment" screen.
+   *
+   * Exists for exactly one situation: the float is wrong for a reason with no real transaction
+   * behind it, most commonly a historical migration gap (a db_bill top-up payment that was never
+   * matched to a manager and silently dropped, while the matching spend WAS migrated and
+   * attached to whichever manager holds the branch today). There is no bank transfer, no vendor,
+   * no GRN to point at — which is exactly why this cannot go through createAllocation() (a real
+   * bank-funded top-up, IMP-numbered) or a GRN voucher (a real, receipted spend).
+   *
+   * Posts through imprestLedgerService.post() with entryType "adjustment" — the same primitive
+   * getPeriodSummary()/getDetailsReport() already reserve their own reporting bucket for, so an
+   * adjustment is visibly labelled as one everywhere the float is read, never mistaken for a real
+   * allocation or voucher.
+   *
+   * A reason is mandatory and is the whole audit trail: unlike a GRN or an allocation, there is
+   * no invoice or bank reference behind this entry, so "why is this manager's float ₹X different"
+   * has to be answerable from the reason alone.
+   */
+  async postAdjustment(
+    input: {
+      imprestManagerId: string;
+      direction: "credit" | "debit";
+      amount: number;
+      transactionDate: string;
+      reason: string;
+    },
+    actorUserId: string,
+    actorRole: string,
+  ) {
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error("Adjustment amount must be greater than zero");
+    }
+    if (!input.transactionDate) throw new Error("A transaction date is required");
+    const reason = input.reason?.trim() ?? "";
+    if (reason.length < 10) {
+      throw new Error("A reason of at least 10 characters is required to post an adjustment");
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [managerRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, branch_id FROM imprest_manager WHERE id = ? AND active_status = 1 LIMIT 1 FOR UPDATE`,
+        [input.imprestManagerId],
+      );
+      if (!managerRows[0]) throw new Error("Imprest manager not found or inactive");
+      const branchId = String(managerRows[0].branch_id);
+
+      // Read on THIS connection, under the manager row lock taken above, so it reflects exactly
+      // what post() below will see and write — not a snapshot that a concurrent posting could
+      // move between here and there.
+      const [beforeRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE 0 END), 0)
+         - COALESCE(SUM(CASE WHEN direction = 'debit'  THEN amount ELSE 0 END), 0) AS balance
+           FROM imprest_transaction_ledger WHERE imprest_manager_id = ?`,
+        [input.imprestManagerId],
+      );
+      const balanceBefore = Number(beforeRows[0]?.balance ?? 0);
+
+      const ledgerId = await imprestLedgerService.post(
+        {
+          imprestManagerId: input.imprestManagerId,
+          branchId,
+          entryType: "adjustment",
+          direction: input.direction,
+          amount,
+          transactionDate: input.transactionDate,
+          referenceType: "manual",
+          referenceId: null,
+          narration: reason,
+          actorUserId,
+        },
+        connection,
+      );
+
+      // The exact value post() computed and wrote, not a JS recomputation of it.
+      const [afterRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT balance_after FROM imprest_transaction_ledger WHERE id = ?`,
+        [ledgerId],
+      );
+      const balanceAfter = Number(afterRows[0]?.balance_after ?? 0);
+
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "imprest_manager",
+          entityId: input.imprestManagerId,
+          action: "adjustment",
+          fromStatus: null,
+          toStatus: "posted",
+          actorUserId,
+          actorRole,
+          remarks: reason,
+          details: { direction: input.direction, amount, balanceBefore, balanceAfter, ledgerId },
+        },
+        connection,
+      );
+
+      await connection.commit();
+      return { ledgerId, balanceBefore, balanceAfter };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
 };

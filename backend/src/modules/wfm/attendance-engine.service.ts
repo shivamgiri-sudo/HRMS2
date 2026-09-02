@@ -1,7 +1,7 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { toIST, minutesOfDay } from '../../shared/timezone.js';
 import { logger } from '../../logger.js';
 
@@ -142,6 +142,33 @@ export function buildShiftWindowInfo(
     shiftStartTime: shiftStartTime ?? null,
     shiftEndTime: shiftEndTime ?? null,
   };
+}
+
+/**
+ * How a scope's attendance is decided. Stored on apr_eligibility_config.attendance_logic
+ * (migration 1648); 'apr' is the column default, so every pre-existing row keeps the
+ * meaning it had when the table was a plain allow-list.
+ *
+ *   apr                    — dialler net login alone decides the day. A short or missing
+ *                            login IS the attendance answer (ruling of 2026-08-07).
+ *   cosec                  — biometric alone. A row carrying this is excluded from APR
+ *                            matching, so it states the decision instead of leaving it to
+ *                            be inferred from no row existing.
+ *   apr_validated_by_cosec — APR first; when APR falls short of a full day the biometric
+ *                            reading is classified too and the better of the two is used.
+ */
+export type AttendanceLogic = 'apr' | 'cosec' | 'apr_validated_by_cosec';
+
+/** Ordering used by the tally: a better-evidenced day wins. */
+const STATUS_RANK: Partial<Record<AttendanceStatus, number>> = {
+  absent: 0,
+  half_day: 1,
+  present: 2,
+};
+
+function statusRank(status: AttendanceStatus | null): number {
+  if (!status) return -1;
+  return STATUS_RANK[status] ?? -1;
 }
 
 // Legacy regex fallback — used when apr_eligibility_config table is empty.
@@ -299,15 +326,20 @@ export const attendanceEngineService = {
     return rows[0] as AttendanceRuleConfig;
   },
 
-  // G1: DB-backed APR eligibility check (replaces hardcoded isOperationsExecutive).
+  // G1: DB-backed attendance-logic resolution (replaces hardcoded isOperationsExecutive).
   // Falls back to regex if apr_eligibility_config table is empty.
-  async isAprEligible(
+  //
+  // Returns which of the three logics applies to this employee. A row whose
+  // attendance_logic is 'cosec' states "biometric" outright and is excluded from matching
+  // here, so it lands on the same answer as no row at all — the difference is that the
+  // decision is recorded and visible in the config UI rather than inferred from silence.
+  async resolveAttendanceLogic(
     designationId: string | null,
     departmentId: string | null,
     processId: string | null,
     deptNameLower: string,
     desigNameLower: string
-  ): Promise<boolean> {
+  ): Promise<AttendanceLogic> {
     try {
       // First check if any active rules exist in the config table
       const [countRows] = await db.execute<RowDataPacket[]>(
@@ -316,13 +348,14 @@ export const attendanceEngineService = {
       const configCount = Number((countRows[0] as any).cnt ?? 0);
       if (configCount === 0) {
         // Fall back to legacy regex if config is empty (safe deploy with no seed)
-        return isOperationsExecutiveByRegex(deptNameLower, desigNameLower);
+        return isOperationsExecutiveByRegex(deptNameLower, desigNameLower) ? 'apr' : 'cosec';
       }
 
       // Match: process_id (most specific) > department_id > designation_id > all NULL (global)
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM apr_eligibility_config
+        `SELECT id, attendance_logic FROM apr_eligibility_config
          WHERE active_status = 1
+           AND attendance_logic <> 'cosec'
            AND (designation_id = ? OR designation_id IS NULL)
            AND (department_id  = ? OR department_id  IS NULL)
            AND (process_id     = ? OR process_id     IS NULL)
@@ -333,11 +366,29 @@ export const attendanceEngineService = {
          LIMIT 1`,
         [designationId, departmentId, processId]
       );
-      return (rows as RowDataPacket[]).length > 0;
+      const matched = (rows as RowDataPacket[])[0] as any;
+      if (!matched) return 'cosec';
+      const logic = String(matched.attendance_logic ?? 'apr') as AttendanceLogic;
+      return logic === 'apr_validated_by_cosec' ? 'apr_validated_by_cosec' : 'apr';
     } catch {
-      // If table doesn't exist yet (migration pending), use regex fallback
-      return isOperationsExecutiveByRegex(deptNameLower, desigNameLower);
+      // If table or column doesn't exist yet (migration pending), use regex fallback
+      return isOperationsExecutiveByRegex(deptNameLower, desigNameLower) ? 'apr' : 'cosec';
     }
+  },
+
+  // Kept for the callers that only need the yes/no answer (apr-attendance.service,
+  // attendance-apr-bulk.routes, universalDigitalFormFill, running-salary). Both APR logics
+  // read the dialler feed, so both are "APR eligible" to those callers.
+  async isAprEligible(
+    designationId: string | null,
+    departmentId: string | null,
+    processId: string | null,
+    deptNameLower: string,
+    desigNameLower: string
+  ): Promise<boolean> {
+    const logic = await this.resolveAttendanceLogic(
+      designationId, departmentId, processId, deptNameLower, desigNameLower);
+    return logic !== 'cosec';
   },
 
   // Check leave/holiday/week-off overrides.
@@ -526,29 +577,73 @@ export const attendanceEngineService = {
     employeeId: string,
     date: string
   ): Promise<{ minutes: number; sourceSystem: string; sourceReference: string | null }> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT evidence.minutes, evidence.source_system, evidence.source_reference
-       FROM (
-         SELECT COALESCE(SUM(was.total_login_minutes), 0) AS minutes,
-                'wfm_attendance_session' AS source_system,
-                CAST(MAX(was.id) AS CHAR) AS source_reference
-         FROM wfm_attendance_session was
-         WHERE was.employee_id = ? AND was.session_date = ?
-         UNION ALL
-         SELECT COALESCE(MAX(ibd.biometric_minutes), 0) AS minutes,
-                CONCAT('integration:', MAX(ibd.integration_key)) AS source_system,
-                CAST(MAX(ibd.id) AS CHAR) AS source_reference
-         FROM integration_biometric_daily ibd
-         JOIN employees e
-           ON e.id = ?
-          AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
-         WHERE ibd.activity_date = ?
-       ) evidence
-       ORDER BY evidence.minutes DESC
-       LIMIT 1`,
-      [employeeId, date, employeeId, date]
+    // Get all sessions for this IST date
+    const [sessRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, total_login_minutes, current_status, login_time
+       FROM wfm_attendance_session
+       WHERE employee_id = ? AND session_date = ?`,
+      [employeeId, date]
     );
-    const row = rows[0] as any;
+    const sessions = sessRows as any[];
+    let totalMinutes = sessions.reduce((s: number, r: any) => s + Number(r.total_login_minutes ?? 0), 0);
+    const sourceRef = sessions.length > 0 ? String(sessions[sessions.length - 1].id) : null;
+
+    // Night-shift cross-midnight merge: if any session on this IST date is Partial and started
+    // after 20:00 IST, the shift continues into the next calendar day. Add those early-morning
+    // continuation minutes so the full shift is counted against the shift-start date.
+    // Feature flag: night_shift_cross_midnight_merge (default on).
+    const mergeCrossMidnight = await getFeatureFlagBool('night_shift_cross_midnight_merge', true);
+    if (mergeCrossMidnight && sessions.length > 0) {
+      const hasNightStart = sessions.some((s: any) => {
+        if (s.current_status !== 'Partial' || !s.login_time) return false;
+        const loginDate = new Date(s.login_time);
+        // Convert UTC to IST minutes-of-day (IST = UTC + 5h30m = +330 min)
+        const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
+        return istMinutesOfDay >= 20 * 60; // after 20:00 IST
+      });
+
+      if (hasNightStart) {
+        const nextDate = nextIstDate(date);
+        const [nextRows] = await db.execute<RowDataPacket[]>(
+          `SELECT total_login_minutes, current_status, login_time
+           FROM wfm_attendance_session
+           WHERE employee_id = ? AND session_date = ?`,
+          [employeeId, nextDate]
+        );
+        for (const s of nextRows as any[]) {
+          if (!s.login_time) continue;
+          const loginDate = new Date(s.login_time);
+          const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
+          // Include only early-morning sessions (before 08:00 IST) — these are the tail of the
+          // night shift that started on `date`, not a new shift that began on the next day.
+          if (istMinutesOfDay < 8 * 60) {
+            totalMinutes += Number(s.total_login_minutes ?? 0);
+          }
+        }
+      }
+    }
+
+    if (totalMinutes > 0) {
+      return {
+        minutes: totalMinutes,
+        sourceSystem: 'wfm_attendance_session',
+        sourceReference: sourceRef,
+      };
+    }
+
+    // Fallback: integration_biometric_daily
+    const [intRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(ibd.biometric_minutes), 0) AS minutes,
+              CONCAT('integration:', MAX(ibd.integration_key)) AS source_system,
+              CAST(MAX(ibd.id) AS CHAR) AS source_reference
+       FROM integration_biometric_daily ibd
+       JOIN employees e
+         ON e.id = ?
+        AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
+       WHERE ibd.activity_date = ?`,
+      [employeeId, date]
+    );
+    const row = intRows[0] as any;
     const minutes = Number(row?.minutes ?? 0);
     return {
       minutes,
@@ -732,11 +827,12 @@ export const attendanceEngineService = {
     // Resolve rule
     let rule = await this.resolveRule(designationId, processId, branchId, date);
 
-    // G1: DB-backed APR eligibility check (replaces hardcoded regex)
-    const configuredAprEmployee = await this.isAprEligible(
+    // G1: DB-backed attendance-logic resolution (replaces hardcoded regex)
+    const attendanceLogic = await this.resolveAttendanceLogic(
       designationId, departmentId, processId,
       emp.dept_name, emp.designation_name
     );
+    const configuredAprEmployee = attendanceLogic !== 'cosec';
 
     // Always fetch biometric minutes upfront — needed for G12 week-off cross-validation
     // and for mismatch detection even when employee is APR-eligible.
@@ -903,6 +999,32 @@ export const attendanceEngineService = {
         rawMinutes = biometricMinutes;
         sourceSystem = biometricEvidence.sourceSystem;
         sourceReference = biometricEvidence.sourceReference;
+        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
+      }
+
+      // Third logic: APR validated by COSEC.
+      //
+      // APR still leads. But where plain 'apr' treats a short net login as the final answer,
+      // this asks the biometric feed the same question and keeps whichever reading credits
+      // the employee more — someone who was in the building nine hours but logged 300
+      // dialler minutes is present, not a half day. It can only raise a day's status, never
+      // lower one, so a process moved onto this logic cannot cost anyone pay.
+      //
+      // Skipped when the fallback above already switched to biometric (nothing left to
+      // compare) and when there is no biometric reading to compare against.
+      if (attendanceLogic === 'apr_validated_by_cosec'
+          && classifyAsApr
+          && biometricMinutes > 0
+          && statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)) {
+        classifyAsApr = false;
+        const aprMinutesForTrail = rawMinutes;
+        rawMinutes = biometricMinutes;
+        sourceSystem = biometricEvidence.sourceSystem;
+        // The decision is written into source_reference so the tally is auditable on the
+        // row itself — attendance_source alone would say 'biometric' with no hint that APR
+        // was consulted first and lost.
+        sourceReference = `APR tally: apr=${aprMinutesForTrail}min (${aprStatusRaw}), `
+          + `biometric=${biometricMinutes}min (${biometricStatusRaw}) — biometric used`;
         rule = { ...rule, attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: halfDayFloor };
       }
     } else {
@@ -1314,6 +1436,108 @@ export const attendanceEngineService = {
 
   async deactivateRule(id: string): Promise<void> {
     await db.execute(`UPDATE attendance_rule_config SET active_status = 0 WHERE id = ?`, [id]);
+  },
+
+  // ---- Attendance logic per process (apr_eligibility_config) -----------------------
+  //
+  // The engine decides dialler vs biometric from apr_eligibility_config, not from
+  // attendance_rule_config — processDay() overwrites the latter's attendance_source in both
+  // branches. These two methods are the only supported way to change that decision, and
+  // they are what the Attendance Rules Master page writes through.
+
+  /** One row per active process, with the logic currently in force and who it affects. */
+  async listProcessAttendanceLogic(): Promise<Array<{
+    process_id: string; process_name: string; attendance_logic: AttendanceLogic;
+    rule_count: number; employee_count: number;
+  }>> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT p.id AS process_id, p.process_name,
+              COALESCE(MAX(a.attendance_logic), 'cosec') AS attendance_logic,
+              COUNT(a.id) AS rule_count,
+              (SELECT COUNT(*) FROM employees e
+                WHERE e.process_id = p.id AND e.employment_status = 'active') AS employee_count
+         FROM process_master p
+         LEFT JOIN apr_eligibility_config a
+                ON a.process_id = p.id AND a.active_status = 1 AND a.attendance_logic <> 'cosec'
+        WHERE p.active_status = 1
+        GROUP BY p.id, p.process_name
+        ORDER BY p.process_name`);
+    return (rows as any[]).map((r) => ({
+      process_id: String(r.process_id),
+      process_name: String(r.process_name),
+      attendance_logic: String(r.attendance_logic) as AttendanceLogic,
+      rule_count: Number(r.rule_count ?? 0),
+      employee_count: Number(r.employee_count ?? 0),
+    }));
+  },
+
+  /**
+   * Sets the logic for one process.
+   *
+   * 'cosec' deactivates the process's rows rather than deleting them, so the previous
+   * setting stays visible in the table and is reversible by setting APR again.
+   *
+   * The other two write one row per (designation, department) pair the table already uses
+   * for APR — the Operations executive designations. Taking the pair set from existing rows
+   * rather than hardcoding it means a designation added to the scheme later is picked up
+   * without touching this code. A process configured while no such pair exists is rejected
+   * rather than silently writing nothing.
+   */
+  async setProcessAttendanceLogic(
+    processId: string, logic: AttendanceLogic, actor: string,
+  ): Promise<{ deactivated: number; written: number }> {
+    if (logic === 'cosec') {
+      const [res] = await db.execute<ResultSetHeader>(
+        `UPDATE apr_eligibility_config
+            SET active_status = 0, updated_at = NOW()
+          WHERE process_id = ? AND active_status = 1`, [processId]);
+      return { deactivated: res.affectedRows ?? 0, written: 0 };
+    }
+
+    const [pairRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT designation_id, department_id
+         FROM apr_eligibility_config
+        WHERE designation_id IS NOT NULL AND department_id IS NOT NULL`);
+    const pairs = pairRows as any[];
+    if (!pairs.length) {
+      throw new Error(
+        'No designation/department scope exists in apr_eligibility_config to apply this logic to.');
+    }
+
+    const [procRows] = await db.execute<RowDataPacket[]>(
+      `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`, [processId]);
+    const processName = String((procRows as any[])[0]?.process_name ?? processId);
+
+    let written = 0;
+    for (const pair of pairs) {
+      const [desigRows] = await db.execute<RowDataPacket[]>(
+        `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`, [pair.designation_id]);
+      const desigName = String((desigRows as any[])[0]?.designation_name ?? 'EXECUTIVE');
+
+      // No unique key exists on this table, so ON DUPLICATE KEY UPDATE would append rather
+      // than update. Look the row up first.
+      const [existing] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM apr_eligibility_config
+          WHERE process_id = ? AND designation_id = ? AND department_id = ? LIMIT 1`,
+        [processId, pair.designation_id, pair.department_id]);
+      const row = (existing as any[])[0];
+      if (row) {
+        await db.execute(
+          `UPDATE apr_eligibility_config
+              SET active_status = 1, attendance_logic = ?, updated_at = NOW()
+            WHERE id = ?`, [logic, row.id]);
+      } else {
+        await db.execute(
+          `INSERT INTO apr_eligibility_config
+             (id, rule_name, designation_id, department_id, process_id, active_status,
+              attendance_logic, notes, created_by, created_at, updated_at)
+           VALUES (UUID(), ?, ?, ?, ?, 1, ?, ?, ?, NOW(), NOW())`,
+          [`APR: ${desigName} / ${processName}`, pair.designation_id, pair.department_id,
+           processId, logic, `Set via Attendance Rules Master by ${actor}.`, actor]);
+      }
+      written++;
+    }
+    return { deactivated: 0, written };
   },
 
   // G10: Missing punch inbox notification to employee + reporting manager

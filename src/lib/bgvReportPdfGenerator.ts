@@ -806,10 +806,26 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
   doc.setTextColor(0, 0, 0);
   currentY += 8;
 
+  // DigiLocker-verified eKYC covers both Aadhaar and PAN without a separate manual
+  // check (bgv-verification.service.ts's computeAndSaveScore credits the score the
+  // same way) — but the raw aadhaar_status/pan_status columns are independent report
+  // fields that stay 'not_run' when no manual check was performed, so the PDF used to
+  // print "NOT RUN" for an identity that was, in fact, verified via DigiLocker. Show
+  // the coverage explicitly instead of the misleading raw status.
+  const digilockerCovers = report.digilocker_status === 'passed';
+  const aadhaarDisplayStatus = digilockerCovers && report.aadhaar_status === 'not_run' ? 'passed' : report.aadhaar_status;
+  const aadhaarDisplayRemarks = digilockerCovers && report.aadhaar_status === 'not_run'
+    ? (report.aadhaar_remarks ? `${report.aadhaar_remarks} (Covered via DigiLocker eKYC)` : 'Covered via DigiLocker eKYC')
+    : report.aadhaar_remarks;
+  const panDisplayStatus = digilockerCovers && report.pan_status === 'not_run' ? 'passed' : report.pan_status;
+  const panDisplayRemarks = digilockerCovers && report.pan_status === 'not_run'
+    ? (report.pan_remarks ? `${report.pan_remarks} (Covered via DigiLocker eKYC)` : 'Covered via DigiLocker eKYC')
+    : report.pan_remarks;
+
   const verificationChecks = [
-    { name: "Aadhaar Verification", status: report.aadhaar_status, match: report.aadhaar_name_match, remarks: report.aadhaar_remarks, type: 'aadhaar' },
+    { name: "Aadhaar Verification", status: aadhaarDisplayStatus, match: report.aadhaar_name_match, remarks: aadhaarDisplayRemarks, type: 'aadhaar' },
     { name: "DigiLocker KYC", status: report.digilocker_status || 'not_run', match: null, remarks: report.digilocker_remarks, type: 'digilocker' },
-    { name: "PAN Verification", status: report.pan_status, match: report.pan_name_match, remarks: report.pan_remarks, type: 'pan' },
+    { name: "PAN Verification", status: panDisplayStatus, match: report.pan_name_match, remarks: panDisplayRemarks, type: 'pan' },
     { name: "Bank Account Verification", status: report.bank_status, match: report.bank_account_match, remarks: report.bank_remarks, type: 'bank' },
     { name: "Education Verification", status: report.education_status, match: null, remarks: report.education_remarks, type: 'education' },
     { name: "Employment Verification", status: report.employment_status, match: null, remarks: report.employment_remarks, type: 'employment' },

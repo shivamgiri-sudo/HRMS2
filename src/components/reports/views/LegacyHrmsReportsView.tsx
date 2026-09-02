@@ -159,20 +159,27 @@ export default function LegacyHrmsReportsView() {
   const result: LegacyResult | null =
     isSuccess && resultRaw ? (unwrap<LegacyResult>(resultRaw) ?? null) : null;
 
-  // ── CSV export ───────────────────────────────────────────────────────────
+  // ── export (exact-format download; filename must match the report name shown
+  //    in the sidebar, not the internal report code) ─────────────────────────
   function handleExport() {
     const token = localStorage.getItem("hrms_access_token") ?? localStorage.getItem("token") ?? tokenRef.current;
     const params = buildParams();
     const qs = new URLSearchParams(params).toString();
     const url = `/api/legacy-reports/${selected}/export${qs ? `?${qs}` : ""}`;
+    const label = reports.find(r => r.code === selected)?.label ?? selected;
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.blob())
-      .then(blob => {
+      .then(r => {
+        const cd = r.headers.get("content-disposition") ?? "";
+        const extMatch = cd.match(/filename[^;=\n]*=\s*(?:['"]?)[^'"\n;]*\.([a-z0-9]+)/i);
+        return r.blob().then(blob => ({ blob, ext: extMatch?.[1] ?? "csv" }));
+      })
+      .then(({ blob, ext }) => {
         const bUrl = URL.createObjectURL(blob);
         const suffix = month || (fromDate ? `${fromDate}_${toDate ?? ""}` : "");
+        const namePart = label.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
         const a = Object.assign(document.createElement("a"), {
           href: bUrl,
-          download: `legacy-${selected}${suffix ? `-${suffix}` : ""}.csv`,
+          download: `${namePart}${suffix ? `_${suffix}` : ""}.${ext}`,
         });
         a.click();
         URL.revokeObjectURL(bUrl);

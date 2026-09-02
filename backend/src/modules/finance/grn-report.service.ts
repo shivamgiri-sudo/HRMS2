@@ -73,13 +73,37 @@ function scopeConditions(filters: GrnReportFilters) {
     conditions.push("g.accounting_period = ?");
     params.push(filters.month);
   }
+  /*
+   * Head and sub-head are matched on the header OR on any allocation row.
+   *
+   * A GRN split across several heads stores the literal 'Multiple Heads' / 'Multiple Sub-Heads'
+   * in the header columns, so `g.head = ?` silently drops every split GRN from a head-filtered
+   * register — the rows most worth looking at when you are chasing one head's spend. The EXISTS
+   * arm recovers them through the allocation's budget line, which carries the real head.
+   *
+   * Written as `IN (subquery)` rather than a JOIN so a GRN with five matching allocation rows
+   * still appears once. listGrns already had this workaround but only applied it alongside a
+   * cost-centre filter.
+   */
   if (filters.head) {
-    conditions.push("g.head = ?");
-    params.push(filters.head);
+    conditions.push(
+      `(g.head = ? OR g.id IN (
+          SELECT a.grn_request_id FROM grn_cost_allocation a
+            JOIN finance_budget_line bl ON bl.id = a.budget_line_id
+           WHERE bl.head = ? AND a.lifecycle_status NOT IN ('released', 'reversed')
+        ))`
+    );
+    params.push(filters.head, filters.head);
   }
   if (filters.subHead) {
-    conditions.push("g.sub_head = ?");
-    params.push(filters.subHead);
+    conditions.push(
+      `(g.sub_head = ? OR g.id IN (
+          SELECT a.grn_request_id FROM grn_cost_allocation a
+            JOIN finance_budget_line bl ON bl.id = a.budget_line_id
+           WHERE bl.sub_head = ? AND a.lifecycle_status NOT IN ('released', 'reversed')
+        ))`
+    );
+    params.push(filters.subHead, filters.subHead);
   }
   if (filters.expenseMode === "imprest") {
     conditions.push("g.grn_type = 'imprest'");
@@ -160,6 +184,15 @@ export const grnReportService = {
           COALESCE(g.approved_at, g.finance_head_reviewed_at, g.branch_head_reviewed_at) AS approval_date,
           g.bill_date,
           g.due_date,
+          -- The decorator below reads all five of these. They were absent from this SELECT, so
+          -- is_legacy was permanently false (killing the legacy ageing clamp it exists to
+          -- drive) and the stage clock always fell back to created_at. 84,767 of 84,818 rows are
+          -- migrated, so "permanently false" meant "wrong on 99.9% of the register".
+          g.bill_source_id,
+          g.submitted_at,
+          g.branch_head_reviewed_at,
+          g.finance_head_reviewed_at,
+          g.accounts_payment_status,
           pay.payment_date,
           pay.paid_amount,
           pay.tds_deducted_amount,
@@ -179,12 +212,16 @@ export const grnReportService = {
         LEFT JOIN employees u ON u.user_id = g.created_by
         LEFT JOIN cost_centre_master cc ON cc.id = g.cost_centre_id
         LEFT JOIN (
+          -- NOT IN ('released') also admitted 'reversed' and 'draft'. Reversed tax has been credited
+          -- back and a draft row is not a booking at all, so counting either overstates the GST
+          -- on a GRN whose allocations were corrected. Named exclusions instead of one negation,
+          -- so a new lifecycle value has to be considered rather than silently included.
           SELECT grn_request_id,
                  SUM(cgst_amount) AS cgst_amount,
                  SUM(sgst_amount) AS sgst_amount,
                  SUM(igst_amount) AS igst_amount
             FROM grn_cost_allocation
-           WHERE lifecycle_status <> 'released'
+           WHERE lifecycle_status IN ('reserved', 'consumed')
            GROUP BY grn_request_id
         ) alloc ON alloc.grn_request_id = g.id
         LEFT JOIN (
@@ -452,37 +489,71 @@ export const grnReportService = {
     };
   },
 
-  /** Head / sub-head / vendor values that actually occur in the caller's scope, for the filters. */
+  /**
+   * Head / sub-head / financial-year / period values that actually occur in the caller's scope,
+   * for the filter dropdowns.
+   *
+   * THREE SEPARATE QUERIES, NOT ONE CROSS-PRODUCT.
+   * This used to be a single `SELECT DISTINCT head, sub_head, financial_year, accounting_period
+   * ... LIMIT 2000`, which is a distinct over the CARTESIAN combination of four columns. Post
+   * migration that combination has 4,224 distinct rows against 26 heads, 92 head/sub-head pairs,
+   * 10 financial years and 120 periods — so the LIMIT cut it in half, and because the ORDER BY
+   * was `head, sub_head`, what survived was the alphabetically-first heads plus whichever years
+   * and periods happened to travel with them. Heads from roughly "R" onward, and most of the ten
+   * years of history, were simply missing from every filter on the page.
+   *
+   * Splitting it means each list is bounded by its own real cardinality instead of by the other
+   * three, and the DISTINCTs are small enough that no LIMIT is needed at all.
+   *
+   * Blank head/sub-head values are excluded in SQL rather than skipped in the loop, so an empty
+   * option can never reach the dropdown.
+   */
   async filterOptions(filters: GrnReportFilters) {
     const { conditions, params } = scopeConditions({ ...filters, head: undefined, subHead: undefined });
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT DISTINCT g.head, g.sub_head, g.financial_year, g.accounting_period
-         FROM grn_request g
-         ${where}
-        ORDER BY g.head, g.sub_head
-        LIMIT 2000`,
-      params
-    );
+
+    const [headRows, yearRows, periodRows] = await Promise.all([
+      db.query<RowDataPacket[]>(
+        `SELECT g.head, g.sub_head
+           FROM grn_request g
+           ${where}${where ? " AND" : " WHERE"} TRIM(COALESCE(g.head, '')) <> ''
+          GROUP BY g.head, g.sub_head
+          ORDER BY g.head, g.sub_head`,
+        params
+      ),
+      db.query<RowDataPacket[]>(
+        `SELECT g.financial_year
+           FROM grn_request g
+           ${where}${where ? " AND" : " WHERE"} TRIM(COALESCE(g.financial_year, '')) <> ''
+          GROUP BY g.financial_year
+          ORDER BY g.financial_year DESC`,
+        params
+      ),
+      db.query<RowDataPacket[]>(
+        `SELECT g.accounting_period
+           FROM grn_request g
+           ${where}${where ? " AND" : " WHERE"} TRIM(COALESCE(g.accounting_period, '')) <> ''
+          GROUP BY g.accounting_period
+          ORDER BY g.accounting_period DESC`,
+        params
+      ),
+    ]);
+
     const heads = new Map<string, Set<string>>();
-    const years = new Set<string>();
-    const periods = new Set<string>();
-    for (const row of rows as RowDataPacket[]) {
+    for (const row of headRows[0] as RowDataPacket[]) {
       const head = String(row.head ?? "").trim();
-      if (head) {
-        if (!heads.has(head)) heads.set(head, new Set());
-        const subHead = String(row.sub_head ?? "").trim();
-        if (subHead) heads.get(head)!.add(subHead);
-      }
-      if (row.financial_year) years.add(String(row.financial_year));
-      if (row.accounting_period) periods.add(String(row.accounting_period));
+      if (!head) continue;
+      if (!heads.has(head)) heads.set(head, new Set());
+      const subHead = String(row.sub_head ?? "").trim();
+      if (subHead) heads.get(head)!.add(subHead);
     }
+
     return {
       heads: Array.from(heads.entries())
         .map(([head, subHeads]) => ({ head, subHeads: Array.from(subHeads).sort() }))
         .sort((a, b) => a.head.localeCompare(b.head)),
-      financialYears: Array.from(years).sort().reverse(),
-      periods: Array.from(periods).sort().reverse(),
+      financialYears: (yearRows[0] as RowDataPacket[]).map((r) => String(r.financial_year)),
+      periods: (periodRows[0] as RowDataPacket[]).map((r) => String(r.accounting_period)),
     };
   },
 };

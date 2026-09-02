@@ -321,8 +321,58 @@ async function getApplicableChecks(candidateId: string): Promise<{
   return { includeEmployment, includeCriminal, denominator };
 }
 
+/** Auto-derived reading of candidate_bgv_report.overall_status (a subset of its ENUM). */
+export type DerivedBgvStatus = "pending" | "in_progress" | "clear" | "refer";
+
 /**
- * Compute and persist BGV score as a percentage (0–100).
+ * Derive the overall BGV verdict purely from per-category check statuses —
+ * the same category set and DigiLocker-covers-aadhaar+pan rule used by
+ * computeAndSaveScore below, so the score and the verdict can never disagree.
+ *
+ * 'clear'    — every applicable category (id, bank, education, address, and
+ *              employment/criminal when applicable) is verified or waived.
+ * 'refer'    — any applicable category came back mismatch/failed. Needs a
+ *              human look; never auto-escalated further than that.
+ * 'in_progress' — nothing has failed, but not everything applicable is clear yet.
+ * 'pending'  — no checks recorded at all.
+ */
+function deriveOverallStatus(
+  bestStatus: Map<string, string>,
+  digilockerClear: boolean,
+  includeEmployment: boolean,
+  includeCriminal: boolean,
+): DerivedBgvStatus {
+  const isClear = (t: string) => { const s = bestStatus.get(t); return s === "verified" || s === "waived"; };
+  const isFailed = (t: string) => { const s = bestStatus.get(t); return s === "mismatch" || s === "failed"; };
+
+  if (bestStatus.size === 0) return "pending";
+
+  const requiredTypes = ["bank", "education", "address"];
+  if (includeEmployment) requiredTypes.push("employment");
+  if (includeCriminal) requiredTypes.push("criminal");
+
+  // DigiLocker verified covers both aadhaar and pan without a separate manual check;
+  // absent that, both must individually clear (not just one) for identity to be clear.
+  const identityClear = digilockerClear || (isClear("aadhaar") && isClear("pan"));
+  const identityFailed = !digilockerClear && (isFailed("aadhaar") || isFailed("pan"));
+
+  if (identityFailed || requiredTypes.some(isFailed)) return "refer";
+  if (identityClear && requiredTypes.every(isClear)) return "clear";
+  return "in_progress";
+}
+
+/**
+ * Compute and persist BGV score (0–100) and the auto-derived overall_status
+ * in one pass, from the same per-category check statuses — so the two can
+ * never diverge the way the score and a free-picked overall_status dropdown
+ * used to.
+ *
+ * overall_status is only auto-written when the report is not locked and its
+ * current value is not the HR-asserted 'negative' — a human hard-reject is
+ * never silently overwritten by a later check update. Every other value
+ * ('pending', 'in_progress', 'clear', 'refer') is fully computed; nothing
+ * else may set it directly, so "CLEAR" can no longer be picked from a
+ * dropdown without the underlying checks actually being clear.
  *
  * Denominator is dynamic: only checks applicable to this candidate's
  * profile/designation are counted. DigiLocker verified = covers both
@@ -337,7 +387,7 @@ export async function computeAndSaveScore(candidateId: string): Promise<number> 
   );
 
   // Build best-status map per normalized check type (precedence: verified > waived > manual_review > rest)
-  const statusPrecedence: Record<string, number> = { verified: 4, waived: 3, manual_review: 2, partial: 1 };
+  const statusPrecedence: Record<string, number> = { verified: 4, waived: 3, manual_review: 2, mismatch: 1, failed: 1, partial: 1 };
   const bestStatus = new Map<string, string>();
   for (const check of rawChecks as RowDataPacket[]) {
     const norm = normalizeCheckType(String(check.check_type));
@@ -346,31 +396,86 @@ export async function computeAndSaveScore(candidateId: string): Promise<number> 
     if (incoming > existing) bestStatus.set(norm, String(check.status));
   }
 
+  // Categories such as address and education have no automated provider — the
+  // BGV_CONFIG providers cover aadhaar/pan/bank/digilocker/criminal only — so
+  // Payroll HR/HR verify them by hand on the report form instead
+  // (candidate_bgv_report.address_status / education_status / …, an
+  // independent 'passed'|'failed'|'partial'|'not_run' field per category).
+  // The score/verdict used to look at candidate_bgv_check exclusively, so a
+  // category with no API integration could never contribute to the score or
+  // move the report to 'clear' no matter what HR recorded for it. Folding the
+  // manual field in here — only for a category with no check-table entry
+  // already, so an API result always wins over a stale manual one — fixes
+  // that without weakening any automated check.
+  const [curRows] = await db.execute<RowDataPacket[]>(
+    `SELECT locked, overall_status,
+            aadhaar_status, pan_status, bank_status, education_status,
+            employment_status, address_status, criminal_status
+       FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const cur = (curRows as RowDataPacket[])[0];
+  const manualStatusFor = (category: string): string | undefined => {
+    const col = `${category}_status`;
+    const v = cur?.[col];
+    return v ? String(v) : undefined;
+  };
+  for (const category of ["aadhaar", "pan", "bank", "education", "employment", "address", "criminal"]) {
+    if (bestStatus.has(category)) continue; // an API/provider result always takes precedence
+    const manual = manualStatusFor(category);
+    if (manual === "passed") bestStatus.set(category, "verified");
+    else if (manual === "failed") bestStatus.set(category, "failed");
+    else if (manual === "partial") bestStatus.set(category, "partial");
+    // 'not_run' / undefined: leave unset — not yet clear, not failed
+  }
+
   const isClear = (type: string) => {
     const s = bestStatus.get(type);
     return s === "verified" || s === "waived";
   };
+  const isHalfCredit = (type: string) => bestStatus.get(type) === "partial";
 
   // DigiLocker verified covers both aadhaar and pan
   const digilockerClear = isClear("digilocker");
 
   let earned = 0;
-  if (digilockerClear || isClear("aadhaar")) earned += CHECK_WEIGHTS.aadhaar;   // 25
-  if (digilockerClear || isClear("pan"))     earned += CHECK_WEIGHTS.pan;        // 20
-  if (isClear("bank"))                       earned += CHECK_WEIGHTS.bank;       // 15
-  if (isClear("education"))                  earned += CHECK_WEIGHTS.education;  // 10
-  if (isClear("address"))                    earned += CHECK_WEIGHTS.address;    // 10
-  if (includeEmployment && isClear("employment")) earned += CHECK_WEIGHTS.employment; // +10
-  if (includeCriminal   && isClear("criminal"))   earned += CHECK_WEIGHTS.criminal;   // +10
+  if (digilockerClear || isClear("aadhaar")) earned += CHECK_WEIGHTS.aadhaar;        // 25
+  else if (isHalfCredit("aadhaar"))          earned += CHECK_WEIGHTS.aadhaar * 0.5;
+  if (digilockerClear || isClear("pan"))     earned += CHECK_WEIGHTS.pan;             // 20
+  else if (isHalfCredit("pan"))              earned += CHECK_WEIGHTS.pan * 0.5;
+  if (isClear("bank"))                       earned += CHECK_WEIGHTS.bank;            // 15
+  else if (isHalfCredit("bank"))             earned += CHECK_WEIGHTS.bank * 0.5;
+  if (isClear("education"))                  earned += CHECK_WEIGHTS.education;       // 10
+  else if (isHalfCredit("education"))        earned += CHECK_WEIGHTS.education * 0.5;
+  if (isClear("address"))                    earned += CHECK_WEIGHTS.address;         // 10
+  else if (isHalfCredit("address"))          earned += CHECK_WEIGHTS.address * 0.5;
+  if (includeEmployment) {
+    if (isClear("employment"))               earned += CHECK_WEIGHTS.employment;      // +10
+    else if (isHalfCredit("employment"))     earned += CHECK_WEIGHTS.employment * 0.5;
+  }
+  if (includeCriminal) {
+    if (isClear("criminal"))                 earned += CHECK_WEIGHTS.criminal;        // +10
+    else if (isHalfCredit("criminal"))       earned += CHECK_WEIGHTS.criminal * 0.5;
+  }
 
   // Always store as percentage so the UI/PDF can display score/100 correctly.
   const scorePct = denominator > 0 ? Math.round((earned / denominator) * 100) : 0;
 
+  const derived = deriveOverallStatus(bestStatus, digilockerClear, includeEmployment, includeCriminal);
+  const nextOverallStatus: string = cur?.locked
+    ? String(cur.overall_status ?? "pending")
+    : cur?.overall_status === "negative"
+      ? "negative"
+      : derived;
+
   await db.execute(
-    `INSERT INTO candidate_bgv_report (candidate_id, bgv_score, updated_at)
-     VALUES (?, ?, NOW())
-     ON DUPLICATE KEY UPDATE bgv_score = VALUES(bgv_score), updated_at = NOW()`,
-    [candidateId, scorePct]
+    `INSERT INTO candidate_bgv_report (candidate_id, bgv_score, overall_status, updated_at)
+     VALUES (?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE
+       bgv_score = VALUES(bgv_score),
+       overall_status = IF(locked = 1, overall_status, VALUES(overall_status)),
+       updated_at = NOW()`,
+    [candidateId, scorePct, nextOverallStatus]
   );
 
   return scorePct;

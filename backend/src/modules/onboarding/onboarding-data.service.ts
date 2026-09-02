@@ -95,25 +95,20 @@ export const EMPLOYMENT_TYPES = [
   { code: "5TPLUS", name: "5+ years" },
 ];
 
-// Mock IFSC lookup — in production, fetch from RBI IFSC API or centralized DB
-export function lookupIFSC(ifscCode: string): Promise<{
+// No RBI IFSC API / centralized IFSC DB is wired up yet. This used to return hardcoded
+// fake data ("Sample Branch", Mumbai/Bangalore) for any SBIN/HDFC-prefixed code, which the
+// onboarding UI auto-filled into Bank Name/Branch Name and persisted into the candidate's
+// real bank record — silently corrupting it with wrong data for two of the most common
+// banks. Every other bank already correctly resolved to null. Fixed 2026-09-01 to always
+// return null (candidate types their own bank/branch name, same as before for every bank
+// that wasn't SBIN/HDFC) until a real IFSC lookup is integrated.
+export function lookupIFSC(_ifscCode: string): Promise<{
   bankName: string;
   branchName: string;
   city: string;
   state: string;
 } | null> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // Mock: return sample data for demo
-      if (ifscCode.toUpperCase().startsWith("SBIN")) {
-        return resolve({ bankName: "State Bank of India", branchName: "Sample Branch", city: "Mumbai", state: "Maharashtra" });
-      }
-      if (ifscCode.toUpperCase().startsWith("HDFC")) {
-        return resolve({ bankName: "HDFC Bank", branchName: "Sample Branch", city: "Bangalore", state: "Karnataka" });
-      }
-      resolve(null);
-    }, 200);
-  });
+  return Promise.resolve(null);
 }
 
 // Mock cheque OCR — extract name from cheque image

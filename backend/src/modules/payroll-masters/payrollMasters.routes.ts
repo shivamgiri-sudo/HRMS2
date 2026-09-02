@@ -94,7 +94,7 @@ payrollMastersRouter.get('/packages/:id', h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-payrollMastersRouter.post('/packages', requireRole('admin', 'finance'), h(async (req, res) => {
+payrollMastersRouter.post('/packages', requireRole('admin', 'finance', 'payroll_head'), h(async (req, res) => {
   const parsed = CreatePackageSchema.parse(req.body);
   const data = await svc.createPackage(parsed, req.authUser?.id ?? '');
   res.status(201).json({ success: true, data });

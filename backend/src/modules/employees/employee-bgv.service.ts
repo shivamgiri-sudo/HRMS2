@@ -7,6 +7,7 @@
 
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { computeAndSaveScore } from "../ats/bgv-verification.service.js";
 
 // Score weights matching frontend (NativeBGVReport.tsx line 143)
 const SCORE_WEIGHTS: Record<string, number> = {
@@ -263,10 +264,17 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
       }
     : null;
 
-  // Calculate score from checks (or use stored score if available)
+  // Score is always the canonical, persisted candidate_bgv_report.bgv_score. This
+  // used to fall back to a local computeScoreFromChecks() with its own fixed-weight,
+  // fixed-100-denominator formula whenever the stored score was falsy — a second
+  // formula that could (and did) disagree with bgv-verification.service.ts's
+  // canonical one, which is dynamic (fresher/department-based) and also credits
+  // DigiLocker and the manual, no-API categories (address, education). Recomputing
+  // via the same canonical function instead of duplicating its logic keeps this
+  // view unable to drift from the BGV report screen and PDF.
   let score = reportRow?.bgv_score ?? 0;
   if (!score && checks.length > 0) {
-    score = computeScoreFromChecks(checks);
+    score = await computeAndSaveScore(candidateId).catch(() => 0);
   }
 
   // Determine missing mandatory checks
@@ -372,8 +380,11 @@ export async function canViewEmployeeBgv(
     return true;
   }
 
-  // HR and payroll_hr can view employees in their branch/process scope
-  if (actorRoles.includes("hr") || actorRoles.includes("payroll_hr") || actorRoles.includes("branch_head")) {
+  // HR and payroll_hr can view employees in their branch/process scope.
+  // All HR-family roles (branch_hr, hr_admin, ho_hr, process_hr, recruitment_hr)
+  // are treated the same as hr — branch-scoped access enforced below.
+  const HR_ROLES = ["hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr", "branch_head"];
+  if (actorRoles.some((r) => HR_ROLES.includes(r))) {
     // Get actor's scope
     const [actorRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.branch_id, e.process_id FROM employees e WHERE e.user_id = ? LIMIT 1`,
@@ -404,20 +415,6 @@ export async function canViewEmployeeBgv(
   }
 
   return false;
-}
-
-/**
- * Compute BGV score from checks
- */
-function computeScoreFromChecks(checks: BgvCheck[]): number {
-  let score = 0;
-  for (const check of checks) {
-    if (check.status === "verified" || check.status === "waived") {
-      const checkType = normalizeCheckType(check.check_type);
-      score += SCORE_WEIGHTS[checkType] ?? 0;
-    }
-  }
-  return score;
 }
 
 /**

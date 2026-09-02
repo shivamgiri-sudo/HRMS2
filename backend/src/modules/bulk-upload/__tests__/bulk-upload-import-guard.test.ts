@@ -18,6 +18,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The router now atomically claims the batch (UPDATE ... WHERE batch_status
  * NOT IN ('importing')) before dispatching, and rejects a concurrent call with
  * 409 instead of letting it run.
+ *
+ * The dispatch itself no longer happens inside the request. A few hundred rows take
+ * longer than nginx's 60s proxy timeout, which turned a working import into a 502 for
+ * the uploader, so the route claims the batch, answers 202 and runs the import in the
+ * background (batch-job.ts) while the page polls /batches/:id/import-status. The claim
+ * guarantees above are unchanged — they are what these tests are really about — but
+ * the status code is now 202 and the result is collected from the status endpoint
+ * rather than from this response.
  */
 
 const BATCH_ID = "batch-1";
@@ -55,22 +63,32 @@ beforeEach(() => {
 });
 
 describe("POST /batches/:id/import — concurrency guard", () => {
-  it("claims the batch, runs the import, and returns its result on a clean call", async () => {
+  it("claims the batch and starts the import on a clean call", async () => {
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release: nothing to release
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim succeeds
+    execute.mockResolvedValueOnce([[{ n: 818 }], []]);        // rows still to import
 
     const res = await request(app())
       .post(`/api/bulk-upload/batches/${BATCH_ID}/import`)
       .send(importBody());
 
-    expect(res.status).toBe(200);
-    expect(res.body.data.importedRows).toBe(720);
-    expect(importReportingManagerBatch).toHaveBeenCalledWith(BATCH_ID, ACTOR);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0][0]).toMatch(/SET batch_status = 'importing'/);
-    expect(execute.mock.calls[0][0]).toMatch(/NOT IN \('importing'\)/);
+    expect(res.status).toBe(202);
+    expect(res.body.processing).toBe(true);
+    expect(res.body.total_rows).toBe(818);
+
+    // The import runs after the response — the point of the change — so it is
+    // awaited here rather than asserted synchronously.
+    await vi.waitFor(() =>
+      expect(importReportingManagerBatch).toHaveBeenCalledWith(BATCH_ID, ACTOR),
+    );
+
+    const claim = execute.mock.calls[1][0] as string;
+    expect(claim).toMatch(/SET batch_status = 'importing'/);
+    expect(claim).toMatch(/NOT IN \('importing'\)/);
   });
 
   it("rejects a second concurrent import of the same batch with 409, without running the service", async () => {
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release: nothing to release
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // claim fails — already importing
 
     const res = await request(app())
@@ -84,19 +102,28 @@ describe("POST /batches/:id/import — concurrency guard", () => {
   });
 
   it("resets the batch off 'importing' when the import throws, instead of leaving it stuck", async () => {
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim succeeds
-    execute.mockResolvedValueOnce([{}, []]); // failed-status UPDATE
+    execute.mockResolvedValueOnce([[{ n: 10 }], []]);         // rows still to import
+    execute.mockResolvedValueOnce([{}, []]);                  // failed-status UPDATE
     importReportingManagerBatch.mockRejectedValue(new Error("connection lost"));
 
+    // The request is answered before the import fails, so the failure can no longer
+    // travel back as a 5xx — it has to land on the batch instead, which is the only
+    // thing the page can still read afterwards.
     const res = await request(app())
       .post(`/api/bulk-upload/batches/${BATCH_ID}/import`)
       .send(importBody());
+    expect(res.status).toBe(202);
 
-    expect(res.status).toBeGreaterThanOrEqual(500);
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(execute.mock.calls[1][0]).toMatch(/SET batch_status = 'failed'/);
-    expect(execute.mock.calls[1][1][0]).toMatch(/connection lost/);
-    expect(execute.mock.calls[1][1][1]).toBe(BATCH_ID);
+    await vi.waitFor(() => {
+      const failedCall = execute.mock.calls.find((c) =>
+        /SET batch_status = 'failed'/.test(String(c[0])),
+      );
+      expect(failedCall).toBeDefined();
+      expect((failedCall![1] as unknown[])[0]).toMatch(/connection lost/);
+      expect((failedCall![1] as unknown[])[1]).toBe(BATCH_ID);
+    });
   });
 
   it("501s an unrecognized rpc_name WITHOUT ever claiming the batch", async () => {
