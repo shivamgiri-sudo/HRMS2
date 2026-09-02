@@ -335,8 +335,22 @@ async function extractInvoices(stats: RunStats): Promise<void> {
           src_gsttype = VALUES(src_gsttype), src_total = VALUES(src_total), src_tax = VALUES(src_tax),
           src_igst = VALUES(src_igst), src_sgst = VALUES(src_sgst), src_cgst = VALUES(src_cgst),
           src_grnd = VALUES(src_grnd), src_invoicedeleteremarks = VALUES(src_invoicedeleteremarks),
-          target_id = VALUES(target_id), target_gst_type = VALUES(target_gst_type),
+          target_gst_type = VALUES(target_gst_type),
           target_apply_gst = VALUES(target_apply_gst), validation_status = 'pending', validation_error = NULL`,
+        // target_id is NEVER reassigned here on purpose. It was `target_id = VALUES(target_id)`
+        // before, which meant every re-run of this script overwrote an ALREADY-LOADED row's
+        // target_id with a fresh crypto.randomUUID() (bound below), unconditionally -- orphaning
+        // it from the real client_invoice/client_credit_note id that row was loaded under.
+        // load.ts then trusted that now-wrong target_id blindly, so a second run failed nearly
+        // every already-loaded row with a foreign-key violation (the line/credit-note table
+        // referencing an invoice_id that matches no real row) -- invisible during the one-time
+        // 2026-08-19 cutover because that was the only run that had ever happened, so every row
+        // was a genuine fresh insert and this UPDATE-branch path was never exercised. Confirmed
+        // live 2026-09-02 on the pipeline's first-ever re-run: 10,748 of ~10,883 rows failed this
+        // way. Omitting target_id from the UPDATE clause makes MySQL preserve whatever is already
+        // stored, so it is set exactly once (the INSERT branch, first time a legacy row is ever
+        // staged) and is immutable after that -- the same discipline load.ts's own
+        // `id = id` no-op already applies to client_invoice.id, for the identical reason.
         [
           row.id, row.invoiceType, normalizedCategory, row.branch_name, row.cost_center,
           row.finance_year, row.month, row.invoiceDate, row.app_tax_cal, row.invoiceDescription,
@@ -429,8 +443,22 @@ async function extractCreditNotes(stats: RunStats): Promise<void> {
           src_status = VALUES(src_status), src_gsttype = VALUES(src_gsttype),
           src_total = VALUES(src_total), src_tax = VALUES(src_tax), src_igst = VALUES(src_igst),
           src_sgst = VALUES(src_sgst), src_cgst = VALUES(src_cgst), src_grnd = VALUES(src_grnd),
-          target_id = VALUES(target_id), target_gst_type = VALUES(target_gst_type),
+          target_gst_type = VALUES(target_gst_type),
           target_apply_gst = VALUES(target_apply_gst), validation_status = 'pending', validation_error = NULL`,
+        // target_id is NEVER reassigned here on purpose. It was `target_id = VALUES(target_id)`
+        // before, which meant every re-run of this script overwrote an ALREADY-LOADED row's
+        // target_id with a fresh crypto.randomUUID() (bound below), unconditionally -- orphaning
+        // it from the real client_invoice/client_credit_note id that row was loaded under.
+        // load.ts then trusted that now-wrong target_id blindly, so a second run failed nearly
+        // every already-loaded row with a foreign-key violation (the line/credit-note table
+        // referencing an invoice_id that matches no real row) -- invisible during the one-time
+        // 2026-08-19 cutover because that was the only run that had ever happened, so every row
+        // was a genuine fresh insert and this UPDATE-branch path was never exercised. Confirmed
+        // live 2026-09-02 on the pipeline's first-ever re-run: 10,748 of ~10,883 rows failed this
+        // way. Omitting target_id from the UPDATE clause makes MySQL preserve whatever is already
+        // stored, so it is set exactly once (the INSERT branch, first time a legacy row is ever
+        // staged) and is immutable after that -- the same discipline load.ts's own
+        // `id = id` no-op already applies to client_invoice.id, for the identical reason.
         [
           row.id, normalizedCategory, row.branch_name, row.cost_center, row.finance_year,
           row.month, row.creditDate, row.app_tax_cal, row.creditDescription, row.credit_no,

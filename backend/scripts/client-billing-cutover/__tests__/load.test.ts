@@ -126,6 +126,7 @@ describe("parseLegacyDate", () => {
 describe("loadValidatedRows — invoices", () => {
   it("loads a clean valid row: is_migrated=1/legacy_id set, single synthesized line item", async () => {
     const conn = mockConn([
+      [[], []], // existence pre-check: no client_invoice row for this legacy_id yet
       [{ affectedRows: 1, insertId: 0 } as any, []], // header INSERT
       [[{ c: 0 }], []], // existing-line count check
       [{} as any, []], // line INSERT
@@ -147,7 +148,7 @@ describe("loadValidatedRows — invoices", () => {
     expect(conn.release).toHaveBeenCalledTimes(1);
 
     // header INSERT ... is_migrated fixed to 1 in the SQL text, legacy_id passed as last param
-    const headerCall = conn.execute.mock.calls[0];
+    const headerCall = conn.execute.mock.calls[1];
     expect(headerCall[0]).toMatch(/is_migrated/);
     expect(headerCall[0]).toMatch(/ON DUPLICATE KEY UPDATE/);
     const headerParams = headerCall[1] as unknown[];
@@ -155,7 +156,7 @@ describe("loadValidatedRows — invoices", () => {
     expect(headerParams[headerParams.length - 1]).toBe(5001); // legacy_id
 
     // line INSERT carries the synthesized single line
-    const lineCall = conn.execute.mock.calls[2];
+    const lineCall = conn.execute.mock.calls[3];
     expect(lineCall[0]).toMatch(/client_invoice_line/);
     const lineParams = lineCall[1] as unknown[];
     expect(lineParams).toContain("invoice-target-uuid-1");
@@ -174,10 +175,12 @@ describe("loadValidatedRows — invoices", () => {
     expect((loadDb.getConnection as any)).not.toHaveBeenCalled();
   });
 
-  it("re-running against an already-loaded legacy_id is idempotent: header UPDATE branch runs (affectedRows=2), no duplicate line inserted", async () => {
+  it("re-running against an already-loaded legacy_id is idempotent: existence pre-check finds it, no duplicate line inserted", async () => {
     const conn = mockConn([
+      [[{ x: 1 }], []], // existence pre-check: a client_invoice row for this legacy_id already exists
       [{ affectedRows: 2, insertId: 0 } as any, []], // header ON DUPLICATE KEY UPDATE branch
-      // no existing-line count call and no line INSERT expected — isFreshInsert is false
+      [[{ c: 1 }], []], // line-count check: the line from the original load is already there
+      // no line INSERT expected — lineCount > 0
     ]);
     const loadDb = mockLoadDb([conn]);
 
@@ -190,13 +193,14 @@ describe("loadValidatedRows — invoices", () => {
     expect(result.invoices).toEqual([
       { legacyId: 5001, outcome: "already_loaded", targetId: "invoice-target-uuid-1" },
     ]);
-    // Only the header UPSERT ran — no line-count check, no line insert.
-    expect(conn.execute).toHaveBeenCalledTimes(1);
+    // Existence pre-check, header UPSERT, line-count check — no 4th call, no line insert.
+    expect(conn.execute).toHaveBeenCalledTimes(3);
     expect(conn.commit).toHaveBeenCalledTimes(1);
   });
 
   it("rolls back cleanly on a simulated mid-insert failure without affecting a second, independent row's own transaction", async () => {
     const failingConn = mockConn([
+      [[], []], // existence pre-check: new row
       [{ affectedRows: 1, insertId: 0 } as any, []], // header INSERT succeeds
       [[{ c: 0 }], []], // existing-line count check
       () => {
@@ -204,6 +208,7 @@ describe("loadValidatedRows — invoices", () => {
       },
     ]);
     const succeedingConn = mockConn([
+      [[], []],
       [{ affectedRows: 1, insertId: 0 } as any, []],
       [[{ c: 0 }], []],
       [{} as any, []],
@@ -248,6 +253,7 @@ describe("loadValidatedRows — invoices", () => {
 describe("loadValidatedRows — credit notes", () => {
   it("loads a clean valid credit note row, referencing target_invoice_id", async () => {
     const conn = mockConn([
+      [[], []], // existence pre-check: new row
       [{ affectedRows: 1, insertId: 0 } as any, []],
       [[{ c: 0 }], []],
       [{} as any, []],
@@ -263,7 +269,7 @@ describe("loadValidatedRows — credit notes", () => {
     expect(result.creditNotes).toEqual([
       { legacyId: 6001, outcome: "loaded", targetId: "credit-note-target-uuid-1" },
     ]);
-    const headerParams = conn.execute.mock.calls[0][1] as unknown[];
+    const headerParams = conn.execute.mock.calls[1][1] as unknown[];
     expect(headerParams[0]).toBe("credit-note-target-uuid-1"); // id
     expect(headerParams[1]).toBe("invoice-target-uuid-1"); // invoice_id (FK)
     expect(headerParams[headerParams.length - 1]).toBe(6001); // legacy_id
@@ -292,11 +298,13 @@ describe("loadValidatedRows — credit notes", () => {
 
   it("invoices load before credit notes (FK ordering) even when both are passed together", async () => {
     const invConn = mockConn([
+      [[], []],
       [{ affectedRows: 1, insertId: 0 } as any, []],
       [[{ c: 0 }], []],
       [{} as any, []],
     ]);
     const cnConn = mockConn([
+      [[], []],
       [{ affectedRows: 1, insertId: 0 } as any, []],
       [[{ c: 0 }], []],
       [{} as any, []],
