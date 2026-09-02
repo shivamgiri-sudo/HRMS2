@@ -499,6 +499,46 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
   return matches;
 }
 
+/**
+ * grn_validation_result.message is VARCHAR(500). POOLED_LINE_SHARE's message used to join one
+ * full sentence per overrun cost centre with no cap at all -- fine for the 1-2 cost centres a
+ * pooled line usually sees, but a genuinely shared branch-common line can have many drawing
+ * against it at once (that is the whole point of a pooled line: no per-cost-centre limit until
+ * Finance defines one), and the join grows without bound. Confirmed live 2026-09-02: raising a
+ * GRN against a pooled line with several cost centres already over their defined share failed
+ * outright with "Data too long for column 'message' at row 1" -- the validation step itself
+ * threw, so the GRN could not be raised at all.
+ *
+ * The full, untruncated list already lives in `details.overrun` on the same result row (nothing
+ * upstream of this was losing information); this only bounds what MySQL will actually accept
+ * for the display string. Shows as many complete sentences as fit under the limit, then names
+ * how many more, rather than cutting a sentence off mid-word.
+ */
+export const VALIDATION_MESSAGE_MAX = 480; // headroom under the real VARCHAR(500) limit
+export function summarizeOverrunList(
+  overrun: Array<{ costCentreName: string; head: string; definedShare: number; totalDraw: number }>
+): string {
+  const sentences = overrun.map(
+    (row) =>
+      `${row.costCentreName} has now drawn ${row.totalDraw.toFixed(2)} from the branch-common `
+      + `${row.head} line against a planned share of ${row.definedShare.toFixed(2)}`
+  );
+  let out = "";
+  let shown = 0;
+  for (const sentence of sentences) {
+    const candidate = out ? `${out}; ${sentence}` : sentence;
+    // Reserve room for the "+N more" suffix that a truncated list will need, except when this
+    // is the very last sentence and nothing will be left to summarize.
+    const suffixRoom = shown + 1 < sentences.length ? 20 : 0;
+    if (candidate.length > VALIDATION_MESSAGE_MAX - suffixRoom) break;
+    out = candidate;
+    shown += 1;
+  }
+  const remaining = sentences.length - shown;
+  if (remaining > 0) out += out ? `; +${remaining} more` : `${remaining} cost centre(s) over their planned share`;
+  return out;
+}
+
 async function buildValidations(connection: PoolConnection, grnId: string) {
   const [grnRows] = await connection.execute<RowDataPacket[]>(
     "SELECT * FROM grn_request WHERE id = ? LIMIT 1",
@@ -751,12 +791,7 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
       severity: overrun.length ? "warning" : "info",
       blocking: false,
       message: overrun.length
-        ? overrun
-          .map((row) =>
-            `${row.costCentreName} has now drawn ${row.totalDraw.toFixed(2)} from the branch-common `
-            + `${row.head} line against a planned share of ${row.definedShare.toFixed(2)}`
-          )
-          .join("; ")
+        ? summarizeOverrunList(overrun)
         : `Funded in part from ${pooledDraws.length} branch-common budget line(s), shared across every cost centre `
           + `(${poolTotal.toFixed(2)} remaining in the pool)`,
       details: {
@@ -770,6 +805,13 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
 
   await connection.execute("DELETE FROM grn_validation_result WHERE grn_request_id = ?", [grnId]);
   for (const result of results) {
+    // Second, independent line of defense: whatever a validator above produced, this never lets
+    // an oversized message reach the column and abort validation entirely -- the earlier failure
+    // mode was not a wrong warning, it was validation throwing and the GRN unable to be raised.
+    const message =
+      result.message.length > VALIDATION_MESSAGE_MAX
+        ? `${result.message.slice(0, VALIDATION_MESSAGE_MAX - 1)}…`
+        : result.message;
     await connection.execute(
       `INSERT INTO grn_validation_result
        (id, grn_request_id, validation_code, severity, validation_status,
@@ -777,7 +819,7 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
        VALUES (?,?,?,?,?,?,?,?)`,
       [
         randomUUID(), grnId, result.code, result.severity, result.status,
-        result.blocking ? 1 : 0, result.message, safeJson(result.details),
+        result.blocking ? 1 : 0, message, safeJson(result.details),
       ]
     );
   }
