@@ -1043,7 +1043,7 @@ export const attendanceEngineService = {
               `SELECT COALESCE(SUM(total_login_minutes), 0) AS mins
                FROM wfm_attendance_session
                WHERE employee_id = ? AND session_date = ?
-               AND login_time >= CONCAT(?, ' 07:00:00')`,
+               AND login_time >= CONCAT(?, ' 08:00:00')`,
               [employeeId, date, date]
             );
             actualMinutesOnWeekOff = Number((weekOffSessions[0] as any).mins ?? 0);
