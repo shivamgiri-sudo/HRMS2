@@ -59,12 +59,32 @@ CALL _m1644_add_col('exit_retention_action', 'created_at', 'DATETIME NOT NULL DE
 CALL _m1644_add_col('exit_retention_action', 'updated_at', 'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
 -- Back-fill created_at/created_by from the old performed_at/performed_by on any row that
--- already exists with only the 305 columns populated (harmless no-op once already backfilled
--- or on a table with 0 rows, which is the confirmed state of this table in production today).
-UPDATE exit_retention_action
-   SET created_at = COALESCE(created_at, performed_at, CURRENT_TIMESTAMP),
-       created_by = COALESCE(created_by, performed_by)
- WHERE created_by IS NULL;
+-- already exists with only the 305 columns populated.
+--
+-- Guarded, because performed_at/performed_by only exist where migration 305 built the table.
+-- Live production's exit_retention_action was NOT built that way — it has no performed_at and
+-- no performed_by at all — and MySQL resolves every column in an UPDATE at parse time, before
+-- it looks at a single row. So the unguarded form threw ER_BAD_FIELD_ERROR ("Unknown column
+-- 'performed_at' in 'field list'") even though the table holds 0 rows and the WHERE could
+-- never have matched. runPendingMigrations treats a failed migration as fatal, so that aborted
+-- boot and took production down on 2026-09-02 until this guard was added.
+--
+-- The ALTERs above already guard on INFORMATION_SCHEMA; this statement simply has to do the
+-- same, and for the same reason: this file must be a no-op where the columns are already
+-- right, and still correct on a fresh environment built from 305.
+SET @backfill_cols := (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'exit_retention_action'
+     AND COLUMN_NAME IN ('performed_at', 'performed_by')
+);
+SET @backfill_sql := IF(@backfill_cols = 2,
+  'UPDATE exit_retention_action
+      SET created_at = COALESCE(created_at, performed_at, CURRENT_TIMESTAMP),
+          created_by = COALESCE(created_by, performed_by)
+    WHERE created_by IS NULL',
+  'DO 0');
+PREPARE stmt FROM @backfill_sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CALL _m1644_add_index('exit_retention_action', 'idx_exit_retention_employee', '(employee_id)');
 
