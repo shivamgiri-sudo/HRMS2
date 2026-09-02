@@ -1832,7 +1832,7 @@ const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
 ];
 
 /** Returns the labels of mandatory documents this candidate has not provided. */
-async function findMissingMandatoryDocuments(candidateId: string): Promise<string[]> {
+export async function findMissingMandatoryDocuments(candidateId: string): Promise<string[]> {
   const [docRows] = await db.execute<RowDataPacket[]>(
     `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL`,
     [candidateId],
@@ -1841,16 +1841,29 @@ async function findMissingMandatoryDocuments(candidateId: string): Promise<strin
     .map((r) => `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`.toLowerCase())
     .filter(Boolean);
 
-  // DigiLocker pulls Aadhaar and PAN straight from the government source, so a
-  // completed DigiLocker session satisfies them without a manual re-upload.
-  const [bridgeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT digilocker_status FROM ats_onboarding_bridge WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+  // DigiLocker pulls straight from the government source, so a document type it
+  // actually verified is satisfied without a manual re-upload -- but ONLY that
+  // type. This used to treat any completed session (ats_onboarding_bridge.
+  // digilocker_status alone) as a blanket pass for both Aadhaar and PAN. That is
+  // wrong: downloadKycDocument returns ONE document, chosen by what the
+  // candidate consented to share in the DigiLocker portal -- see
+  // digilocker-evidence.ts, which autoCreateDigilockerVerifiedChecks() already
+  // uses to record candidate_bgv_check per check_type correctly. This function
+  // just wasn't reading that table, so an Aadhaar-only pull silently waived the
+  // PAN upload too. Reproduced against MAS63413 (candidate a7edfea8-...):
+  // check_type='aadhaar' is verified via digilocker, check_type='pan' is still
+  // 'manual_review' -- he has no PAN document on file and this function was
+  // reporting nothing missing.
+  const [verifiedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT check_type FROM candidate_bgv_check
+      WHERE candidate_id = ? AND check_type IN ('aadhaar', 'pan') AND status = 'verified'`,
     [candidateId],
   );
-  const digilockerDone = String(bridgeRows[0]?.digilocker_status ?? "") === "documents_received";
+  const digilockerVerified = new Set(verifiedRows.map((r) => String(r.check_type)));
 
   return MANDATORY_DOCUMENTS.filter((req) => {
-    if (digilockerDone && (req.matches.includes("aadhaar") || req.matches.includes("pan"))) return false;
+    if (digilockerVerified.has("aadhaar") && req.matches.includes("aadhaar")) return false;
+    if (digilockerVerified.has("pan") && req.matches.includes("pan")) return false;
     // "photo" must not be satisfied by "Photocopy of ..." style names, so compare
     // against the whole doc_type/doc_name text rather than a bare substring of one word.
     return !held.some((text) => req.matches.some((m) => text.includes(m)));
