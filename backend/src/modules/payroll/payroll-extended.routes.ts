@@ -353,18 +353,33 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         COALESCE(esa.ctc_annual / 12, spl.gross_salary)   AS CTCOffered,
         COALESCE(esa.ctc_annual / 12, spl.gross_salary)   AS CurrentCTC,
         COALESCE(spl.present_days, 0)                      AS ActualDays,
-        COALESCE(spl.paid_working_days, spl.present_days, 0) AS EarnedDays,
+        -- spl.paid_working_days is never populated by the payroll engine (always 0, every
+        -- run -- verified 2026-09-02), so the previous COALESCE(paid_working_days, ...)
+        -- here always picked that stored zero and silently reported EarnedDays=0 for every
+        -- employee. spl.final_payable_days IS populated and IS reliable: verified against
+        -- all 129,696 salary_prep_line rows ever created, there are zero cases where it
+        -- reads 0 while present_days is nonzero, and where it differs from
+        -- present_days+leave_days it is because it already clamps to the month's working
+        -- days (e.g. 30 present + 1 leave in a 30-day month stays 30, not 31) -- exactly
+        -- the earned-days figure this column is supposed to show. present_days is only a
+        -- fallback for the small set of legacy rows where final_payable_days is genuinely 0.
+        COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) AS EarnedDays,
         0                                                  AS ExtraDay,
         COALESCE(spl.leave_days, 0)                        AS Leave,
-        COALESCE(slc_basic.amount, 0)                      AS Basic1,
-        COALESCE(slc_hra.amount, 0)                        AS HRA1,
-        COALESCE(slc_bonus.amount, 0)                      AS Bonus1,
-        COALESCE(slc_conv.amount, 0)                       AS Conv1,
-        COALESCE(slc_portfolio.amount, 0)                  AS Portfolio1,
-        COALESCE(slc_special.amount, 0)                    AS SpecialAllowance1,
-        COALESCE(slc_other.amount, 0)                      AS OtherAllowance1,
-        COALESCE(slc_medical.amount, 0)                    AS MedicalAllowance1,
-        spl.gross_salary                                   AS Gross1,
+        -- Legacy's "1"-suffixed columns are the EARNED/pro-rated pay, not a repeat of the
+        -- offered value: earned = offered * EarnedDays / WorkingDays (confirmed against
+        -- db_bill.salary_data, the source system these headers were built from -- see
+        -- docs/finance/salary-reports-open-decisions-2026-09-02.md). Falls back to the
+        -- offered amount when WorkingDays is 0/unset rather than emitting NULL.
+        ROUND(COALESCE(COALESCE(slc_basic.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_basic.amount, 0)), 2) AS Basic1,
+        ROUND(COALESCE(COALESCE(slc_hra.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_hra.amount, 0)), 2) AS HRA1,
+        ROUND(COALESCE(COALESCE(slc_bonus.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_bonus.amount, 0)), 2) AS Bonus1,
+        ROUND(COALESCE(COALESCE(slc_conv.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_conv.amount, 0)), 2) AS Conv1,
+        ROUND(COALESCE(COALESCE(slc_portfolio.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_portfolio.amount, 0)), 2) AS Portfolio1,
+        ROUND(COALESCE(COALESCE(slc_special.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_special.amount, 0)), 2) AS SpecialAllowance1,
+        ROUND(COALESCE(COALESCE(slc_other.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_other.amount, 0)), 2) AS OtherAllowance1,
+        ROUND(COALESCE(COALESCE(slc_medical.amount, 0) * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), COALESCE(slc_medical.amount, 0)), 2) AS MedicalAllowance1,
+        ROUND(COALESCE(spl.gross_salary * COALESCE(NULLIF(spl.final_payable_days, 0), spl.present_days, 0) / NULLIF(spl.working_days, 0), spl.gross_salary), 2) AS Gross1,
         CASE WHEN spl.esic_employee > 0 THEN 'YES' ELSE 'NO' END AS ESIElig,
         CASE WHEN spl.pf_employee > 0 THEN 'YES' ELSE 'NO' END   AS PFELig,
         spl.esic_employee                                  AS ESIC,
