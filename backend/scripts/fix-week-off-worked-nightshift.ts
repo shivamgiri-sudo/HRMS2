@@ -64,12 +64,13 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
         row.employee_id,
         row.record_date
       );
+      // Write result back to DB (same upsert path as processDateBatch, respects is_locked=0)
+      await attendanceEngineService.upsertDailyRecord(result, 'system:nightshift-fix');
       if (result.status !== "week_off_worked") {
         results.fixed++;
         console.log(`  FIXED  ${row.record_date}  ${row.employee_id}  → ${result.status}  (was week_off_worked)`);
       } else {
         results.unchanged++;
-        // Still week_off_worked — may be genuinely worked day
         console.log(`  KEPT   ${row.record_date}  ${row.employee_id}  → week_off_worked (genuine)`);
       }
     } catch (e: any) {
