@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
+import { clientBillingNumberingService, assertCanonicalFinanceYear } from "./client-billing-numbering.service.js";
 
 export interface ProformaLineInput {
   particulars: string;
@@ -53,6 +53,11 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
   if (input.lines.length === 0) {
     throw Object.assign(new Error("At least one line item is required"), { statusCode: 400 });
   }
+  // Checked before any write: a malformed financeYear silently corrupts the eventual bill
+  // number (see assertCanonicalFinanceYear's own comment for the real incident this closes),
+  // and there is no way to fix it after mintBillNumber has already advanced the sequence
+  // counter at approval time -- refusing it here means a bad request never creates anything.
+  assertCanonicalFinanceYear(input.financeYear);
 
   const conn = await db.getConnection();
   const invoiceId = randomUUID();

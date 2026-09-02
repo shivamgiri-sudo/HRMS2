@@ -12,6 +12,55 @@ import { db } from "../../db/mysql.js";
 type Executor = { execute: typeof db.execute };
 
 /**
+ * The one accepted shape for financeYear: "2026-27" -- full 4-digit start year, 2-digit end
+ * year, end = (start + 1) mod 100. Enforced here because this is where the value turns into a
+ * printed number, and confirmed with a real production write (2026-09-02): a caller that sent
+ * "26-27" instead (the short form `client_invoice.finance_year` also stores, harmlessly, as a
+ * plain display column on migrated rows -- this is the one place the same string is not just
+ * display) minted bill number "09-01/-27" -- `"26-27".slice(2)` is `"-27"`, not "26-27". It
+ * generated live, passed every existing check, and would have been filed as-is; only found
+ * because someone asked "are you sure" and it was tested for real rather than assumed.
+ *
+ * The frontend already only ever sends the long form (CreateProformaSheet.tsx's
+ * financeYearOptions(), a closed dropdown, never free text -- see billingFieldOptions.ts's own
+ * comment, which already flagged this exact failure mode for the UI). This is the same
+ * guarantee enforced at the API boundary, so it holds for every caller, not only the one UI
+ * surface that happens to get it right today.
+ */
+export function assertCanonicalFinanceYear(financeYear: string): void {
+  const m = /^(\d{4})-(\d{2})$/.exec(financeYear);
+  if (!m) {
+    throw Object.assign(
+      new Error(`financeYear must be "YYYY-YY" (e.g. "2026-27"), got "${financeYear}"`),
+      { statusCode: 400 },
+    );
+  }
+  const startYear = Number(m[1]);
+  const endYearShort = Number(m[2]);
+  if ((startYear + 1) % 100 !== endYearShort) {
+    throw Object.assign(
+      new Error(`financeYear "${financeYear}" is not consecutive -- expected "${startYear}-${String((startYear + 1) % 100).padStart(2, "0")}"`),
+      { statusCode: 400 },
+    );
+  }
+}
+
+/** financeYear.slice(2) assuming the caller already validated the long form -- kept as a second,
+ *  independent line of defense (not the only one) so a caller that reaches this function by some
+ *  future path other than createProforma/createCreditNote still cannot mint a broken number. */
+function fyShortOf(financeYear: string): string {
+  // Reproduces "2026-27".slice(2) === "26-27" exactly (last 2 digits of the start year, the
+  // dash, the end year) -- NOT just the trailing 2-digit group, which would drop the start
+  // year's own last 2 digits and turn "2026-27" into "27".
+  const m = /^\d{2}(\d{2}-\d{2})$/.exec(financeYear);
+  if (m) return m[1];
+  // Not the canonical shape (assertCanonicalFinanceYear should already have refused it) --
+  // still produce something rather than throw mid-mint after the sequence counter already
+  // advanced, but make the malformed result unmistakable instead of silently plausible.
+  return `INVALID(${financeYear})`;
+}
+
+/**
  * Atomic counter mint, replacing legacy's `LOCK TABLES tbl_invoice READ` (wrong table, wrong
  * mode, no real serialization — confirmed race condition in the source audit). This uses
  * MySQL's well-known `INSERT ... ON DUPLICATE KEY UPDATE col = LAST_INSERT_ID(col + expr)`
@@ -75,7 +124,7 @@ async function mintBillNumber(stateCode: string, companyName: string, financeYea
   const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
   const n = await nextSequenceValue("bill", scopeKey, conn);
   const idx = n < 10 ? `0${n}` : String(n);
-  const fyShort = financeYear.slice(2); // "2026-27" -> "26-27", matches legacy substr($f_year1,2,6)
+  const fyShort = fyShortOf(financeYear); // "2026-27" -> "26-27", matches legacy substr($f_year1,2,6)
   return `${stateCode}-${idx}/${fyShort}`;
 }
 
@@ -93,7 +142,7 @@ async function mintCreditNoteNumber(stateCode: string, companyName: string, fina
   const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
   const n = await nextSequenceValue("credit_note", scopeKey, conn);
   const idx = n < 10 ? `0${n}` : String(n);
-  const fyShort = financeYear.slice(2);
+  const fyShort = fyShortOf(financeYear);
   return `CN-${stateCode}-${idx}/${fyShort}`;
 }
 

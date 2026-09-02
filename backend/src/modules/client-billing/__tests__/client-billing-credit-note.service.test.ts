@@ -5,9 +5,13 @@ const { getConnection } = vi.hoisted(() => ({ getConnection: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { getConnection } }));
 
 const { mintCreditNoteNumber } = vi.hoisted(() => ({ mintCreditNoteNumber: vi.fn() }));
-vi.mock("../client-billing-numbering.service.js", () => ({
-  clientBillingNumberingService: { mintCreditNoteNumber, mintProformaNumber: vi.fn(), mintBillNumber: vi.fn() },
-}));
+vi.mock("../client-billing-numbering.service.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client-billing-numbering.service.js")>();
+  return {
+    ...actual,
+    clientBillingNumberingService: { mintCreditNoteNumber, mintProformaNumber: vi.fn(), mintBillNumber: vi.fn() },
+  };
+});
 
 let clientBillingCreditNoteService: typeof import("../client-billing-credit-note.service.js")["clientBillingCreditNoteService"];
 beforeAll(async () => {

@@ -4,8 +4,9 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 let clientBillingNumberingService: typeof import("../client-billing-numbering.service.js")["clientBillingNumberingService"];
+let assertCanonicalFinanceYear: typeof import("../client-billing-numbering.service.js")["assertCanonicalFinanceYear"];
 beforeAll(async () => {
-  ({ clientBillingNumberingService } = await import("../client-billing-numbering.service.js"));
+  ({ clientBillingNumberingService, assertCanonicalFinanceYear } = await import("../client-billing-numbering.service.js"));
 });
 
 beforeEach(() => {
@@ -112,5 +113,52 @@ describe("conn parameter (Gap 3 — avoid mixing pool-level execute with an open
     expect(result).toBe("CN-09-04/26-27");
     expect(connExecute).toHaveBeenCalledTimes(1);
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("assertCanonicalFinanceYear", () => {
+  it("accepts the long form", () => {
+    expect(() => assertCanonicalFinanceYear("2026-27")).not.toThrow();
+  });
+
+  it("rejects the short form — the real 2026-09-02 production incident", () => {
+    // Sent live via the API as a plausible-looking value (it's how finance_year displays
+    // everywhere else in this schema), reached mintBillNumber unvalidated, and minted
+    // "09-01/-27" instead of "09-01/26-27" — "26-27".slice(2) is "-27". Confirmed against a
+    // real write before this fix; the invoice was rejected afterward as a cleanup, not left
+    // in production.
+    expect(() => assertCanonicalFinanceYear("26-27")).toThrow(/YYYY-YY/);
+  });
+
+  it("rejects a non-consecutive pair (a plausible typo, not just a format slip)", () => {
+    expect(() => assertCanonicalFinanceYear("2026-99")).toThrow(/not consecutive/);
+  });
+
+  it("rejects the 4-digit-both-halves typo billingFieldOptions.ts's own comment names", () => {
+    expect(() => assertCanonicalFinanceYear("2026-2027")).toThrow(/YYYY-YY/);
+  });
+
+  it("rejects garbage input without throwing something unrelated", () => {
+    expect(() => assertCanonicalFinanceYear("")).toThrow(/YYYY-YY/);
+    expect(() => assertCanonicalFinanceYear("not-a-year")).toThrow(/YYYY-YY/);
+  });
+});
+
+describe("mintBillNumber / mintCreditNoteNumber — malformed financeYear reaching the mint directly", () => {
+  // These two functions are a second, independent line of defense (fyShortOf), for a caller
+  // that reaches them by some path other than createProforma/createCreditNote (which already
+  // call assertCanonicalFinanceYear before either mint is ever attempted). The output is
+  // deliberately impossible to mistake for a real bill number, not silently plausible-but-wrong
+  // the way "09-01/-27" was.
+  it("mintBillNumber marks the number itself as invalid rather than silently truncating", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
+    const result = await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India Pvt Ltd", "26-27");
+    expect(result).toBe("09-01/INVALID(26-27)");
+  });
+
+  it("mintCreditNoteNumber does the same", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
+    const result = await clientBillingNumberingService.mintCreditNoteNumber("09", "Mas Callnet India Pvt Ltd", "26-27");
+    expect(result).toBe("CN-09-01/INVALID(26-27)");
   });
 });

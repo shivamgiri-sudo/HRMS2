@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
+import { clientBillingNumberingService, assertCanonicalFinanceYear } from "./client-billing-numbering.service.js";
 
 export interface CreditNoteLineInput {
   particulars: string;
@@ -58,6 +58,10 @@ async function createCreditNote(input: CreateCreditNoteInput): Promise<CreditNot
   if (input.lines.length === 0) {
     throw clientError("At least one line item is required");
   }
+  // Same reasoning as createProforma's identical check -- see assertCanonicalFinanceYear's own
+  // comment. Refused before any write, since mintCreditNoteNumber has the identical dependency
+  // on the long "YYYY-YY" form.
+  assertCanonicalFinanceYear(input.financeYear);
 
   const conn = await db.getConnection();
   const creditNoteId = randomUUID();
