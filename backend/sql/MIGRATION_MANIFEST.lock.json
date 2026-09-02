@@ -880,6 +880,7 @@
     "setup-dialer-kpi-metrics.sql",
     "verify_ats_fix.sql",
     "1645_bgv_report_permissions_hr_variants.sql",
-    "1646_report_permissions_hr_variants.sql"
+    "1646_report_permissions_hr_variants.sql",
+    "1649_employee_master_template_required_columns.sql"
   ]
 }
