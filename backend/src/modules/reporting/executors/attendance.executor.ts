@@ -301,11 +301,6 @@ export async function attendanceRegisterMonthly(
     // for why the sum is a ceiling and not a running total.
     const salDays = computeSalDays(paidBase, eligibleWO, holiday, daysInMonth);
 
-    // Uncapped — the same raw sum salDays above ceilings at daysInMonth, kept here as-is so it
-    // can legitimately exceed the calendar month. This is what surfaces who worked extra days
-    // (week-offs worked on top of a full month), not what payroll pays for.
-    const totalWorkingDays = Math.round(rawSalDays * 100) / 100;
-
     return {
       sno:             idx + 1,
       emp_code:        emp.emp_code,
