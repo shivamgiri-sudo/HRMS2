@@ -2,6 +2,54 @@ import { apiBaseUrl } from "@/lib/apiBase";
 
 const HRMS_API_URL = apiBaseUrl();
 
+/**
+ * KPI engine types, mirroring backend/src/modules/portal/portal.types.ts's PortalKpiMetric/
+ * PortalRag and portal.kpi-engine.service.ts's ProcessKpiResult. PortalKpiBoard.tsx imports
+ * these but they were never added here -- same dropped-during-merge gap as the backend side,
+ * and it broke the frontend build the same way. PortalKpiBoard is not yet wired into
+ * PortalProcessDashboard.tsx (still on the old getKpis() shape below) -- that integration is
+ * unfinished elsewhere and out of scope here; this only restores the types so the file compiles.
+ */
+export type PortalRag = "red" | "amber" | "green" | "no_data";
+
+export interface SparklinePoint {
+  period: string;
+  value: number;
+}
+
+export interface PortalKpiMetric {
+  metric_code: string;
+  metric_name: string;
+  unit: string;
+  direction: "higher_is_better" | "lower_is_better";
+  target: number;
+  target_source: "process_specific" | "portal_default" | "engine_fallback";
+  actual: number | null;
+  achievement_pct: number | null;
+  rag: PortalRag;
+  description: string | null;
+  no_data_reason: string | null;
+  numerator: number | null;
+  denominator: number | null;
+  delta_vs_previous: number | null;
+  improved: boolean | null;
+  sparkline: SparklinePoint[];
+}
+
+export interface PortalKpiDetail {
+  process_id: string;
+  period: string;
+  metrics: PortalKpiMetric[];
+  summary: {
+    active_headcount: number;
+    employees_with_activity: number;
+    expected_days: number;
+    unconfirmed_days: number;
+    inferred_process_pct: number;
+    data_through: string | null;
+  };
+}
+
 function getPortalToken(): string | null {
   return localStorage.getItem("portal_token");
 }
