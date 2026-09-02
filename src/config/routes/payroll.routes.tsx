@@ -20,6 +20,7 @@ const PayrollOvertimeManagement = lazy(() => import("@/pages/PayrollOvertimeMana
 const PayrollConfigFlags        = lazy(() => import("@/pages/payroll/PayrollConfigFlags"));
 const RecalculationQueue        = lazy(() => import("@/pages/payroll/RecalculationQueue"));
 const AttendanceControlTower    = lazy(() => import("@/pages/payroll/AttendanceControlTower"));
+const PayrollExceptionControl   = lazy(() => import("@/pages/payroll/PayrollExceptionControl"));
 const RunningPayrollBreakdown   = lazy(() => import("@/pages/payroll/RunningPayrollBreakdown"));
 const HolidayMaster             = lazy(() => import("@/pages/payroll/HolidayMaster"));
 // Legacy redirect-only pages removed — routes below use Navigate instead
@@ -50,6 +51,7 @@ const PfManagement              = lazy(() => import("@/pages/payroll/PfManagemen
 // Merged consolidated pages
 const PaymentDisbursalCenter    = lazy(() => import("@/pages/payroll/PaymentDisbursalCenter"));
 const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollReadinessDashboard"));
+const BranchCostCentreAttendance = lazy(() => import("@/pages/payroll/BranchCostCentreAttendance"));
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
 const PayrollVarianceAnalysis   = lazy(() => import("@/pages/payroll/PayrollVarianceAnalysis"));
 const PayrollRunLifecycle       = lazy(() => import("@/pages/payroll/PayrollRunLifecycle"));
@@ -183,6 +185,14 @@ export const payrollRouteElements = (
           the grants actually sit on — the same consolidation 1101 did for TEAM_ATTENDANCE,
           which had the identical two-code split. */}
       <Route path="/payroll/attendance-control-tower" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','payroll','hr','wfm','branch_head']}><Gate pageCode="PAYROLL_ATTENDANCE_CONTROL_TOWER"><AttendanceControlTower /></Gate></ProtectedRoute>} />
+      {/* Exception Control — per-employee COSEC exceptions and month-level payable days. Served
+          under the Attendance Control Tower page code rather than a new one: the grants there
+          already sit on exactly the Payroll Head population this screen is for, and a new code
+          would need role_page_access rows before anyone could open it. The route's role list is
+          narrower than that page's on purpose — this screen writes attendance and payroll
+          inputs, so the read-only roles the Control Tower admits (hr, wfm, branch_head) are
+          deliberately not here, matching the backend's own write-role check. */}
+      <Route path="/payroll/exception-control"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_admin']}><Gate pageCode="PAYROLL_ATTENDANCE_CONTROL_TOWER"><PayrollExceptionControl /></Gate></ProtectedRoute>} />
       <Route path="/payroll/running-breakdown"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm','employee']}><Gate pageCode="PAYROLL_RUNNING_BREAKDOWN"><RunningPayrollBreakdown /></Gate></ProtectedRoute>} />
       <Route path="/payroll/holiday-master"      element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_HOLIDAY_MASTER"><HolidayMaster /></Gate></ProtectedRoute>} />
       <Route path="/payroll/holiday-work"           element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_HOLIDAY_WORK"><HolidayWork /></Gate></ProtectedRoute>} />
@@ -192,6 +202,11 @@ export const payrollRouteElements = (
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><Gate pageCode="PAYROLL_NOC"><NocManagement /></Gate></ProtectedRoute>} />
       {/* Payroll Readiness Dashboard — merged page with scope toggle for branch/process */}
       <Route path="/payroll/readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','payroll_hr','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><PayrollReadinessDashboard /></Gate></ProtectedRoute>} />
+      {/* Cost-centre attendance sign-off — the drill-down behind the readiness page's
+          "Attendance Data Ready" item. Same page code as its parent, so the RBAC grants that
+          already exist for PAYROLL_BRANCH_READINESS govern it and no role can reach one but
+          not the other. */}
+      <Route path="/payroll/readiness/cost-centres" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','payroll_hr','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><BranchCostCentreAttendance /></Gate></ProtectedRoute>} />
       <Route path="/payroll/branch-readiness"   element={<ReadinessScopeRedirect scope="branch" />} />
       <Route path="/payroll/process-readiness"  element={<ReadinessScopeRedirect scope="process" />} />
       <Route path="/payroll/salary-verification" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','wfm','process_manager','admin']}><Gate pageCode="PAYROLL_SALARY_VERIFICATION"><ProcessSalaryVerify /></Gate></ProtectedRoute>} />

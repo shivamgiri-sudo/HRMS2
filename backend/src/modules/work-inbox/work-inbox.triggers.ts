@@ -267,6 +267,71 @@ export async function triggerPayrollAttendanceFreezeRequest(
   });
 }
 
+/**
+ * Cost-centre attendance sign-off chain (payroll-cc-attendance.service.ts).
+ *
+ * entityId is the finalization row id, not the branch id, so each cost centre's item is distinct —
+ * createWorkItemIfNotExists dedupes on (itemType, entityType, entityId), and keying on the branch
+ * would have collapsed every cost centre in a branch into one notification.
+ */
+export async function triggerCcAttendanceFinalized(
+  branchId: string,
+  finalizationId: string,
+  month: string,
+  employeeCount: number
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "CC_ATTENDANCE_FINALIZED",
+    title: `Cost-centre attendance finalized for ${month} — awaiting your approval`,
+    description: `Branch Payroll HR has finalized a cost centre's attendance (${employeeCount} employees) for ${month}. Review the employee day counts and approve, or send it back with a reason.`,
+    moduleCode: "payroll",
+    entityType: "cc_attendance",
+    entityId: finalizationId,
+    assignedToRole: "branch_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("CC_ATTENDANCE_FINALIZED"),
+  });
+}
+
+export async function triggerCcAttendanceBranchApproved(
+  branchId: string,
+  finalizationId: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "CC_ATTENDANCE_BRANCH_APPROVED",
+    title: `Cost-centre attendance approved by Branch Head for ${month}`,
+    description: `A cost centre's attendance for ${month} has cleared Branch Head approval and is waiting on final HO Payroll Head approval.`,
+    moduleCode: "payroll",
+    entityType: "cc_attendance",
+    entityId: finalizationId,
+    assignedToRole: "payroll_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("CC_ATTENDANCE_BRANCH_APPROVED"),
+  });
+}
+
+export async function triggerCcAttendanceUnlockRequested(
+  branchId: string,
+  finalizationId: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "CC_ATTENDANCE_UNLOCK_REQUESTED",
+    title: `Unlock requested for an approved cost centre — ${month}`,
+    description: `A branch has found a pending attendance correction after HO approval for ${month} and is asking for the cost centre to be unlocked. Granting it sends the cost centre back through all three approval stages.`,
+    moduleCode: "payroll",
+    entityType: "cc_attendance",
+    entityId: finalizationId,
+    assignedToRole: "payroll_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("CC_ATTENDANCE_UNLOCK_REQUESTED"),
+  });
+}
+
 export async function triggerPayrollProcessSignOff(
   branchId: string,
   processId: string,
