@@ -139,6 +139,32 @@ const KNOWN_GAPS: Record<string, string> = {
   // force — it failed this push and sent me here, rather than letting four stale entries sit
   // in a list that is supposed to record what is actually missing.
 
+  // ── KPI Studio (src/hooks/useKpiStudio.ts), added 2026-09-02 ───────────────────────────
+  // Same gap as api-endpoint-existence.contract.test.ts's KNOWN_MISSING list (see that file
+  // for the fuller explanation) -- no backend/src/modules/kpi-studio directory exists at all,
+  // so this is 23 call sites against a feature that was never built server-side, not 23
+  // individually mis-pointed URLs.
+  "GET /api/kpi-studio/capability": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/formula-help": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/metrics": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/scope-options": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/data-sources": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/data-sources/:p": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/data-sources/:p/columns": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/:p": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/definitions/:p/coverage": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/validate-formula": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/definitions/validate": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/preview": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/definitions": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "DELETE /api/kpi-studio/definitions/:p": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/metrics": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/data-sources": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/data-sources/:p/fields": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "DELETE /api/kpi-studio/fields/:p": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/compute": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "POST /api/kpi-studio/manual-value": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
+  "GET /api/kpi-studio/explain/:p/:p": "No backend module exists for KPI Studio. See api-endpoint-existence.contract.test.ts's KNOWN_MISSING block for the full explanation.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
