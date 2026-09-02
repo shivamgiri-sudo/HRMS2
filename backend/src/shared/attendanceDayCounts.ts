@@ -80,9 +80,28 @@ export function countDayCodes(getCell: (day: number) => string, daysInMonth: num
   return counts;
 }
 
-/** Paid base, the input calculateWeekoffEligibility() expects: a half-day earns half a day. */
+/**
+ * Paid base, the input calculateWeekoffEligibility() expects: a half-day earns half a day.
+ *
+ * Approved leave counts as a full day, because that is what the engine that actually PAYS
+ * people does — payrollCalculate.service.ts computes its paid_base as
+ *   present 1.0 | late 1.0 | half_day 0.5 | leave_approved 1.0 | else 0
+ * and this function feeds the two surfaces that are supposed to show what payroll will pay:
+ * the cost-centre attendance sign-off grid and the attendance register.
+ *
+ * Omitting leave here made both reports disagree with the payslip, in two compounding ways.
+ * A lower paid base drops the employee down calculateWeekoffEligibility()'s slab table, so
+ * they were shown FEWER week-offs than payroll grants — and then the missing leave days were
+ * absent from sal_days as well. On the live August-2026 HEAD OFFICE cost centre that read as
+ * 20 salary days against payroll's 30 for an employee with 16 present and 8 approved leave:
+ * a ten-day gap on the very screen three roles sign off on before the run.
+ *
+ * This is a REPORTING correction, not a change to anyone's pay. payrollCalculate.service.ts
+ * has always counted leave in its own SQL and is untouched; these two reports now agree with
+ * it instead of understating it.
+ */
 export function computePaidBase(counts: DayCounts): number {
-  return counts.present + counts.hd * 0.5 + counts.od;
+  return counts.present + counts.hd * 0.5 + counts.od + counts.leave;
 }
 
 /**
