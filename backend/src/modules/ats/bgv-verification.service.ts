@@ -9,6 +9,7 @@ import { loadAsyncBgvTriggerContext, validateOnboardingToken, decryptPanForProvi
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
+import { encrypt } from "../../utils/encryption.js";
 
 const hashValue = (value: unknown) => {
   const normalized = String(value ?? "").trim().toUpperCase();
@@ -777,15 +778,24 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
       result.status === "verified" ? new Date() : null,
     ]
   );
+  // account_no_encrypted was missing from this SET list, so a verification could
+  // succeed here (candidate_bank_verification below correctly records it worked)
+  // while the number itself never made it into candidate_onboarding_bank_detail --
+  // a second, independent path to the same "verified but unretrievable" gap that
+  // saveBankDetails' resave-wipe produces. COALESCE so this never overwrites an
+  // already-good stored value with NULL on a re-verify call.
+  const accountNoEncrypted = accountNo ? encrypt(String(accountNo).trim()) : null;
   await db.execute(
     `UPDATE candidate_onboarding_bank_detail
         SET account_no_masked = COALESCE(?, account_no_masked), account_no_hash = COALESCE(?, account_no_hash),
+            account_no_encrypted = COALESCE(?, account_no_encrypted),
             ifsc_code = COALESCE(?, ifsc_code), verification_status = ?,
             provider_name = ?, verification_ref = ?, verified_account_holder_name = ?, verified_at = ?, updated_at = NOW()
       WHERE candidate_id = ?`,
     [
       accountNo ? maskLast4(accountNo) : null,
       accountNo ? hashValue(accountNo) : null,
+      accountNoEncrypted,
       ifscCode || null,
       result.status,
       result.providerKey,

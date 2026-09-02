@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1064,
-  "columnCount": 15323,
+  "columnCount": 15324,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -3663,6 +3663,7 @@
       "pan_number_encrypted",
       "aadhaar_number_masked",
       "aadhaar_number_hash",
+      "aadhaar_number_encrypted",
       "source_type",
       "source",
       "profile_status",

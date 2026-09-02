@@ -881,6 +881,23 @@ export function decryptPanForProvider(encrypted: unknown): string | null {
   }
 }
 
+/**
+ * Decrypts a stored Aadhaar number for a statutory consumer (EPFO UAN/KYC seeding).
+ * Mirrors decryptPanForProvider exactly. Callers must not forward the return value
+ * to the browser or log it -- this exists for server-side statutory filing use only.
+ */
+export function decryptAadhaarForProvider(encrypted: unknown): string | null {
+  const value = nonEmptyString(encrypted);
+  if (!value) return null;
+  try {
+    const aadhaar = String(decryptPii(value)).trim();
+    return /^[0-9]{12}$/.test(aadhaar) ? aadhaar : null;
+  } catch (error) {
+    console.warn("[BGV] Could not decrypt stored Aadhaar:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 export async function loadAsyncBgvTriggerContext(
   candidateId: string,
   decryptAccountNumber: (value: string) => string = decryptPii,
@@ -1346,8 +1363,21 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   // numbers already get: only the server decrypts it, and the browser still only
   // ever receives the masked value.
   const panEncrypted = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan) ? encrypt(rawPan) : null;
-  const aadhaarMasked = maskAadhaar(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
-  const aadhaarHash = hashValue(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number);
+  // Same masked-value-echoed-back-on-autosave guard as PAN above (2026-09-01 fix),
+  // applied proactively here rather than waiting to reproduce it: a KYC step that
+  // seeds its Aadhaar input from maskAadhaar()'s own "XXXX-XXXX-1234" shape would
+  // otherwise autosave that mask as if it were the real number.
+  const incomingAadhaarRaw = String(input.aadhaarNumber ?? input.aadhar_number ?? input.aadhaar_number ?? "").trim();
+  const incomingAadhaarIsMasked = /^XXXX-XXXX-\d{4}$/i.test(incomingAadhaarRaw);
+  const rawAadhaar = incomingAadhaarIsMasked ? "" : incomingAadhaarRaw.replace(/\D/g, "");
+  const aadhaarMasked = rawAadhaar ? maskAadhaar(rawAadhaar) : maskAadhaar(input.aadhaar_number_masked);
+  const aadhaarHash = rawAadhaar ? hashValue(rawAadhaar) : null;
+  // Encrypted at rest — added 2026-09-02 for EPFO KYC/UAN seeding, which needs the
+  // complete Aadhaar number. Same treatment as PAN/bank account: only the server
+  // decrypts it, the browser only ever receives the masked value. See
+  // sql/1650_aadhaar_encrypted_storage_candidate_onboarding.sql for the compliance
+  // context (Aadhaar Act s.29) this decision accepts.
+  const aadhaarEncrypted = /^[0-9]{12}$/.test(rawAadhaar) ? encrypt(rawAadhaar) : null;
 
   // Validate and prepare DOB (allow null, but convert empty strings to null)
   const dobValue = input.dateOfBirth ?? tokenData.date_of_birth;
@@ -1362,12 +1392,12 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         permanent_address, permanent_state, permanent_city, permanent_pincode,
         present_address, present_state, present_city, present_pincode, mobile_number, alt_mobile_number,
         personal_email_id, official_email_id, pan_number_masked, pan_number_hash, pan_number_encrypted, aadhaar_number_masked,
-        aadhaar_number_hash, passport_no, driving_license_no,
+        aadhaar_number_hash, aadhaar_number_encrypted, passport_no, driving_license_no,
         uan_number, epf_number, esic_number,
         source_type, source, profile_status,
         mother_name, emergency_contact_name, emergency_contact_relation, emergency_contact_mobile,
         nationality, religion, category, address_proof_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
@@ -1385,6 +1415,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         pan_number_encrypted = COALESCE(VALUES(pan_number_encrypted), pan_number_encrypted),
         aadhaar_number_masked = COALESCE(VALUES(aadhaar_number_masked), aadhaar_number_masked),
         aadhaar_number_hash = COALESCE(VALUES(aadhaar_number_hash), aadhaar_number_hash),
+        aadhaar_number_encrypted = COALESCE(VALUES(aadhaar_number_encrypted), aadhaar_number_encrypted),
         passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
         uan_number = VALUES(uan_number), epf_number = VALUES(epf_number), esic_number = VALUES(esic_number),
         source_type = VALUES(source_type), source = VALUES(source),
@@ -1430,6 +1461,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panEncrypted,
       aadhaarMasked,
       aadhaarHash,
+      aadhaarEncrypted,
       input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
       input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
       input.uanNumber ?? null,
@@ -1564,8 +1596,18 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
      ON DUPLICATE KEY UPDATE
        bank_name = VALUES(bank_name), branch_name = VALUES(branch_name), account_holder_name = VALUES(account_holder_name),
-       account_no_masked = VALUES(account_no_masked), account_no_hash = VALUES(account_no_hash),
-       account_no_encrypted = VALUES(account_no_encrypted), ifsc_code = VALUES(ifsc_code),
+       -- The frontend deliberately leaves the account-number field blank on reload
+       -- ("re-enter for security"), so a resave that only touches bank name/branch
+       -- (or is triggered again after the candidate already verified successfully)
+       -- submits no new account number. Overwriting unconditionally here wiped a
+       -- previously-saved (and possibly already-verified) account number to NULL —
+       -- reproduced against MAS63413: verified 2026-08-24 06:37:56, then the very
+       -- next save 24s later already shows account_no_encrypted = NULL. COALESCE
+       -- keeps the existing stored value whenever this submission has none.
+       account_no_masked = COALESCE(VALUES(account_no_masked), account_no_masked),
+       account_no_hash = COALESCE(VALUES(account_no_hash), account_no_hash),
+       account_no_encrypted = COALESCE(VALUES(account_no_encrypted), account_no_encrypted),
+       ifsc_code = VALUES(ifsc_code),
        account_type = VALUES(account_type), cancelled_cheque_document_id = VALUES(cancelled_cheque_document_id),
        name_on_cheque = VALUES(name_on_cheque),
        updated_at = NOW()`,
