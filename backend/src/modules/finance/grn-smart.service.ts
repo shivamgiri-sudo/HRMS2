@@ -4,6 +4,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "../../db/mysql.js";
+import { isValidGstin } from "../gst/gst-export.service.js";
 import { aiProviderConfigService } from "../ai/ai-provider-config.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
@@ -1002,6 +1003,31 @@ async function reverseConsumedAllocations(connection: PoolConnection, allocation
       [allocations[0].grn_request_id]
     );
   }
+}
+
+/**
+ * Whether a just-confirmed GRN extraction's vendorGstin should be written back onto that
+ * vendor's own vendor_master.gst_number row, and what to write.
+ *
+ * Only fires when the confirmed value is itself checksum-valid AND the vendor's current
+ * gst_number is NOT already a trustworthy value of its own — never overwrite a value that
+ * already passes. Two disagreeing but both-valid GSTINs on the same vendor is a real
+ * discrepancy for a human to resolve, not something to silently pick a side on by whichever
+ * GRN happened to get confirmed most recently.
+ *
+ * Pure and separately tested (client-billing-numbering.service.ts's
+ * assertCanonicalFinanceYear/fyShortOf split follows the same shape) so this decision is
+ * provable without mocking confirmExtraction's whole transaction.
+ */
+export function resolveVendorGstinBackfill(
+  currentGstin: string,
+  confirmedGstin: string
+): string | null {
+  const confirmed = confirmedGstin.trim().toUpperCase();
+  if (!confirmed || !isValidGstin(confirmed)) return null;
+  const current = currentGstin.trim().toUpperCase();
+  if (current && isValidGstin(current)) return null;
+  return confirmed;
 }
 
 export const grnSmartService = {
@@ -2383,6 +2409,28 @@ export const grnSmartService = {
           WHERE grn_request_id = ? AND confirmed_at IS NULL`,
         [actorUserId, grnId]
       );
+
+      // Backfill vendor_master.gst_number from a real, human-confirmed extraction — the other
+      // half of resolveCanonicalVendor's fix (grn.service.ts): that only reads vendor_master, it
+      // never writes it, so a vendor with no trustworthy GSTIN there stays that way on every
+      // FUTURE GRN even after someone correctly confirms it on THIS one.
+      if (grn.vendor_id) {
+        const [vendorRows] = await connection.execute<RowDataPacket[]>(
+          `SELECT gst_number FROM vendor_master WHERE id = ? LIMIT 1`,
+          [grn.vendor_id]
+        );
+        const backfill = resolveVendorGstinBackfill(
+          String(vendorRows[0]?.gst_number ?? ""),
+          String(fields.vendorGstin ?? "")
+        );
+        if (backfill) {
+          await connection.execute(
+            `UPDATE vendor_master SET gst_number = ? WHERE id = ?`,
+            [backfill, grn.vendor_id]
+          );
+        }
+      }
+
       await connection.commit();
     } catch (error) {
       await connection.rollback();
