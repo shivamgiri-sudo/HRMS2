@@ -34,6 +34,16 @@ function actor(req: AuthenticatedRequest) {
 
 router.use(requireAuth);
 
+/** GET /api/gst/registrations — the (entity, GSTIN) pairs a batch can be generated for. */
+router.get(
+  "/registrations",
+  requireRole(...GST_READ_ROLES),
+  h(async (_req, res) => {
+    const data = await gstExportService.listRegistrations();
+    return res.json({ success: true, data });
+  })
+);
+
 /** POST /api/gst/exports — generate a batch for one registration + month. */
 router.post(
   "/exports",

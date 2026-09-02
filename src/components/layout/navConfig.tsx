@@ -401,6 +401,7 @@ export const navGroups: NavGroup[] = [
           { label: "Billability & Seat Cost", href: "/finance/billability",              icon: ic(Receipt),      roles: ["super_admin","finance","payroll_head","payroll_branch"], pageCode: "FINANCE_BILLABILITY_SEAT_COST", description: "Which roles the client pays for, seat rates, and support cost splits" },
           { label: "Salary Voucher", href: "/finance/salary-voucher", icon: ic(Receipt), roles: ["super_admin","finance_head","payroll_hr"], pageCode: "FINANCE_SALARY_VOUCHER", description: "The Tally journal a payroll run will post, per company and branch" },
           { label: "Client Billing", href: "/finance/client-billing", icon: ic(FileText), roles: ["super_admin","admin","finance","finance_head","accounts_head"], pageCode: "FINANCE_CLIENT_BILLING", description: "Client proforma invoices, invoices and credit notes" },
+          { label: "GST / Tally Export", href: "/finance/gst-export", icon: ic(FileText), roles: ["super_admin","admin","finance","finance_head","accounts_head","branch_admin"], pageCode: "FINANCE_GST_EXPORT", description: "Generate the GSTR-1/3B/Tally sales export for a registration and month" },
           // Roles mirror GRN_READ_ROLES (backend/src/modules/finance/grn.routes.ts). Two-way drift
           // before: payroll_head was listed and is NOT in that list, so it opened a page whose
           // list, summary and attribution calls all 403 — an empty shell; while branch_admin and

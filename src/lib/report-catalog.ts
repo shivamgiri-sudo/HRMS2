@@ -726,6 +726,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
       { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
       { key: "weekoff_count", label: "W", format: "number", width: 40, align: "center" },
+      { key: "total_working_days", label: "Total Working Days", format: "number", width: 110, align: "right" },
       { key: "sal_days", label: "SalDays", format: "number", width: 70, align: "right" },
       { key: "total", label: "Total", format: "number", width: 50, align: "center" },
     ],

@@ -54,6 +54,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/expenses/finance": "EXPENSE_FINANCE",
   "/finance/billability": "FINANCE_BILLABILITY_SEAT_COST",
   "/finance/salary-voucher": "FINANCE_SALARY_VOUCHER",
+  "/finance/gst-export": "FINANCE_GST_EXPORT",
   "/finance/branch-budget": "FINANCE_BRANCH_BUDGET",
   "/finance/annual-budget-summary": "FINANCE_ANNUAL_BUDGET_SUMMARY",
   "/finance/unlinked-grn-review": "FINANCE_UNLINKED_GRN_REVIEW",
