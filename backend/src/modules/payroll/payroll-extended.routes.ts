@@ -18,6 +18,19 @@ import { resolveAccountNumber, resolveAccountNumberWithConflict } from "../../sh
 const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
 /** Report-style exports row-filter to these roles' assigned scope instead of denying. */
 const PAYROLL_REPORT_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
+
+/**
+ * Convert a "YYYY-MM-DD" calendar date into the Excel/Lotus 1900-date-system serial
+ * number (day 0 = 1899-12-30, matching Excel's leap-year-bug base). Used instead of
+ * handing SheetJS a JS Date object because SheetJS's Date->serial conversion runs off
+ * the *host* timezone offset — on a non-UTC server that silently shifts the serial by
+ * a fraction of a day (verified: a plain `new Date(y,m-1,d)` here produced 46203.0001
+ * instead of 46203 under IST). Pure UTC epoch arithmetic sidesteps that entirely.
+ */
+function excelDateSerial(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+}
 const ORG_WIDE_REQUIRED_MSG =
   "This export requires org-wide payroll scope. A branch-scoped export would produce a partial payment file, which is indistinguishable from a complete one once downloaded.";
 
@@ -318,6 +331,11 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         COALESCE(desm.designation_name, '')                AS Designation,
         COALESCE(e.profile_type, '')                       AS Profile,
         'InHouse'                                          AS EmployeeFor,
+        -- employees.is_billable exists (migration 413) but was added DEFAULT 1 and has
+        -- never been backfilled -- verified live 2026-09-02: all 58,975 employees read 1.
+        -- Wiring it in would print "Yes" for every row, which is a confident wrong answer,
+        -- not a fix -- the legacy sheet has real No values for real employees (e.g. 24852C).
+        -- Leaving this blank until the column is actually populated from a real source.
         ''                                                 AS Billable,
         COALESCE(bm.branch_name, '')                       AS Branch,
         COALESCE(slc_basic.amount, 0)                      AS Basic,
@@ -348,7 +366,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         COALESCE(slc_medical.amount, 0)                    AS MedicalAllowance1,
         spl.gross_salary                                   AS Gross1,
         CASE WHEN spl.esic_employee > 0 THEN 'YES' ELSE 'NO' END AS ESIElig,
-        CASE WHEN spl.pf_employee > 0 THEN 'YES' ELSE 'NO' END   AS PFElig,
+        CASE WHEN spl.pf_employee > 0 THEN 'YES' ELSE 'NO' END   AS PFELig,
         spl.esic_employee                                  AS ESIC,
         spl.pf_employee                                    AS EPF,
         COALESCE(spl.tds, 0)                               AS IncomeTax,
@@ -375,7 +393,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
         0                                                  AS OtherDeduction,
         ''                                                 AS OtherDeductionRemarks,
         spl.total_deductions                               AS TotalDeduction,
-        r.run_month                                        AS SalDate,
+        LAST_DAY(STR_TO_DATE(CONCAT(r.run_month, '-01'), '%Y-%m-%d')) AS SalDate,
         COALESCE(eu.uan, e.uan_number, '')                        AS UAN,
         COALESCE(eu.member_id, e.epf_number, '')           AS EPFNo,
         COALESCE(e.esic_number, '')                        AS ESICNo,
@@ -485,7 +503,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
     MedicalAllowance1: Number(row.MedicalAllowance1),
     Gross1: Number(row.Gross1),
     ESIElig: row.ESIElig,
-    PFElig: row.PFElig,
+    PFELig: row.PFELig,
     ESIC: Number(row.ESIC),
     EPF: Number(row.EPF),
     IncomeTax: Number(row.IncomeTax),
@@ -512,7 +530,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
     OtherDeduction: Number(row.OtherDeduction),
     OtherDeductionRemarks: row.OtherDeductionRemarks,
     TotalDeduction: Number(row.TotalDeduction),
-    SalDate: row.SalDate,
+    SalDate: excelDateSerial(row.SalDate),
     UAN: row.UAN,
     EPFNo: row.EPFNo,
     ESICNo: row.ESICNo,
@@ -542,6 +560,18 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(sheetData);
+
+  // SalDate carries an Excel serial number (see excelDateSerial above) so it survives
+  // any server timezone unscathed; stamp the legacy sheet's own display format on that
+  // column so it still reads as a date in Excel/Tally, not a bare integer.
+  if (sheetData.length > 0) {
+    const salDateCol = XLSX.utils.encode_col(Object.keys(sheetData[0]).indexOf("SalDate"));
+    for (let i = 0; i < sheetData.length; i++) {
+      const cell = ws[`${salDateCol}${i + 2}`]; // +2: row 1 is the header
+      if (cell) cell.z = "m/d/yy";
+    }
+  }
+
   XLSX.utils.book_append_sheet(wb, ws, "Salary Sheet");
 
   const runMonthLabel = String(run.run_month).replace("-", " ");
