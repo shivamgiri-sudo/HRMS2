@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
-import { canonicalPnlService } from "./canonical-pnl.service.js";
+import { getCachedAllocationSummary, normalizePeriod } from "./canonical-pnl.service.js";
 import {
   getDriverRevenueActuals, getIndirectCostActuals, getInvoicedRevenueActuals, getSeatRevenueActuals,
   type ActualsByKey, type SeatRevenueActuals,
@@ -521,9 +521,39 @@ export interface StatementDependencies {
   }>>;
 }
 
+/*
+ * PERF FIX (2026-09-02): getStatement() below only ever reads summary.rows/.generatedAt/
+ * .calculationEngine from this dependency — never .trend or the extra .kpis fields
+ * canonicalPnlService.getSummary() computes. That wrapper unconditionally ALSO computes a 6-month
+ * trend (its own getTrend(), 6 more calls into the allocation engine, each documented there as
+ * ~19-33s on a cold cache) and a revenue-risk row count — entirely to serve fields this statement
+ * view discards.
+ *
+ * Confirmed live 2026-09-02: GET /api/finance/pnl/statement was needing 2-3 attempts to load,
+ * each pending 60-90s+ before the frontend gave up (net::ERR_ABORTED) and the UI showed "Could not
+ * load the statement for this period." This function was the reason: every cache-miss request was
+ * firing 7 allocation-engine computations (getSummary's own + getTrend's 6) instead of 1.
+ *
+ * Fix: call the exact SAME cache canonicalPnlService.getSummary() itself uses
+ * (getCachedAllocationSummary, unchanged — same key format, same 60s TTL, shared with every other
+ * caller of that cache) but skip the trend/kpis wrapper around it. Cuts the fan-out from 7
+ * allocation computations to 1 per cache miss. summary.rows are byte-for-byte the same rows
+ * canonicalPnlService.getSummary() would have returned — nothing about what is computed changes,
+ * only the unused trend/kpis work is no longer done on this path.
+ */
+async function getStatementSummary(filters: Partial<PnlQueryFilters>) {
+  const period = normalizePeriod(filters.period);
+  const summary = await getCachedAllocationSummary({ ...filters, period });
+  return {
+    rows: summary.rows,
+    generatedAt: summary.generatedAt,
+    calculationEngine: "bpo_allocation_v2",
+  };
+}
+
 const defaultDependencies: StatementDependencies = {
   getComponents,
-  getSummary: (filters) => canonicalPnlService.getSummary(filters),
+  getSummary: (filters) => getStatementSummary(filters),
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
   getIndirectCost: (period) => getIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
