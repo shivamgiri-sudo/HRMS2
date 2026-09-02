@@ -1372,12 +1372,29 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const rawAadhaar = incomingAadhaarIsMasked ? "" : incomingAadhaarRaw.replace(/\D/g, "");
   const aadhaarMasked = rawAadhaar ? maskAadhaar(rawAadhaar) : maskAadhaar(input.aadhaar_number_masked);
   const aadhaarHash = rawAadhaar ? hashValue(rawAadhaar) : null;
-  // Encrypted at rest — added 2026-09-02 for EPFO KYC/UAN seeding, which needs the
-  // complete Aadhaar number. Same treatment as PAN/bank account: only the server
-  // decrypts it, the browser only ever receives the masked value. See
-  // sql/1651_aadhaar_encrypted_storage_candidate_onboarding.sql for the compliance
-  // context (Aadhaar Act s.29) this decision accepts.
-  const aadhaarEncrypted = /^[0-9]{12}$/.test(rawAadhaar) ? encrypt(rawAadhaar) : null;
+  // candidate_onboarding_profile.aadhaar_number_encrypted DOES NOT EXIST on the live
+  // database. Migration 1651_aadhaar_encrypted_storage_candidate_onboarding.sql was
+  // written and shipped to the server, but was never added to MIGRATION_MANIFEST, so it
+  // has never run — verified 2026-09-02 against mas_hrms: the column is absent and a
+  // PREPARE of this INSERT fails ER_BAD_FIELD_ERROR. The code referencing it was
+  // deployed anyway, which meant EVERY candidate KYC save (Step 3) returned a 500 and
+  // new onboarding was blocked outright. The write is removed rather than the migration
+  // added, because the owner's decision is to hold Aadhaar/PAN in plaintext for ESI
+  // rather than encrypted — see rawAadhaarForCandidate below.
+  //
+  // The RAW plaintext values, written to ats_candidate below. Owner decision 2026-09-02:
+  // ESI registration needs the real Aadhaar and PAN, and employees.pan_number /
+  // employees.aadhaar_number are already plaintext and already populated (923 and 1,050
+  // of 1,116 active employees), so this makes the onboarding path consistent with the
+  // rest of the system rather than introducing a new practice.
+  //
+  // Gated on the SAME format check the encryption used, which is the point: the reason
+  // the raw columns were previously left unwritten is that this flow can hold a MASKED
+  // value, and writing a mask into a column named "raw" corrupted it. A masked PAN
+  // ("ABCXXXX12") and a masked Aadhaar ("XXXX-XXXX-1234") both fail these tests, so only
+  // a genuine, well-formed number is ever written here.
+  const rawPanForCandidate = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(rawPan) ? rawPan : null;
+  const rawAadhaarForCandidate = /^[0-9]{12}$/.test(rawAadhaar) ? rawAadhaar : null;
 
   // Validate and prepare DOB (allow null, but convert empty strings to null)
   const dobValue = input.dateOfBirth ?? tokenData.date_of_birth;
@@ -1392,12 +1409,12 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         permanent_address, permanent_state, permanent_city, permanent_pincode,
         present_address, present_state, present_city, present_pincode, mobile_number, alt_mobile_number,
         personal_email_id, official_email_id, pan_number_masked, pan_number_hash, pan_number_encrypted, aadhaar_number_masked,
-        aadhaar_number_hash, aadhaar_number_encrypted, passport_no, driving_license_no,
+        aadhaar_number_hash, passport_no, driving_license_no,
         uan_number, epf_number, esic_number,
         source_type, source, profile_status,
         mother_name, emergency_contact_name, emergency_contact_relation, emergency_contact_mobile,
         nationality, religion, category, address_proof_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'employee_details_saved', ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
         title = VALUES(title), employee_name = VALUES(employee_name), relation = VALUES(relation),
         father_husband_name = VALUES(father_husband_name), gender = VALUES(gender), marital_status = VALUES(marital_status),
@@ -1415,7 +1432,6 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
         pan_number_encrypted = COALESCE(VALUES(pan_number_encrypted), pan_number_encrypted),
         aadhaar_number_masked = COALESCE(VALUES(aadhaar_number_masked), aadhaar_number_masked),
         aadhaar_number_hash = COALESCE(VALUES(aadhaar_number_hash), aadhaar_number_hash),
-        aadhaar_number_encrypted = COALESCE(VALUES(aadhaar_number_encrypted), aadhaar_number_encrypted),
         passport_no = VALUES(passport_no), driving_license_no = VALUES(driving_license_no),
         uan_number = VALUES(uan_number), epf_number = VALUES(epf_number), esic_number = VALUES(esic_number),
         source_type = VALUES(source_type), source = VALUES(source),
@@ -1461,7 +1477,6 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       panEncrypted,
       aadhaarMasked,
       aadhaarHash,
-      aadhaarEncrypted,
       input.passportNo ?? input["passportNumber"] ?? input["passport_number"] ?? null,
       input.drivingLicenseNo ?? input["dlNumber"] ?? input["dl_number"] ?? null,
       input.uanNumber ?? null,
@@ -1489,10 +1504,23 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
        current_address = COALESCE(?, current_address),
        mobile = COALESCE(?, mobile),
        email = COALESCE(?, email),
-       -- pan_number / aadhar_number are the RAW columns and are deliberately not
-       -- written here: this flow only ever holds masked values, and writing those
-       -- into a column named "raw" corrupted it. It also made the PAN column look
-       -- populated to every downstream reader while never being usable.
+       -- pan_number / aadhar_number are the RAW columns. They were previously left
+       -- unwritten because this flow can hold a MASKED value, and writing a mask into a
+       -- column named "raw" corrupted it, making PAN look populated to every downstream
+       -- reader while never being usable. That hazard is handled at the source now:
+       -- rawPanForCandidate / rawAadhaarForCandidate are null unless the value passes the
+       -- full-format check (a mask cannot pass it), so only a genuine number reaches these
+       -- columns, and COALESCE leaves them untouched otherwise.
+       --
+       -- They are written because NOT writing them starved three readers of exactly these
+       -- columns in employee-creation-orchestrator.service.ts: PAN/Aadhaar format
+       -- validation, the duplicate-ACTIVE-employee guard (the check meant to stop one
+       -- person being onboarded twice), and the insert into employee_statutory_info that
+       -- ESI registration ultimately reads. Owner decision 2026-09-02: hold these in
+       -- plaintext, consistent with employees.pan_number / employees.aadhaar_number which
+       -- are already plaintext and already populated for 83% / 94% of active employees.
+       pan_number = COALESCE(?, pan_number),
+       aadhar_number = COALESCE(?, aadhar_number),
        pan_number_masked = COALESCE(?, pan_number_masked),
        pan_number_hash = COALESCE(?, pan_number_hash),
        aadhar_number_masked = COALESCE(?, aadhar_number_masked),
@@ -1531,6 +1559,8 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       nonEmptyString(input.presentAddress ?? input.current_address),
       nonEmptyString(input.mobileNumber ?? tokenData.mobile),
       nonEmptyString(input.personalEmailId ?? tokenData.email),
+      rawPanForCandidate,
+      rawAadhaarForCandidate,
       panMasked,
       panHash,
       aadhaarMasked,
@@ -1589,6 +1619,43 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
   // Encrypt account number for later penny drop verification (reversible, unlike hash)
   const accountNoEncrypted = accountNo ? encrypt(String(accountNo).trim()) : null;
 
+  // ── Penny-drop gate (owner decision 2026-09-02) ──────────────────────────────────
+  // A bank account is only captured once a penny drop has come back positive for THAT
+  // account. Previously this INSERT ran unconditionally, which is why the live data shows
+  // 32,816 saved bank rows against 41 carrying verification_status='verified' — the
+  // account a candidate typed was stored and used downstream whether or not it was ever
+  // proven to exist or to belong to them.
+  //
+  // Matched on account_no_hash, not merely "this candidate has a verified check": without
+  // the hash comparison a candidate could verify one account, then save a different one
+  // and inherit the pass. 68 of the 79 verified checks carry a usable hash.
+  //
+  // Deliberately scoped to submissions that actually carry an account number. The form
+  // blanks that field on reload ("re-enter for security"), so a resave touching only bank
+  // name or branch legitimately arrives without one; those are allowed through because the
+  // COALESCE below leaves the stored (already verified) account untouched. Blocking them
+  // would lock a candidate out of editing their own branch name after verifying.
+  const submittedAccountNo = String(accountNo ?? "").trim();
+  if (submittedAccountNo) {
+    const [verifiedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bank_verification
+        WHERE candidate_id = ?
+          AND verification_status = 'verified'
+          AND account_no_hash = ?
+        LIMIT 1`,
+      [candidateId, hashValue(submittedAccountNo)]
+    );
+    if (!verifiedRows.length) {
+      throw Object.assign(
+        new Error(
+          "This account could not be saved because its penny-drop verification has not passed. "
+          + "Run the account verification for this exact account number and IFSC, and save again once it succeeds."
+        ),
+        { statusCode: 409 }
+      );
+    }
+  }
+
   await db.execute(
     `INSERT INTO candidate_onboarding_bank_detail
        (id, candidate_id, bank_name, branch_name, account_holder_name, account_no_masked,
@@ -1644,7 +1711,22 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
     [
       input.bankName ?? input.bank_name ?? null,
       input.ifscCode ?? input.bank_ifsc ?? null,
-      maskAccount(accountNo),
+      // The REAL account number, not maskAccount(). This is the plaintext column payroll
+      // disbursement ultimately depends on, and 28,255 of its 31,262 populated rows hold
+      // genuine numbers from the legacy import. Writing maskAccount() here put "XXXXXX7753"
+      // into that same column for every candidate onboarded through this flow — measured
+      // 2026-09-02: of every bank save in the preceding 30 days, ZERO produced a usable
+      // number and all produced a mask. It looked populated to every reader and was
+      // worthless for paying anyone, which is why 59 active employees have no payable
+      // account today.
+      //
+      // Guarded the same way the KYC capture is: only a plausible account number is stored,
+      // so the mask the form echoes back on reload (that field is deliberately blanked and
+      // re-entered) can never overwrite a good value. COALESCE leaves the column alone when
+      // this submission carries nothing.
+      /^[0-9]{9,18}$/.test(String(accountNo ?? "").replace(/\s+/g, ""))
+        ? String(accountNo).replace(/\s+/g, "")
+        : null,
       hashValue(accountNo),
       accountNoEncrypted,
       candidateId,

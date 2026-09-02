@@ -384,10 +384,16 @@ export async function createEmployeeFromCandidate(
           personal_email, personal_phone, alternate_mobile,
           gender, date_of_birth, father_name, marital_status,
           address1, permanent_address1,
+          -- Carried from the candidate at conversion (owner decision 2026-09-02). These
+          -- two columns were never written here, so every employee created through this
+          -- path had NULL PAN/Aadhaar while 83% / 94% of the existing workforce carried
+          -- them from legacy import. ESI registration reads employees.pan_number and had
+          -- nothing to read for anyone onboarded through the current flow.
+          pan_number, aadhaar_number,
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
@@ -401,6 +407,15 @@ export async function createEmployeeFromCandidate(
         candRow?.marital_status || null,
         candRow?.current_address ?? null,
         candRow?.permanent_address ?? null,
+        // Same validated-or-null rule the onboarding capture uses: a malformed or masked
+        // value is stored as NULL rather than written into a column downstream readers
+        // treat as a filable identifier.
+        /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(String(candRow?.pan_number ?? "").trim().toUpperCase())
+          ? String(candRow?.pan_number).trim().toUpperCase()
+          : null,
+        /^[0-9]{12}$/.test(String(candRow?.aadhar_number ?? "").replace(/\D/g, ""))
+          ? String(candRow?.aadhar_number).replace(/\D/g, "")
+          : null,
         resolvedBranchId,
         resolvedProcessId,
         offer.department_id ?? null,
@@ -1410,11 +1425,38 @@ async function createRelatedEmployeeRecords(
   // is always true, but the guard keeps this block idempotent on a retried transaction too.
   // account_seq starts at 1 for the same reason: this is necessarily the employee's first-ever
   // bank_detail row.
+  // CORRECTED 2026-09-02. This block existed but could never fire, and would have written
+  // an unusable row if it had. Both faults are fixed here, measured against live data:
+  //
+  //   1. WRONG SOURCE TABLE. It read onboarding_penny_drop_requests, which is the orphaned
+  //      third penny-drop store: no frontend calls /api/onboarding/penny-drop/initiate at
+  //      all, so that table is effectively empty and `verifiedAccount` was always
+  //      undefined. The penny drop the onboarding form actually runs writes to
+  //      candidate_bank_verification (via POST /api/ats/bgv/verify/bank). Result: of 42
+  //      candidates who passed a real penny drop and became employees, 41 had NO
+  //      employee_bank_detail row at all.
+  //
+  //   2. WRONG COLUMN. It wrote account_number_enc but never account_number. The plaintext
+  //      account_number column is what payroll disbursement and the ESI export read
+  //      (13,151 of 13,180 existing rows carry it). A row with only the encrypted form
+  //      reads as MISSING to every consumer, so the employee still cannot be paid.
+  //
+  // The full account number comes from ats_candidate.bank_account_no: the onboarding save
+  // mirrors it there in plaintext and it is populated for all 42 of those candidates,
+  // whereas candidate_bank_verification stores only last4 and a hash. Still gated on a
+  // genuinely verified penny drop, per the owner's rule that an account is only carried
+  // once verification is positive.
   const [pennyDropRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT account_no, ifsc_code, account_holder_name
-       FROM onboarding_penny_drop_requests
-      WHERE candidate_id = ? AND status = 'success'
-      ORDER BY completed_at DESC LIMIT 1`,
+    `SELECT c.bank_account_no AS account_no,
+            COALESCE(NULLIF(v.ifsc_code, ''), c.bank_ifsc) AS ifsc_code,
+            COALESCE(NULLIF(v.input_account_holder_name, ''), c.full_name) AS account_holder_name
+       FROM candidate_bank_verification v
+       JOIN ats_candidate c ON c.id = v.candidate_id
+      WHERE v.candidate_id = ?
+        AND v.verification_status = 'verified'
+        AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
+      ORDER BY v.verified_at DESC, v.created_at DESC
+      LIMIT 1`,
     [candidateId]
   );
   const verifiedAccount = pennyDropRows[0];
@@ -1424,15 +1466,16 @@ async function createRelatedEmployeeRecords(
       [employeeId]
     );
     if (!existingPrimary.length) {
-      const accountNoStr = String(verifiedAccount.account_no);
+      const accountNoStr = String(verifiedAccount.account_no).trim();
       await conn.execute(
         `INSERT INTO employee_bank_detail
            (id, employee_id, is_primary, account_seq, account_holder_name,
-            account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
-         VALUES (?, ?, 1, 1, ?, ?, ?, ?, 'savings', 1, 1)`,
+            account_number, account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
+         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
         [
           randomUUID(), employeeId,
           verifiedAccount.account_holder_name ?? null,
+          accountNoStr,
           encryptField(accountNoStr),
           computeAccountBlindIndex(accountNoStr),
           verifiedAccount.ifsc_code ?? null,

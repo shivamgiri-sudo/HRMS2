@@ -359,6 +359,11 @@ esiRegDocsRouter.get(
          COALESCE(b.branch_name, e.branch, '')             AS branch,
          e.esic_number,
          e.pan_number,
+         -- ESI registration needs the Aadhaar as well as the PAN, and this export never
+         -- carried it. employees.aadhaar_number is the populated source (1,050 of 1,116
+         -- active); employee_statutory_info.aadhaar_id is the fallback for the rows that
+         -- were written through the statutory path instead. Added 2026-09-02.
+         COALESCE(NULLIF(e.aadhaar_number, ''), NULLIF(esi.aadhaar_id, '')) AS aadhaar_number,
          (SELECT ebd.bank_name FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
          (SELECT ebd.account_number FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_number,
          (SELECT ebd.ifsc_code FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS ifsc_code,
@@ -376,7 +381,7 @@ esiRegDocsRouter.get(
 
     const mask = (acct: string | null) => (acct ? `****${acct.slice(-4)}` : "");
 
-    const header = "Emp Code,Name,Branch,ESIC Number,PAN Number,Bank Name,Account Number (Masked),IFSC Code,Account Type,PAN Ready,Photo Ready,Bank Ready\n";
+    const header = "Emp Code,Name,Branch,ESIC Number,PAN Number,Aadhaar Number,Bank Name,Account Number (Masked),IFSC Code,Account Type,PAN Ready,Photo Ready,Bank Ready\n";
     const csvRows = (rows as RowDataPacket[])
       .map((r) =>
         [
@@ -385,6 +390,7 @@ esiRegDocsRouter.get(
           `"${(r.branch ?? "").replace(/"/g, '""')}"`,
           r.esic_number ?? "",
           r.pan_number ?? "",
+          r.aadhaar_number ?? "",
           `"${(r.bank_name ?? "").replace(/"/g, '""')}"`,
           mask(r.account_number ?? null),
           r.ifsc_code ?? "",
