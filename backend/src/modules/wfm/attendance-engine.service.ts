@@ -1025,8 +1025,30 @@ export const attendanceEngineService = {
 
           if (!isNightShiftCarryover) {
             // Genuine new APR activity on the week-off day — check for it.
+            // APR stores only net login minutes for bulk-upload rows (Login_Time is NULL),
+            // so we cannot read the start time from APR directly. Instead use the biometric
+            // session on the same date as a time proxy — both sources represent the same
+            // physical presence, and biometric always records login_time as a datetime.
+            // If the earliest biometric punch on this week-off date is before 08:00, the APR
+            // minutes belong to a night-shift carryover, not a new working day.
             const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
-            if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
+            if (aprCheck > 0) {
+              const [firstBioRow] = await db.execute<RowDataPacket[]>(
+                `SELECT MIN(login_time) AS first_login
+                 FROM wfm_attendance_session
+                 WHERE employee_id = ? AND session_date = ?`,
+                [employeeId, date]
+              );
+              const firstBio: Date | null = (firstBioRow[0] as any)?.first_login ?? null;
+              // IST = UTC + 330 min. If no biometric at all, assume genuine new session.
+              const firstBioIstHour = firstBio
+                ? ((new Date(firstBio).getUTCHours() * 60 + new Date(firstBio).getUTCMinutes() + 330) % 1440) / 60
+                : 24;
+              if (firstBioIstHour >= 8) {
+                actualMinutesOnWeekOff = aprCheck;
+              }
+              // before 08:00 IST → night-shift carryover → actualMinutesOnWeekOff stays 0
+            }
           }
           // If isNightShiftCarryover: leave actualMinutesOnWeekOff = 0 → falls through to week_off.
         } else {
