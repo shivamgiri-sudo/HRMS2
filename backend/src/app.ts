@@ -159,6 +159,7 @@ import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.
 import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
 import { attendanceExceptionsRouter } from "./modules/wfm/attendance-exceptions.routes.js";
+import { attendanceExceptionBucketRouter } from "./modules/wfm/attendance-exception-bucket.routes.js";
 import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
@@ -657,6 +658,10 @@ app.use('/api/wfm/attendance/manual-mark', attendanceManualMarkRouter);
 // Distinct path segment, not a child of /api/wfm/attendance — the three routers above
 // cannot shadow it. Read-only worklist over attendance_reconciliation_issue.
 app.use('/api/wfm/attendance-exceptions', attendanceExceptionsRouter);
+// Payroll Head's per-employee COSEC judgment overrides (migration 1652). The router file
+// itself documents this mount point, but the app.use() line was dropped from the merge that
+// landed it -- PayrollExceptionControl.tsx called this path against a 404 on every request.
+app.use('/api/wfm/attendance-exception-bucket', attendanceExceptionBucketRouter);
 app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
 app.use('/api/wfm/biometric-punch', biometricPunchRouter);
