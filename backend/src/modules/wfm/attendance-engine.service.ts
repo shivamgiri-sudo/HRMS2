@@ -1,6 +1,7 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
+import { EMPLOYMENT_END_DATE_SELECT } from '../payroll/employment-end-date.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { toIST, minutesOfDay } from '../../shared/timezone.js';
 import { logger } from '../../logger.js';
@@ -126,6 +127,12 @@ export function isCrossMidnightShift(
 export function nextIstDate(date: string): string {
   const d = new Date(`${date}T00:00:00+05:30`);
   d.setDate(d.getDate() + 1);
+  return (toIST(d) ?? d.toISOString())!.slice(0, 10);
+}
+
+export function prevIstDate(date: string): string {
+  const d = new Date(`${date}T00:00:00+05:30`);
+  d.setDate(d.getDate() - 1);
   return (toIST(d) ?? d.toISOString())!.slice(0, 10);
 }
 
@@ -447,7 +454,8 @@ export const attendanceEngineService = {
     branchId: string | null,
     dateOfJoining?: string | null,
     costCentreId?: string | null,
-    designationId?: string | null
+    designationId?: string | null,
+    employmentEndDate?: string | null
   ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean } | null> {
     // 1. Approved leave
     const [leaveRows] = await db.execute<RowDataPacket[]>(
@@ -469,6 +477,23 @@ export const attendanceEngineService = {
     if (dojExclusionEnabled && dateOfJoining) {
       holidaySql += ` AND lhm.holiday_date >= ?`;
       holidayParams.push(dateOfJoining);
+    }
+    // Leaver exclusion, the mirror image of the DOJ one above. A holiday falling AFTER an
+    // employee's last working day is not theirs: someone who finished on 8 August is owed
+    // neither the 15th nor the 28th, someone who finished on the 17th is owed the 15th only,
+    // and someone who finished on the 30th is owed both.
+    //
+    // Without this the engine wrote a 'holiday' row for days after the employee had gone, and
+    // because the cost-centre sign-off grid and the attendance register count those rows, a
+    // leaver's salary days read higher on screen than payroll pays. Payroll resolves holidays
+    // from leave_holiday_master and is separately bounded, so the two disagreed on the same
+    // person: 10 salary days on the grid against the 8 payroll pays.
+    //
+    // Bounded on the same resolved last working day payroll prorates with, so attendance,
+    // reports and the payslip cannot part company on when someone stopped being employed.
+    if (employmentEndDate) {
+      holidaySql += ` AND lhm.holiday_date <= ?`;
+      holidayParams.push(String(employmentEndDate).slice(0, 10));
     }
     // Cost centre scope: if mapping exists, employee's cost centre must be mapped
     holidaySql += `
@@ -930,6 +955,7 @@ export const attendanceEngineService = {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id, e.cost_centre_id,
          e.date_of_joining, e.reporting_manager_id,
+         ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date,
          LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
          LOWER(COALESCE(desig.designation_name,'')) AS designation_name
        FROM employees e
@@ -948,6 +974,9 @@ export const attendanceEngineService = {
     const branchId: string | null = emp.branch_id ?? null;
     const costCentreId: string | null = emp.cost_centre_id ?? null;
     const dateOfJoining: string | null = emp.date_of_joining ?? null;
+    // Resolved last working day — exit_request's confirmed/proposed date, then date_of_exit,
+    // then date_of_leaving. Null for anyone still employed.
+    const employmentEndDate: string | null = emp.employment_end_date ?? null;
     const shiftWindow = await this.getShiftWindow(employeeId, date);
 
     // Per-employee COSEC exceptions. Resolved once here and used at every biometric
@@ -996,28 +1025,93 @@ export const attendanceEngineService = {
     }
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
-    const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
+    const override = await this.resolveOverridePriority(
+      employeeId, date, branchId, dateOfJoining, costCentreId, designationId, employmentEndDate
+    );
 
     if (override) {
-      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked
+      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked.
+      //
+      // Night-shift cross-midnight guard: a night-shift worker whose roster is e.g. 22:00–07:00
+      // punches out at 03:xx on the next calendar day. That next calendar day may be a week-off.
+      // The biometric/APR evidence on the week-off date belongs to the previous night's shift —
+      // it was already credited when the engine ran for the shift-start date. Firing week_off_worked
+      // here would double-count the session and incorrectly penalise the employee.
+      //
+      // Guard logic: check whether the previous calendar day's roster shift is a cross-midnight
+      // (night) shift whose end date lands on `date`. If yes, the evidence on `date` is carryover
+      // — skip week_off_worked and fall through to the regular week_off result.
       if (override.isRosterWeekOff) {
-        // Get APR minutes if applicable to check for actual work on this day
-        let actualMinutesOnWeekOff = biometricMinutes;
+        // For APR-strict employees biometric is not the attendance source.
+        // Start from zero; only APR minutes count toward week_off_worked for these employees.
+        let actualMinutesOnWeekOff = isAprEmployee ? 0 : biometricMinutes;
+
         if (isAprEmployee) {
-          const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
-          if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
+          // Check whether previous day's night shift tail is landing on this week-off date.
+          const prevDate = prevIstDate(date);
+          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
+          const isNightShiftCarryover =
+            prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
+
+          if (!isNightShiftCarryover) {
+            // Genuine new APR activity on the week-off day — check for it.
+            // APR stores only net login minutes for bulk-upload rows (Login_Time is NULL),
+            // so we cannot read the start time from APR directly. Instead use the biometric
+            // session on the same date as a time proxy — both sources represent the same
+            // physical presence, and biometric always records login_time as a datetime.
+            // If the earliest biometric punch on this week-off date is before 08:00, the APR
+            // minutes belong to a night-shift carryover, not a new working day.
+            const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+            if (aprCheck > 0) {
+              const [firstBioRow] = await db.execute<RowDataPacket[]>(
+                `SELECT MIN(login_time) AS first_login
+                 FROM wfm_attendance_session
+                 WHERE employee_id = ? AND session_date = ?`,
+                [employeeId, date]
+              );
+              const firstBio: Date | null = (firstBioRow[0] as any)?.first_login ?? null;
+              // IST = UTC + 330 min. If no biometric at all, assume genuine new session.
+              const firstBioIstHour = firstBio
+                ? ((new Date(firstBio).getUTCHours() * 60 + new Date(firstBio).getUTCMinutes() + 330) % 1440) / 60
+                : 24;
+              if (firstBioIstHour >= 8) {
+                actualMinutesOnWeekOff = aprCheck;
+              }
+              // before 08:00 IST → night-shift carryover → actualMinutesOnWeekOff stays 0
+            }
+          }
+          // If isNightShiftCarryover: leave actualMinutesOnWeekOff = 0 → falls through to week_off.
+        } else {
+          // Biometric employee: same carryover guard applies.
+          const prevDate = prevIstDate(date);
+          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
+          const isNightShiftCarryover =
+            prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
+          if (isNightShiftCarryover) {
+            // Early-morning biometric sessions are carryover from previous night shift.
+            // Only count sessions that started on/after midnight of this week-off date itself
+            // (i.e. a genuinely new session, not the tail of yesterday's shift).
+            const [weekOffSessions] = await db.execute<RowDataPacket[]>(
+              `SELECT COALESCE(SUM(total_login_minutes), 0) AS mins
+               FROM wfm_attendance_session
+               WHERE employee_id = ? AND session_date = ?
+               AND login_time >= CONCAT(?, ' 08:00:00')`,
+              [employeeId, date, date]
+            );
+            actualMinutesOnWeekOff = Number((weekOffSessions[0] as any).mins ?? 0);
+          }
         }
 
         if (actualMinutesOnWeekOff > 0) {
-          // Employee worked on their roster week-off — flag for WFM review
+          // Employee genuinely worked on their roster week-off — flag for WFM review
           const wowResult: EngineResult = {
             employeeId, date, processId, branchId,
             source: isAprEmployee ? 'dialler' : 'biometric',
-            sourceSystem: biometricEvidence.sourceSystem,
+            sourceSystem: isAprEmployee ? 'apr' : biometricEvidence.sourceSystem,
             sourceRecordDate: date,
-            sourceReference: biometricEvidence.sourceReference,
+            sourceReference: isAprEmployee ? null : biometricEvidence.sourceReference,
             diallerMinutes: isAprEmployee ? actualMinutesOnWeekOff : null,
-            biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
+            biometricMinutes: isAprEmployee ? null : (biometricMinutes > 0 ? biometricMinutes : null),
             rawMinutes: actualMinutesOnWeekOff,
             status: 'week_off_worked',
             lwpValue: 0.0,
