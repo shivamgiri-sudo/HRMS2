@@ -160,7 +160,6 @@ import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.
 import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
 import { attendanceExceptionsRouter } from "./modules/wfm/attendance-exceptions.routes.js";
-import { attendanceExceptionBucketRouter } from "./modules/wfm/attendance-exception-bucket.routes.js";
 import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
@@ -677,7 +676,6 @@ app.use('/api/wfm/biometric-punch', biometricPunchRouter);
 app.use('/api/wfm/biometric-logs', biometricLogsRouter);
 app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
-app.use('/api/wfm/attendance-exception-bucket', attendanceExceptionBucketRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
 app.use("/api/attendance", attendanceDisputeRouter);
 app.use("/api/salary-disputes", salaryDisputeRouter);
