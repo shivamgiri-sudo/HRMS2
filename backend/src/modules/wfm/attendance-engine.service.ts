@@ -1,7 +1,6 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
-import { EMPLOYMENT_END_DATE_SELECT } from '../payroll/employment-end-date.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { toIST, minutesOfDay } from '../../shared/timezone.js';
 import { logger } from '../../logger.js';
@@ -127,12 +126,6 @@ export function isCrossMidnightShift(
 export function nextIstDate(date: string): string {
   const d = new Date(`${date}T00:00:00+05:30`);
   d.setDate(d.getDate() + 1);
-  return (toIST(d) ?? d.toISOString())!.slice(0, 10);
-}
-
-export function prevIstDate(date: string): string {
-  const d = new Date(`${date}T00:00:00+05:30`);
-  d.setDate(d.getDate() - 1);
   return (toIST(d) ?? d.toISOString())!.slice(0, 10);
 }
 
@@ -292,7 +285,12 @@ export function classifyCosecMinutes(
 
 export interface AttendanceExceptionBucket {
   employeeId: string;
-  /** A day with at least one punch but no matching pair counts as a full present day. */
+  /**
+   * Any punch on the day counts as a full present day, paired or not, and regardless of how
+   * few minutes it adds up to. Broadened from "unpaired punch only" by owner ruling
+   * 2026-09-03; the column keeps its original name. A day that already reaches the full-day
+   * threshold on its own is left to the normal classifier.
+   */
   singlePunchCountsAsPresent: boolean;
   /** Minutes that make a full day for this employee; null = use COSEC_DEFAULT_FULL_DAY_MINUTES. */
   fullDayThresholdMinutes: number | null;
@@ -449,8 +447,7 @@ export const attendanceEngineService = {
     branchId: string | null,
     dateOfJoining?: string | null,
     costCentreId?: string | null,
-    designationId?: string | null,
-    employmentEndDate?: string | null
+    designationId?: string | null
   ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean } | null> {
     // 1. Approved leave
     const [leaveRows] = await db.execute<RowDataPacket[]>(
@@ -472,23 +469,6 @@ export const attendanceEngineService = {
     if (dojExclusionEnabled && dateOfJoining) {
       holidaySql += ` AND lhm.holiday_date >= ?`;
       holidayParams.push(dateOfJoining);
-    }
-    // Leaver exclusion, the mirror image of the DOJ one above. A holiday falling AFTER an
-    // employee's last working day is not theirs: someone who finished on 8 August is owed
-    // neither the 15th nor the 28th, someone who finished on the 17th is owed the 15th only,
-    // and someone who finished on the 30th is owed both.
-    //
-    // Without this the engine wrote a 'holiday' row for days after the employee had gone, and
-    // because the cost-centre sign-off grid and the attendance register count those rows, a
-    // leaver's salary days read higher on screen than payroll pays. Payroll resolves holidays
-    // from leave_holiday_master and is separately bounded, so the two disagreed on the same
-    // person: 10 salary days on the grid against the 8 payroll pays.
-    //
-    // Bounded on the same resolved last working day payroll prorates with, so attendance,
-    // reports and the payslip cannot part company on when someone stopped being employed.
-    if (employmentEndDate) {
-      holidaySql += ` AND lhm.holiday_date <= ?`;
-      holidayParams.push(String(employmentEndDate).slice(0, 10));
     }
     // Cost centre scope: if mapping exists, employee's cost centre must be mapped
     holidaySql += `
@@ -950,7 +930,6 @@ export const attendanceEngineService = {
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id, e.cost_centre_id,
          e.date_of_joining, e.reporting_manager_id,
-         ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date,
          LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
          LOWER(COALESCE(desig.designation_name,'')) AS designation_name
        FROM employees e
@@ -969,9 +948,6 @@ export const attendanceEngineService = {
     const branchId: string | null = emp.branch_id ?? null;
     const costCentreId: string | null = emp.cost_centre_id ?? null;
     const dateOfJoining: string | null = emp.date_of_joining ?? null;
-    // Resolved last working day — exit_request's confirmed/proposed date, then date_of_exit,
-    // then date_of_leaving. Null for anyone still employed.
-    const employmentEndDate: string | null = emp.employment_end_date ?? null;
     const shiftWindow = await this.getShiftWindow(employeeId, date);
 
     // Per-employee COSEC exceptions. Resolved once here and used at every biometric
@@ -1020,93 +996,28 @@ export const attendanceEngineService = {
     }
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
-    const override = await this.resolveOverridePriority(
-      employeeId, date, branchId, dateOfJoining, costCentreId, designationId, employmentEndDate
-    );
+    const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
 
     if (override) {
-      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked.
-      //
-      // Night-shift cross-midnight guard: a night-shift worker whose roster is e.g. 22:00–07:00
-      // punches out at 03:xx on the next calendar day. That next calendar day may be a week-off.
-      // The biometric/APR evidence on the week-off date belongs to the previous night's shift —
-      // it was already credited when the engine ran for the shift-start date. Firing week_off_worked
-      // here would double-count the session and incorrectly penalise the employee.
-      //
-      // Guard logic: check whether the previous calendar day's roster shift is a cross-midnight
-      // (night) shift whose end date lands on `date`. If yes, the evidence on `date` is carryover
-      // — skip week_off_worked and fall through to the regular week_off result.
+      // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked
       if (override.isRosterWeekOff) {
-        // For APR-strict employees biometric is not the attendance source.
-        // Start from zero; only APR minutes count toward week_off_worked for these employees.
-        let actualMinutesOnWeekOff = isAprEmployee ? 0 : biometricMinutes;
-
+        // Get APR minutes if applicable to check for actual work on this day
+        let actualMinutesOnWeekOff = biometricMinutes;
         if (isAprEmployee) {
-          // Check whether previous day's night shift tail is landing on this week-off date.
-          const prevDate = prevIstDate(date);
-          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
-          const isNightShiftCarryover =
-            prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
-
-          if (!isNightShiftCarryover) {
-            // Genuine new APR activity on the week-off day — check for it.
-            // APR stores only net login minutes for bulk-upload rows (Login_Time is NULL),
-            // so we cannot read the start time from APR directly. Instead use the biometric
-            // session on the same date as a time proxy — both sources represent the same
-            // physical presence, and biometric always records login_time as a datetime.
-            // If the earliest biometric punch on this week-off date is before 08:00, the APR
-            // minutes belong to a night-shift carryover, not a new working day.
-            const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
-            if (aprCheck > 0) {
-              const [firstBioRow] = await db.execute<RowDataPacket[]>(
-                `SELECT MIN(login_time) AS first_login
-                 FROM wfm_attendance_session
-                 WHERE employee_id = ? AND session_date = ?`,
-                [employeeId, date]
-              );
-              const firstBio: Date | null = (firstBioRow[0] as any)?.first_login ?? null;
-              // IST = UTC + 330 min. If no biometric at all, assume genuine new session.
-              const firstBioIstHour = firstBio
-                ? ((new Date(firstBio).getUTCHours() * 60 + new Date(firstBio).getUTCMinutes() + 330) % 1440) / 60
-                : 24;
-              if (firstBioIstHour >= 8) {
-                actualMinutesOnWeekOff = aprCheck;
-              }
-              // before 08:00 IST → night-shift carryover → actualMinutesOnWeekOff stays 0
-            }
-          }
-          // If isNightShiftCarryover: leave actualMinutesOnWeekOff = 0 → falls through to week_off.
-        } else {
-          // Biometric employee: same carryover guard applies.
-          const prevDate = prevIstDate(date);
-          const prevShiftWindow = await this.getShiftWindow(employeeId, prevDate);
-          const isNightShiftCarryover =
-            prevShiftWindow.isNightShift && prevShiftWindow.endDate === date;
-          if (isNightShiftCarryover) {
-            // Early-morning biometric sessions are carryover from previous night shift.
-            // Only count sessions that started on/after midnight of this week-off date itself
-            // (i.e. a genuinely new session, not the tail of yesterday's shift).
-            const [weekOffSessions] = await db.execute<RowDataPacket[]>(
-              `SELECT COALESCE(SUM(total_login_minutes), 0) AS mins
-               FROM wfm_attendance_session
-               WHERE employee_id = ? AND session_date = ?
-               AND login_time >= CONCAT(?, ' 08:00:00')`,
-              [employeeId, date, date]
-            );
-            actualMinutesOnWeekOff = Number((weekOffSessions[0] as any).mins ?? 0);
-          }
+          const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+          if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
         }
 
         if (actualMinutesOnWeekOff > 0) {
-          // Employee genuinely worked on their roster week-off — flag for WFM review
+          // Employee worked on their roster week-off — flag for WFM review
           const wowResult: EngineResult = {
             employeeId, date, processId, branchId,
             source: isAprEmployee ? 'dialler' : 'biometric',
-            sourceSystem: isAprEmployee ? 'apr' : biometricEvidence.sourceSystem,
+            sourceSystem: biometricEvidence.sourceSystem,
             sourceRecordDate: date,
-            sourceReference: isAprEmployee ? null : biometricEvidence.sourceReference,
+            sourceReference: biometricEvidence.sourceReference,
             diallerMinutes: isAprEmployee ? actualMinutesOnWeekOff : null,
-            biometricMinutes: isAprEmployee ? null : (biometricMinutes > 0 ? biometricMinutes : null),
+            biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
             rawMinutes: actualMinutesOnWeekOff,
             status: 'week_off_worked',
             lwpValue: 0.0,
@@ -1269,30 +1180,53 @@ export const attendanceEngineService = {
     // lwpDeduction = 0 and lets absent days reduce finalPayableDays, so absent and
     // missing_punch both pay zero for the day; what changes is that the deduction
     // is now stated rather than left as an unresolved queue item.
-    // Single-punch exception (migration 1652) — must be asked BEFORE the missing_punch return
-    // below, because that is the branch a single punch actually lands in. assessAggregatePunches
-    // zeroes the minutes for reason 'single_punch', so rawMinutes is 0 here and the day would
-    // otherwise go to the review queue rather than to any classifier.
+    // Any-punch exception (migration 1652; broadened by owner ruling 2026-09-03) — must be
+    // asked BEFORE the missing_punch return below, because an unpaired punch lands in that
+    // branch: assessAggregatePunches zeroes the minutes for reason 'single_punch', so such a
+    // day arrives here with rawMinutes 0 and would otherwise go to the review queue rather
+    // than to any classifier.
     //
-    // Scoped to the biometric path (!classifyAsApr): the exception is about what COSEC saw, and
-    // an employee being judged on dialler net login has no COSEC punch pair to be missing.
+    // The rule was originally scoped to rawMinutes === 0, i.e. ONLY a day with no matching
+    // punch pair. That covered less than the decision behind it. On 2026-09-02 all four
+    // employees carrying this flag punched in AND out and were then judged on hours against
+    // the standard 9-hour full day: the CEO worked 4h09m and was recorded absent, nine
+    // minutes under the 4h30m half-day floor, while the other three took half days on
+    // 5h26m, 6h01m and 7h11m. The exception never fired, because none of them had a single
+    // punch. For the named people it covers, presence in the building is the whole test —
+    // so any punch at all now makes the day present, whether or not it is paired.
+    //
+    // Two conditions keep it narrow:
+    //   - rawMinutes < cosecFullDayMinutes: someone who already worked a full day is
+    //     recorded through the normal classifier, so the row states the ordinary reason
+    //     rather than an exception that changed nothing.
+    //   - !classifyAsApr: the exception is about what COSEC saw, and an employee judged on
+    //     dialler net login has no COSEC punch to be credited for.
+    // Leave, holiday and week-off never reach here — resolveOverridePriority returns above.
     if (bucket?.singlePunchCountsAsPresent
-        && rawMinutes === 0
+        && rawMinutes < cosecFullDayMinutes
         && !classifyAsApr
         && await this.hasAnyBiometricPunch(employeeId, date)) {
       const lateResult = await this.calculateLateArrival(employeeId, date, rule);
+      const isUnpairedPunch = rawMinutes === 0;
       return {
         employeeId, date, processId, branchId,
         source: 'biometric',
-        // Named so the row itself says why it is present on zero minutes. A reader who finds a
-        // present day backed by no working time can tell this was a standing Payroll Head
-        // exception and not the engine miscounting.
-        sourceSystem: 'cosec_single_punch_exception',
+        // Named so the row itself says why it is present on less than a full day's minutes.
+        // A reader who finds a present day backed by four hours can tell this was a standing
+        // Payroll Head exception and not the engine miscounting. The two cases stay
+        // distinguishable in reporting: an unpaired punch keeps the original value, so every
+        // row written before this broadening still means exactly what it meant.
+        sourceSystem: isUnpairedPunch ? 'cosec_single_punch_exception' : 'cosec_any_punch_exception',
         sourceRecordDate: date,
-        sourceReference: 'employee_attendance_exception_bucket: single punch counted as present',
+        sourceReference: isUnpairedPunch
+          ? 'employee_attendance_exception_bucket: single punch counted as present'
+          : `employee_attendance_exception_bucket: any punch counted as present (${rawMinutes} min worked)`,
         diallerMinutes: null,
-        biometricMinutes: null,
-        rawMinutes: 0,
+        // The real reading is kept rather than blanked: the day is present by exception, but
+        // what the person actually worked still has to be answerable from the row. An
+        // unpaired punch has no minutes to report and stays null, exactly as before.
+        biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
+        rawMinutes,
         status: 'present',
         lwpValue: 0.0,
         lateMark: lateResult.lateMark,

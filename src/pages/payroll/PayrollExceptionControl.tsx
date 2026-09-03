@@ -14,7 +14,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { EmployeePicker, employeeDisplayName, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
+import { EmployeePicker, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
 import {
   Loader2, ShieldCheck, CalendarDays, AlertTriangle, CheckCircle2, X, Fingerprint, Clock,
 } from 'lucide-react';
@@ -305,7 +305,7 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
     if (!employee) return flash('err', 'Pick an employee first');
     if (reason.trim().length < 10) return flash('err', 'Give a reason of at least 10 characters');
     if (!singlePunch && threshold === 'default') {
-      return flash('err', 'Set at least one exception — single punch, or a shorter full day');
+      return flash('err', 'Set at least one exception — any punch counts as present, or a shorter full day');
     }
     setSaving(true);
     try {
@@ -328,7 +328,7 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
   const remove = async (row: BucketRow) => {
     const why = window.prompt(
       `Remove ${row.employee_name ?? row.employee_code} from the exception bucket?\n\n`
-      + 'Standard COSEC rules (9-hour full day, single punch goes to review) will apply from the '
+      + 'Standard COSEC rules (9-hour full day, hours counted, single punch goes to review) will apply from the '
       + 'next processing run.\n\nReason (at least 10 characters):'
     );
     if (why === null) return;
@@ -383,12 +383,14 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
           />
           <div>
             <Label htmlFor="single-punch" className="cursor-pointer text-sm font-medium text-slate-800">
-              A single COSEC punch counts as present
+              Any COSEC punch counts as present
             </Label>
             <p className="mt-0.5 text-xs text-slate-600">
-              For employees who tap in and then leave the premises on work. Without this, a day with one punch
-              records zero minutes and waits in the missing-punch review queue. A day with no punch at all is
-              still not credited.
+              For employees who tap in and then leave the premises on work. The day is a full present day on
+              any punch at all — paired or not, and however few hours it adds up to — so hours are not counted
+              for this person. Without it, an unpaired punch waits in the missing-punch review queue and a
+              short paired day becomes a half day or an absence. A day with no punch at all is still not
+              credited.
             </p>
           </div>
         </div>
@@ -432,7 +434,7 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
               <TableHeader>
                 <TableRow>
                   <TableHead>Employee</TableHead>
-                  <TableHead>Single punch</TableHead>
+                  <TableHead>Any punch</TableHead>
                   <TableHead>Full day</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Added</TableHead>
@@ -513,7 +515,7 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
               <div><dt className="text-slate-500">Designation</dt><dd className="text-slate-800">{drawerDetail.designation_name ?? '—'}</dd></div>
               <div><dt className="text-slate-500">Status</dt><dd className="text-slate-800">{Number(drawerDetail.active_status) === 1 ? 'Active' : 'Removed'}</dd></div>
               <div>
-                <dt className="text-slate-500">Single punch</dt>
+                <dt className="text-slate-500">Any punch</dt>
                 <dd className="text-slate-800">
                   {Number(drawerDetail.single_punch_counts_as_present) === 1 ? 'Counts as present' : 'Standard'}
                 </dd>
@@ -543,23 +545,6 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
 
 // ── Tab 2: Payable Days ───────────────────────────────────────────────────────
 
-/**
- * Payroll Head's standing list of employees who get payable days set directly, no reason
- * required — an explicit exception the Payroll Head asked for on top of the general rule
- * (every other employee still requires a reason). Their code/name surface as one-click chips
- * so the Payroll Head never has to search for them by name.
- */
-const QUICK_PICK_EMPLOYEES: { code: string; name: string }[] = [
-  { code: 'MAS00001', name: 'DEEPAK KASHYAP' },
-  { code: 'MAS00183', name: 'ASHWANI WADHWA' },
-  { code: 'MAS07197', name: 'SADHNA WADHWA' },
-  { code: 'MAS63086', name: 'NAYANDEEP KAUR' },
-  { code: 'MAS63087', name: 'AMIT KAUR' },
-  { code: 'MAS63088', name: 'RITA DEVI' },
-];
-const QUICK_PICK_CODES = new Set(QUICK_PICK_EMPLOYEES.map((e) => e.code));
-const QUICK_PICK_REASON = 'Pre-approved payable-days entry — Payroll Head standing list, no reason required.';
-
 function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void }) {
   const months = recentMonths();
   const [month, setMonth] = useState(months[0]);
@@ -572,7 +557,6 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
   const [checking, setChecking] = useState(false);
   const [days, setDays] = useState('');
   const [reason, setReason] = useState('');
-  const [resolvingQuick, setResolvingQuick] = useState<string | null>(null);
 
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<any>(null);
@@ -640,7 +624,7 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
     const n = Number(days);
     if (!Number.isFinite(n) || n < 0 || n > 31) return flash('err', 'Payable days must be between 0 and 31');
     if (Math.round(n * 2) !== n * 2) return flash('err', 'Payable days must be a whole or half day (e.g. 25 or 25.5)');
-    if (!waiveReason && reason.trim().length < 10) return flash('err', 'Give a reason of at least 10 characters');
+    if (reason.trim().length < 10) return flash('err', 'Give a reason of at least 10 characters');
 
     setSaving(true);
     try {
@@ -648,7 +632,7 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
         employee_id: employee.id,
         run_month: month,
         payable_days: n,
-        reason: waiveReason ? QUICK_PICK_REASON : reason.trim(),
+        reason: reason.trim(),
       });
       flash('ok', res.message ?? 'Payable days set');
       setEmployee(null); setDays(''); setReason(''); setCurrent(null);
@@ -680,24 +664,6 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
   };
 
   const runClosed = current?.run_closed === true;
-  const waiveReason = employee ? QUICK_PICK_CODES.has(employee.employee_code) : false;
-
-  const pickQuickEmployee = async (code: string) => {
-    setResolvingQuick(code);
-    try {
-      const res = await hrmsApi.get<
-        { employees?: EmployeeSearchResult[]; data?: EmployeeSearchResult[] } | EmployeeSearchResult[]
-      >(`/api/employees?search=${encodeURIComponent(code)}&limit=5`);
-      const list = Array.isArray(res) ? res : (res.employees ?? res.data ?? []);
-      const found = list.find((e) => e.employee_code === code);
-      if (!found) { flash('err', `Could not find ${code} — check they are still an active employee`); return; }
-      setEmployee(found);
-    } catch (e: any) {
-      flash('err', e?.message ?? `Could not look up ${code}`);
-    } finally {
-      setResolvingQuick(null);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -722,26 +688,6 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
               onSelect={setEmployee}
               disabled={saving}
             />
-            {!employee && (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-slate-500">Quick select:</span>
-                {QUICK_PICK_EMPLOYEES.map((q) => (
-                  <button
-                    key={q.code}
-                    type="button"
-                    onClick={() => void pickQuickEmployee(q.code)}
-                    disabled={saving || resolvingQuick !== null}
-                    className="cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {resolvingQuick === q.code ? (
-                      <Loader2 className="inline h-3 w-3 animate-spin" />
-                    ) : (
-                      <>{q.name} <span className="font-mono text-[10px] text-slate-400">({q.code})</span></>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
@@ -800,27 +746,15 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
             </p>
           </div>
           <div className="md:col-span-2">
-            {waiveReason ? (
-              <>
-                <Label className="mb-1.5 block text-sm">Reason</Label>
-                <div className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-500">
-                  <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
-                  Not required for {employee ? employeeDisplayName(employee) : 'this employee'} — Payroll Head standing list.
-                </div>
-              </>
-            ) : (
-              <>
-                <Label className="mb-1.5 block text-sm">Reason <span className="text-red-600">*</span></Label>
-                <Textarea
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  disabled={saving || runClosed}
-                  rows={2}
-                  placeholder="Why the calculated days are being overridden…"
-                  className="rounded-xl text-sm"
-                />
-              </>
-            )}
+            <Label className="mb-1.5 block text-sm">Reason <span className="text-red-600">*</span></Label>
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              disabled={saving || runClosed}
+              rows={2}
+              placeholder="Why the calculated days are being overridden…"
+              className="rounded-xl text-sm"
+            />
           </div>
         </div>
 
