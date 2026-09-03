@@ -287,6 +287,8 @@ export const atsFormConfigService = {
     }));
 
     // 1. Prefer active employees at the resolved branch so inactive roster rows do not leak through.
+    // Roster membership is the explicit authorization; department filter kept but designation
+    // filter removed so HR assistants/managers in the roster are not excluded.
     if (branchRow?.id) {
       const [empRows] = await db.execute<RecruiterRow[]>(
         `SELECT DISTINCT
@@ -299,12 +301,10 @@ export const atsFormConfigService = {
          FROM ats_recruiter_roster r
          JOIN employees e ON e.id = r.employee_id
          LEFT JOIN department_master d ON d.id = e.department_id
-         LEFT JOIN designation_master des ON des.id = e.designation_id
          WHERE r.active_status = 1
            AND e.active_status = 1
            AND e.branch_id = ?
            AND ${recruiterDepartmentPredicate}
-           AND ${recruiterDesignationPredicate}
          ORDER BY name ASC`,
         [branchRow.id]
       );
@@ -360,11 +360,9 @@ export const atsFormConfigService = {
          FROM ats_recruiter_roster r
          JOIN employees e ON e.id = r.employee_id AND e.active_status = 1
          LEFT JOIN department_master d ON d.id = e.department_id
-         LEFT JOIN designation_master des ON des.id = e.designation_id
          WHERE r.active_status = 1
            AND r.branch IN (${rosterPlaceholders})
            AND ${recruiterDepartmentPredicate}
-           AND ${recruiterDesignationPredicate}
          ORDER BY name ASC`,
         rosterLookupValues
       );
