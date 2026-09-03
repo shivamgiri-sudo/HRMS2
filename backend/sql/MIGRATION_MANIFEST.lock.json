@@ -678,7 +678,12 @@
     "1655_pnl_branch_cost_split.sql",
     "1656_social_profile_link.sql",
     "1657_bulk_upload_two_stage_approval.sql",
-    "1658_blood_group_normalization.sql"
+    "1658_blood_group_normalization.sql",
+    "1659_reactivate_gated_pages_locked_from_everyone.sql",
+    "1660_pf_management_payroll_head_grant.sql",
+    "1661_restrict_audit_security_access_control_to_super_admin.sql",
+    "1662_team_attendance_follows_reporting_line.sql",
+    "1663_deduction_types_tds_upload.sql"
   ],
   "approvedDeletions": [
     {
