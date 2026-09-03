@@ -1099,6 +1099,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
     `SELECT spl.id, spl.run_id, spl.employee_id, spl.employee_code,
             spl.gross_salary, spl.total_deductions, spl.net_salary,
             spl.basic, spl.hra, spl.special_allowance,
+            spl.incentive_total, spl.other_deductions,
             spl.pf_employee, spl.esic_employee, spl.professional_tax, spl.tds,
             spl.lwp_deduction, spl.advance_recovery,
             spl.pf_employer, spl.esic_employer,

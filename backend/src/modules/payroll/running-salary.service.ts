@@ -257,12 +257,11 @@ export async function computeRunningSalary(
     eligibleHolidaysTillDate;
   const cappedEarned = Math.min(Math.max(0, earnedPayableDays), activeCalDays);
 
-  let earnedSalaryTillDate = (monthlyGross / daysInMonth) * cappedEarned;
+  const earnedStructureSalary = (monthlyGross / daysInMonth) * cappedEarned;
 
-  // E1.9: Add approved incentives to earned salary (same as projected path below).
-  // Incentives are a month-level lump sum approved before payroll runs — they are
-  // earned as of approval, not spread across days, so they belong in the earned
-  // figure as soon as they are approved.
+  // Fetch approved incentives for the month. Incentives are a lump-sum addition
+  // to net pay — they do not form part of the gross that PF/ESIC/PT are computed on.
+  // They are added to net AFTER calculateNetSalary, matching payrollCalculate.service.ts.
   const [incentiveRowsEarned] = await db.execute<RowDataPacket[]>(
     `SELECT SUM(COALESCE(iul.amount, 0)) AS total_incentives
        FROM incentive_upload_line iul
@@ -273,7 +272,6 @@ export async function computeRunningSalary(
     [employeeId, runMonth.slice(0, 7)],
   );
   const approvedIncentivesEarned = Number((incentiveRowsEarned[0] as any)?.total_incentives ?? 0);
-  earnedSalaryTillDate += approvedIncentivesEarned;
 
   // Advance recovery — same query as payrollCalculate.service.ts step 5d
   let advanceRecoveryEarned = 0;
@@ -301,9 +299,10 @@ export async function computeRunningSalary(
     loanEmiEarned = Number((loanRows[0] as any)?.loan_emi ?? 0);
   } catch { /* employee_loans may not exist */ }
 
-  // Prorated deductions on earned gross
+  // PT slab is based on structure gross only (same as payroll engine — incentives are
+  // non-statutory earnings excluded from PT base).
   const ptEarned = emp.state_code
-    ? await getPtFromSlab(emp.state_code, earnedSalaryTillDate)
+    ? await getPtFromSlab(emp.state_code, earnedStructureSalary)
     : defaultPt;
 
   // When fixed components are available, calculate basic_pct relative to monthlyGross
@@ -316,7 +315,7 @@ export async function computeRunningSalary(
     : (emp.hra_pct ?? 20);
 
   const earnedCalcRaw = payrollService.calculateNetSalary({
-    grossMonthlyCTC: earnedSalaryTillDate,
+    grossMonthlyCTC: earnedStructureSalary,
     workingDays: Math.max(1, cappedEarned),
     lwpDays: 0, // LWP already baked into cappedEarned
     pfEmployeePct, esicEmployeePct: esicEmpPct, esicEmployerPct: esicEmrPct, esicWageLimit, pfWageLimit,
@@ -326,11 +325,14 @@ export async function computeRunningSalary(
     hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
   });
-  // Mirror the payroll-calculate deduction pass: subtract advance recovery and loan EMI
+  // Add incentive to net after statutory deductions, matching payrollCalculate.service.ts.
+  // Subtract advance recovery and loan EMI last, same as the locked payroll run.
   const earnedCalc = {
     ...earnedCalcRaw,
-    net_salary: Math.max(0, earnedCalcRaw.net_salary - advanceRecoveryEarned - loanEmiEarned),
+    net_salary: Math.max(0, earnedCalcRaw.net_salary + approvedIncentivesEarned - advanceRecoveryEarned - loanEmiEarned),
   };
+  // earned_salary_till_date shown in UI = structure gross + incentive (total take-home basis)
+  const earnedSalaryTillDate = earnedStructureSalary + approvedIncentivesEarned;
 
   // ── Projection ────────────────────────────────────────────────────────────
   // Count remaining calendar days from tomorrow to month-end.
@@ -373,17 +375,14 @@ export async function computeRunningSalary(
     projectedEligibleWeekoffs + eligibleHolidaysTillDate + futureHolidays +
     futurePresent;
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
-  let projectedSalary = (monthlyGross / daysInMonth) * projectedPayableDays;
+  const projectedStructureSalary = (monthlyGross / daysInMonth) * projectedPayableDays;
 
-  // E1.9: Add approved incentives to projected salary (same value already fetched above for earned)
-  projectedSalary += approvedIncentivesEarned;
-
-  // Prorated deductions on projected gross
+  // PT on structure gross only — incentive excluded from PT base.
   const ptProjected = emp.state_code
-    ? await getPtFromSlab(emp.state_code, projectedSalary)
+    ? await getPtFromSlab(emp.state_code, projectedStructureSalary)
     : defaultPt;
-  const projectedCalc = payrollService.calculateNetSalary({
-    grossMonthlyCTC: projectedSalary,
+  const projectedCalcRaw = payrollService.calculateNetSalary({
+    grossMonthlyCTC: projectedStructureSalary,
     workingDays: Math.max(1, projectedPayableDays),
     lwpDays: 0,
     pfEmployeePct, esicEmployeePct: esicEmpPct, esicEmployerPct: esicEmrPct, esicWageLimit, pfWageLimit,
@@ -393,6 +392,12 @@ export async function computeRunningSalary(
     hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
   });
+  // Incentive added to net after deductions, matching payrollCalculate.service.ts.
+  const projectedCalc = {
+    ...projectedCalcRaw,
+    net_salary: projectedCalcRaw.net_salary + approvedIncentivesEarned,
+  };
+  const projectedSalary = projectedStructureSalary + approvedIncentivesEarned;
 
   // ── APR provenance split ──────────────────────────────────────────────────
   //
