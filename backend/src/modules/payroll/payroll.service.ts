@@ -878,15 +878,19 @@ export const payrollService = {
 
     const gross = r2(basic + hra + special + allowancesTotal);
 
-    // PF: on Basic only, capped at pfWageLimit (statutory ceiling ₹15,000)
-    // Variable allowances intentionally excluded from PF base
+    // PF: on Basic only, capped at pfWageLimit.
+    // When pfFixedBasic is provided (employee has a contracted monthly basic), use it as the PF
+    // base — PF is a fixed statutory contribution tied to the contracted basic, not to the
+    // attendance-prorated basic that varies month to month.
+    // Variable allowances intentionally excluded from PF base.
     // Skipped entirely when employee has an approved PF opt-out (voluntary declaration).
-    const pfBase = Math.min(basic, p.pfWageLimit);
+    const pfBasicForContribution = p.pfFixedBasic != null ? p.pfFixedBasic : basic;
+    const pfBase = Math.min(pfBasicForContribution, p.pfWageLimit);
     const pfEmp = p.pfOptOut ? 0 : r2(pfBase * (p.pfEmployeePct / 100));
 
     // Employer PF: EPF 3.67% + EPS 8.33% of min(Basic, ₹15,000 EPS ceiling)
     const epsCeiling = 15000;
-    const epsBase = Math.min(basic, epsCeiling);
+    const epsBase = Math.min(pfBasicForContribution, epsCeiling);
     const pfEmrEpf = p.pfOptOut ? 0 : r2(pfBase * 0.0367);
     const pfEmrEps = p.pfOptOut ? 0 : r2(epsBase * 0.0833);
     const pfEmr = r2(pfEmrEpf + pfEmrEps);

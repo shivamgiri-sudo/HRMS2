@@ -1727,6 +1727,7 @@ export async function calculatePayrollRunScoped(
       esicOptOut,
       esicContinuityOverride,
       gratuityPct: statConfig["gratuity_pct"],
+      pfFixedBasic: hasFixedComponents ? fixedBasic : undefined,
     });
 
     // Net pay = payrollService net + holiday work extra payout + incentives + reimbursements

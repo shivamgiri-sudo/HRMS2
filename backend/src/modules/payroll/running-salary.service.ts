@@ -325,6 +325,9 @@ export async function computeRunningSalary(
     basicPct: effectiveBasicPct,
     hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
+    // Use the contracted fixed basic for PF — PF is a fixed statutory contribution
+    // on the agreed basic, not prorated by attendance days.
+    pfFixedBasic: hasFixedComponents ? fixedBasic : undefined,
   });
   // Mirror the payroll-calculate deduction pass: subtract advance recovery and loan EMI
   const earnedCalc = {
@@ -392,6 +395,7 @@ export async function computeRunningSalary(
     basicPct: effectiveBasicPct,
     hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
+    pfFixedBasic: hasFixedComponents ? fixedBasic : undefined,
   });
 
   // ── APR provenance split ──────────────────────────────────────────────────
