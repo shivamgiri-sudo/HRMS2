@@ -500,9 +500,15 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const latestIsDraft = latestRecord?.is_draft === true;
   const useRunningEstimate = !!runningSalary && !hasCurrentMonthPayslip;
 
+  // incentive is stored above gross_salary in the earnings array — add it so the
+  // "gross" tile shows Total Earnings (what the employee actually receives) rather
+  // than structure-only gross, which understates pay when a bulk incentive exists.
+  const latestIncentive = (latestRecord?.earnings ?? [])
+    .filter(e => e.component_code === "INCENTIVE")
+    .reduce((s, e) => s + Number(e.amount ?? 0), 0);
   const displayGross = useRunningEstimate
     ? Number(runningSalary.earned_salary_till_date ?? 0)
-    : Number(latestRecord?.gross_salary ?? 0);
+    : Number(latestRecord?.gross_salary ?? 0) + latestIncentive;
   const displayDeductions = useRunningEstimate
     ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0)
       + Number(runningSalary.professional_tax ?? 0) + Number(runningSalary.tds ?? 0)
@@ -601,7 +607,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         <section className="grid gap-4 sm:grid-cols-3">
           {[
             {
-              label: useRunningEstimate ? "Earned gross (till date)" : latestIsDraft ? "Gross salary (Draft)" : "Latest gross salary",
+              label: useRunningEstimate ? "Earned gross (till date)" : latestIsDraft ? "Total earnings (Draft)" : (latestIncentive > 0 ? "Total earnings" : "Latest gross salary"),
               value: (latestRecord || useRunningEstimate) ? formatCurrency(displayGross) : "Not available",
               icon: Plus,
               tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
@@ -869,7 +875,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     const monthName = MONTHS.find((m) => m.value === String(Number(recMonNum)))?.label || record.run_month || "";
                     const isDuplicate = payrollRecords.some((r, i) => i !== idx && r.run_month === record.run_month);
                     const basicSal = Number(record.basic ?? record.basic_salary ?? 0);
-                    const totalAllowances = Number(record.gross_salary ?? 0) - basicSal;
+                    const incentiveInRecord = (record.earnings ?? [])
+                      .filter(e => e.component_code === "INCENTIVE")
+                      .reduce((s, e) => s + Number(e.amount ?? 0), 0);
+                    const totalAllowances = Number(record.gross_salary ?? 0) - basicSal + incentiveInRecord;
                     const isExpanded = expandedRecord === record.id;
                     return (
                       <Fragment key={record.id}>
@@ -1003,6 +1012,9 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                           )}
                                           {Number(record.tds ?? 0) > 0 && (
                                             <tr><td className="py-1 text-muted-foreground">TDS</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.tds))}`)}</td></tr>
+                                          )}
+                                          {Number(record.loan_deduction ?? 0) > 0 && (
+                                            <tr><td className="py-1 text-muted-foreground">Loan EMI</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.loan_deduction))}`)}</td></tr>
                                           )}
                                           {Number(record.total_deductions) === 0 && (
                                             <tr><td colSpan={2} className="py-1 text-muted-foreground">No deductions</td></tr>

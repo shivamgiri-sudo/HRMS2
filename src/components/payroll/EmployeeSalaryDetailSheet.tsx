@@ -348,17 +348,27 @@ export function EmployeeSalaryDetailSheet({
                 )}
 
                 {/* Net Pay */}
-                <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-5 py-4 flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium text-emerald-700">Net Pay</div>
-                    <div className="text-xs text-emerald-600 mt-0.5">
-                      Gross ₹{fmt(data.gross_salary)} − Deductions ₹{fmt(data.total_deductions)}
+                {(() => {
+                  const incentiveAmt = (data.earnings ?? [])
+                    .filter(e => e.code === "INCENTIVE")
+                    .reduce((s, e) => s + Number(e.amount ?? 0), 0);
+                  const hasIncentive = incentiveAmt > 0;
+                  return (
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-5 py-4 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium text-emerald-700">Net Pay</div>
+                        <div className="text-xs text-emerald-600 mt-0.5">
+                          {hasIncentive
+                            ? `Gross ₹${fmt(data.gross_salary)} + Incentive ₹${fmt(incentiveAmt)} − Deductions ₹${fmt(data.total_deductions)}`
+                            : `Gross ₹${fmt(data.gross_salary)} − Deductions ₹${fmt(data.total_deductions)}`}
+                        </div>
+                      </div>
+                      <div className="text-2xl font-bold font-mono text-emerald-800">
+                        ₹{fmt(data.net_salary)}
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-2xl font-bold font-mono text-emerald-800">
-                    ₹{fmt(data.net_salary)}
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Open Flags */}
                 {openFlags.length > 0 && (

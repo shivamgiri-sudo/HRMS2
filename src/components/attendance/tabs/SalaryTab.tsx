@@ -17,7 +17,9 @@ const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
  * payslip that had one. Every other head falls through to Other Deductions by
  * design, so a new head is never silently hidden.
  */
-const TILED_DEDUCTIONS = new Set(["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV"]);
+const TILED_DEDUCTIONS = new Set(["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV",
+  // Component codes the payroll engine writes to salary_prep_line_component
+  "PF_EMPLOYEE", "ESIC_EMPLOYEE", "PROFESSIONAL_TAX", "LWP_DEDUCTION", "ADVANCE_RECOVERY", "LOAN_EMI"]);
 
 function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: string }) {
   const [open, setOpen] = useState(false);
@@ -137,10 +139,28 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                       {detail.special_allowance > 0 && <div className="flex justify-between text-xs"><span className="text-slate-600">Special Allowance</span><span className="font-medium text-slate-800">{INR(detail.special_allowance)}</span></div>}
                     </>
                   )}
-                  <div className="flex justify-between text-xs font-semibold border-t border-slate-200 pt-1 mt-1">
-                    <span className="text-slate-700">Gross Salary</span>
-                    <span className="text-slate-900">{INR(detail.gross_salary)}</span>
-                  </div>
+                  {(() => {
+                    const incentiveAmt = Number(
+                      (detail.components ?? []).find(
+                        c => c.component_code === "INCENTIVE" && c.component_type === "earning"
+                      )?.amount ?? 0
+                    );
+                    const hasIncentive = incentiveAmt > 0;
+                    return (
+                      <>
+                        {hasIncentive && (
+                          <div className="flex justify-between text-xs border-t border-slate-200 pt-1 mt-1 text-slate-500">
+                            <span>Structure Gross</span>
+                            <span>{INR(detail.gross_salary)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-xs font-semibold border-t border-slate-200 pt-1 mt-1">
+                          <span className="text-slate-700">{hasIncentive ? "Total Earnings" : "Gross Salary"}</span>
+                          <span className="text-slate-900">{INR(detail.gross_salary + incentiveAmt)}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -155,6 +175,12 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                     { label: "TDS", value: detail.tds },
                     { label: "LWP Deduction", value: detail.lwp_deduction },
                     { label: "Advance Recovery", value: detail.advance_recovery },
+                    {
+                      label: "Loan EMI",
+                      value: (detail.components ?? []).find(
+                        c => c.component_code === "LOAN_EMI" && c.component_type === "deduction"
+                      )?.amount ?? 0,
+                    },
                   ]
                     // Only heads actually deducted. `!= null` also passed 0, so a
                     // payslip showed "₹0 TDS" tiles beside real deductions.
