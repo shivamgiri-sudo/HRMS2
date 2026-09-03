@@ -59,11 +59,57 @@ describe("Onboarding — frontend/backend mandatory-document parity", () => {
   });
 });
 
+// PAN Card stopped being a hard submit blocker on 2026-09-03 (freshers and
+// candidates whose card is in re-issue were stuck at Step 10), but it is still
+// collected: it stays in both MANDATORY_DOCUMENTS lists so Step 4's checklist
+// keeps showing it as Required, and only the submit gate filters it out. That
+// split is the whole design, so both halves are asserted here — a future edit
+// that "tidies" PAN out of the rules list would silently stop asking for it.
+function extractNonBlockingLabels(source: string): string[] {
+  const start = source.indexOf("NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(");
+  const end = source.indexOf(");", start);
+  const body = source.slice(start, end);
+  return body.match(/"([^"]+)"/g)?.map((s) => s.slice(1, -1)) ?? [];
+}
+
+describe("Onboarding — PAN Card is collected but does not block submission", () => {
+  it("both sides declare the same non-blocking labels", () => {
+    const backendLabels = extractNonBlockingLabels(backendService);
+    const frontendLabels = extractNonBlockingLabels(frontendModule);
+
+    expect(backendLabels).toEqual(["PAN Card"]);
+    expect(frontendLabels).toEqual(backendLabels);
+  });
+
+  it("PAN Card is still a mandatory-document rule on both sides (still asked for)", () => {
+    expect(extractRules(backendService, "const MANDATORY_DOCUMENTS").some((r) => r.label === "PAN Card")).toBe(true);
+    expect(extractRules(frontendModule, "export const MANDATORY_DOCUMENT_RULES").some((r) => r.label === "PAN Card")).toBe(true);
+  });
+
+  it("submitFullOnboarding filters non-blocking labels out of its document gate", () => {
+    const fn = backendService.slice(backendService.indexOf("export async function submitFullOnboarding"));
+    const gate = fn.slice(
+      fn.indexOf("await findMissingMandatoryDocuments(candidateId)"),
+      fn.indexOf("MISSING_REQUIRED_DOCUMENTS"),
+    );
+    expect(gate).toContain("NON_BLOCKING_DOCUMENT_LABELS.has");
+  });
+
+  it("the frontend Submit button uses the blocking subset, not the full list", () => {
+    const stepTen = readFileSync(
+      resolve(process.cwd(), "..", "src", "components", "onboarding-full", "OnboardingSteps6to10.tsx"),
+      "utf8",
+    );
+    expect(stepTen).toMatch(/const missingMandatoryDocs = findMissingBlockingDocs\(/);
+    expect(stepTen).not.toMatch(/const missingMandatoryDocs = findMissingMandatoryDocs\(/);
+  });
+});
+
 describe("Onboarding — bank account is not mandatory to submit", () => {
   it("submitFullOnboarding no longer hard-requires a candidate_onboarding_bank_detail row", () => {
     const fn = backendService.slice(
       backendService.indexOf("export async function submitFullOnboarding"),
-      backendService.indexOf("const missingDocuments = await findMissingMandatoryDocuments")
+      backendService.indexOf("await findMissingMandatoryDocuments(candidateId)")
     );
     expect(fn).not.toContain("candidate_onboarding_bank_detail");
     expect(fn).not.toContain("Bank details are required before submit");

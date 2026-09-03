@@ -24,7 +24,7 @@ import type {
   StatutoryForm, StatusData, BgvStatus, BankForm,
 } from "./useOnboardingFull";
 import { EMPTY_QUAL, FAMILY_MEMBER_LIMIT, hasSavedMaskedValue } from "./useOnboardingFull";
-import { findMissingMandatoryDocs } from "./mandatoryDocuments";
+import { findMissingBlockingDocs } from "./mandatoryDocuments";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -442,7 +442,7 @@ export function Step10Statutory({
   const form11ConsentReady = pfForm11Check1 && pfForm11Check2 && pfForm11Check3;
 
   const digilockerDone = status?.digilocker?.status === "documents_received";
-  const missingMandatoryDocs = findMissingMandatoryDocs(status?.documents, digilockerDone);
+  const missingMandatoryDocs = findMissingBlockingDocs(status?.documents, digilockerDone);
   const documentsOk = missingMandatoryDocs.length === 0;
   const canSubmit = statutory.declarationAccepted && otpVerified && privacyConsentAccepted && consentAccepted && documentsOk;
 

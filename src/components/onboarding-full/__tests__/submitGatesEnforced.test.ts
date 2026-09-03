@@ -20,7 +20,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateStep7Education } from "../OnboardingSteps6to10";
-import { MANDATORY_DOCUMENT_RULES, findMissingMandatoryDocs } from "../mandatoryDocuments";
+import {
+  MANDATORY_DOCUMENT_RULES,
+  NON_BLOCKING_DOCUMENT_LABELS,
+  findMissingMandatoryDocs,
+  findMissingBlockingDocs,
+} from "../mandatoryDocuments";
 import type { QualForm, StatusData } from "../useOnboardingFull";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -96,6 +101,32 @@ describe("Live Selfie — mandatory, and not satisfiable by a gallery photo", ()
       { doc_type: "Live Selfie", doc_name: "Live Selfie (Identity Verification)" },
     ]);
     expect(missing.map((r) => r.label)).toContain("Passport Size Photo");
+  });
+});
+
+describe("PAN Card — still requested, no longer a submit blocker", () => {
+  const ALL_EXCEPT_PAN = [
+    { doc_type: "Aadhaar Card", doc_name: "aadhaar.pdf" },
+    { doc_type: "Address Proof", doc_name: "address proof.pdf" },
+    { doc_type: "Passport Photo", doc_name: "photo.jpg" },
+    { doc_type: "Live Selfie", doc_name: "Live Selfie (Identity Verification)" },
+    { doc_type: "10th Marksheet", doc_name: "10th.pdf" },
+    { doc_type: "12th Marksheet", doc_name: "12th.pdf" },
+  ];
+
+  it("is still one of the mandatory rules, so Step 4's checklist keeps asking for it", () => {
+    expect(MANDATORY_DOCUMENT_RULES.some((r) => r.label === "PAN Card")).toBe(true);
+    expect(findMissingMandatoryDocs(ALL_EXCEPT_PAN).map((r) => r.label)).toContain("PAN Card");
+  });
+
+  it("is excluded from the blocking subset the Submit button gates on", () => {
+    expect(NON_BLOCKING_DOCUMENT_LABELS.has("PAN Card")).toBe(true);
+    expect(findMissingBlockingDocs(ALL_EXCEPT_PAN)).toEqual([]);
+  });
+
+  it("does not waive any other missing document", () => {
+    const missingSelfieToo = ALL_EXCEPT_PAN.filter((d) => d.doc_type !== "Live Selfie");
+    expect(findMissingBlockingDocs(missingSelfieToo).map((r) => r.label)).toEqual(["Live Selfie"]);
   });
 });
 

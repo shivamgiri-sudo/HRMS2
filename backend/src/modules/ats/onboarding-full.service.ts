@@ -1937,6 +1937,25 @@ const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
   { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },
 ];
 
+// Documents that are still ASKED FOR — they stay in MANDATORY_DOCUMENTS above, so
+// Step 4's checklist keeps listing them as "Required" and findMissingMandatoryDocuments
+// keeps reporting them — but that no longer HARD-BLOCKS submission at Step 10.
+//
+// PAN Card, decided 2026-09-03: candidates without a PAN in hand (freshers, and
+// applicants whose card is still with a previous employer or in re-issue) were
+// stuck at submit with no way past it, while the same field was never enforced as
+// a NUMBER anywhere — 13 of 115 submitted profiles carry no pan_number_hash at all,
+// the most recent from that same day. Collect it, chase it post-joining, don't gate
+// the onboarding on it. The UI is deliberately unchanged: the PAN field keeps its
+// asterisk and the checklist keeps its red "Required" badge, so candidates who DO
+// have a PAN are still prompted for it exactly as before.
+//
+// Keep in sync with NON_BLOCKING_DOCUMENT_LABELS in
+// src/components/onboarding-full/mandatoryDocuments.ts — the frontend's Submit
+// button computes the same gate client-side, and a list that disagrees either
+// re-blocks the button or enables it against a backend that still refuses.
+export const NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(["PAN Card"]);
+
 /** Returns the labels of mandatory documents this candidate has not provided. */
 export async function findMissingMandatoryDocuments(candidateId: string): Promise<string[]> {
   const [docRows] = await db.execute<RowDataPacket[]>(
@@ -2055,7 +2074,12 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   // nor joining-control-room.service.ts's readinessBlockers() reference bank
   // data at all.
 
-  const missingDocuments = await findMissingMandatoryDocuments(candidateId);
+  // Non-blocking categories (PAN Card) are filtered out here rather than removed
+  // from MANDATORY_DOCUMENTS, so the candidate is still asked for them everywhere
+  // else — checklist, "still missing" hints, HR's review view — without the
+  // submission itself being refused. See NON_BLOCKING_DOCUMENT_LABELS.
+  const missingDocuments = (await findMissingMandatoryDocuments(candidateId))
+    .filter((label) => !NON_BLOCKING_DOCUMENT_LABELS.has(label));
   if (missingDocuments.length) {
     throw Object.assign(
       new Error(`Please upload these required documents before submitting: ${missingDocuments.join(", ")}.`),

@@ -33,6 +33,16 @@ export const MANDATORY_DOCUMENT_RULES: MandatoryDocRule[] = [
   { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },
 ];
 
+// Categories that are still asked for and still shown as "Required" in the Step 4
+// checklist, but which no longer BLOCK the Step 10 Submit button. Deliberately a
+// separate list rather than a removal from MANDATORY_DOCUMENT_RULES above: the
+// visible UI is unchanged (asterisks, red badges, "still missing" hints all stay),
+// only the gate moves. Keep identical to NON_BLOCKING_DOCUMENT_LABELS in
+// backend/src/modules/ats/onboarding-full.service.ts — if the two disagree, the
+// button either stays disabled for no reason or enables against a backend that
+// still refuses the submission with a 400.
+export const NON_BLOCKING_DOCUMENT_LABELS = new Set<string>(["PAN Card"]);
+
 /**
  * Mandatory document rules this candidate has not satisfied yet.
  * `digilockerDone` should be `status?.digilocker?.status === "documents_received"`
@@ -50,4 +60,18 @@ export function findMissingMandatoryDocs(
     if (digilockerDone && (rule.matches.includes("aadhaar") || rule.matches.includes("pan"))) return false;
     return !held.some((text) => rule.matches.some((m) => text.includes(m)));
   });
+}
+
+/**
+ * The subset of `findMissingMandatoryDocs` that actually blocks submission —
+ * i.e. everything the backend's submit gate still refuses. Use this for the
+ * Submit button's enabled/disabled state; use `findMissingMandatoryDocs` for
+ * anything that merely *displays* what is outstanding.
+ */
+export function findMissingBlockingDocs(
+  documents: Pick<DocRecord, "doc_type" | "doc_name">[] | undefined,
+  digilockerDone = false,
+): MandatoryDocRule[] {
+  return findMissingMandatoryDocs(documents, digilockerDone)
+    .filter((rule) => !NON_BLOCKING_DOCUMENT_LABELS.has(rule.label));
 }

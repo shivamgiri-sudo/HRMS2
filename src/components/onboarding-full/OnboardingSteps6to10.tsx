@@ -14,7 +14,7 @@ import type {
   StatutoryForm, StatusData, BgvStatus, BankForm,
 } from "./useOnboardingFull";
 import { EMPTY_QUAL, FAMILY_MEMBER_LIMIT, hasSavedMaskedValue } from "./useOnboardingFull";
-import { findMissingMandatoryDocs } from "./mandatoryDocuments";
+import { findMissingBlockingDocs } from "./mandatoryDocuments";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -633,7 +633,12 @@ export function Step10Statutory({
   // enabled and only then get a backend rejection listing 6 things nobody
   // told them were still missing. Now checks the same rules the backend does.
   const digilockerDone = status?.digilocker?.status === "documents_received";
-  const missingMandatoryDocs = findMissingMandatoryDocs(status?.documents, digilockerDone);
+  // Blocking subset only: PAN Card (see NON_BLOCKING_DOCUMENT_LABELS) is still
+  // requested and still shown as "Required" in Step 4's checklist, but the backend
+  // no longer refuses a submission without it, so this button must not either —
+  // and the "still missing" line below must not name it as the reason, or it sends
+  // candidates back to Step 4 for a document that is not holding them up.
+  const missingMandatoryDocs = findMissingBlockingDocs(status?.documents, digilockerDone);
   const documentsOk = missingMandatoryDocs.length === 0;
   const canSubmit = statutory.declarationAccepted && otpVerified && privacyConsentAccepted && consentAccepted && documentsOk;
 
