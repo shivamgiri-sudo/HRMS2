@@ -1216,19 +1216,9 @@ export const attendanceEngineService = {
       // onboarded, at which point this check flips them over on its own.
       aprFeedCoversEmployee = await this.isEnrolledInAprFeed(emp.employee_code, date);
 
-      // Biometric fallback — for the uncovered population only.
-      //
-      // When APR has nothing for the day but the employee did punch, classify them on
-      // that punch instead. The APR reading stays recorded in aprStatusRaw/diallerMinutes,
-      // and mismatch_flag above is unaffected, so the fallback is visible rather than
-      // silently rewriting which source was used.
-      if (rawMinutes === 0 && biometricMinutes > 0 && !aprFeedCoversEmployee) {
-        classifyAsApr = false;
-        rawMinutes = biometricMinutes;
-        sourceSystem = biometricEvidence.sourceSystem;
-        sourceReference = biometricEvidence.sourceReference;
-        rule = { ...rule, attendance_source: 'biometric', full_day_minutes: cosecFullDayMinutes, half_day_minutes: halfDayFloor };
-      }
+      // No biometric fallback for APR employees.
+      // Absence of an APR record IS the attendance answer for this population (2026-09-03).
+      // An APR employee with 0 rawMinutes falls through to the classifier and lands on 'absent'.
 
       // Third logic: APR validated by COSEC.
       //
@@ -1238,10 +1228,11 @@ export const attendanceEngineService = {
       // dialler minutes is present, not a half day. It can only raise a day's status, never
       // lower one, so a process moved onto this logic cannot cost anyone pay.
       //
-      // Skipped when the fallback above already switched to biometric (nothing left to
-      // compare) and when there is no biometric reading to compare against.
+      // Only applies when APR actually has a record (rawMinutes > 0): when APR is silent
+      // the day is absent; there is nothing to validate or lift.
       if (attendanceLogic === 'apr_validated_by_cosec'
           && classifyAsApr
+          && rawMinutes > 0
           && biometricMinutes > 0
           && statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)) {
         classifyAsApr = false;
@@ -1332,15 +1323,14 @@ export const attendanceEngineService = {
       };
     }
 
-    if (rawMinutes === 0 && !(isAprEmployee && aprFeedCoversEmployee)) {
+    // missing_punch only for biometric employees with no data.
+    // APR employees with 0 rawMinutes are absent (no APR record = absent, per 2026-09-03 ruling).
+    if (rawMinutes === 0 && !isAprEmployee) {
       const lateResult = await this.calculateLateArrival(employeeId, date, rule);
       return {
         employeeId, date, processId, branchId,
-        // Record the feed the employee is actually configured for. Hardcoding 'biometric'
-        // here would file an Operations Executive whose APR feed reported nothing as a
-        // missed biometric punch, hiding the real gap from whoever reviews the queue.
-        source: isAprEmployee ? 'dialler' : 'biometric',
-        sourceSystem: isAprEmployee ? 'apr_no_activity' : 'cosec_policy_absence',
+        source: 'biometric',
+        sourceSystem: 'cosec_policy_absence',
         sourceRecordDate: date,
         sourceReference: null,
         diallerMinutes: null,
