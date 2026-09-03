@@ -26,6 +26,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getApplicableChecks } from "../ats/bgv-verification.service.js";
 
 export type EligibilityBlocker = {
   code: string;
@@ -67,6 +68,47 @@ export const TERMINAL_DOCUMENT_STATUSES = [
  * the tracker; this exclusion is scoped to this one gate.
  */
 const EPF_DOCUMENT_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"] as const;
+
+/**
+ * Which BGV categories are still holding this report back, in HR's words.
+ *
+ * Applicability comes from getApplicableChecks() — the same function that builds
+ * the BGV score denominator — rather than a second copy of the "criminal only for
+ * managers, employment only for non-freshers" rules, so this cannot name a check
+ * the report never needed. DigiLocker verified covers aadhaar and pan together,
+ * mirroring deriveOverallStatus().
+ *
+ * A category counts as done only at 'passed' or 'waived'. Everything else —
+ * 'not_run', 'partial', 'failed' — is outstanding, which is the honest reading:
+ * education and address have no automated provider, so they sit at 'not_run'
+ * until a human marks them, and that is precisely what HR needs telling.
+ */
+async function outstandingBgvCategories(
+  candidateId: string,
+  report: RowDataPacket,
+): Promise<string[]> {
+  const { includeEmployment, includeCriminal } = await getApplicableChecks(candidateId)
+    // A failure here must not cost HR the blocker itself — fall back to the
+    // narrower base set rather than throwing away the whole eligibility answer.
+    .catch(() => ({ includeEmployment: false, includeCriminal: false }));
+
+  const done = (col: string) => {
+    const v = String(report[col] ?? "").trim().toLowerCase();
+    return v === "passed" || v === "waived" || v === "verified";
+  };
+
+  const outstanding: string[] = [];
+  if (!done("digilocker_status")) {
+    if (!done("aadhaar_status")) outstanding.push("Aadhaar");
+    if (!done("pan_status")) outstanding.push("PAN");
+  }
+  if (!done("bank_status")) outstanding.push("bank");
+  if (!done("education_status")) outstanding.push("education");
+  if (!done("address_status")) outstanding.push("address");
+  if (includeEmployment && !done("employment_status")) outstanding.push("employment");
+  if (includeCriminal && !done("criminal_status")) outstanding.push("criminal");
+  return outstanding;
+}
 
 export async function evaluateAppointmentLetterEligibility(employeeId: string): Promise<EligibilityResult> {
   const blockers: EligibilityBlocker[] = [];
@@ -113,7 +155,10 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     });
   } else {
     const [bgv] = await db.execute<RowDataPacket[]>(
-      `SELECT overall_status, is_auto_approved FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
+      `SELECT overall_status, is_auto_approved,
+              aadhaar_status, pan_status, digilocker_status, bank_status,
+              education_status, address_status, employment_status, criminal_status
+         FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
       [candidateId],
     ).catch(() => [[]] as unknown as [RowDataPacket[]]);
     const report = (bgv as RowDataPacket[])[0];
@@ -122,9 +167,16 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     } else {
       const status = String(report.overall_status ?? "");
       if (status !== "clear") {
+        // Name the categories, not just the verdict. "in_progress" sent HR to the
+        // BGV report to work out which of seven checks was holding the letter —
+        // and the answer is usually education or address, which have no automated
+        // provider and so sit at 'not_run' until somebody marks them by hand.
+        const outstanding = await outstandingBgvCategories(candidateId, report);
         blockers.push({
           code: "bgv_not_clear",
-          reason: `Background verification is "${status || "pending"}", not clear.`,
+          reason:
+            `Background verification is "${status || "pending"}", not clear.` +
+            (outstanding.length ? ` Outstanding: ${outstanding.join(", ")}.` : ""),
           severity: "critical",
         });
       } else if (Number(report.is_auto_approved) === 1) {

@@ -281,7 +281,59 @@ export async function verifyCandidateDocument(documentId: string, actorId: strin
     );
   }
   await auditDocumentAccess(document, actorId, "verify", "allowed");
+  // Verifying the marksheet is what "education verified" means, so let it reach
+  // the BGV report. Without this the two halves never met: 118 candidates had
+  // uploaded a degree or marksheet while 117 of their reports still read
+  // education_status = 'not_run', which held every appointment letter behind a
+  // check whose evidence was already on file.
+  if (categoryOf(document.document_type) === "education") {
+    await syncEducationStatusFromDocuments(document.candidate_id).catch((err: unknown) => {
+      // Never fail the verification itself over the derived status — the document
+      // is verified either way, and this can be re-derived by verifying another.
+      console.error("[secure-documents] education BGV sync failed:", (err as Error).message);
+    });
+  }
   return getDocumentMetadata(documentId, actorId);
+}
+
+/**
+ * Re-derive candidate_bgv_report.education_status from the education documents
+ * actually on file, then let computeAndSaveScore re-derive the overall verdict.
+ *
+ * Mechanical, not a judgement: every education document verified means 'passed',
+ * some means 'partial', none leaves the column alone. A human-set 'failed' is
+ * never overwritten — an HR rejection outranks a document count — and 'passed' is
+ * never walked back to 'partial' for the same reason.
+ *
+ * Scoped to the onboarding store. Portal uploads live in ats_candidate_documents,
+ * which holds no rows on live data; if that changes this needs to count both.
+ */
+async function syncEducationStatusFromDocuments(candidateId: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT doc_type, document_status
+       FROM candidate_onboarding_document
+      WHERE candidate_id = ? AND deleted_at IS NULL`,
+    [candidateId],
+  );
+  const educationDocs = (rows as Array<{ doc_type: string; document_status: string }>)
+    .filter((r) => categoryOf(String(r.doc_type ?? "")) === "education");
+  if (educationDocs.length === 0) return;
+
+  const verified = educationDocs.filter((r) => String(r.document_status) === "verified").length;
+  if (verified === 0) return;
+  const next = verified === educationDocs.length ? "passed" : "partial";
+
+  await db.execute(
+    `UPDATE candidate_bgv_report
+        SET education_status = ?, updated_at = NOW()
+      WHERE candidate_id = ?
+        AND locked = 0
+        AND COALESCE(education_status, '') NOT IN ('failed', 'passed')`,
+    [next, candidateId],
+  );
+
+  const { computeAndSaveScore } = await import("./bgv-verification.service.js");
+  await computeAndSaveScore(candidateId);
 }
 
 export async function rejectCandidateDocument(documentId: string, actorId: string, reason: string) {

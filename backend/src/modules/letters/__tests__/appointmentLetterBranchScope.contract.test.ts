@@ -114,3 +114,51 @@ describe("Appointment letters — EPF forms are not a blocker", () => {
     expect(clause).toContain("...EPF_DOCUMENT_CODES");
   });
 });
+
+/**
+ * The BGV blocker names which checks are outstanding.
+ *
+ * "Background verification is in_progress, not clear" sent HR to the report to
+ * work out which of seven categories was holding the letter — and the answer is
+ * usually education or address, which have no automated provider and sit at
+ * 'not_run' until a human marks them. On live data 196 of 198 reports read
+ * education_status = 'not_run', so this was the common case, not the edge one.
+ */
+describe("Appointment letters — the BGV blocker is specific", () => {
+  const eligibility = readFileSync(
+    resolve(process.cwd(), "src/modules/letters/appointmentLetterEligibility.service.ts"),
+    "utf8"
+  );
+
+  it("reads the per-category statuses, not just the verdict", () => {
+    expect(eligibility).toContain("education_status");
+    expect(eligibility).toContain("address_status");
+    expect(eligibility).toContain("digilocker_status");
+  });
+
+  it("names the outstanding categories in the blocker reason", () => {
+    expect(eligibility).toContain("outstandingBgvCategories(candidateId, report)");
+    expect(eligibility).toContain("Outstanding: ${outstanding.join(\", \")}");
+  });
+
+  it("takes applicability from getApplicableChecks rather than re-deriving it", () => {
+    // A second copy of "criminal only for managers, employment only for
+    // non-freshers" would drift from the score denominator that uses the real one.
+    // Asserted against the inputs those rules read, not against the words —
+    // the helper's own comment names them while deliberately not implementing them.
+    expect(eligibility).toContain("getApplicableChecks(candidateId)");
+    expect(eligibility).not.toContain("candidate_onboarding_experience");
+    expect(eligibility).not.toContain("bgv_requirements");
+  });
+
+  it("counts only passed/waived as done, so 'not_run' is reported outstanding", () => {
+    const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
+    expect(fn).toContain('v === "passed"');
+    expect(fn).toContain('v === "waived"');
+  });
+
+  it("keeps the blocker even when applicability cannot be resolved", () => {
+    const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
+    expect(fn).toContain(".catch(() => ({ includeEmployment: false, includeCriminal: false }))");
+  });
+});

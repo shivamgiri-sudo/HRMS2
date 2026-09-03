@@ -267,7 +267,7 @@ const CHECK_WEIGHTS: Record<string, number> = {
  * DigiLocker note: handled in computeAndSaveScore — if digilocker is verified
  * it covers both aadhaar and pan without requiring separate manual checks.
  */
-async function getApplicableChecks(candidateId: string): Promise<{
+export async function getApplicableChecks(candidateId: string): Promise<{
   includeEmployment: boolean;
   includeCriminal: boolean;
   denominator: number;
