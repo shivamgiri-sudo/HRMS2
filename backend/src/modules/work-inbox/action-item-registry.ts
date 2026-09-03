@@ -31,6 +31,21 @@ export interface ActionItemDefinition {
 }
 
 export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
+  // ── Workforce ───────────────────────────────────────────────────────────────
+  {
+    itemType:          "HIRING_SHORTAGE",
+    displayName:       "Process short of mandate",
+    module:            "HRMS",
+    entityType:        "workforce_mandate",
+    // Assignment is by USER, resolved per mandate in hc-gap-alert.cron.ts (super_admin sees
+    // every shortage, a branch head only their own scope). These roles are the fallback for
+    // anything that raises the item without resolving recipients itself.
+    defaultAssigneeRoles: ["branch_head", "hr"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   72,
+    deeplinkPattern:   "/recruitment/job-requisition?tab=headcount&mandateId={entityId}",
+    requiresScope:     true,
+  },
   // ── ATS ─────────────────────────────────────────────────────────────────────
   {
     itemType:          "ONBOARDING_STUCK",

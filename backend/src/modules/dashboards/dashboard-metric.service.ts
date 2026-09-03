@@ -258,6 +258,72 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
   }
 }
 
+// ─── Hiring alert (mandate vs available headcount) ────────────────────────────
+/**
+ * How many people the caller's processes are short of, against the mandate they are billed on
+ * plus the buffer they are meant to carry. Same arithmetic as the Headcount & Shortage board on
+ * /recruitment/job-requisition, so the tile and the board can never disagree:
+ *   buffer_to_maintain = CEIL(mandate x buffer_pct / 100)
+ *   shortage           = MAX(0, mandate + buffer_to_maintain - active)
+ *
+ * Active is active_status = 1 alone — the canonical definition (ruling 2026-08-07, guarded by
+ * attendance-canon.contract.test.ts), so this tile sizes the organisation exactly like the
+ * Total Employees tile beside it. People serving notice are reported separately rather than
+ * deducted, and no date_of_joining gate is applied: a future-dated joiner is a seat already
+ * filled as far as a hiring decision goes.
+ */
+export async function getHiringAlertMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "wm.branch_id", "wm.process_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*)                                                    AS process_count,
+         COALESCE(SUM(wm.mandated_hc), 0)                            AS mandate_hc,
+         COALESCE(SUM(a.active_hc), 0)                               AS active_hc,
+         COALESCE(SUM(CEIL(wm.mandated_hc * wm.buffer_pct / 100)), 0) AS buffer_to_maintain,
+         COALESCE(SUM(GREATEST(0,
+           wm.mandated_hc + CEIL(wm.mandated_hc * wm.buffer_pct / 100) - COALESCE(a.active_hc, 0)
+         )), 0)                                                      AS shortage,
+         COALESCE(SUM(
+           wm.mandated_hc + CEIL(wm.mandated_hc * wm.buffer_pct / 100) - COALESCE(a.active_hc, 0) > 0
+         ), 0)                                                       AS processes_short
+       FROM workforce_mandate wm
+       LEFT JOIN (
+         SELECT branch_id, process_id, COUNT(*) AS active_hc
+           FROM employees
+          WHERE active_status = 1
+          GROUP BY branch_id, process_id
+       ) a ON a.branch_id = wm.branch_id AND a.process_id = wm.process_id
+       WHERE wm.active_status = 1
+         AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
+         AND ${scopeSql}`,
+      params
+    );
+
+    const row = (rows[0] ?? {}) as Record<string, unknown>;
+    const processCount = Number(row.process_count ?? 0);
+    const shortage = Number(row.shortage ?? 0);
+    const detail = {
+      mandate: Number(row.mandate_hc ?? 0),
+      active: Number(row.active_hc ?? 0),
+      bufferToMaintain: Number(row.buffer_to_maintain ?? 0),
+      shortage,
+      processesShort: Number(row.processes_short ?? 0),
+    };
+    const status: MetricResult["status"] = shortage > 0 ? "warn" : "ok";
+
+    // processCount is the source row count: a caller scoped to processes that carry no mandate
+    // must report NO_DATA_IN_SOURCE rather than a confident "0 short", which would read as
+    // "you are fully staffed" when the truth is "nobody told this system your mandate".
+    return wrapEnriched(
+      "HIRING_ALERT", shortage, detail, status, false,
+      targetScopeId(scope.branchIds), targetScopeId(scope.processIds), processCount
+    );
+  } catch (err) {
+    return nullResult("HIRING_ALERT", err);
+  }
+}
+
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 export async function getOnboardingMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {

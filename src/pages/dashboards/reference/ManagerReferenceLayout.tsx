@@ -49,6 +49,8 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
   const m = data.metrics;
   const drill = data.drilldownFor ?? (() => ({}));
   const team = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
+  const hiringShortage = metricDetail(m, "hiringAlert", "shortage") ?? metricValue(m, "hiringAlert");
+  const processesShort = metricDetail(m, "hiringAlert", "processesShort");
   const present = metricDetail(m, "att", "present");
   const absent = metricDetail(m, "att", "absent");
   const late = metricDetail(m, "att", "late");
@@ -131,6 +133,13 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
             unavailableReason: metricUnavailableReason(m, "att") },
           { label: "New Joiners (This Month)", value: newJoiners, helper: "Last 30 days", icon: UserPlus, tone: "violet",
             unavailableReason: metricUnavailableReason(m, "onb"), ...drill("onb") },
+          // A branch head lands on this dashboard (dashboardAccessRegistry maps branch_head to
+          // MANAGEMENT_DASHBOARD), and resolveDashboardScope narrows the metric to their own
+          // branch and processes, so this reads "how short am I", not the org total.
+          { label: "Hiring Shortage", value: hiringShortage,
+            helper: processesShort ? `${processesShort} process${processesShort === 1 ? "" : "es"} short` : "Against mandate + buffer",
+            icon: UserPlus, tone: "red",
+            unavailableReason: metricUnavailableReason(m, "hiringAlert"), ...drill("hiringAlert") },
           { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/ats/dashboard" },
         ]}
       />

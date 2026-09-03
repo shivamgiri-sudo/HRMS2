@@ -10,6 +10,7 @@ import {
   getDocumentComplianceMetrics,
   getDpdpWithdrawalMetrics,
   getHeadcountMetrics,
+  getHiringAlertMetrics,
   getIncentiveMetrics,
   getJoiningDocEsignMetrics,
   getLeaveApprovalMetrics,
@@ -36,6 +37,7 @@ import {
 
 type MetricKey =
   | "hc"
+  | "hiringAlert"
   | "onb"
   | "att"
   | "payroll"
@@ -87,6 +89,7 @@ type MetricDefinition = {
 
 const METRICS: Readonly<Record<MetricKey, MetricDefinition>> = {
   hc: { code: "HEADCOUNT", label: "Active headcount", unit: "employees", source: "Employee master", sourceTable: "employees", higherIsBetter: true, moduleCode: "hrms", execute: getHeadcountMetrics },
+  hiringAlert: { code: "HIRING_ALERT", label: "Hiring shortage", unit: "seats", source: "Cost centre billing mandate", sourceTable: "workforce_mandate", higherIsBetter: false, moduleCode: "hrms", execute: getHiringAlertMetrics },
   onb: { code: "ONBOARDING", label: "Onboarding pipeline", unit: "candidates", source: "ATS onboarding", sourceTable: "ats_onboarding_bridge", higherIsBetter: true, moduleCode: "ats", execute: getOnboardingMetrics },
   att: { code: "ATTENDANCE", label: "Processed attendance rate", unit: "percent", source: "Processed attendance", sourceTable: "attendance_daily_record", numeratorKey: "attendedDays", denominatorKey: "expectedToWork", higherIsBetter: true, moduleCode: "attendance", execute: getAttendanceMetrics },
   payroll: { code: "PAYROLL_READINESS", label: "Payroll readiness", unit: "employees", source: "Employee payroll master", sourceTable: "employees", numeratorKey: "readyCount", denominatorKey: "total", higherIsBetter: true, moduleCode: "payroll", execute: getPayrollReadinessMetrics },
@@ -132,7 +135,7 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // Fixes 4 blank KPI cards + the attendance donut with no layout change.
   // attException + docCompliance give the org-wide blocker roll-up: the exceptions that
   // stop a payroll run, and the active employees with no document on file.
-  SUPER_ADMIN_DASHBOARD: ["hc", "att", "onb", "resign", "payroll", "attException", "docCompliance"],
+  SUPER_ADMIN_DASHBOARD: ["hc", "att", "onb", "resign", "payroll", "attException", "docCompliance", "hiringAlert"],
   // `bgv` added 31-Jul-2026 (CEO UAT): the layout renders a BGV Pending tile but the
   // bundle never requested the metric, so it was a permanent em-dash.
   //
@@ -154,7 +157,7 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // holds real rows (7), just few. Re-add the day their sources start writing.
   HR_DASHBOARD: [
     "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
-    "hc", "att", "docCompliance", "training", "leaveApprovals",
+    "hc", "att", "docCompliance", "training", "leaveApprovals", "hiringAlert",
   ],
   WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
   // "hc" added — WfmAttendanceReferenceLayout.tsx's first tile, "Total Employees",
@@ -178,7 +181,10 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // "New Joiners (This Month)" tile falls back to metricDetail(m, "onb", …) when the
   // workforce summary has no new_joiners_30d, and the bundle never requested it, so the
   // fallback was dead code.
-  MANAGEMENT_DASHBOARD: ["hc", "att", "onb", "training", "leaveApprovals"],
+  // hiringAlert added for branch heads: dashboardAccessRegistry maps branch_head to this
+  // dashboard (variant "manager"), and resolveDashboardScope narrows them to their own branch
+  // and processes, so the tile answers "how short am I" for their scope only.
+  MANAGEMENT_DASHBOARD: ["hc", "att", "onb", "training", "leaveApprovals", "hiringAlert"],
   EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
   PERFORMANCE_SCORECARD: [
     "attendanceStatus", "latecoming", "unplannedLeave", "pipStatus",

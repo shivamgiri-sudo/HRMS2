@@ -63,6 +63,8 @@ export async function getDrilldown(
   switch (metricCode) {
     case "HEADCOUNT":
       return drillHeadcount(scope);
+    case "HIRING_ALERT":
+      return drillHiringAlert(scope);
     case "ONBOARDING":
     case "ONBOARDING_PENDING":
       return drillOnboarding(scope, filters);
@@ -159,6 +161,52 @@ function sourceUnavailable(err: unknown): never {
 }
 
 // ─── HEADCOUNT: grouped by branch ────────────────────────────────────────────
+/**
+ * The processes behind the Hiring shortage tile, worst first. Arithmetic is identical to
+ * getHiringAlertMetrics and to /api/manpower-risk/cost-center, so the tile, the drawer and the
+ * Headcount & Shortage board always agree.
+ */
+async function drillHiringAlert(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "wm.branch_id", "wm.process_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT b.branch_name  AS branchName,
+              p.process_name AS processName,
+              wm.mandated_hc AS mandate,
+              COALESCE(a.active_hc, 0) AS active,
+              CEIL(wm.mandated_hc * wm.buffer_pct / 100) AS bufferTarget,
+              GREATEST(0, wm.mandated_hc + CEIL(wm.mandated_hc * wm.buffer_pct / 100)
+                          - COALESCE(a.active_hc, 0)) AS count
+         FROM workforce_mandate wm
+         LEFT JOIN branch_master  b ON b.id = wm.branch_id
+         LEFT JOIN process_master p ON p.id = wm.process_id
+         LEFT JOIN (
+           SELECT branch_id, process_id, COUNT(*) AS active_hc
+             FROM employees
+            WHERE active_status = 1
+            GROUP BY branch_id, process_id
+         ) a ON a.branch_id = wm.branch_id AND a.process_id = wm.process_id
+        WHERE wm.active_status = 1
+          AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
+          AND ${scopeSql}
+        ORDER BY count DESC, wm.mandated_hc DESC`,
+      params,
+    );
+    return {
+      metricCode: "HIRING_ALERT",
+      records: (rows as any[]).map((r) => ({
+        branchName: r.branchName ?? "Unassigned",
+        processName: r.processName ?? "—",
+        mandate: Number(r.mandate),
+        active: Number(r.active),
+        bufferTarget: Number(r.bufferTarget),
+        count: Number(r.count),
+      })),
+      totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
 async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // buildScopeWhere has no case for TEAM_ONLY/SELF_ONLY and falls back to 1=0 for both —

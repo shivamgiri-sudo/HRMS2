@@ -56,6 +56,8 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
   const drill = data.drilldownFor ?? (() => ({}));
   const systemMetrics = (read(data.system, "metrics") ?? {}) as Record<string, unknown>;
   const active = asNumber(systemMetrics.activeEmployees) ?? metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
+  const hiringShortage = metricDetail(m, "hiringAlert", "shortage") ?? metricValue(m, "hiringAlert");
+  const processesShort = metricDetail(m, "hiringAlert", "processesShort");
   const present = metricDetail(m, "att", "present");
   const livePresent = metricDetail(m, "att", "livePresent");
   const displayPresent = livePresent ?? present;
@@ -87,6 +89,11 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         { label: "On Leave Today", value: onLeave, helper: "Approved leave", icon: CalendarDays, tone: "red", ...drill("att") },
         { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red", ...drill("att") },
         { label: "Total Branches", value: branches, helper: "Active", icon: Building2, tone: "green" },
+        // Org-wide: super_admin bypasses scoping, so this is every process carrying a mandate.
+        { label: "Hiring Shortage", value: hiringShortage,
+          helper: processesShort ? `${processesShort} process${processesShort === 1 ? "" : "es"} short` : "Against mandate + buffer",
+          icon: UserMinus, tone: "red",
+          unavailableReason: metricUnavailableReason(m, "hiringAlert"), ...drill("hiringAlert") },
         { label: "Open Positions", value: openPositions, helper: "Across departments", icon: Network, tone: "blue" },
         { label: "System Uptime", value: uptime, helper: uptime === "—" ? "Source unavailable" : "Reported by system health", icon: Activity, tone: uptime === "—" ? "slate" : "green" },
       ]} />

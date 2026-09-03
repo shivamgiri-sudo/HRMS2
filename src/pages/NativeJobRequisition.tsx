@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { HeadcountShortagePanel } from '@/components/workforce/HeadcountShortagePanel';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import {
@@ -184,6 +185,12 @@ const emptyForm = {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function NativeJobRequisition() {
+  // Which half of this page is showing. Headcount & Shortage answers "how many do I need";
+  // the requisition list answers "what have I raised". Deep-linked as ?tab=headcount from the
+  // dashboard tile and from the HIRING_SHORTAGE work item.
+  const [pageTab, setPageTab] = useState<'requisitions' | 'headcount'>(
+    new URLSearchParams(window.location.search).get('tab') === 'headcount' ? 'headcount' : 'requisitions',
+  );
   const [requisitions, setRequisitions] = useState<JobRequisition[]>([]);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -692,14 +699,49 @@ export default function NativeJobRequisition() {
             <h1 className="text-2xl font-bold text-gray-900">Job Requisitions</h1>
             <p className="text-gray-500 text-sm">Manage hiring demands and headcount requests</p>
           </div>
-          <button
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Requisition
-          </button>
+          {pageTab === 'requisitions' && (
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Requisition
+            </button>
+          )}
         </div>
+
+        {/* Tabs. The shortage board lives here rather than on a page of its own so HR reads the
+            gap and raises the requisition that closes it without changing screen. */}
+        <div className="flex items-center gap-1 border-b border-slate-200">
+          {([['requisitions', 'Requisitions'], ['headcount', 'Headcount & Shortage']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => {
+                setPageTab(key);
+                const url = new URL(window.location.href);
+                if (key === 'headcount') url.searchParams.set('tab', 'headcount');
+                else url.searchParams.delete('tab');
+                window.history.replaceState({}, '', url);
+              }}
+              className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+                pageTab === key
+                  ? 'border-blue-600 text-blue-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {pageTab === 'headcount' && (
+          <HeadcountShortagePanel
+            branchId={branchFilter || undefined}
+            processId={processFilter || undefined}
+          />
+        )}
+
+        <div className={pageTab === 'requisitions' ? 'space-y-5' : 'hidden'}>
 
         {/* Metrics Cards */}
         {metrics && (
@@ -1549,6 +1591,7 @@ export default function NativeJobRequisition() {
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {/* Handover Modal */}

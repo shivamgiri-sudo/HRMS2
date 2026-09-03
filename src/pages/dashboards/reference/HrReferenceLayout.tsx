@@ -7,6 +7,7 @@ import {
   TriangleAlert,
   UserCheck,
   UsersRound,
+  UserPlus,
   CheckCircle2,
   Eye,
   MessageSquare,
@@ -192,6 +193,8 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   const bgv = metricDetail(m, "bgv", "pending") ?? metricValue(m, "bgv");
   const bgvCleared = metricDetail(m, "bgv", "cleared");
   const headcount = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
+  const hiringShortage = metricDetail(m, "hiringAlert", "shortage") ?? metricValue(m, "hiringAlert");
+  const processesShort = metricDetail(m, "hiringAlert", "processesShort");
   const attendanceRate = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
   const appointmentEsign = metricDetail(m, "appointmentEsign", "pending") ?? metricValue(m, "appointmentEsign");
   const joiningDocs = metricDetail(m, "joiningDocEsign", "pending") ?? metricValue(m, "joiningDocEsign");
@@ -402,6 +405,17 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
           color="#6366F1"
           bg="from-indigo-500/10 to-violet-500/5"
           onClick={drill("hc").onDrilldown}
+        />
+        <KpiTile
+          icon={UserPlus}
+          label="Hiring Shortage"
+          value={hiringShortage}
+          suffix=" seats"
+          trend={hiringShortage && hiringShortage > 0 ? "down" : hiringShortage !== null ? "up" : undefined}
+          change={processesShort ? `${processesShort} process${processesShort === 1 ? "" : "es"}` : undefined}
+          color="#EF4444"
+          bg="from-red-500/10 to-orange-500/5"
+          onClick={drill("hiringAlert").onDrilldown}
         />
         <KpiTile
           icon={TrendingDown}

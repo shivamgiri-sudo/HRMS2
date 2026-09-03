@@ -171,9 +171,14 @@ describe("role-specific metric execution definitions", () => {
   it("does not return the same metric bundle for every dashboard", () => {
     // `tat` and `dpdp` dropped 2026-08-28: both sources hold 0 rows on a COUNT(*) and no
     // layout consumes either key, so requesting them bought a false zero and two queries.
+    // `hiringAlert` added 2026-09-03: the Hiring Shortage tile, sourced from workforce_mandate
+    // against the billing mandate. Unlike `tat`/`dpdp` above, its source is not empty — migration
+    // 1666 seeds 20 process rows carrying 807 of the 896 billed seats — so it reports a real
+    // figure rather than a false zero, and metricUnavailableReason covers the scoped-to-nothing
+    // case.
     expect(getDashboardMetricKeys("HR_DASHBOARD")).toEqual([
       "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
-      "hc", "att", "docCompliance", "training", "leaveApprovals",
+      "hc", "att", "docCompliance", "training", "leaveApprovals", "hiringAlert",
     ]);
     expect(getDashboardMetricKeys("WFM_DASHBOARD")).toEqual(["hc", "att", "attException", "biometric"]);
     expect(getDashboardMetricKeys("PAYROLL_HR_DASHBOARD")).toEqual([

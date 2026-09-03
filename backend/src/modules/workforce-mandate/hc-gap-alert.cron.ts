@@ -11,6 +11,7 @@
 
 import type { RowDataPacket } from "mysql2";
 import { db as pool } from "../../db/mysql.js";
+import { createWorkItem } from "../work-inbox/work-inbox.service.js";
 import { randomUUID } from "crypto";
 
 let nextRun: ReturnType<typeof setTimeout> | undefined;
@@ -19,6 +20,8 @@ const RUN_MINUTE = 30;
 
 interface GapAlert {
   mandate_id: string;
+  process_id: string | null;
+  branch_id: string | null;
   process_name: string;
   branch_name: string | null;
   mandated_hc: number;
@@ -38,6 +41,44 @@ function millisecondsUntilNextRun(): number {
   return target.getTime() - now.getTime();
 }
 
+
+/**
+ * Who is told about a shortage on this mandate.
+ *
+ * Owner rule (2026-09-03): super_admin sees every shortage; a branch head sees the ones in their
+ * own scope. Recipients are resolved to USER IDS rather than assigned to a role, because
+ * work_item routes on `assigned_to_role = <the reader's single role>` — a role-assigned item would
+ * put every branch's shortage in every branch head's inbox, which is the opposite of the rule.
+ *
+ * A branch head with no scope row gets nothing rather than everything: the same fail-closed
+ * behaviour buildScopeWhereClause applies to the board this alert links to.
+ */
+async function resolveAlertRecipients(gap: GapAlert): Promise<string[]> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT DISTINCT ur.user_id
+       FROM mas_hrms.user_roles ur
+      WHERE ur.active_status = 1
+        AND (
+          ur.role_key = 'super_admin'
+          OR (
+            ur.role_key IN ('branch_head', 'branch_manager')
+            AND EXISTS (
+              SELECT 1 FROM mas_hrms.user_assignment_scope uas
+               WHERE uas.user_id = ur.user_id
+                 AND uas.active_status = 1
+                 AND (
+                   uas.scope_type = 'all'
+                   OR (uas.branch_id IS NOT NULL AND uas.branch_id = ?)
+                   OR (uas.process_id IS NOT NULL AND uas.process_id = ?)
+                 )
+            )
+          )
+        )`,
+    [gap.branch_id, gap.process_id]
+  );
+  return (rows as RowDataPacket[]).map((r) => String(r.user_id));
+}
+
 async function checkHcGaps(): Promise<void> {
   console.log("[hc-gap-alert] Starting HC gap check...");
 
@@ -46,6 +87,8 @@ async function checkHcGaps(): Promise<void> {
       WITH live_counts AS (
         SELECT
           wm.id AS mandate_id,
+          wm.process_id,
+          wm.branch_id,
           p.process_name,
           b.branch_name,
           wm.mandated_hc,
@@ -102,6 +145,8 @@ async function checkHcGaps(): Promise<void> {
       )
       SELECT
         mandate_id,
+        process_id,
+        branch_id,
         process_name,
         branch_name,
         mandated_hc,
@@ -167,7 +212,38 @@ async function checkHcGaps(): Promise<void> {
         ]
       );
 
-      console.log(`[hc-gap-alert] Alert logged for ${scopeLabel}: coverage ${gap.coverage_pct}%, gap ${gap.net_gap}, hiring demand ${gap.hiring_demand}`);
+      // Deliver it. Until now this cron wrote an audit row and told nobody — the worker
+      // registration comment claimed it "fires push notifications to HR Admin + Branch Head"
+      // and no such code existed.
+      const recipients = await resolveAlertRecipients(gap);
+      for (const userId of recipients) {
+        const [[already]] = await pool.execute<RowDataPacket[]>(
+          `SELECT id FROM mas_hrms.work_item
+            WHERE item_type = 'HIRING_SHORTAGE' AND entity_id = ? AND assigned_to_user_id = ?
+              AND status NOT IN ('completed', 'cancelled')
+            LIMIT 1`,
+          [gap.mandate_id, userId]
+        );
+        if (already) continue;
+        await createWorkItem({
+          itemType: "HIRING_SHORTAGE",
+          title: `${scopeLabel} is ${gap.hiring_demand} short of mandate`,
+          description:
+            `Coverage is ${gap.coverage_pct}% against a threshold of ${gap.alert_threshold_pct}%. ` +
+            `Mandate ${gap.mandated_hc}, gap ${gap.net_gap}, hiring demand ${gap.hiring_demand} ` +
+            `(includes people already on notice).`,
+          moduleCode: "hrms",
+          entityType: "workforce_mandate",
+          entityId: gap.mandate_id,
+          assignedToUserId: userId,
+          branchId: gap.branch_id ?? undefined,
+          processId: gap.process_id ?? undefined,
+          priority: gap.coverage_pct < 50 ? "critical" : "high",
+          createdBy: "hc-gap-alert",
+        });
+      }
+
+      console.log(`[hc-gap-alert] Alert logged for ${scopeLabel}: coverage ${gap.coverage_pct}%, gap ${gap.net_gap}, hiring demand ${gap.hiring_demand}; notified ${recipients.length} recipient(s)`);
     }
 
     console.log("[hc-gap-alert] HC gap check complete.");
