@@ -65,7 +65,7 @@ esiRegDocsRouter.get(
          e.id                                              AS employee_id,
          e.employee_code,
          CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
-         COALESCE(b.branch_name, e.branch, '')             AS branch,
+         COALESCE(b.branch_name, '')                       AS branch,
          e.esic_number,
          (SELECT COUNT(*) FROM employee_documents ed
           WHERE ed.employee_id = e.id
@@ -356,7 +356,7 @@ esiRegDocsRouter.get(
       `SELECT
          e.employee_code,
          CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-         COALESCE(b.branch_name, e.branch, '')             AS branch,
+         COALESCE(b.branch_name, '')                       AS branch,
          e.esic_number,
          e.pan_number,
          -- ESI registration needs the Aadhaar as well as the PAN, and this export never
