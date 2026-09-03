@@ -143,11 +143,6 @@ export interface NetSalaryParams {
   allowances?: SalaryAllowance[]; // variable pay: night shift, incentives, etc.
   pfOptOut?: boolean;      // true = employee voluntarily opted out of PF deduction
   esicOptOut?: boolean;    // true = employee voluntarily opted out of ESI deduction
-  // When the employee has a fixed monthly basic (from salary_component_assignments), pass it here
-  // so PF is computed on the agreed-upon full-month basic rather than the attendance-prorated basic.
-  // PF is a fixed statutory contribution (12% of contracted basic) — it does not vary with
-  // the number of days worked in a month.
-  pfFixedBasic?: number;
   // true = employee was covered by ESI at the start of their current contribution
   // period (Apr-Sep / Oct-Mar) and must stay covered even though this month's
   // gross has since crossed esicWageLimit (ESI Act s.2(6A)/Reg 3). Independent
