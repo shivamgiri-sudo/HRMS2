@@ -31,7 +31,9 @@ import {
   Layers,
   Loader2,
   RefreshCw,
+  Search,
   Send,
+  X,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -116,6 +118,8 @@ type EmployeeRequest = {
 type RegularizationDecisionSupport = {
   riskScore: number;
   riskLevel: "low" | "medium" | "high";
+  /** Whether the caller can move this row forward at its current stage. */
+  canApproveNow?: boolean;
   flags: string[];
   canBulkApprove: boolean;
   evidence: {
@@ -538,6 +542,9 @@ export default function AttendanceRegularization() {
   // success handlers, which must refetch the tab the user is actually looking at.
   const viewTabRef = useRef<ViewTab>("my_requests");
   useEffect(() => { viewTabRef.current = viewTab; }, [viewTab]);
+  // Read inside loadRequests, which is a plain function rather than a hook and so
+  // would otherwise close over the search term from the render that defined it.
+  const searchRef = useRef("");
   const tabInitialized = useRef(false);
   useEffect(() => {
     if (roleLoading || !firstLoadDone || tabInitialized.current) return;
@@ -562,12 +569,22 @@ export default function AttendanceRegularization() {
   const [serverTotal, setServerTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("all");
+  // Employee search. Sent to the server, not applied only in the browser: the list
+  // is capped at REQUEST_FETCH_LIMIT out of 132,000 rows, so filtering what happens
+  // to be loaded would answer "no requests found" for an employee whose rows were
+  // simply not on the page.
+  const [searchTerm, setSearchTerm] = useState("");
   const [filterFromDate, setFilterFromDate] = useState("");
   const [filterToDate, setFilterToDate] = useState("");
   const [tablePage, setTablePage] = useState(1);
   const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [reviewDialogTarget, setReviewDialogTarget] = useState<{ id: string; status: "approved" | "rejected" } | null>(null);
+  // Rejection only. Approval fires straight from the button: the note was optional
+  // there, so the dialog asked a question with no required answer and put a click
+  // between the approver and every single request in the queue. Rejection keeps it,
+  // because a rejected request has to tell the employee why -- the remark is
+  // mandatory and is what they see.
+  const [reviewDialogTarget, setReviewDialogTarget] = useState<{ id: string } | null>(null);
   const [reviewDialogNote, setReviewDialogNote] = useState("");
 
   // Discarding an approved regularization is narrower than approving one:
@@ -621,10 +638,12 @@ export default function AttendanceRegularization() {
   const requestCategory = form.watch("requestCategory");
   const attendanceDate = form.watch("attendanceDate");
   const debouncedAttendanceDate = useDebounce(attendanceDate, 180);
+  const debouncedSearch = useDebounce(searchTerm, 350);
 
   const filteredRequests = useMemo(() => {
     // Normalized statuses that indicate pending approval action
     const PENDING_APPROVAL_STATUSES = ["pending_manager", "pending_admin", "payroll_pending"];
+    const searchNeedle = debouncedSearch.trim().toLowerCase();
 
     return requests.filter((item) => {
       // Tab-based filtering
@@ -638,6 +657,17 @@ export default function AttendanceRegularization() {
       }
       // "all" tab shows everything
 
+      // Also matched here, not only on the server: /regularizations/mine is merged
+      // into the same list and carries no search parameter, so without this the
+      // caller's own requests would ignore the box they just typed in.
+      if (searchNeedle) {
+        const haystack = [item.submitted_by, item.employee_code, item.request_no]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(searchNeedle)) return false;
+      }
+
       if (filterStatus !== "all" && item.current_status !== filterStatus) return false;
       const detail = item.regularization_request_detail?.[0];
       const date = detail?.attendance_date ?? "";
@@ -645,7 +675,7 @@ export default function AttendanceRegularization() {
       if (filterToDate && date && date > filterToDate) return false;
       return true;
     });
-  }, [requests, filterStatus, filterFromDate, filterToDate, viewTab, currentEmployeeId]);
+  }, [requests, filterStatus, filterFromDate, filterToDate, viewTab, currentEmployeeId, debouncedSearch]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRequests.length / TABLE_PAGE_SIZE));
   const pagedRequests = useMemo(() => {
@@ -677,10 +707,35 @@ export default function AttendanceRegularization() {
     risky: requests.filter((r) => r.decision_support?.riskLevel === "high").length,
   }), [requests]);
 
-  const safeBulkIds = useMemo(
-    () => selectedIds.filter((id) => requests.find((r) => r.id === id)?.decision_support?.canBulkApprove),
-    [requests, selectedIds]
+  /**
+   * Selected rows this approver can actually move forward, and how many of them the
+   * risk engine has flagged.
+   *
+   * `canBulkApprove` alone is not enough to drive the button: it means "low risk AND
+   * actionable", so a queue of flagged requests leaves it at (0) with nothing on
+   * screen explaining why. `canApproveNow` answers only the stage question, which is
+   * what decides whether the bulk endpoint will accept the id at all.
+   */
+  const approvableSelection = useMemo(() => {
+    const rows = selectedIds
+      .map((id) => requests.find((r) => r.id === id))
+      .filter((r): r is EmployeeRequest => Boolean(r));
+    const approvable = rows.filter((r) => r.decision_support?.canApproveNow);
+    return {
+      ids: approvable.map((r) => r.id),
+      flaggedCount: approvable.filter((r) => (r.decision_support?.riskLevel ?? "low") !== "low").length,
+      blockedCount: rows.length - approvable.length,
+    };
+  }, [requests, selectedIds]);
+
+  // Ids on the page the caller may act on — what the header checkbox selects. Rows
+  // outside their authority are left alone rather than selected and then refused.
+  const selectableOnPage = useMemo(
+    () => pagedRequests.filter((r) => r.decision_support?.canApproveNow).map((r) => r.id),
+    [pagedRequests]
   );
+  const allOnPageSelected =
+    selectableOnPage.length > 0 && selectableOnPage.every((id) => selectedIds.includes(id));
 
   const attendancePreviewQuery = useQuery({
     queryKey: ["regularization-attendance-preview", debouncedAttendanceDate, linkedEmployeeId],
@@ -725,10 +780,12 @@ export default function AttendanceRegularization() {
    *
    * Every fetch below is now bounded, and asks only for what the visible tab needs.
    */
-  async function loadRequests(tab: ViewTab = viewTabRef.current) {
+  async function loadRequests(tab: ViewTab = viewTabRef.current, search: string = searchRef.current) {
     setIsLoading(true);
     try {
       const params = new URLSearchParams({ limit: String(REQUEST_FETCH_LIMIT) });
+      const term = search.trim();
+      if (term) params.set("search", term);
       // "All" is the only view that wants closed history. The other two are the
       // approval queue and the caller's own requests, and both are covered by the
       // open statuses plus /mine below — measured at 162 ms / 14 KB against the
@@ -797,6 +854,18 @@ export default function AttendanceRegularization() {
     if (wasAll !== isAll) loadRequests(viewTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewTab]);
+
+  // Refetch when the search term settles. The first run is skipped so the initial
+  // mount does not fire a second identical request behind the one loadRequests()
+  // already issued.
+  const searchInitialized = useRef(false);
+  useEffect(() => {
+    searchRef.current = debouncedSearch;
+    if (!searchInitialized.current) { searchInitialized.current = true; return; }
+    setTablePage(1);
+    loadRequests(viewTabRef.current, debouncedSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
 
   // Auto-populate current times from preview; also pre-fill requested times from actual punch data
   useEffect(() => {
@@ -1709,18 +1778,51 @@ export default function AttendanceRegularization() {
                   </button>
                 )}
               </div>
-              {canBulkApprove && viewTab === "pending_approval" && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={safeBulkIds.length === 0 || bulkApproveMutation.isPending}
-                  onClick={() => bulkApproveMutation.mutate(safeBulkIds)}
-                  className="h-9 text-xs"
-                >
-                  {bulkApproveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
-                  Bulk approve safe ({safeBulkIds.length})
-                </Button>
+              {/* Bulk approval. Offered on the approval queue and on All -- it used to be
+                  pending_approval only, which hid it from the tab most approvers land on.
+                  It approves exactly the selected rows the caller may act on at their
+                  current stage; the server re-checks every id and reports per row, so
+                  this list can never widen what actually happens. Rows the risk engine
+                  flagged are counted out loud rather than silently dropped, which is what
+                  the old "safe only" sweep did -- and since no live request has ever
+                  reached the one status that sweep accepted, it was permanently (0). */}
+              {canBulkApprove && viewTab !== "my_requests" && (
+                <div className="flex items-center gap-2">
+                  {approvableSelection.flaggedCount > 0 && (
+                    <span className="text-[11px] font-semibold text-amber-600">
+                      {approvableSelection.flaggedCount} risk-flagged
+                    </span>
+                  )}
+                  {approvableSelection.blockedCount > 0 && (
+                    <span className="text-[11px] text-slate-400">
+                      {approvableSelection.blockedCount} not yours to approve
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={approvableSelection.ids.length === 0 || bulkApproveMutation.isPending}
+                    onClick={() => {
+                      const { ids, flaggedCount } = approvableSelection;
+                      if (
+                        flaggedCount > 0 &&
+                        !window.confirm(
+                          `${flaggedCount} of the ${ids.length} selected request(s) are risk-flagged ` +
+                            `(no punch evidence, repeated requests, already-locked attendance or similar).\n\n` +
+                            `Approve all ${ids.length} anyway?`,
+                        )
+                      ) {
+                        return;
+                      }
+                      bulkApproveMutation.mutate(ids);
+                    }}
+                    className="h-9 text-xs"
+                  >
+                    {bulkApproveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
+                    Approve selected ({approvableSelection.ids.length})
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -1738,6 +1840,27 @@ export default function AttendanceRegularization() {
               )}
             </p>
             <div className="flex flex-wrap gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search employee name or code"
+                  aria-label="Search by employee name or code"
+                  className="h-9 w-64 rounded-lg border border-gray-200 bg-white pl-8 pr-8 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm("")}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
               <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); setTablePage(1); }}>
                 <SelectTrigger className="h-9 w-40 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
                   <SelectValue />
@@ -1790,7 +1913,26 @@ export default function AttendanceRegularization() {
                 <table className="min-w-full divide-y divide-slate-200 text-xs">
                   <thead className="bg-slate-50">
                     <tr>
-                      <Th>Select</Th>
+                      <Th>
+                        {/* Selects only the rows on this page the caller may act on --
+                            selecting rows the server will refuse just produces failures. */}
+                        <label className="flex items-center gap-1.5" title="Select all approvable rows on this page">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-slate-300"
+                            disabled={selectableOnPage.length === 0}
+                            checked={allOnPageSelected}
+                            onChange={(event) => {
+                              setSelectedIds((current) =>
+                                event.target.checked
+                                  ? Array.from(new Set([...current, ...selectableOnPage]))
+                                  : current.filter((id) => !selectableOnPage.includes(id))
+                              );
+                            }}
+                          />
+                          <span>All</span>
+                        </label>
+                      </Th>
                       <Th>Request</Th>
                       {viewTab !== "my_requests" && <Th>Employee</Th>}
                       <Th>Date</Th>
@@ -1869,13 +2011,14 @@ export default function AttendanceRegularization() {
                               {["pending_manager", "pending_admin", "payroll_pending"].includes(request.current_status) && !isOwnRequest && (
                                 <>
                                   <button
-                                    onClick={() => { setReviewDialogTarget({ id: request.id, status: "approved" }); setReviewDialogNote(""); }}
-                                    className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    disabled={reviewMutation.isPending}
+                                    onClick={() => reviewMutation.mutate({ id: request.id, status: "approved" })}
+                                    className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
                                   >
                                     Approve
                                   </button>
                                   <button
-                                    onClick={() => { setReviewDialogTarget({ id: request.id, status: "rejected" }); setReviewDialogNote(""); }}
+                                    onClick={() => { setReviewDialogTarget({ id: request.id }); setReviewDialogNote(""); }}
                                     className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
                                   >
                                     Reject
@@ -1951,20 +2094,18 @@ export default function AttendanceRegularization() {
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {reviewDialogTarget?.status === "approved"
-                ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                : <AlertTriangle className="h-5 w-5 text-rose-600" />}
-              {reviewDialogTarget?.status === "approved" ? "Approve" : "Reject"} Regularization
+              <AlertTriangle className="h-5 w-5 text-rose-600" />
+              Reject Regularization
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
             <Label className="text-sm font-medium">
-              Remarks {reviewDialogTarget?.status === "approved" ? "(optional)" : <span className="text-rose-500">*</span>}
+              Remarks <span className="text-rose-500">*</span>
             </Label>
             <Textarea
               value={reviewDialogNote}
               onChange={(e) => setReviewDialogNote(e.target.value)}
-              placeholder={reviewDialogTarget?.status === "approved" ? "Add a note for the employee (optional)" : "Remarks are required to reject"}
+              placeholder="Remarks are required to reject"
               rows={3}
               className="rounded-xl resize-none"
             />
@@ -1974,17 +2115,17 @@ export default function AttendanceRegularization() {
               Cancel
             </Button>
             <Button
-              disabled={reviewMutation.isPending || (reviewDialogTarget?.status !== "approved" && !reviewDialogNote.trim())}
+              disabled={reviewMutation.isPending || !reviewDialogNote.trim()}
               onClick={() => {
                 if (!reviewDialogTarget) return;
                 reviewMutation.mutate(
-                  { id: reviewDialogTarget.id, status: reviewDialogTarget.status, reviewerNote: reviewDialogNote.trim() || undefined },
+                  { id: reviewDialogTarget.id, status: "rejected", reviewerNote: reviewDialogNote.trim() },
                   { onSuccess: () => { setReviewDialogTarget(null); setReviewDialogNote(""); } }
                 );
               }}
-              className={`rounded-xl ${reviewDialogTarget?.status === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"} text-white`}
+              className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white"
             >
-              {reviewMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : reviewDialogTarget?.status === "approved" ? "Approve" : "Reject"}
+              {reviewMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reject"}
             </Button>
           </DialogFooter>
         </DialogContent>

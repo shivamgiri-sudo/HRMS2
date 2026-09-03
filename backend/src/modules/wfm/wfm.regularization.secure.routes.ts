@@ -403,7 +403,7 @@ function normalizePreviewStatus(status: unknown, totalPunches: number): string {
     .join(" ");
 }
 
-async function buildRegularizationDecisionSupport(row: RowDataPacket) {
+async function buildRegularizationDecisionSupport(row: RowDataPacket, viewer: ViewerApprovalRoles | null = null) {
   const sessionDate = String(row.session_date ?? "").slice(0, 10);
   const employeeId = String(row.employee_id ?? "");
   const flags: string[] = [];
@@ -458,11 +458,22 @@ async function buildRegularizationDecisionSupport(row: RowDataPacket) {
   }
 
   const riskLevel = riskScore >= 60 ? "high" : riskScore >= 30 ? "medium" : "low";
+  // Can the CALLER act on this row at all, at whatever stage it currently sits?
+  // Without a viewer this stays false, which is what every non-list caller wants.
+  const canApproveNow = viewerCanApproveNow(viewer, String(row.status ?? ""));
   return {
     riskScore,
     riskLevel,
     flags,
-    canBulkApprove: riskLevel === "low" && String(row.status ?? "") === "manager_approved",
+    canApproveNow,
+    // "Safe to sweep without opening": low risk AND actionable by this caller now.
+    //
+    // This used to read `status === "manager_approved"` with no reference to the
+    // caller, which made it dead on live data — all 209 open requests sit at
+    // `pending` and not one row has ever reached manager_approved, so the
+    // "Bulk approve safe" button was permanently disabled at (0). It now answers
+    // the question the button actually asks.
+    canBulkApprove: riskLevel === "low" && canApproveNow,
     evidence: {
       currentAttendanceStatus: row.current_attendance_status ?? null,
       currentLwp: row.current_lwp ?? null,
@@ -483,10 +494,53 @@ async function buildRegularizationDecisionSupport(row: RowDataPacket) {
   };
 }
 
-async function enrichRegularizationRows(rows: RowDataPacket[]) {
+/**
+ * Which approval stage the CALLER occupies, resolved once per request instead of
+ * per row.
+ *
+ * regularizationReviewRole() is the precise answer but costs a query and an
+ * approver resolution per request id, which a 100-row page cannot pay. These three
+ * booleans mirror its precedence — super_admin outranks everything, payroll acts
+ * only at the payroll_pending stage, WFM at the manager_approved stage — and are
+ * used ONLY to decide what the browser offers. Every write still goes through
+ * _performReview -> regularizationReviewRole, so an optimistic flag can at worst
+ * produce a per-row "outside your approval scope" in the bulk response; it can
+ * never approve anything the single-row path would refuse.
+ */
+type ViewerApprovalRoles = { superAdmin: boolean; wfm: boolean; payroll: boolean };
+
+async function resolveViewerApprovalRoles(userId: string): Promise<ViewerApprovalRoles> {
+  const [superAdmin, wfm, payroll] = await Promise.all([
+    hasAnyRole(userId, "super_admin"),
+    hasAnyRole(userId, "wfm"),
+    hasAnyRole(userId, ...PAYROLL_APPROVAL_ROLES),
+  ]);
+  return { superAdmin, wfm, payroll };
+}
+
+/**
+ * Can this caller move this row forward RIGHT NOW?
+ *
+ * Answered with nextRegularizationStatus, the same stage machine the write path
+ * uses, so the flag cannot drift from the rule. payrollFrozen is passed false on
+ * purpose: a frozen month changes the destination (payroll_pending rather than
+ * approved), not whether the caller may act.
+ */
+function viewerCanApproveNow(viewer: ViewerApprovalRoles | null, status: string): boolean {
+  if (!viewer) return false;
+  if (TERMINAL_REGULARIZATION_STATUSES.includes(status)) return false;
+  if (viewer.superAdmin) return nextRegularizationStatus("super_admin", status, "approved") !== null;
+  if (status === PAYROLL_PENDING_STATUS) {
+    return viewer.payroll && nextRegularizationStatus("payroll", status, "approved") !== null;
+  }
+  if (viewer.wfm) return nextRegularizationStatus("wfm", status, "approved") !== null;
+  return false;
+}
+
+async function enrichRegularizationRows(rows: RowDataPacket[], viewer: ViewerApprovalRoles | null = null) {
   return Promise.all(rows.map(async (row) => ({
     ...row,
-    decision_support: await buildRegularizationDecisionSupport(row),
+    decision_support: await buildRegularizationDecisionSupport(row, viewer),
   })));
 }
 
@@ -1197,6 +1251,24 @@ wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: an
   }
   if (req.query.fromDate) { conds.push("ar.session_date >= ?"); params.push(String(req.query.fromDate)); }
   if (req.query.toDate) { conds.push("ar.session_date <= ?"); params.push(String(req.query.toDate)); }
+  // Employee search. Matched on the employees row rather than on
+  // attendance_regularization, which carries no name and no request number of its
+  // own — the "request no" the UI shows is composed in the browser from the
+  // employee code and the session date. Both columns searched here are on tables
+  // the count query already joins, so paging stays consistent with the list.
+  //
+  // Server-side rather than a browser filter because the list is capped at 500 rows
+  // out of 132,000: filtering only what was already fetched would answer "no
+  // requests found" for an employee whose rows simply were not on the page.
+  const searchTerm = String(req.query.search ?? "").trim();
+  if (searchTerm) {
+    const like = `%${searchTerm}%`;
+    conds.push(`(
+      COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) LIKE ?
+      OR e.employee_code LIKE ?
+    )`);
+    params.push(like, like);
+  }
 
   const limit = Math.min(
     Math.max(1, Number(req.query.limit) || REGULARIZATION_PAGE_LIMIT_DEFAULT),
@@ -1265,7 +1337,8 @@ wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: an
       LIMIT ${limit} OFFSET ${offset}`,
     params,
   );
-  const data = await enrichRegularizationRows(rows);
+  const viewer = await resolveViewerApprovalRoles(req.authUser.id);
+  const data = await enrichRegularizationRows(rows, viewer);
   // `data` keeps its existing shape so every current caller is unaffected; the paging
   // fields are additive.
   return res.json({ success: true, data, total, page, limit, hasMore: offset + rows.length < total });
