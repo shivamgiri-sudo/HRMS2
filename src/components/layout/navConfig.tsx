@@ -167,7 +167,7 @@ export const navGroups: NavGroup[] = [
           // with 6 roles and 51 users holding it, and /api/bulk-upload/approvals/* is mounted
           // and serving — but nothing in the menu pointed at it, so reaching the queue meant
           // typing the URL. It was the clearest of the eight routes found outside navigation.
-          { label: "Bulk Upload Approvals", href: "/bulk-upload/approvals",  icon: ic(FileCheck),   pageCode: "BULK_UPLOAD", description: "Review and approve pending bulk-upload batches" },
+          { label: "Bulk Upload Approvals", href: "/bulk-upload/approvals",  icon: ic(FileCheck),   pageCode: "BULK_UPLOAD_APPROVALS", description: "Review and approve pending bulk-upload batches" },
           { label: "Historical Import",   href: "/ats/bulk-import",          icon: ic(Upload),      roles: ["admin","super_admin"], description: "Import historical candidates" },
         ],
       },

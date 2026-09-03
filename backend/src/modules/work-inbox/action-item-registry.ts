@@ -164,6 +164,21 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     requiresScope:     false,
   },
   {
+    // The bulk-upload gate's own queue item, distinct from INCENTIVE_APPROVAL above:
+    // that one points at /payroll/incentives and its entity is an incentive_batch, while
+    // this addresses the upload_batch the two-stage chain actually decides, and covers
+    // deductions too — which had no work-inbox presence at all.
+    itemType:          "BULK_UPLOAD_APPROVAL",
+    displayName:       "Incentive / deduction upload awaiting approval",
+    module:            "PAYROLL",
+    entityType:        "upload_batch",
+    defaultAssigneeRoles: ["branch_head", "payroll_head"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/bulk-upload/approvals?batchId={entityId}",
+    requiresScope:     true,
+  },
+  {
     itemType:          "PAYROLL_SIGN_OFF_PENDING",
     displayName:       "Payroll run awaiting sign-off",
     module:            "PAYROLL",

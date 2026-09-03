@@ -206,11 +206,22 @@ interface LinkedRow extends RowDataPacket {
   created_entity_id: string;
 }
 
+/**
+ * The rows this batch still intends to apply.
+ *
+ * `row_status <> 'discarded'` matters: an approver can drop individual employees out of
+ * a pending batch, and a discarded row's domain record is already gone (incentive line
+ * deleted) or already deactivated (deduction set inactive). Without this filter the apply
+ * pass still walked those rows — writing a lock for a line that no longer exists, and
+ * counting a deliberate discard as a FAILURE, which flipped an otherwise clean batch to
+ * 'partially_applied' and told the uploader rows had failed when none had.
+ */
 async function linkedRows(batchId: string): Promise<LinkedRow[]> {
   const [rows] = await db.execute<LinkedRow[]>(
     `SELECT id, row_no, created_entity_id
        FROM upload_batch_row
       WHERE upload_batch_id = ? AND created_entity_type = ? AND created_entity_id IS NOT NULL
+        AND COALESCE(row_status, '') <> 'discarded'
       ORDER BY row_no ASC`,
     [batchId, ENTITY_TYPE],
   );

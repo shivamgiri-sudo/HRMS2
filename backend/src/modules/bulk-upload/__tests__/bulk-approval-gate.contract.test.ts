@@ -45,11 +45,27 @@ describe("separation of duties", () => {
     const fn = src.slice(src.indexOf("export async function assertCanApprove"));
     // The uploaded_by check must come BEFORE the role check, because hasAnyRole
     // short-circuits true for super_admin and would otherwise skip it entirely.
+    // The role list is now per stage (rule.roles), so match the call, not the constant.
     const selfCheck = fn.indexOf("batch.uploaded_by === userId");
-    const roleCheck = fn.indexOf("hasAnyRole(userId, ...APPROVER_ROLES)");
+    const roleCheck = fn.indexOf("hasAnyRole(userId, ...rule.roles)");
     expect(selfCheck).toBeGreaterThan(-1);
     expect(roleCheck).toBeGreaterThan(-1);
     expect(selfCheck).toBeLessThan(roleCheck);
+  });
+
+  /**
+   * The second stage brings a second way for one person to be both maker and checker:
+   * a user can hold branch_head AND payroll_head, and would otherwise release a batch
+   * at stage 1 and then finally approve their own release at stage 2. That check must
+   * also sit ahead of the role test, for the same super_admin short-circuit reason.
+   */
+  it("refuses to let the branch approver also give final approval", () => {
+    const src = read("bulk-approval.service.ts");
+    const fn = src.slice(src.indexOf("export async function assertCanApprove"));
+    const crossStage = fn.indexOf('stage === "payroll" && batch.branch_head_approved_by === userId');
+    const roleCheck = fn.indexOf("hasAnyRole(userId, ...rule.roles)");
+    expect(crossStage).toBeGreaterThan(-1);
+    expect(crossStage).toBeLessThan(roleCheck);
   });
 
   it("a branch_head with no assignment scope sees nothing, not everything", () => {

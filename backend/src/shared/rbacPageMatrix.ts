@@ -195,6 +195,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "TEAM_KPI_SCORECARD",
   ],
   wfm: [
+    "BULK_UPLOAD_APPROVALS",
     "WFM_DASHBOARD",
     "WFM_ATTENDANCE_DASHBOARD",
     "ATTENDANCE_DISPUTES",
@@ -232,6 +233,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "SALARY_INCREMENT",
   ],
   payroll_head: [
+    "BULK_UPLOAD_APPROVALS",
     "PAYROLL_HR_DASHBOARD",
     "ATTENDANCE_DISPUTES",
     "PAYROLL",
@@ -257,6 +259,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
   payroll_hr: [
+    "BULK_UPLOAD_APPROVALS",
     "PAYROLL_HR_DASHBOARD",
     "ATS_PAYROLL_HR",
     "ATS_JOINING_DOCUMENTS_TRACKER",
@@ -518,6 +521,10 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
   // those page codes have no mounted route. Dashboard registry already allows
   // MANAGEMENT, QUALITY and OPERATIONS for this role.
   branch_head: [
+    // The Branch Head / Payroll Head approval queue for gated bulk uploads. Its live
+    // grants were seeded by migration 1522 but never added here, so the next run of
+    // apply-rbac-page-matrix would have deactivated every one of them.
+    "BULK_UPLOAD_APPROVALS",
     "JOB_REQUISITION",
     "MANAGEMENT_DASHBOARD",
     "OPERATIONS_DASHBOARD",
@@ -539,6 +546,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
 
   // 5 active users. Declared on /provisioning/admin alongside hr and admin.
   branch_admin: [
+    "BULK_UPLOAD_APPROVALS",
     "PROVISIONING_ADMIN",
     "IT_PROVISIONING_TRACKER",
     "ASSETS_MANAGER",

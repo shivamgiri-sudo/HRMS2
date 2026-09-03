@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1075,
-  "columnCount": 15575,
+  "columnCount": 15589,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -16180,6 +16180,16 @@
       "approved_by",
       "approved_at",
       "approval_remarks",
+      "branch_head_approved_by",
+      "branch_head_approved_at",
+      "branch_head_remarks",
+      "payroll_head_approved_by",
+      "payroll_head_approved_at",
+      "payroll_head_remarks",
+      "last_rejected_by",
+      "last_rejected_at",
+      "last_rejected_stage",
+      "last_rejected_reason",
       "error_summary",
       "metadata",
       "uploaded_by",
@@ -16200,6 +16210,10 @@
       "created_entity_type",
       "created_entity_id",
       "error_messages",
+      "discarded_by",
+      "discarded_at",
+      "discard_stage",
+      "discard_reason",
       "created_at"
     ],
     "upload_deduction_snapshot": [

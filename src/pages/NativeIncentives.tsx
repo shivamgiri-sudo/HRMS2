@@ -1512,6 +1512,24 @@ export default function NativeIncentives() {
           </TabsContent>
 
           <TabsContent value="approval" className="mt-4">
+            {/* Bulk-uploaded incentives are decided on the Bulk Upload Approvals queue, not
+              * here: that path carries the branch scope, the maker-checker rules and the
+              * Branch Head -> Payroll Head chain. A deep link rather than a second copy of
+              * the same screen — two approval surfaces for one batch is how a batch gets
+              * approved twice. */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3">
+              <p className="text-xs leading-relaxed text-blue-900">
+                <span className="font-bold">Uploaded a file?</span> Bulk incentive and deduction
+                batches are approved cost-centre-wise on the Bulk Upload Approvals queue —
+                Branch Head first, then Payroll Head.
+              </p>
+              <a
+                href="/bulk-upload/approvals"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(37,99,235,0.3)] transition-all duration-200 hover:bg-blue-700 cursor-pointer"
+              >
+                Open approval queue
+              </a>
+            </div>
             <ApprovalQueueTab />
           </TabsContent>
 

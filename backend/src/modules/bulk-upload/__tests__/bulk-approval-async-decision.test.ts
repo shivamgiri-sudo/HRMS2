@@ -46,12 +46,14 @@ const batch = {
 };
 
 const {
-  getBatch, assertCanApprove, markDecided, claimForDecision, releaseClaim,
-  releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
+  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
 } = vi.hoisted(() => ({
   getBatch: vi.fn(),
   assertCanApprove: vi.fn(),
   markDecided: vi.fn(),
+  markStageDecided: vi.fn().mockResolvedValue(true),
+  markStageRejected: vi.fn().mockResolvedValue(true),
   claimForDecision: vi.fn(),
   releaseClaim: vi.fn(),
   releaseStuckClaim: vi.fn(),
@@ -59,19 +61,53 @@ const {
   sendPartialApplyEmail: vi.fn(),
 }));
 
+// The stage machine is mocked with its REAL shape rather than stubbed, because the route
+// reads STAGE_RULES[stage].from to place its claim and its optimistic guard — a stub that
+// returned a bare object would let a broken guard pass these tests.
+const STAGE_RULES = {
+  branch: { from: "pending_branch_head", to: "pending_payroll_head", roles: ["branch_head"], label: "Branch Head", applies: false },
+  payroll: { from: "pending_payroll_head", to: "approved", roles: ["payroll_head"], label: "Payroll Head", applies: true },
+};
+const TWO_STAGE_TYPES = new Set(["INCENTIVE_BULK", "DEDUCTION_BULK"]);
+
 vi.mock("../bulk-approval.service.js", () => ({
   APPROVAL_GATED_TYPES: new Set([
     "ATTENDANCE_REGULARIZATION_BULK", "LEAVE_APPLICATION_BULK",
     "INCENTIVE_BULK", "DEDUCTION_BULK",
   ]),
   APPROVER_ROLES: ["branch_head"],
+  PAYROLL_APPROVER_ROLES: ["payroll_head"],
+  TWO_STAGE_TYPES,
+  STAGE_RULES,
+  resolveStage: (b: { approval_status: string | null }) =>
+    b.approval_status === "pending_branch_head" ? "branch"
+      : b.approval_status === "pending_payroll_head" ? "payroll"
+        : null,
+  stageOutcome: (stage: "branch" | "payroll", typeCode: string) =>
+    stage === "branch" && !TWO_STAGE_TYPES.has(typeCode)
+      ? { next: "approved", applies: true }
+      : { next: STAGE_RULES[stage].to, applies: STAGE_RULES[stage].applies },
   // A real class: the route's error handler branches on `instanceof`.
   BulkUploadError: class BulkUploadError extends Error {
     statusCode: number;
     constructor(message: string, statusCode = 400) { super(message); this.statusCode = statusCode; }
   },
-  getBatch, assertCanApprove, markDecided, claimForDecision, releaseClaim,
-  releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+  getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
+  claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+}));
+
+// Collaborators the two-stage chain added. None of them may influence the decision path,
+// so they are stubbed to no-ops here and asserted properly in the two-stage suite.
+vi.mock("../bulk-approval-review.service.js", () => ({
+  getBatchReview: vi.fn(), getBatchEmployees: vi.fn(), discardRows: vi.fn(),
+  isReviewable: (t: string) => t === "INCENTIVE_BULK" || t === "DEDUCTION_BULK",
+  BATCH_ENTITY_TYPE: "bulk_upload_batch",
+}));
+vi.mock("../bulk-approval-notify.service.js", () => ({ notifyBatchCreator: vi.fn().mockResolvedValue({}) }));
+vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({ triggerBulkBatchApproval: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../../shared/financeApprovalEvent.js", () => ({
+  recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined),
+  listFinanceApprovalEvents: vi.fn().mockResolvedValue([]),
 }));
 
 const { applyRegularizationBatch } = vi.hoisted(() => ({ applyRegularizationBatch: vi.fn() }));
@@ -123,7 +159,9 @@ describe("POST /approvals/batches/:id/approve", () => {
     expect(res.body.total_rows).toBe(217);
 
     // Claimed before the answer — a retry must not be able to apply the batch twice.
-    expect(claimForDecision).toHaveBeenCalledWith(BATCH_ID);
+    // Claimed against the stage the batch is ON, not just its id. Without the second
+    // argument a stage-2 approval could claim a batch still sitting at stage 1.
+    expect(claimForDecision).toHaveBeenCalledWith(BATCH_ID, "pending_branch_head");
 
     await vi.waitFor(() => expect(applyRegularizationBatch).toHaveBeenCalled());
     await vi.waitFor(() =>
@@ -195,12 +233,32 @@ describe("GET /approvals/batches/:id/job-status", () => {
     expect(res.body.approval_status).toBe("approved");
   });
 
-  it("refuses a caller who could not approve the batch in the first place", async () => {
-    const { BulkUploadError } = await import("../bulk-approval.service.js");
-    assertCanApprove.mockRejectedValue(new BulkUploadError("Out of your scope.", 403));
+  /**
+   * Polling deliberately uses the LOOSER check, not assertCanApprove.
+   *
+   * With two stages, the Branch Head who released a batch at stage 1 can no longer
+   * approve it — but they must still be able to watch stage 2 finish, and so must the
+   * person who uploaded it. Gating the poll on the stage-specific approval check would
+   * blank the progress bar for both of them the moment the batch moved on. A caller who
+   * is neither an approver nor the uploader still gets 403, which is what this pins.
+   */
+  it("still refuses a caller who is neither an approver nor the uploader", async () => {
+    const { hasAnyRole } = await import("../../../shared/scopeAccess.js");
+    (hasAnyRole as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
     const res = await request(app()).get(`/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`);
 
     expect(res.status).toBe(403);
+  });
+
+  it("lets the Branch Head who released it keep watching after it moves to stage 2", async () => {
+    getBatch.mockResolvedValue({ ...batch, approval_status: "pending_payroll_head" });
+    // Holds branch_head only — assertCanApprove for the payroll stage would refuse them.
+    const { hasAnyRole } = await import("../../../shared/scopeAccess.js");
+    (hasAnyRole as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    const res = await request(app()).get(`/api/bulk-upload/approvals/batches/${BATCH_ID}/job-status`);
+
+    expect(res.status).toBe(200);
   });
 });

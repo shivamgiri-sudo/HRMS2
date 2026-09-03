@@ -96,6 +96,35 @@ export async function triggerIncentiveApproval(
   });
 }
 
+/**
+ * The approval queue item for a gated bulk upload, raised once per stage.
+ *
+ * `approverRole` is a parameter rather than a registry default because the same batch is
+ * addressed to a different role at each stage — branch_head first, payroll_head after —
+ * and createWorkItemIfNotExists dedupes on (entity, item type, open), so the stage-2 item
+ * only appears once the stage-1 one has been completed.
+ */
+export async function triggerBulkBatchApproval(
+  uploadBatchId: string,
+  batchNo: string,
+  uploadTypeCode: string,
+  approverRole: string,
+  branchId?: string | null,
+): Promise<void> {
+  const label = uploadTypeCode === "DEDUCTION_BULK" ? "Deduction" : "Incentive";
+  await createWorkItemIfNotExists({
+    itemType: "BULK_UPLOAD_APPROVAL",
+    title: `${label} upload awaiting approval: ${batchNo}`,
+    moduleCode: "payroll",
+    entityType: "upload_batch",
+    entityId: uploadBatchId,
+    assignedToRole: approverRole,
+    branchId: branchId ?? undefined,
+    priority: "high",
+    dueAt: dueAt("BULK_UPLOAD_APPROVAL"),
+  });
+}
+
 export async function triggerDpdpWithdrawalReview(
   withdrawalId: string,
   requesterName: string

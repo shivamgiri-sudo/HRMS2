@@ -18,6 +18,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { BatchCostCentreReview } from "@/components/bulk-upload/BatchCostCentreReview";
 import {
   pollBatchJob, isBatchJobStarted, describeProgress,
   type BatchJobStatus,
@@ -40,6 +42,11 @@ interface PendingBatch {
   uploaded_by_name: string | null;
   submitted_for_approval_at: string | null;
   created_at: string;
+  branch_head_approved_by: string | null;
+  branch_head_approved_at: string | null;
+  branch_head_remarks: string | null;
+  payroll_head_approved_by: string | null;
+  payroll_head_approved_at: string | null;
 }
 
 interface DecidedBatch {
@@ -54,6 +61,9 @@ interface DecidedBatch {
   approval_remarks: string | null;
   error_summary: string | null;
   branch_name: string | null;
+  last_rejected_stage: string | null;
+  last_rejected_reason: string | null;
+  last_rejected_at: string | null;
 }
 
 interface HistoryBatchFull extends DecidedBatch {
@@ -176,6 +186,71 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 /**
+ * The two money types run a second approval, by the HO Payroll Head, before anything is
+ * paid. Everything else is decided once, by the Branch Head — so the stepper and the
+ * button copy have to differ by type, not be hard-coded to one chain.
+ */
+const TWO_STAGE_TYPES = new Set(["INCENTIVE_BULK", "DEDUCTION_BULK"]);
+
+type Stage = "branch" | "payroll";
+
+const STAGE_LABEL: Record<Stage, string> = {
+  branch: "Branch Head",
+  payroll: "Payroll Head",
+};
+
+/** Which stage is this batch waiting on? Mirrors resolveStage() on the server. */
+function stageOf(batch: { approval_status: string | null }): Stage | null {
+  if (batch.approval_status === "pending_branch_head") return "branch";
+  if (batch.approval_status === "pending_payroll_head") return "payroll";
+  return null;
+}
+
+/**
+ * Where the batch is in its chain. Rendered for the two-stage types only — showing a
+ * three-step tracker on a leave batch that has one approver would misdescribe it.
+ */
+function StageStepper({ batch }: { batch: PendingBatch }) {
+  const steps = [
+    { key: "upload", label: "Uploaded", done: true },
+    {
+      key: "branch",
+      label: STAGE_LABEL.branch,
+      done: Boolean(batch.branch_head_approved_at),
+      active: batch.approval_status === "pending_branch_head",
+    },
+    {
+      key: "payroll",
+      label: STAGE_LABEL.payroll,
+      done: Boolean(batch.payroll_head_approved_at),
+      active: batch.approval_status === "pending_payroll_head",
+    },
+  ];
+  return (
+    <ol className="flex flex-wrap items-center gap-1.5" aria-label="Approval progress">
+      {steps.map((step, i) => (
+        <li key={step.key} className="flex items-center gap-1.5">
+          {i > 0 && <span aria-hidden className="h-px w-4 bg-slate-200" />}
+          <span
+            className={
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold " +
+              (step.done
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : step.active
+                  ? "border-blue-300 bg-blue-50 text-blue-700"
+                  : "border-slate-200 bg-slate-50 text-slate-400")
+            }
+          >
+            {step.done && <CheckCircle2 className="h-3 w-3" />}
+            {step.label}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
  * How a decision ended, returned rather than written straight to state: load()
  * clears the error banner, so anything set before the reload would vanish before
  * the approver could read it.
@@ -193,6 +268,9 @@ const DISCARD_ENTITY_TYPE: Record<string, "leave" | "regularization" | undefined
 };
 
 export default function BulkUploadApprovals() {
+  // canEditPage alone is not enough — a stale grant hands out buttons the API 403s
+  // (the Support Command Center incident), so the stage role is checked too.
+  const { isResolved, canEditPage, hasAnyRole } = useWorkforceAccess();
   const [pending, setPending] = useState<PendingBatch[]>([]);
   const [history, setHistory] = useState<DecidedBatch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -267,6 +345,21 @@ export default function BulkUploadApprovals() {
   // returned immediately; this is what the approver watches instead of a spinner
   // that used to end in a 502.
   const [decisionProgress, setDecisionProgress] = useState<BatchJobStatus | null>(null);
+
+  /**
+   * Which stage the open batch is on, and whether this user owns that stage.
+   *
+   * The server decides this too — assertCanApprove re-checks the role, the branch scope
+   * and both separation-of-duties rules — so this only governs whether the buttons are
+   * offered. Gating on canEditPage alone is what handed 24 users buttons the API refused.
+   */
+  const openStage = openBatch ? stageOf(openBatch) : null;
+  const canDecideOpenBatch =
+    isResolved &&
+    Boolean(openStage) &&
+    canEditPage("BULK_UPLOAD_APPROVALS") &&
+    (hasAnyRole("super_admin") ||
+      (openStage === "payroll" ? hasAnyRole("payroll_head") : hasAnyRole("branch_head")));
 
   const [openHistoryBatch, setOpenHistoryBatch] = useState<HistoryBatchFull | null>(null);
   const [historyRows, setHistoryRows] = useState<PreviewRow[]>([]);
@@ -877,6 +970,23 @@ export default function BulkUploadApprovals() {
                     <p className="mt-1 max-w-3xl text-xs text-slate-500 leading-relaxed">
                       {TYPE_EFFECT[openBatch.upload_type_code]}
                     </p>
+                    {TWO_STAGE_TYPES.has(openBatch.upload_type_code) && (
+                      <div className="mt-2.5">
+                        <StageStepper batch={openBatch} />
+                        {openStage === "branch" && (
+                          <p className="mt-1.5 text-[11px] leading-relaxed text-blue-700">
+                            Approving here does not pay anything. The batch moves to the{" "}
+                            {STAGE_LABEL.payroll} for final approval.
+                          </p>
+                        )}
+                        {openStage === "payroll" && (
+                          <p className="mt-1.5 text-[11px] font-semibold leading-relaxed text-amber-700">
+                            Final approval. These amounts enter the payroll run for the month as
+                            soon as you approve.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <button
@@ -889,9 +999,17 @@ export default function BulkUploadApprovals() {
               </div>
             </div>
 
-            {/* Preview table */}
+            {/* Preview — cost-centre-wise for the two money types, flat rows otherwise */}
             <div className="flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
-              {previewLoading ? (
+              {TWO_STAGE_TYPES.has(openBatch.upload_type_code) ? (
+                <BatchCostCentreReview
+                  batchId={openBatch.id}
+                  batchNo={openBatch.upload_batch_no}
+                  canDiscard={canDecideOpenBatch}
+                  stageLabel={openStage ? STAGE_LABEL[openStage] : "Approver"}
+                  onChanged={() => { void load(); }}
+                />
+              ) : previewLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-600" />
                   <span className="ml-3 text-sm text-slate-500">Loading rows…</span>
@@ -1015,12 +1133,25 @@ export default function BulkUploadApprovals() {
               })()}
               <div className="flex items-center justify-between">
                 <p className="text-xs text-slate-400">
-                  {openBatch.imported_rows} row{openBatch.imported_rows !== 1 ? "s" : ""} will be{" "}
+                  {/* This sentence used to end on "will be " with nothing after it —
+                    * a dangling fragment under the approve button. Say what actually
+                    * happens, which now differs by stage. */}
+                  {openBatch.imported_rows} row{openBatch.imported_rows !== 1 ? "s" : ""}{" "}
+                  {TWO_STAGE_TYPES.has(openBatch.upload_type_code) && openStage === "branch"
+                    ? "will be held for Payroll Head approval."
+                    : "will be applied."}{" "}
                   {openBatch.error_rows > 0 && (
                     <span className="text-amber-600">(+{openBatch.error_rows} skipped errors)</span>
                   )}
                 </p>
                 <div className="flex gap-2">
+                  {!canDecideOpenBatch && isResolved && (
+                    <p className="self-center pr-2 text-[11px] font-medium text-slate-400">
+                      {openStage
+                        ? `Waiting on the ${STAGE_LABEL[openStage]} — you can review but not decide.`
+                        : "This batch has already been decided."}
+                    </p>
+                  )}
                   <button
                     type="button"
                     disabled={deciding !== null}
@@ -1029,6 +1160,7 @@ export default function BulkUploadApprovals() {
                   >
                     Cancel
                   </button>
+                  {canDecideOpenBatch && (
                   <button
                     type="button"
                     disabled={deciding !== null}
@@ -1036,8 +1168,10 @@ export default function BulkUploadApprovals() {
                     className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition-all duration-200 hover:bg-rose-50 disabled:opacity-60 cursor-pointer"
                   >
                     <XCircle className="h-4 w-4" />
-                    {deciding === "reject" ? "Rejecting…" : "Reject batch"}
+                    {deciding === "reject" ? "Rejecting…" : "Discard whole batch"}
                   </button>
+                  )}
+                  {canDecideOpenBatch && (
                   <button
                     type="button"
                     disabled={deciding !== null}
@@ -1045,8 +1179,13 @@ export default function BulkUploadApprovals() {
                     className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(16,185,129,0.3)] transition-all duration-200 hover:bg-emerald-700 hover:shadow-[0_4px_16px_rgba(16,185,129,0.4)] disabled:opacity-60 cursor-pointer"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    {deciding === "approve" ? "Applying…" : `Approve ${openBatch.imported_rows} row(s)`}
+                    {deciding === "approve"
+                      ? "Working…"
+                      : TWO_STAGE_TYPES.has(openBatch.upload_type_code) && openStage === "branch"
+                        ? `Approve & send to ${STAGE_LABEL.payroll}`
+                        : `Approve ${openBatch.imported_rows} row(s)`}
                   </button>
+                  )}
                 </div>
               </div>
             </div>

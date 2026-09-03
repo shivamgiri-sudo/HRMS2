@@ -30,26 +30,128 @@ export const APPROVAL_GATED_TYPES = new Set([
 ]);
 
 /**
- * Who may upload. Branch WFM and Super Admin, per the approved design.
- * wfm_spoc / wfm_analyst appear in older route guards but hold zero live accounts
- * (user_roles, verified 2026-08-21); they are kept so an existing grant keeps working.
+ * Types that need a SECOND approval, by the HO Payroll Head, before anything applies.
+ *
+ * Only the two that move money. For an incentive the Branch Head's approval used to BE
+ * the payment: applyIncentiveBatch sets incentive_upload_batch.status = 'approved', and
+ * payrollCalculate.service.ts §5f pays on exactly that status with no further step. The
+ * same is true of a deduction reaching status = 'active'. Putting the HO stage in front
+ * of the apply — rather than after it — is what makes the second approval real rather
+ * than decorative.
+ *
+ * Attendance regularization and leave stay single-stage on purpose. They correct a
+ * record rather than paying one, and routing every branch's daily corrections through
+ * HO would stall branch operations for no control benefit.
  */
-export const UPLOADER_ROLES = ["super_admin", "wfm", "wfm_spoc", "wfm_analyst"];
+export const TWO_STAGE_TYPES = new Set(["INCENTIVE_BULK", "DEDUCTION_BULK"]);
 
 /**
- * Who may approve. Deliberately NOT the uploader roles — a branch WFM must not be
- * able to approve their own upload, which is the entire point of the gate.
+ * Who may upload. Branch WFM, Payroll HR and Super Admin, per the approved design.
+ * wfm_spoc / wfm_analyst appear in older route guards but hold zero live accounts
+ * (user_roles, verified 2026-08-21); they are kept so an existing grant keeps working.
+ *
+ * payroll_hr was named as an uploader in the original design and already holds
+ * BULK_UPLOAD with can_create = 1, so the page has always been open to them — this
+ * list was the only thing refusing the import itself.
+ */
+export const UPLOADER_ROLES = ["super_admin", "wfm", "wfm_spoc", "wfm_analyst", "payroll_hr"];
+
+/**
+ * Who may approve at stage 1. Deliberately NOT the uploader roles — a branch WFM must
+ * not be able to approve their own upload, which is the entire point of the gate.
  * admin is excluded for the same reason: several live admin holders also hold wfm
  * (the branch-roles-carry-global-grants finding), so admitting admin here would
  * quietly reopen self-approval.
  */
 export const APPROVER_ROLES = ["branch_head"];
 
+/**
+ * Who may approve at stage 2 — the HO Payroll Head, and nobody else.
+ *
+ * payroll_hr is NOT here even though it sounds adjacent: it is an uploader role, so
+ * admitting it would let the same person originate and finally release a payment.
+ */
+export const PAYROLL_APPROVER_ROLES = ["payroll_head"];
+
 export type BulkApprovalStatus =
   | "pending_branch_head"
+  | "pending_payroll_head"
   | "approved"
   | "rejected"
   | "partially_applied";
+
+/** Which approval step a batch is sitting on. */
+export type ApprovalStage = "branch" | "payroll";
+
+interface StageRule {
+  /** The approval_status a batch must hold to be decided at this stage. */
+  from: BulkApprovalStatus;
+  /** Where an approval at this stage sends it. */
+  to: BulkApprovalStatus;
+  roles: string[];
+  label: string;
+  /** Does approving here run the domain engine (i.e. move money)? */
+  applies: boolean;
+}
+
+/**
+ * The state machine, in one place.
+ *
+ * Stage 1 does NOT apply: it only parks the batch in the Payroll Head's queue. That is
+ * the whole point — see TWO_STAGE_TYPES above. For a single-stage type there is no
+ * 'payroll' entry and stage 1 goes straight to 'approved', applying as it always did.
+ */
+export const STAGE_RULES: Record<ApprovalStage, StageRule> = {
+  branch: {
+    from: "pending_branch_head",
+    to: "pending_payroll_head",
+    roles: APPROVER_ROLES,
+    label: "Branch Head",
+    applies: false,
+  },
+  payroll: {
+    from: "pending_payroll_head",
+    to: "approved",
+    roles: PAYROLL_APPROVER_ROLES,
+    label: "Payroll Head",
+    applies: true,
+  },
+};
+
+/**
+ * Which stage is this batch waiting on? Derived from the batch itself, never from the
+ * client — a caller that could name its own stage could approve stage 2 on a batch no
+ * branch head had seen.
+ */
+export function resolveStage(batch: {
+  approval_status: string | null;
+  upload_type_code: string;
+}): ApprovalStage | null {
+  if (batch.approval_status === "pending_branch_head") return "branch";
+  if (batch.approval_status === "pending_payroll_head") {
+    // Only reachable for a two-stage type, but check anyway: if the type set is ever
+    // narrowed, a batch already parked at that status must not become undecidable.
+    return "payroll";
+  }
+  return null;
+}
+
+/**
+ * Where does an approval at `stage` leave this batch?
+ *
+ * For a single-stage type the branch decision is final, so it goes straight to
+ * 'approved' and the domain engine runs — exactly the behaviour before this change.
+ */
+export function stageOutcome(
+  stage: ApprovalStage,
+  uploadTypeCode: string,
+): { next: BulkApprovalStatus; applies: boolean } {
+  if (stage === "branch" && !TWO_STAGE_TYPES.has(uploadTypeCode)) {
+    return { next: "approved", applies: true };
+  }
+  const rule = STAGE_RULES[stage];
+  return { next: rule.to, applies: rule.applies };
+}
 
 export interface StagedRow {
   rowId: string;
@@ -391,6 +493,16 @@ export interface BatchRecord extends RowDataPacket {
   uploaded_by: string;
   total_rows: number;
   valid_rows: number;
+  branch_head_approved_by?: string | null;
+  branch_head_approved_at?: Date | string | null;
+  branch_head_remarks?: string | null;
+  payroll_head_approved_by?: string | null;
+  payroll_head_approved_at?: Date | string | null;
+  payroll_head_remarks?: string | null;
+  last_rejected_by?: string | null;
+  last_rejected_at?: Date | string | null;
+  last_rejected_stage?: string | null;
+  last_rejected_reason?: string | null;
 }
 
 export async function getBatch(batchId: string): Promise<BatchRecord> {
@@ -404,45 +516,74 @@ export async function getBatch(batchId: string): Promise<BatchRecord> {
 }
 
 /**
- * Can this user approve this batch?
+ * Can this user act on this batch, at this stage?
  *
- * Three independent conditions, all required:
- *  1. They hold an approver role (branch_head).
- *  2. The batch branch is inside their assignment scope.
+ * Four independent conditions, all required:
+ *  1. They hold the approver role FOR THAT STAGE (branch_head / payroll_head).
+ *  2. At stage 1, the batch branch is inside their assignment scope.
  *  3. They are not the person who uploaded it.
+ *  4. At stage 2, they are not the person who approved it at stage 1.
  *
- * (3) is checked first and separately because it is the one a role check cannot
- * express: a branch head who also holds wfm could otherwise upload and approve the
- * same file, and hasAnyRole returns true for super_admin unconditionally.
+ * (3) and (4) are checked first and separately because they are what a role check
+ * cannot express: a branch head who also holds wfm could otherwise upload and approve
+ * the same file, and hasAnyRole returns true for super_admin unconditionally.
+ *
+ * WHY STAGE 2 HAS NO BRANCH-SCOPE TEST
+ *
+ * The Payroll Head is an HO role that decides for every branch. Live check 2026-09-03:
+ * payroll_head holds no user_assignment_scope rows at all, and hasScopedAccess with
+ * requireScopeForNonAdmin:true fails CLOSED on zero scopes — so applying the stage-1
+ * scope test here would refuse every stage-2 approval that exists. The branch
+ * restriction has already done its job one stage earlier.
  */
-export async function assertCanApprove(userId: string, batch: BatchRecord): Promise<void> {
+export async function assertCanApprove(
+  userId: string,
+  batch: BatchRecord,
+  stage: ApprovalStage = "branch",
+): Promise<void> {
   // super_admin is both maker and checker — can approve their own uploads and
   // any batch regardless of branch scope.
   if (await hasAnyRole(userId, "super_admin")) return;
 
+  const rule = STAGE_RULES[stage];
+
   if (batch.uploaded_by && batch.uploaded_by === userId) {
     throw new BulkUploadError(
-      "You uploaded this batch, so you cannot approve it. A different Branch Head must review it.",
+      `You uploaded this batch, so you cannot approve it. A different ${rule.label} must review it.`,
       403,
     );
   }
 
-  const isApprover = await hasAnyRole(userId, ...APPROVER_ROLES);
+  // Separation of duties across the two stages: whoever released this at branch level
+  // must not also be the one who finally releases the money. This is a real overlap —
+  // a user can hold both branch_head and payroll_head.
+  if (stage === "payroll" && batch.branch_head_approved_by === userId) {
+    throw new BulkUploadError(
+      "You approved this batch as Branch Head, so you cannot also give it final Payroll Head approval.",
+      403,
+    );
+  }
+
+  const isApprover = await hasAnyRole(userId, ...rule.roles);
   if (!isApprover) {
     throw new BulkUploadError(
-      "Only a Branch Head can approve a bulk upload of leave, regularization, incentive or deduction.",
+      stage === "payroll"
+        ? "Only the Payroll Head can give final approval to an incentive or deduction batch."
+        : "Only a Branch Head can approve a bulk upload of leave, regularization, incentive or deduction.",
       403,
     );
   }
 
-  const inScope = await hasScopedAccess(
-    userId,
-    APPROVER_ROLES,
-    { branchId: batch.branch_id },
-    { allowAdminBypass: false, requireScopeForNonAdmin: true },
-  );
-  if (!inScope) {
-    throw new BulkUploadError("This batch belongs to a branch outside your scope.", 403);
+  if (stage === "branch") {
+    const inScope = await hasScopedAccess(
+      userId,
+      rule.roles,
+      { branchId: batch.branch_id },
+      { allowAdminBypass: false, requireScopeForNonAdmin: true },
+    );
+    if (!inScope) {
+      throw new BulkUploadError("This batch belongs to a branch outside your scope.", 403);
+    }
   }
 }
 
@@ -492,6 +633,85 @@ export async function markDecided(
 }
 
 /**
+ * Record a decision at one stage of the chain.
+ *
+ * Guarded on the status the batch is expected to hold, so two approvers pressing the
+ * button at the same moment cannot both advance it — the loser gets affectedRows 0 and
+ * is told the state changed, rather than silently double-advancing a payment.
+ *
+ * `approved_by` / `approved_at` / `approval_remarks` keep their existing meaning as the
+ * LATEST decision, so every existing reader (the history endpoint, the approvals page,
+ * the audit export) keeps working untouched. The per-stage columns are additive.
+ */
+export async function markStageDecided(params: {
+  batchId: string;
+  stage: ApprovalStage;
+  next: BulkApprovalStatus;
+  expectedFrom: BulkApprovalStatus;
+  batchStatus: string;
+  userId: string;
+  remarks: string | null;
+  summary: string;
+}): Promise<boolean> {
+  const stageColumns =
+    params.stage === "branch"
+      ? "branch_head_approved_by = ?, branch_head_approved_at = NOW(), branch_head_remarks = ?"
+      : "payroll_head_approved_by = ?, payroll_head_approved_at = NOW(), payroll_head_remarks = ?";
+
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE upload_batch
+        SET batch_status = ?,
+            approval_status = ?,
+            approved_by = ?,
+            approved_at = NOW(),
+            approval_remarks = ?,
+            error_summary = ?,
+            ${stageColumns},
+            updated_at = NOW()
+      WHERE id = ? AND approval_status = ?`,
+    [
+      params.batchStatus, params.next, params.userId, params.remarks,
+      params.summary.slice(0, 1000),
+      params.userId, params.remarks,
+      params.batchId, params.expectedFrom,
+    ],
+  );
+  return res.affectedRows > 0;
+}
+
+/** Record a rejection, naming the stage that refused it and why. */
+export async function markStageRejected(params: {
+  batchId: string;
+  stage: ApprovalStage;
+  expectedFrom: BulkApprovalStatus;
+  userId: string;
+  reason: string;
+  summary: string;
+}): Promise<boolean> {
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE upload_batch
+        SET batch_status = 'rejected',
+            approval_status = 'rejected',
+            approved_by = ?,
+            approved_at = NOW(),
+            approval_remarks = ?,
+            error_summary = ?,
+            last_rejected_by = ?,
+            last_rejected_at = NOW(),
+            last_rejected_stage = ?,
+            last_rejected_reason = ?,
+            updated_at = NOW()
+      WHERE id = ? AND approval_status = ?`,
+    [
+      params.userId, params.reason, params.summary.slice(0, 1000),
+      params.userId, params.stage, params.reason,
+      params.batchId, params.expectedFrom,
+    ],
+  );
+  return res.affectedRows > 0;
+}
+
+/**
  * Claim the batch before a long-running apply, so a client retry after a false
  * timeout cannot run the domain engines twice and double-deduct a leave balance.
  * Mirrors the claim the existing import dispatcher uses.
@@ -499,7 +719,10 @@ export async function markDecided(
 // A claim older than this is assumed to be from a crashed server and is safe to release.
 const STALE_CLAIM_MINUTES = 5;
 
-export async function claimForDecision(batchId: string): Promise<boolean> {
+export async function claimForDecision(
+  batchId: string,
+  expectedStatus: BulkApprovalStatus = "pending_branch_head",
+): Promise<boolean> {
   // Auto-release any claim that has been stuck in 'approving' for more than
   // STALE_CLAIM_MINUTES — this happens when the server restarts mid-approval.
   await db.execute(
@@ -512,8 +735,8 @@ export async function claimForDecision(batchId: string): Promise<boolean> {
   const [res] = await db.execute<ResultSetHeader>(
     `UPDATE upload_batch
         SET batch_status = 'approving', updated_at = NOW()
-      WHERE id = ? AND approval_status = 'pending_branch_head' AND batch_status <> 'approving'`,
-    [batchId],
+      WHERE id = ? AND approval_status = ? AND batch_status <> 'approving'`,
+    [batchId, expectedStatus],
   );
   return res.affectedRows > 0;
 }
@@ -582,7 +805,17 @@ export async function sendPartialApplyEmail(params: {
 
   // Fetch uploader email
   const [userRows] = await db.execute<RowDataPacket[]>(
-    "SELECT email, full_name FROM auth_user WHERE id = ? LIMIT 1",
+    // auth_user has no full_name column — verified live 2026-09-03, its columns are id,
+    // email, password_hash and login bookkeeping. This selected one, so every execution
+    // raised ER_BAD_FIELD_ERROR and the partial-approval email has never been sent since
+    // it was written. The display name lives on employees, joined via employees.user_id.
+    `SELECT au.email,
+            COALESCE(NULLIF(TRIM(e.full_name), ''),
+                     NULLIF(TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))), ''),
+                     au.email) AS full_name
+       FROM auth_user au
+       LEFT JOIN employees e ON e.user_id = au.id
+      WHERE au.id = ? LIMIT 1`,
     [params.batch.uploaded_by],
   );
   const uploader = (userRows as RowDataPacket[])[0];
