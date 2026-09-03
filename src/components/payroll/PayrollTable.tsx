@@ -79,8 +79,11 @@ export interface PayrollRecord {
   workingDays?: number;
   presentDays?: number;
   lwpDays?: number;
+  incentiveTotal?: number;
+  otherDeductions?: number;
   earningComponents?: Array<{ component_code: string; component_name: string; component_type: string; amount: number }>;
   deductionComponents?: Array<{ component_code: string; component_name: string; component_type: string; amount: number }>;
+  employerCostComponents?: Array<{ component_code: string; component_name: string; component_type: string; amount: number }>;
 }
 
 interface PayrollTableProps {
@@ -370,10 +373,16 @@ export function PayrollTable({
               <div>
                 <p className="text-[var(--text-muted)]">Allowances</p>
                 <p className="mt-1 font-semibold text-[var(--status-present)]"><AmountCell amount={record.totalAllowances} prefix="+" /></p>
+                {(record.incentiveTotal ?? 0) > 0 && (
+                  <p className="text-[10px] text-emerald-500">incl. ₹{(record.incentiveTotal ?? 0).toLocaleString('en-IN')} incentive</p>
+                )}
               </div>
               <div>
                 <p className="text-[var(--text-muted)]">Deductions</p>
                 <p className="mt-1 font-semibold text-[var(--status-absent)]"><AmountCell amount={record.totalDeductions} prefix="-" /></p>
+                {(record.otherDeductions ?? 0) > 0 && (
+                  <p className="text-[10px] text-red-400">incl. ₹{(record.otherDeductions ?? 0).toLocaleString('en-IN')} custom</p>
+                )}
               </div>
               <div>
                 <p className="text-[var(--text-muted)]">Net Salary</p>
@@ -439,10 +448,20 @@ export function PayrollTable({
                   ₹{record.basic.toLocaleString('en-IN')}
                 </TableCell>
                 <TableCell className="text-right text-emerald-600">
-                  +₹{record.totalAllowances.toLocaleString('en-IN')}
+                  <div>+₹{record.totalAllowances.toLocaleString('en-IN')}</div>
+                  {(record.incentiveTotal ?? 0) > 0 && (
+                    <div className="text-[10px] font-medium text-emerald-500 mt-0.5">
+                      incl. ₹{(record.incentiveTotal ?? 0).toLocaleString('en-IN')} incentive
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="text-right text-destructive">
-                  -₹{record.totalDeductions.toLocaleString('en-IN')}
+                  <div>-₹{record.totalDeductions.toLocaleString('en-IN')}</div>
+                  {(record.otherDeductions ?? 0) > 0 && (
+                    <div className="text-[10px] font-medium text-red-400 mt-0.5">
+                      incl. ₹{(record.otherDeductions ?? 0).toLocaleString('en-IN')} custom ded.
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="text-right font-semibold text-foreground">
                   ₹{record.netSalary.toLocaleString('en-IN')}

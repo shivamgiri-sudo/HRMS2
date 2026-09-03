@@ -361,15 +361,15 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                         </td>
                       </tr>
 
-                      {/* Dynamically render all non-BASIC earning components */}
+                      {/* Dynamically render all non-BASIC, non-INCENTIVE earning components */}
                       {record.earningComponents && record.earningComponents.length > 0 ? (
                         record.earningComponents
-                          .filter(e => e.component_code !== 'BASIC' && Number(e.amount) > 0)
+                          .filter(e => e.component_code !== 'BASIC' && e.component_code !== 'INCENTIVE' && Number(e.amount) > 0)
                           .map((comp) => (
                             <tr key={comp.component_code} className="border-b">
                               <td className="py-1.5 text-muted-foreground">
                                 <div>{comp.component_name}</div>
-                                {comp.reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {comp.reason}</div>}
+                                {(comp as any).reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {(comp as any).reason}</div>}
                               </td>
                               <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
                                 +{fmt(Number(comp.amount))}
@@ -395,14 +395,6 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                               </td>
                             </tr>
                           )}
-                          {incentiveTotal > 0 && (
-                            <tr className="border-b">
-                              <td className="py-1.5 text-muted-foreground">Incentive</td>
-                              <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
-                                +{fmt(incentiveTotal)}
-                              </td>
-                            </tr>
-                          )}
                           {hra === 0 && specialAllow === 0 && incentiveTotal === 0 && record.totalAllowances > 0 && (
                             <tr className="border-b">
                               <td className="py-1.5 text-muted-foreground">Total Allowances</td>
@@ -414,10 +406,48 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                         </>
                       )}
 
-                      <tr className="font-semibold">
-                        <td className="py-1.5">Gross Salary</td>
-                        <td className="py-1.5 text-right font-mono">{fmt(grossSalary)}</td>
+                      {/* Gross subtotal (structure earnings, before incentive) */}
+                      <tr className="font-semibold border-t border-slate-200">
+                        <td className="py-1.5 text-slate-600 text-xs uppercase tracking-wide">Gross Salary</td>
+                        <td className="py-1.5 text-right font-mono text-slate-700">{fmt(grossSalary)}</td>
                       </tr>
+
+                      {/* Incentive — shown separately, highlighted, after gross */}
+                      {(() => {
+                        const incentiveComp = record.earningComponents?.find(
+                          e => e.component_code === 'INCENTIVE' && Number(e.amount) > 0
+                        );
+                        const amount = incentiveComp ? Number(incentiveComp.amount) : incentiveTotal;
+                        if (amount <= 0) return null;
+                        return (
+                          <tr className="border-b bg-emerald-50/50">
+                            <td className="py-1.5 text-emerald-700 font-medium">
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                Incentive
+                              </div>
+                              <div className="text-[10px] text-emerald-500 mt-0.5 ml-3">Approved bulk incentive — added to net</div>
+                            </td>
+                            <td className="py-1.5 text-right font-mono font-bold text-emerald-600">
+                              +{fmt(amount)}
+                            </td>
+                          </tr>
+                        );
+                      })()}
+
+                      {/* Total Earnings = gross + incentive */}
+                      {incentiveTotal > 0 && (
+                        <tr className="font-bold border-t-2 border-emerald-200 bg-emerald-50/30">
+                          <td className="py-2 text-emerald-800">Total Earnings</td>
+                          <td className="py-2 text-right font-mono text-emerald-700">{fmt(grossSalary + incentiveTotal)}</td>
+                        </tr>
+                      )}
+                      {incentiveTotal === 0 && (
+                        <tr className="font-semibold">
+                          <td className="py-1.5">Total Earnings</td>
+                          <td className="py-1.5 text-right font-mono">{fmt(grossSalary)}</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -436,21 +466,30 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                       <col className="w-1/3" />
                     </colgroup>
                     <tbody>
-                      {/* Dynamically render all deduction components */}
+                      {/* Dynamically render all deduction components — custom DED_* highlighted */}
                       {record.deductionComponents && record.deductionComponents.length > 0 ? (
                         record.deductionComponents
                           .filter(d => Number(d.amount) > 0)
-                          .map((comp) => (
-                            <tr key={comp.component_code} className="border-b">
-                              <td className="py-1.5 text-muted-foreground">
-                                <div>{comp.component_name}</div>
-                                {comp.reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {comp.reason}</div>}
-                              </td>
-                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
-                                -{fmt(Number(comp.amount))}
-                              </td>
-                            </tr>
-                          ))
+                          .map((comp) => {
+                            const isCustom = comp.component_code.startsWith('DED_');
+                            return (
+                              <tr key={comp.component_code} className={`border-b ${isCustom ? 'bg-red-50/50' : ''}`}>
+                                <td className="py-1.5 text-muted-foreground">
+                                  <div className={isCustom ? 'text-red-700 font-medium flex items-center gap-1.5' : ''}>
+                                    {isCustom && <span className="inline-flex h-1.5 w-1.5 rounded-full bg-red-400" />}
+                                    {comp.component_name}
+                                  </div>
+                                  {isCustom && (
+                                    <div className="text-[10px] text-red-400 mt-0.5 ml-3">Custom deduction</div>
+                                  )}
+                                  {(comp as any).reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {(comp as any).reason}</div>}
+                                </td>
+                                <td className={`py-1.5 text-right font-mono font-semibold ${isCustom ? 'text-red-600 font-bold' : 'text-destructive'}`}>
+                                  -{fmt(Number(comp.amount))}
+                                </td>
+                              </tr>
+                            );
+                          })
                       ) : (
                         /* Fallback for old payroll lines without component arrays */
                         <>
@@ -539,6 +578,26 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-semibold text-lg">Net Salary</span>
+                {/* Formula breakdown — only shown when there are non-trivial components */}
+                {(incentiveTotal > 0 || otherDeductions > 0) && (
+                  <div className="mt-1.5 text-xs text-slate-500 space-y-0.5">
+                    <div className="flex gap-1.5 items-center">
+                      <span className="text-slate-600 font-medium">{fmt(grossSalary)}</span>
+                      <span>gross</span>
+                      {incentiveTotal > 0 && (
+                        <>
+                          <span className="text-emerald-600 font-bold">+ {fmt(incentiveTotal)}</span>
+                          <span className="text-emerald-600">incentive</span>
+                        </>
+                      )}
+                      <span className="text-destructive font-medium">− {fmt(record.totalDeductions)}</span>
+                      <span>deductions</span>
+                      {otherDeductions > 0 && (
+                        <span className="text-red-400">(incl. {fmt(otherDeductions)} custom)</span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {momDelta !== null && momPct !== null && (
                   <div className={`mt-1 flex items-center gap-1 text-xs font-medium ${momDelta > 0 ? "text-emerald-600" : momDelta < 0 ? "text-red-500" : "text-slate-400"}`}>
                     {momDelta > 0 ? <TrendingUp className="h-3 w-3" /> : momDelta < 0 ? <TrendingDown className="h-3 w-3" /> : <Flat className="h-3 w-3" />}
