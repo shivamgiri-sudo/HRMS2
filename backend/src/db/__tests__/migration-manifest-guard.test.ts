@@ -199,6 +199,18 @@ describe("migration manifest — duplicates", () => {
     // were invisible to the roles that own them. Renaming them to free numbers
     // is the one thing that would break: schema_migrations keys on the filename,
     // so a renamed file reads as never-applied and runs again.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(67);
+    //
+    // 67 -> 69 (2026-09-03): 1644_kpi_studio_foundation.sql and
+    // 1645_kpi_studio_resolution.sql registered against the existing
+    // 1644_role_report_permissions_wfm_payroll_hr.sql and
+    // 1645_pnl_manual_adjustment.sql. Same shape again — concurrent sessions
+    // took the same next-available number. The three KPI Studio files shipped
+    // with their code and were registered nowhere, so none of their seven
+    // tables existed in mas_hrms at all and every KPI Studio query raised
+    // ER_NO_SUCH_TABLE; they were applied to production on 2026-09-03 with
+    // owner approval and are registered here so a rebuilt database gets them
+    // too. Renaming them to free numbers is the one thing that would break:
+    // schema_migrations now carries these exact filenames as applied.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(69);
   });
 });
