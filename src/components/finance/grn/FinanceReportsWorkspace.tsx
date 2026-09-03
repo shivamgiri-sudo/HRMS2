@@ -240,6 +240,10 @@ export function FinanceReportsWorkspace() {
   const results = useQuery({
     queryKey: ["grn-report", report, applied],
     enabled: ran,
+    // Never auto-retry a timed-out report query. Each retry runs the same expensive query
+    // again, and three concurrent 30-second queries exhaust the DB connection pool and
+    // make unrelated endpoints return 500. Show the error immediately instead.
+    retry: 0,
     queryFn: async () => {
       const params = new URLSearchParams();
       const add = (key: string, value: string) => { if (value) params.set(key, value); };
@@ -260,7 +264,9 @@ export function FinanceReportsWorkspace() {
         add("from", applied.from);
         add("to", applied.to);
       }
-      const response = await hrmsApi.get<any>(`/api/finance/grn-reports/${active.endpoint}?${params}`);
+      // 90-second timeout: finance reports scan a large table and the all-branches scope
+      // for super_admin can take longer than the default 30s on first run.
+      const response = await hrmsApi.get<any>(`/api/finance/grn-reports/${active.endpoint}?${params}`, 90_000);
       return response as { rows: any[]; totals?: any; truncated?: boolean; limit?: number };
     },
   });
