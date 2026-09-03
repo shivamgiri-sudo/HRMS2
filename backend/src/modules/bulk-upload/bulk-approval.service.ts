@@ -289,6 +289,7 @@ export async function resolveEmployees(codes: string[]): Promise<Map<string, Res
         WHERE employee_code IN (${slice.map(() => "?").join(",")})
           AND (
             LOWER(employment_status) = 'active'
+            OR date_of_joining >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
             OR EXISTS (
                  SELECT 1
                    FROM attendance_daily_record a
@@ -296,7 +297,7 @@ export async function resolveEmployees(codes: string[]): Promise<Map<string, Res
                     AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
                )
           )`,
-      [...slice, ACTIVITY_WINDOW_DAYS],
+      [...slice, ACTIVITY_WINDOW_DAYS, ACTIVITY_WINDOW_DAYS],
     );
     for (const r of rows as RowDataPacket[]) {
       map.set(String(r.employee_code).trim().toUpperCase(), {
