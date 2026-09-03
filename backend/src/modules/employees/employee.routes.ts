@@ -1249,6 +1249,19 @@ router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "p
     { allowAdminBypass: true, allowCeoAllRead: true }
   );
   const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
+  /*
+   * Counts the attendance rows that exist for today, not the employees who might have one.
+   *
+   * This was a LEFT JOIN with COUNT(*), which counts every active employee whether or not
+   * the join matched — so `total_with_record` always equalled `total_active`, and the
+   * "No record" tile below, computed as total_active - total_with_record, was pinned at 0
+   * forever. Live on 2026-09-03: 1,037 active, 742 with a record, so the tile should have
+   * read 295 and read 0. Verified across three days (295, 1, 10 — all displayed as 0).
+   *
+   * An INNER JOIN says what was meant, and is also 3-5x faster because it drives off the
+   * day's rows (~1,000) instead of every employee: 1,115/741/548ms before, 409/115/208ms
+   * after. The scope clause still applies through the same `e` alias.
+   */
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total_with_record,
@@ -1259,10 +1272,12 @@ router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "p
        SUM(adr.attendance_status = 'leave_approved') AS on_leave,
        SUM(adr.attendance_status = 'week_off')       AS week_off,
        SUM(adr.attendance_status = 'holiday')        AS holiday
-     FROM employees e
-     LEFT JOIN attendance_daily_record adr
-       ON adr.employee_id = e.id AND adr.record_date = ?
-     WHERE e.active_status = 1 AND e.employment_status = 'Active'${scopeSql}`,
+     FROM attendance_daily_record adr
+     JOIN employees e
+       ON e.id = adr.employee_id
+      AND e.active_status = 1
+      AND e.employment_status = 'Active'
+     WHERE adr.record_date = ?${scopeSql}`,
     [today, ...scoped.params]
   );
   const [totalRow] = await db.execute<RowDataPacket[]>(
