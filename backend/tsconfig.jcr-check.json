@@ -1,0 +1,21 @@
+{
+  // Scoped typecheck for the Joining Control Room service and its routes.
+  //
+  // `npm run typecheck` at the repo root is a no-op — the root tsconfig declares "files": [] so
+  // `tsc --noEmit` compiles nothing and exits 0 no matter what is broken. Compiling the whole
+  // backend instead surfaces a few hundred pre-existing errors in unrelated modules, which buries
+  // anything new. This config is the actual gate for changes to this page.
+  //
+  //   npx tsc -p backend/tsconfig.jcr-check.json
+  //
+  // Transitive imports are checked too, so errors from outside these two files can appear;
+  // everything in joining-control-room.* is expected to stay clean. Sibling of
+  // tsconfig.finance-check.json, which does the same for the finance/GRN work.
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/ats/joining-control-room.service.ts",
+    "src/modules/ats/joining-control-room.routes.ts",
+    "src/modules/ats/__tests__/joining-control-room-queue-batching.test.ts"
+  ],
+  "compilerOptions": { "noEmit": true, "types": ["node", "vitest/globals"] }
+}
