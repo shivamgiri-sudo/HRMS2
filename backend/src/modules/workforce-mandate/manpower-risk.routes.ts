@@ -168,6 +168,13 @@ manpowerRiskRouter.get(
     // unmapped mandate is a cost centre missing its process_id, which is a data fix somebody has
     // to make. Scoped on branch only — a process-scoped caller matches nothing here, which is
     // correct, because mandate that belongs to no process belongs to no process owner either.
+    //
+    // This MUST mirror migration 1666's resolution ladder rung for rung, or a cost centre it
+    // resolved gets counted twice — once inside its process row and again here. It did exactly
+    // that before this was written out in full: Godfrey Philips' BSS/OB/AHMH-JD/474 (133 seats,
+    // no process_id, no staff) is resolved by the same-billing-client rung into the Godfrey row,
+    // and the banner still reported those 133 seats as unmapped, overstating the bucket at 222
+    // seats when only 89 are genuinely unattributable.
     const unmappedScope = await buildScopeWhereClause(
       req.authUser!.id,
       [...HIRING_ALERT_ROLES],
@@ -175,23 +182,54 @@ manpowerRiskRouter.get(
       { allowAdminBypass: true, allowCeoAllRead: true },
     );
     const [unmappedRows] = await db.query<RowDataPacket[]>(
-      `SELECT
+      `WITH dominant_process AS (
+         SELECT cost_centre_id, process_id FROM (
+           SELECT e2.cost_centre_id, e2.process_id,
+                  ROW_NUMBER() OVER (PARTITION BY e2.cost_centre_id
+                                     ORDER BY COUNT(*) DESC, e2.process_id) AS rn
+             FROM employees e2
+            WHERE e2.active_status = 1
+              AND e2.cost_centre_id IS NOT NULL AND e2.cost_centre_id <> ''
+              AND e2.process_id     IS NOT NULL AND e2.process_id     <> ''
+            GROUP BY e2.cost_centre_id, e2.process_id
+         ) ranked WHERE ranked.rn = 1
+       ),
+       billed AS (
+         SELECT cc.id AS cc_id, cc.branch_id, NULLIF(cc.process_id, '') AS cc_process,
+                dp.process_id AS dom_process,
+                TRIM(LOWER(ccbc.client_name))  AS bill_client,
+                TRIM(LOWER(ccbc.process_name)) AS bill_process,
+                ccbc.current_mandate AS mandated_hc
+           FROM cost_center_billing_config ccbc
+           JOIN cost_centre_master cc ON cc.cost_centre_code = ccbc.cost_center
+           LEFT JOIN dominant_process dp ON dp.cost_centre_id = cc.id
+          WHERE ccbc.active_status = 1 AND ccbc.current_mandate > 0
+            AND cc.branch_id IS NOT NULL AND cc.branch_id <> ''
+       ),
+       client_sibling AS (
+         SELECT branch_id, bill_client,
+                MIN(COALESCE(cc_process, dom_process)) AS sibling_process
+           FROM billed
+          WHERE COALESCE(cc_process, dom_process) IS NOT NULL
+            AND bill_client IS NOT NULL AND bill_client <> ''
+          GROUP BY branch_id, bill_client
+       )
+       SELECT
          cc.branch_id,
          b.branch_name,
-         COUNT(*)                    AS cost_centre_count,
-         SUM(ccbc.current_mandate)   AS mandated_hc
-       FROM cost_center_billing_config ccbc
-       JOIN cost_centre_master cc ON cc.cost_centre_code = ccbc.cost_center
-       LEFT JOIN branch_master b  ON b.id = cc.branch_id
-       WHERE ccbc.active_status = 1
-         AND ccbc.current_mandate > 0
-         AND (cc.process_id IS NULL OR cc.process_id = '')
-         AND NOT EXISTS (
-           SELECT 1 FROM employees e2
-            WHERE e2.cost_centre_id = cc.id
-              AND e2.active_status = 1
-              AND e2.process_id IS NOT NULL AND e2.process_id <> ''
-         )
+         COUNT(*)                  AS cost_centre_count,
+         SUM(cc.mandated_hc)       AS mandated_hc
+       FROM (
+         SELECT billed.branch_id, billed.mandated_hc,
+                COALESCE(billed.cc_process, billed.dom_process, cs.sibling_process, pm.id) AS resolved_process
+           FROM billed
+           LEFT JOIN client_sibling cs
+             ON cs.branch_id = billed.branch_id AND cs.bill_client = billed.bill_client
+           LEFT JOIN process_master pm
+             ON TRIM(LOWER(pm.process_name)) = billed.bill_process
+       ) cc
+       LEFT JOIN branch_master b ON b.id = cc.branch_id
+       WHERE cc.resolved_process IS NULL
          AND (${unmappedScope.sql})
        GROUP BY cc.branch_id, b.branch_name
        ORDER BY mandated_hc DESC`,

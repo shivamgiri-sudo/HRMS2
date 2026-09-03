@@ -276,7 +276,7 @@ export function HeadcountShortagePanel({
                     {u.cost_centre_count} cost centre{u.cost_centre_count === 1 ? "" : "s"}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
-                    {u.mandated_hc} seats
+                    {u.mandated_hc} seat{u.mandated_hc === 1 ? "" : "s"}
                   </td>
                 </tr>
               ))}
