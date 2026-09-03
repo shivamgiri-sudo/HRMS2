@@ -142,16 +142,7 @@ export const platformRouteElements = (
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
       <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
-      {/* Gated on BULK_UPLOAD_APPROVALS, not BULK_UPLOAD.
-        * branch_head holds NO BULK_UPLOAD grant (live, 2026-09-03) — so the only role
-        * allowed to approve a gated batch was being turned away by the gate on the very
-        * page built for them. BULK_UPLOAD_APPROVALS is the code migration 1522 created for
-        * this queue and already grants branch_head, branch_admin, payroll_head and
-        * super_admin; migration 1657 adds wfm and payroll_hr read-only so a creator can
-        * watch their own batch. This route is also listed in PAGE_CODE_BY_ROUTE, which
-        * makes the `roles` prop below inert — the page code is the single gate. The list is
-        * kept as documentation of who the code is expected to admit. */}
-      <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','branch_head','branch_admin','payroll_head','wfm','payroll_hr']}><Gate pageCode="BULK_UPLOAD_APPROVALS"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
+      <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_head']}><Gate pageCode="BULK_UPLOAD"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
       <Route path="/assets"          element={<ProtectedRoute><Assets /></ProtectedRoute>} />
       <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
       <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
@@ -207,15 +198,15 @@ export const platformRouteElements = (
       {/* Integration / migration / audit */}
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
       <Route path="/migration-console"            element={<ProtectedRoute roles={['admin']}><Gate pageCode="MIGRATION_CONSOLE"><NativeMigrationConsole /></Gate></ProtectedRoute>} />
-      <Route path="/audit-log"                    element={<ProtectedRoute roles={['admin','super_admin','hr','payroll_head','wfm']}><Gate pageCode="AUDIT_LOG"><NativeAuditLog /></Gate></ProtectedRoute>} />
+      <Route path="/audit-log"                    element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="AUDIT_LOG"><NativeAuditLog /></Gate></ProtectedRoute>} />
 
       {/* Configuration Control Center */}
       <Route path="/admin/configuration" element={<ProtectedRoute roles={['super_admin','admin']}><Gate pageCode="CONFIGURATION_CENTER"><NativeConfigurationCenter /></Gate></ProtectedRoute>} />
 
       {/* Security / access */}
-      <Route path="/security-center"             element={<ProtectedRoute roles={['admin','ceo','coo','hr']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
-      <Route path="/settings/access-control"     element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
+      <Route path="/security-center"             element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
+      <Route path="/settings/access-control"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />

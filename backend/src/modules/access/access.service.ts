@@ -372,6 +372,49 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     }
   }
 
+  /**
+   * Team Attendance follows the reporting line, not a role.
+   *
+   * Policy (owner's decision, 2026-09-03): whoever is set as reporting manager for any employee
+   * may see it. That cannot be expressed as a role grant — measured live, 63 of the 66 people who
+   * actually hold reportees carry only the `employee` role, so granting by role would either hand
+   * the page to every employee in the company or miss almost every real manager.
+   *
+   * Deriving it from the relationship instead makes it self-maintaining: someone promoted into a
+   * reporting line gets the page on their next sign-in, and someone whose last reportee moves away
+   * loses it, with no grant table to keep in step.
+   *
+   * View only, and safe to grant on this basis because the data layer already confines the page to
+   * the caller's own team — attendance-engine.routes.ts and attendance-daily-scoped.routes.ts both
+   * filter on `e.reporting_manager_id = ? OR e.manager_id = ?`. A manager therefore sees their
+   * reportees and nobody else's; this grant decides only whether the screen opens at all.
+   */
+  const TEAM_ATTENDANCE_PAGE = "TEAM_ATTENDANCE";
+  if (
+    emp?.id &&
+    !pageMap.has(TEAM_ATTENDANCE_PAGE) &&
+    activePageCodes.includes(TEAM_ATTENDANCE_PAGE) &&
+    !disabledPageCodes.includes(TEAM_ATTENDANCE_PAGE)
+  ) {
+    const [reportRows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM employees
+        WHERE active_status = 1
+          AND (reporting_manager_id = ? OR manager_id = ?)
+        LIMIT 1`,
+      [emp.id, emp.id]
+    );
+    if ((reportRows as RowDataPacket[]).length > 0) {
+      pageMap.set(TEAM_ATTENDANCE_PAGE, {
+        page_code: TEAM_ATTENDANCE_PAGE,
+        can_view: true,
+        can_create: false,
+        can_edit: false,
+        can_delete: false,
+        can_export: false,
+      });
+    }
+  }
+
   for (const userPage of userPageRows as PageRow[]) {
     pageMap.set(userPage.page_code, {
       page_code: userPage.page_code,
