@@ -20,6 +20,7 @@ import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 import { encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar } from "../../shared/syncPiiEncryption.js";
 import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
 import { SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "./fieldOwnership.js";
+import { normalizeBloodGroup } from "./bloodGroup.util.js";
 import { computeAccountBlindIndex, findDuplicateAccountOwner } from "../../shared/bankAccountDuplicate.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
 
@@ -403,12 +404,22 @@ router.patch("/me", h(async (req: any, res: any) => {
   const updates: string[] = [];
   const values: any[] = [];
   const changedFields: string[] = [];
+  // What actually reached the column, which is not always what the request carried — see
+  // the blood_group note below. The audit log reads this so old/new are comparable.
+  const storedByField: Record<string, unknown> = {};
   for (const field of ALLOWED_FIELDS) {
     if (req.body[field] !== undefined) {
       // dbColumnFor: almost every field's request-body name is also its real `employees`
       // column, except address_line1, which writes to address1 — see fieldOwnership.ts.
       updates.push(`\`${dbColumnFor(field)}\` = ?`);
-      values.push(req.body[field]);
+      // blood_group is the one self-editable field with a fixed vocabulary. It used to be
+      // a free-text box, which is where live values like 'B+ve', 'O +' and 'SAMBHLI' came
+      // from, and the legacy import's 'NA' placeholder printed on ID cards as if it were a
+      // real reading. Normalise to one of the eight groups or NULL; everything else is
+      // stored as given.
+      const storedValue = field === "blood_group" ? normalizeBloodGroup(req.body[field]) : req.body[field];
+      values.push(storedValue);
+      storedByField[field] = storedValue;
       changedFields.push(field);
     }
   }
@@ -428,7 +439,7 @@ router.patch("/me", h(async (req: any, res: any) => {
   const [beforeRows] = await db.execute(`SELECT ${beforeCols} FROM employees WHERE id = ? LIMIT 1`, [empId]) as any[];
   const oldValues = beforeRows[0] ?? {};
   const newValues: Record<string, unknown> = {};
-  for (const field of changedFields) newValues[field] = req.body[field];
+  for (const field of changedFields) newValues[field] = storedByField[field];
 
   values.push(empId);
   await db.execute(`UPDATE employees SET ${updates.join(", ")} WHERE id = ?`, values);

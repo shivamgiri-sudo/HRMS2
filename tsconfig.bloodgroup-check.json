@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/lib/bloodGroups.ts",
+    "src/pages/Profile.tsx",
+    "src/pages/NativeEmployeeStatCard.tsx",
+    "src/pages/NativeITProvisioningTracker.tsx",
+    "src/components/employees/EmployeeEditDialog.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

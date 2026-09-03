@@ -46,6 +46,7 @@ import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js
 import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
 import { cropFaceForProfilePhoto } from './face-crop.util.js';
+import { normalizeBloodGroup } from './bloodGroup.util.js';
 import { writeEmployeePhotoBuffer } from './employee.photo.compat.routes.js';
 import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
@@ -298,6 +299,13 @@ export async function createEmployeeFromCandidate(
          -- The statutory forms need these; they were collected and then dropped.
          COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
          p.marital_status,
+         -- Collected on the Onboarding form and then dropped here, exactly like the
+         -- emergency contact below: the INSERT never named the column, so every employee
+         -- created through this path reached their ID card with a blank Blood Group even
+         -- though the candidate had already supplied it. 15,263 onboarding profiles hold
+         -- a real value. ats_candidate has no blood_group column, so the profile is the
+         -- only source.
+         p.blood_group,
          -- Form 11 PF opt-out election captured during onboarding
          COALESCE(p.pf_opt_out_elected, 0) AS pf_opt_out_elected,
          -- Emergency contact captured on the Onboarding form (OnboardingSteps1to5.tsx).
@@ -382,7 +390,7 @@ export async function createEmployeeFromCandidate(
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, official_email, mobile,
           personal_email, personal_phone, alternate_mobile,
-          gender, date_of_birth, father_name, marital_status,
+          gender, date_of_birth, father_name, marital_status, blood_group,
           address1, permanent_address1,
           -- Carried from the candidate at conversion (owner decision 2026-09-02). These
           -- two columns were never written here, so every employee created through this
@@ -393,7 +401,7 @@ export async function createEmployeeFromCandidate(
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
@@ -405,6 +413,10 @@ export async function createEmployeeFromCandidate(
         candRow?.date_of_birth ?? null,
         toStoredName(candRow?.father_name),
         candRow?.marital_status || null,
+        // Normalised, never stored raw: the onboarding field is free text and holds the
+        // same 'NA' / 'B+ve' shapes as the legacy employee rows. An unrecognisable value
+        // becomes NULL so the card prints an honest blank instead of a fake reading.
+        normalizeBloodGroup(candRow?.blood_group),
         candRow?.current_address ?? null,
         candRow?.permanent_address ?? null,
         // Same validated-or-null rule the onboarding capture uses: a malformed or masked

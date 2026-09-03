@@ -50,6 +50,7 @@ import {
 import { EmployeeLeaveEligibility, type EmployeeLeaveEligibilityHandle } from "./EmployeeLeaveEligibility";
 import { fetchAllEmployeeRows } from "@/hooks/useEmployees";
 import { PhotoUpload } from "@/components/employee/PhotoUpload";
+import { BLOOD_GROUPS, isKnownBloodGroup } from "@/lib/bloodGroups";
 
 const WEEKDAYS = [
   { value: 0, label: 'Sun' },
@@ -81,6 +82,7 @@ interface EditFormData {
   country: string;
   date_of_birth: string;
   gender: string;
+  blood_group: string;
   designation_id: string;
   department_id: string;
   branch_id: string;
@@ -141,6 +143,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     country: "",
     date_of_birth: "",
     gender: "",
+    blood_group: "",
     designation_id: "",
     department_id: "",
     branch_id: "",
@@ -375,6 +378,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         country: employeeDetails.country || "",
         date_of_birth: employeeDetails.date_of_birth?.slice?.(0, 10) || "",
         gender: employeeDetails.gender || "",
+        // A legacy free-text value ("NA", "B+ve") is not one of the eight groups, so the
+        // Select below shows its placeholder and HR is asked for a real one.
+        blood_group: employeeDetails.blood_group || "",
         designation_id: employeeDetails.designation_id || "",
         department_id: employeeDetails.department_id || "",
         branch_id: employeeDetails.branch_id || "",
@@ -408,6 +414,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         country: data.country || null,
         dateOfBirth: data.date_of_birth || undefined,
         gender: data.gender || undefined,
+        // null, not undefined, when cleared: undefined is dropped from the PATCH body and
+        // the stale value would survive. null tells the API to blank the column.
+        bloodGroup: isKnownBloodGroup(data.blood_group) ? data.blood_group : null,
         designationId: data.designation_id || null,
         departmentId: data.department_id || null,
         branchId: data.branch_id || null,
@@ -713,6 +722,26 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                         <SelectItem value="female">Female</SelectItem>
                         <SelectItem value="other">Other</SelectItem>
                         <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    {/* HR had no way to set this at all before 2026-09-03 — blood_group was
+                        absent from updateEmployeeSchema, so the employee's own Profile page
+                        was the only writer. 448 of 1,028 active employees printed an ID
+                        card with a blank Blood Group and nobody could fill it in. */}
+                    <Label htmlFor="blood_group">Blood Group</Label>
+                    <Select
+                      value={isKnownBloodGroup(formData.blood_group) ? formData.blood_group : ""}
+                      onValueChange={(value) => setFormData({ ...formData, blood_group: value })}
+                    >
+                      <SelectTrigger id="blood_group">
+                        <SelectValue placeholder="Select blood group" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {BLOOD_GROUPS.map((bg) => (
+                          <SelectItem key={bg} value={bg}>{bg}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

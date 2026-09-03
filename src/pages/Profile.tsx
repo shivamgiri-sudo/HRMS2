@@ -43,6 +43,7 @@ import { useAttendanceDailyRecords } from "@/hooks/useAttendanceHub";
 import { MyAssets } from "@/components/profile/MyAssets";
 import { MyPerformanceReviews } from "@/components/profile/MyPerformanceReviews";
 import { EmployeeJourneyTimeline } from "@/components/employees/EmployeeJourneyTimeline";
+import { BLOOD_GROUPS, isKnownBloodGroup, displayBloodGroup } from "@/lib/bloodGroups";
 import {
   BankStatutoryDetails,
   EmergencyNomineeDetails,
@@ -462,7 +463,7 @@ const Profile = () => {
                         <InfoRow icon={Cake}      label="Date of Birth"  value={formatDate(employee.date_of_birth)} />
                         <InfoRow icon={User}      label="Gender"         value={employee.gender} />
                         <InfoRow icon={HeartHandshake} label="Marital Status" value={employee.marital_status} />
-                        <InfoRow icon={User} label="Blood Group" value={employee.blood_group} />
+                        <InfoRow icon={User} label="Blood Group" value={displayBloodGroup(employee.blood_group)} />
                       </div>
                     </div>
                   </div>
@@ -685,14 +686,26 @@ const Profile = () => {
                           </div>
                           <div className="space-y-1.5">
                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Blood Group</Label>
-                            <Input
-                              value={formData.blood_group}
-                              onChange={(e) => setFormData(p => ({ ...p, blood_group: e.target.value.toUpperCase() }))}
+                            {/* Was a free-text Input. That is where 'B+ve', 'O +' and one
+                                'SAMBHLI' in live data came from, and a typo here reaches
+                                the printed employee ID card. A legacy value that is not
+                                one of the eight groups — including the import's 'NA'
+                                placeholder — matches no item, so the field shows its
+                                placeholder and asks for a real choice. */}
+                            <Select
+                              value={isKnownBloodGroup(formData.blood_group) ? formData.blood_group : ""}
+                              onValueChange={(v) => setFormData(p => ({ ...p, blood_group: v }))}
                               disabled={!isEditing}
-                              placeholder="e.g. O+"
-                              maxLength={10}
-                              className="rounded-xl"
-                            />
+                            >
+                              <SelectTrigger className="rounded-xl">
+                                <SelectValue placeholder="Select blood group" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {BLOOD_GROUPS.map((bg) => (
+                                  <SelectItem key={bg} value={bg}>{bg}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                         </div>
                       </div>

@@ -130,10 +130,14 @@ export const FIELD_OWNERSHIP: Record<string, FieldOwnership> = {
     notes: "Not in employee.validation.ts's updateEmployeeSchema — HR cannot set this via PATCH /:id.",
   },
   blood_group: {
-    tab: "personal", employeeEditable: true, hrEditable: false,
+    tab: "personal", employeeEditable: true, hrEditable: true,
     approvalRequired: false, immutable: false,
-    liveRoute: "PATCH /me",
-    notes: "Not in employee.validation.ts's updateEmployeeSchema — HR cannot set this via PATCH /:id.",
+    liveRoute: "PATCH /me, PATCH /:id",
+    notes: "Self-edit-only until 2026-09-03, which is why 448 of 1,028 active employees " +
+      "reached their ID card with a blank Blood Group and HR had no field to fill it in. " +
+      "Now in updateEmployeeSchema as `bloodGroup`, restricted to the eight canonical " +
+      "groups; both routes normalise through bloodGroup.util.ts, so the legacy free-text " +
+      "values ('NA', 'B+ve', 'O +') cannot be written back.",
   },
   official_email: {
     tab: "personal", employeeEditable: false, hrEditable: true,

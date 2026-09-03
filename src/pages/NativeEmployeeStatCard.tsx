@@ -40,6 +40,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatISTDate } from "@/lib/utils";
 import { EmployeeIDCard } from "@/components/employees/EmployeeIDCard";
+import { displayBloodGroup } from "@/lib/bloodGroups";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1227,7 +1228,7 @@ export default function NativeEmployeeStatCard() {
               hrContact={card.employee.branch_hr_contact || "hr@teammas.in"}
               photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
               emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
-              bloodGroup={card.employee.blood_group ?? "—"}
+              bloodGroup={displayBloodGroup(card.employee.blood_group) ?? "—"}
             />
             <div className="mt-3 flex justify-center">
               <button onClick={() => window.print()}
@@ -1251,7 +1252,7 @@ export default function NativeEmployeeStatCard() {
               hrContact={card.employee.branch_hr_contact || "hr@teammas.in"}
               photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
               emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
-              bloodGroup={card.employee.blood_group ?? "—"}
+              bloodGroup={displayBloodGroup(card.employee.blood_group) ?? "—"}
               printMode={true}
             />
           </div>

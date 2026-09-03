@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isOfficialEmail, OFFICIAL_EMAIL_MESSAGE } from "../../shared/officialEmail.js";
+import { BLOOD_GROUPS } from "./bloodGroup.util.js";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const officialEmail = z.string().trim().email().refine(isOfficialEmail, OFFICIAL_EMAIL_MESSAGE);
@@ -42,6 +43,12 @@ export const updateEmployeeSchema = z.object({
   personalEmail: personalEmail.nullable().optional(),
   personalMobile: z.string().trim().max(20).nullable().optional(),
   gender: z.enum(["Male", "Female", "Other"]).optional(),
+  // HR could not set this at all before: it was absent from this schema, so the only
+  // writer was the employee's own PATCH /me. 448 of 1,028 active employees reached their
+  // ID card with a blank Blood Group and nobody in HR had a field to fill it in.
+  // Constrained to the eight real groups — the free-text Profile input it replaces is
+  // what produced 'B+ve', 'O +' and one row reading 'SAMBHLI'.
+  bloodGroup: z.enum(BLOOD_GROUPS).nullable().optional(),
   dateOfBirth: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
   dateOfJoining: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
   salaryStartDate: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").nullable().optional(),

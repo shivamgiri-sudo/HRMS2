@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { normalizeBloodGroup } from "./bloodGroup.util.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
@@ -48,6 +49,7 @@ const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: stri
   { inputKey: "personalEmail",      dbCol: "personal_email",      label: "Personal Email" },
   { inputKey: "dateOfBirth",        dbCol: "date_of_birth",       label: "Date of Birth" },
   { inputKey: "gender",             dbCol: "gender",              label: "Gender" },
+  { inputKey: "bloodGroup",         dbCol: "blood_group",         label: "Blood Group" },
   { inputKey: "address1",           dbCol: "address1",            label: "Address" },
   { inputKey: "city",               dbCol: "city",                label: "City" },
 ];
@@ -498,7 +500,7 @@ export const employeeService = {
       `SELECT branch_id, department_id, process_id, designation_id,
               reporting_manager_id, employment_status, employment_type, active_status,
               date_of_joining, first_name, last_name, official_email, mobile,
-              personal_email, date_of_birth, gender, address1, city
+              personal_email, date_of_birth, gender, blood_group, address1, city
        FROM employees WHERE id = ? LIMIT 1`,
       [id]
     );
@@ -563,6 +565,10 @@ export const employeeService = {
     if (input.personalEmail     !== undefined) { sets.push("personal_email = ?");       params.push(input.personalEmail ?? null); }
     if (input.personalMobile    !== undefined) { sets.push("personal_phone = ?");       params.push(input.personalMobile ?? null); }
     if (input.gender            !== undefined) { sets.push("gender = ?");               params.push(input.gender); }
+    // Normalised on the way in even though the schema already restricts it to the eight
+    // canonical groups, so this path can never re-introduce the free-text values the
+    // backfill migration cleans up.
+    if (input.bloodGroup        !== undefined) { sets.push("blood_group = ?");          params.push(normalizeBloodGroup(input.bloodGroup)); }
     if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
     if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
     if (input.salaryStartDate   !== undefined) { sets.push("salary_start_date = ?");    params.push(input.salaryStartDate ?? null); }

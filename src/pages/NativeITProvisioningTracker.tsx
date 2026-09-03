@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from "react";
 import { EmployeeIDCard } from "@/components/employees/EmployeeIDCard";
+import { displayBloodGroup } from "@/lib/bloodGroups";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -1497,7 +1498,7 @@ export default function NativeITProvisioningTracker() {
                           hrContact={statCardData.branch_hr_contact || "hr@teammas.in"}
                           photoUrl={statCardPhotoUrl ?? undefined}
                           emergencyContact={statCardData.emergency_contact?.mobile ?? "Contact HR"}
-                          bloodGroup={statCardData.blood_group ?? "—"}
+                          bloodGroup={displayBloodGroup(statCardData.blood_group) ?? "—"}
                           printMode={false}
                         />
                       </div>

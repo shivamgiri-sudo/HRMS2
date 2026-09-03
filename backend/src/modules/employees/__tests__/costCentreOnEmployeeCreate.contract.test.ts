@@ -25,22 +25,67 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const ORCHESTRATOR = "src/modules/employees/employee-creation-orchestrator.service.ts";
 const EMPLOYEE_SERVICE = "src/modules/employees/employee.service.ts";
 
-/** Strip comments so a column only DISCUSSED in prose never counts as written. */
+/**
+ * Strip comments so a column only DISCUSSED in prose never counts as written.
+ *
+ * SQL line comments are stripped alongside the TypeScript ones. Both INSERTs below carry
+ * `--` prose INSIDE the column list explaining why a column is there, and without this the
+ * splitter turned each such block into comma-separated "columns" while swallowing the real
+ * column name next to it — reporting createEmployee as 18 columns / 17 values against a
+ * statement that is correctly balanced, so the count assertions were red on healthy code
+ * and could not have caught the mismatch they exist to catch. Anchored to the start of a
+ * line so TypeScript's `--` decrement operator is never mistaken for a comment.
+ */
 const stripComments = (s: string): string =>
-  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/^\s*--.*$/gm, "");
 
 /**
  * The column list and the VALUES list of the first `INSERT INTO employees` in `src`.
  *
- * Returned as trimmed item arrays rather than raw text so the counts can be compared. These
- * two statements contain no nested parentheses inside either list, so splitting on commas is
- * safe here; a future INSERT using a function call would need a real parser.
+ * Returned as trimmed item arrays rather than raw text so the counts can be compared.
+ *
+ * Both the extraction and the split track parenthesis depth. createEmployee's VALUES list
+ * supplies cost_center_code as `(SELECT cost_centre_code FROM cost_centre_master ...)`, and
+ * a non-greedy `\(([\s\S]*?)\)` ends the list at that subquery's OWN closing paren —
+ * truncating 18 values to 17 and failing a statement that balances perfectly. Depth-aware
+ * splitting also keeps such a subquery as ONE value even when it later grows a comma.
  */
+function readParenGroup(src: string, openIdx: number): { body: string; end: number } {
+  let depth = 0;
+  for (let i = openIdx; i < src.length; i++) {
+    if (src[i] === "(") depth++;
+    else if (src[i] === ")" && --depth === 0) return { body: src.slice(openIdx + 1, i), end: i };
+  }
+  throw new Error("unbalanced parentheses in INSERT INTO employees");
+}
+
+/** Split on commas that sit at depth 0, so a nested call or subquery stays one item. */
+function splitTopLevel(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; } else cur += ch;
+  }
+  out.push(cur);
+  return out.map(x => x.trim()).filter(Boolean);
+}
+
 function employeeInsert(src: string): { columns: string[]; values: string[] } {
-  const m = /INSERT INTO employees\s*\(([\s\S]*?)\)\s*VALUES\s*\(([\s\S]*?)\)/.exec(src);
-  expect(m, "no INSERT INTO employees found").toBeTruthy();
-  const split = (s: string) => s.split(",").map(x => x.trim()).filter(Boolean);
-  return { columns: split(m![1]), values: split(m![2]) };
+  const at = src.indexOf("INSERT INTO employees");
+  expect(at, "no INSERT INTO employees found").toBeGreaterThanOrEqual(0);
+
+  const cols = readParenGroup(src, src.indexOf("(", at));
+  const valuesAt = src.indexOf("VALUES", cols.end);
+  expect(valuesAt, "INSERT INTO employees has no VALUES list").toBeGreaterThanOrEqual(0);
+  const vals = readParenGroup(src, src.indexOf("(", valuesAt));
+
+  return { columns: splitTopLevel(cols.body), values: splitTopLevel(vals.body) };
 }
 
 describe("cost centre is written when an employee is created", () => {
