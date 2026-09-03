@@ -33,9 +33,12 @@ export async function diagnoseAttendanceMismatch(
   recordDate: string,
 ): Promise<AttendanceDiagnostic | null> {
   // Fetch employee
+  // employees has no `emp_code` column — it is `employee_code`, which this SELECT already
+  // listed alongside the non-existent one. Every query here threw ER_BAD_FIELD_ERROR, so the
+  // diagnostic endpoint could never have returned a row. Caught by schema-column-refs.
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, emp_code, first_name, last_name, call_centre_code,
-            biometric_code, employee_code FROM employees WHERE emp_code = ? LIMIT 1`,
+    `SELECT id, first_name, last_name, call_centre_code,
+            biometric_code, employee_code FROM employees WHERE employee_code = ? LIMIT 1`,
     [empCode],
   );
   if (empRows.length === 0) return null;
@@ -106,15 +109,15 @@ export async function batchDiagnose(
       `SELECT attendance_status, attendance_source, raw_minutes, record_date, id, employee_id
         FROM attendance_daily_record a
         JOIN employees e ON e.id = a.employee_id
-       WHERE e.emp_code = ? AND a.record_date BETWEEN ? AND ?
+       WHERE e.employee_code = ? AND a.record_date BETWEEN ? AND ?
        ORDER BY a.record_date ASC`,
       [code, dateFrom, dateTo],
     );
 
     // Fetch employee details once
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, emp_code, first_name, last_name, call_centre_code, biometric_code, employee_code
-        FROM employees WHERE emp_code = ? LIMIT 1`,
+      `SELECT id, first_name, last_name, call_centre_code, biometric_code, employee_code
+        FROM employees WHERE employee_code = ? LIMIT 1`,
       [code],
     );
     if (empRows.length === 0) continue;
