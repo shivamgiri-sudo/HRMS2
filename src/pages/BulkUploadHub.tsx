@@ -475,6 +475,61 @@ function getFallbackSampleValue(
     return reportingManagerSamples[normalizedHeader];
   }
 
+  const attendanceRegSamples: Record<string, string> = {
+    employee_code:    "MAS00001",
+    session_date:     "2026-08-05",
+    requested_status: "present",
+    reason:           "Biometric device offline — presence confirmed from dialler report",
+    reason_code:      "BIOMETRIC_MISMATCH",
+    dispute_type:     "missing_punch",
+    new_punch_in:     "09:30",
+    new_punch_out:    "18:30",
+    supporting_note:  "Verified against COSEC outage ticket",
+  };
+  if (normalizedUploadType === "ATTENDANCE_REGULARIZATION_BULK" && normalizedHeader in attendanceRegSamples) {
+    return attendanceRegSamples[normalizedHeader];
+  }
+
+  const leaveAppSamples: Record<string, string> = {
+    employee_code: "MAS00001",
+    leave_code:    "CL",
+    from_date:     "2026-08-11",
+    to_date:       "2026-08-12",
+    total_days:    "2",
+    reason:        "Family function — informed team leader in advance",
+  };
+  if (normalizedUploadType === "LEAVE_APPLICATION_BULK" && normalizedHeader in leaveAppSamples) {
+    return leaveAppSamples[normalizedHeader];
+  }
+
+  const rosterAssignmentSamples: Record<string, string> = {
+    cycle_id:      "CYCLE-UUID-HERE",
+    employee_code: "MAS00001",
+    roster_date:   "2026-08-18",
+    shift_code:    "GEN",
+    is_week_off:   "0",
+    notes:         "Manual override",
+  };
+  if (normalizedUploadType === "ROSTER_ASSIGNMENT_BULK" && normalizedHeader in rosterAssignmentSamples) {
+    return rosterAssignmentSamples[normalizedHeader];
+  }
+
+  const shiftRosterSamples: Record<string, string> = {
+    employee_code:   "MAS00001",
+    week_start_date: "2026-08-18",
+    mon_shift: "GEN",
+    tue_shift: "GEN",
+    wed_shift: "NGT",
+    thu_shift: "NGT",
+    fri_shift: "GEN",
+    sat_shift: "WO",
+    sun_shift: "WO",
+    notes:     "Standard week",
+  };
+  if (normalizedUploadType === "SHIFT_ROSTER_BULK" && normalizedHeader in shiftRosterSamples) {
+    return shiftRosterSamples[normalizedHeader];
+  }
+
   if (normalizedHeader.includes("date")) return "16-05-2026";
   if (normalizedHeader.includes("email")) return "sample@example.com";
   if (normalizedHeader.includes("phone") || normalizedHeader.includes("mobile")) return "9876543210";
@@ -549,9 +604,139 @@ function buildTemplateCsv(template: UploadTemplate, includeSampleValues: boolean
   ].join("\n");
 }
 
+function getUploadTypeAllowedValues(uploadTypeCode: string): string[] {
+  const code = uploadTypeCode.toUpperCase();
+  switch (code) {
+    case "ATTENDANCE_REGULARIZATION_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "requested_status  (what you want the day changed to):",
+        "  present        = Full day present (≥ 480 min APR / ≥ 540 min biometric)",
+        "  half_day       = Half day (≥ 240 min). Also accepted: half-day, Half_Day, Half Day",
+        "  absent         = Absent / Leave Without Pay",
+        "  missing_punch  = No punch recorded — pending WFM review (no LWP deducted yet)",
+        "",
+        "dispute_type  (why the record is wrong):",
+        "  missing_punch      = No biometric punch found",
+        "  wrong_shift        = Employee was on a different shift",
+        "  biometric_mismatch = Biometric showed less time than APR/dialler",
+        "  other              = Any other reason (explain in supporting_note)",
+        "",
+        "reason_code  (system reason tag):",
+        "  BIOMETRIC_MISMATCH   = Device or sync issue",
+        "  MANUAL_ENTRY         = HR manually confirmed",
+        "  SHIFT_CHANGE         = Shift was swapped",
+        "  OTHER                = Catch-all",
+        "",
+        "Date format: YYYY-MM-DD  (e.g. 2026-08-05)",
+        "Time format: HH:MM       (e.g. 09:30)",
+      ];
+    case "LEAVE_APPLICATION_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "leave_code  (which leave type to apply):",
+        "  CL    = Casual Leave",
+        "  EL    = Earned Leave",
+        "  ML    = Medical Leave",
+        "  LWP   = Leave Without Pay",
+        "  MTRL  = Maternity Leave",
+        "  PTRL  = Paternity Leave",
+        "",
+        "total_days: number of calendar days between from_date and to_date inclusive",
+        "  Example: from_date = 2026-08-11, to_date = 2026-08-12 → total_days = 2",
+        "  Half day: use total_days = 0.5",
+        "",
+        "Date format: YYYY-MM-DD  (e.g. 2026-08-11)",
+      ];
+    case "ROSTER_ASSIGNMENT_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "shift_code  (which shift to assign):",
+        "  GEN  = General Shift   09:00 – 18:00",
+        "  EVE  = Evening Shift   14:00 – 23:00",
+        "  NGT  = Night Shift     22:00 – 07:00 (next day)",
+        "  WO   = Week Off        (no hours)",
+        "",
+        "is_week_off:",
+        "  0 = Working day (default)",
+        "  1 = Week off — employee should not work this day",
+        "",
+        "cycle_id: UUID of the WFM roster cycle — copy from the Roster Builder page.",
+        "Date format: YYYY-MM-DD  (e.g. 2026-08-18)",
+      ];
+    case "SHIFT_ROSTER_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "Shift codes for mon_shift / tue_shift / wed_shift / thu_shift / fri_shift / sat_shift / sun_shift:",
+        "  GEN  = General Shift   09:00 – 18:00",
+        "  EVE  = Evening Shift   14:00 – 23:00",
+        "  NGT  = Night Shift     22:00 – 07:00 (next day)",
+        "  WO   = Week Off        (leave blank or use WO for week-off days)",
+        "",
+        "week_start_date: must be a Monday. Format YYYY-MM-DD  (e.g. 2026-08-18)",
+        "Example row: MAS00001, 2026-08-18, GEN, GEN, NGT, NGT, GEN, WO, WO",
+      ];
+    case "DEDUCTION_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "deduction_type_code: must match an existing deduction master code, e.g. CANTEEN, ADVANCE",
+        "run_month: YYYY-MM format  (e.g. 2026-08)",
+        "amount: numeric with up to 2 decimal places  (e.g. 850.00)",
+        "is_prorated:  0 = fixed amount,  1 = prorate against working days",
+      ];
+    case "INCENTIVE_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "incentive_code: must match an existing incentive master code, e.g. PERF, QTR",
+        "pay_month: YYYY-MM format  (e.g. 2026-08)",
+        "amount: numeric with up to 2 decimal places  (e.g. 2500.00)",
+      ];
+    case "EMPLOYEE_MASTER":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "employment_type:    full-time | part-time | contract | intern",
+        "employment_status:  Active | Inactive",
+        "gender:             Male | Female | Other",
+        "shift_rotation_type: frozen | rotating",
+        "working_days:       comma-separated day numbers — 1=Mon … 7=Sun  (e.g. 1,2,3,4,5)",
+        "Date format: DD-MM-YYYY  (e.g. 16-05-2026)",
+      ];
+    case "ASSET_MASTER":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "status:  available | assigned | maintenance | retired | lost",
+        "Date format: DD-MM-YYYY  (e.g. 16-05-2026)",
+      ];
+    case "SHIFT_ROTATION_TYPE_UPDATE":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "shift_rotation_type:  frozen | rotating",
+      ];
+    case "WEEK_OFF_PREFERENCE_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "preferred_day_1 / preferred_day_2:  0=Sun  1=Mon  2=Tue  3=Wed  4=Thu  5=Fri  6=Sat",
+        "week_start_date: Date format YYYY-MM-DD  (e.g. 2026-08-18)",
+      ];
+    default:
+      return [];
+  }
+}
+
 function buildTemplateGuide(template: UploadTemplate) {
   const headers = getTemplateHeaders(template);
   const required = new Set(template.required_columns || []);
+  const allowedValues = getUploadTypeAllowedValues(template.upload_type_code);
 
   return [
     `Bulk Upload Template Guide - ${template.upload_type_name}`,
@@ -561,18 +746,18 @@ function buildTemplateGuide(template: UploadTemplate) {
     "Important rules:",
     "1. Do not rename headers.",
     "2. Do not delete optional columns. Keep blank commas if you do not have a value.",
-    "3. Date fields must use DD-MM-YYYY format, for example 16-05-2026.",
+    "3. Date fields must use DD-MM-YYYY format unless specified otherwise, for example 16-05-2026.",
     "4. Time fields must use HH:mm format, for example 09:00.",
     "5. Values containing commas must stay inside double quotes, for example \"1,2,3,4,5\".",
     "6. For manager fields, keep ManagerCode and ManagerEmail blank unless the manager already exists in HRMS.",
     "7. For Process Master, Department Name must exactly match an existing HRMS department, for example Operations.",
     "8. For Department Master, keep ManagerCode and ManagerEmail blank unless that manager already exists in Employee Master.",
     "9. For Asset Master, Status should be a valid HRMS asset status such as available, assigned, maintenance, retired, or lost.",
-    "10. For Asset Master, PurchaseDate and WarrantyEndDate must use DD-MM-YYYY format.",
-    "11. For Branch Master, BranchCode must be unique, for example OKAYA or TPZ.",
-    "12. For LOB Master, ProcessCode or ProcessName should match an existing Process Master record.",
-    "13. For Designation Master, DepartmentName should exactly match an existing HRMS department, for example Operations.",
+    "10. For Branch Master, BranchCode must be unique, for example OKAYA or TPZ.",
+    "11. For LOB Master, ProcessCode or ProcessName should match an existing Process Master record.",
+    "12. For Designation Master, DepartmentName should exactly match an existing HRMS department, for example Operations.",
     "",
+    ...(allowedValues.length > 0 ? [...allowedValues, ""] : []),
     "Column order:",
     ...headers.map((header, index) => `${index + 1}. ${header}${required.has(header) ? "  [Required]" : "  [Optional]"}`),
   ].join("\n");
@@ -1642,10 +1827,21 @@ export default function BulkUploadHub() {
                       />
                     </div>
 
+                    {getUploadTypeAllowedValues(selectedTemplate.upload_type_code).length > 0 && (
+                      <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-3">
+                        <p className="text-xs font-semibold text-blue-900 mb-2">Allowed values for this upload type</p>
+                        <pre className="text-xs leading-5 text-blue-800 whitespace-pre-wrap font-mono">
+                          {getUploadTypeAllowedValues(selectedTemplate.upload_type_code)
+                            .filter(l => !l.startsWith("──"))
+                            .join("\n")}
+                        </pre>
+                      </div>
+                    )}
+
                     <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
                       <p className="font-semibold">Safe upload rule</p>
                       <p className="mt-1">
-                        Always use the downloaded CSV. Do not delete optional columns; keep them blank if not needed. Date format must be DD-MM-YYYY and comma values like WorkingDays must stay inside quotes.
+                        Always use the downloaded CSV. Do not delete optional columns; keep them blank if not needed. Date format must be DD-MM-YYYY (or YYYY-MM-DD for attendance/leave/roster). Comma values like WorkingDays must stay inside quotes. Status and code fields must exactly match the allowed values shown above.
                       </p>
                     </div>
                   </div>

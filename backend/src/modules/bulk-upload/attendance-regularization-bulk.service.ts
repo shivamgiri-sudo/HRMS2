@@ -31,6 +31,18 @@ const MAX_LOOKBACK_DAYS = 90;
 const VALID_STATUSES = new Set(["present", "half_day", "absent"]);
 const TIME_RE = /^\d{2}:\d{2}$/;
 
+/** Normalise requested_status variants to canonical DB values.
+ *  Users type "Half Day", "half-day", "Half_Day" etc. — all map to "half_day".
+ */
+function normalizeRequestedStatus(raw: string): string {
+  const s = raw.trim().toLowerCase().replace(/[\s\-]+/g, "_");
+  if (s === "half_day" || s === "halfday") return "half_day";
+  if (s === "present") return "present";
+  if (s === "absent") return "absent";
+  if (s === "missing_punch") return "missing_punch";
+  return s;
+}
+
 function validateRow(d: Record<string, string>): string | null {
   if (!d.employee_code) return "employee_code is required";
 
@@ -42,11 +54,17 @@ function validateRow(d: Record<string, string>): string | null {
     return `session_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.session_date}"`;
   }
   d.session_date = session_date;
+
+  // Normalise requested_status before validation — half-day / Half Day / Half_Day → half_day
+  if (d.requested_status) {
+    d.requested_status = normalizeRequestedStatus(d.requested_status);
+  }
+
   if (!d.reason || d.reason.trim().length < 10) {
     return "reason is required and must be at least 10 characters — it is the audit record for the correction";
   }
-  if (d.requested_status && !VALID_STATUSES.has(d.requested_status.toLowerCase())) {
-    return `requested_status must be one of present, half_day, absent (got "${d.requested_status}")`;
+  if (d.requested_status && !VALID_STATUSES.has(d.requested_status)) {
+    return `requested_status must be one of: present, half_day, absent (got "${d.requested_status}"). Also accepted: half-day, Half Day, Half_Day`;
   }
   if (d.dispute_type && !(DISPUTE_TYPES as readonly string[]).includes(d.dispute_type.toLowerCase())) {
     return `dispute_type "${d.dispute_type}" is not a recognised dispute type`;
@@ -125,7 +143,7 @@ export async function importRegularizationBatch(
           sessionDate: d.session_date,
           reason: d.reason,
           reasonCode: d.reason_code || undefined,
-          requestedStatus: (d.requested_status?.toLowerCase() || null) as never,
+          requestedStatus: (d.requested_status ? normalizeRequestedStatus(d.requested_status) : null) as never,
           disputeType: (d.dispute_type?.toLowerCase() || null) as never,
           newPunchIn: d.new_punch_in || null,
           newPunchOut: d.new_punch_out || null,
