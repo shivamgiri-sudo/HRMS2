@@ -1511,7 +1511,20 @@ export async function getJoiningDocumentFileForAccess(params: {
     err.statusCode = 403;
     throw err;
   }
-  if (!fs.existsSync(String(file.storage_path))) {
+  // Resolve through the module's own path fallback rather than trusting the stored
+  // string. Some rows hold an absolute path from a developer machine
+  // ("C:\Users\...\private-storage\...") because the same shared database is written
+  // from off-server: the bytes can sit in the canonical place under STORAGE_ROOT
+  // while the recorded path names a drive this host does not have. A bare
+  // existsSync() on that string reports "missing from storage" for a file that is
+  // right there. When the bytes genuinely are absent, this still returns null and
+  // the same 404 is raised.
+  const resolvedPath = resolveJoiningDocumentFile(
+    file.storage_path,
+    String(file.employee_id),
+    String(file.document_code),
+  );
+  if (!resolvedPath) {
     const err = new Error("Secure document file is missing from storage") as Error & { statusCode?: number };
     err.statusCode = 404;
     throw err;
@@ -1530,7 +1543,7 @@ export async function getJoiningDocumentFileForAccess(params: {
   });
 
   return {
-    storagePath: String(file.storage_path),
+    storagePath: resolvedPath,
     mimeType: String(file.mime_type || "application/octet-stream"),
     fileName: String(file.original_filename || `${file.document_code}.bin`),
   };

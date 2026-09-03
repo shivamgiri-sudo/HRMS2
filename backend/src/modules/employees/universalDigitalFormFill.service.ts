@@ -1843,6 +1843,18 @@ async function writeArtifact(employeeId: string, documentCode: string, fileName:
   };
 }
 
+/**
+ * States that mean a document is finished.
+ *
+ * Mirrors isChecklistTerminalStatus() in employeeJoiningDocuments.service.ts and
+ * TERMINAL_STATUSES in joiningKitAssembly.service.ts — the same five states, kept
+ * as a local copy the way joiningKitAssembly does, rather than importing across
+ * module boundaries for one array.
+ */
+const TERMINAL_CHECKLIST_STATUSES = [
+  'verified', 'completed', 'esign_completed', 'signed_verified', 'wet_signed_uploaded',
+] as const;
+
 async function attachGeneratedArtifact(checklist: ChecklistContextRow, content: Buffer, fileName: string, actorUserId?: string | null) {
   const artifact = await writeArtifact(checklist.employee_id, checklist.document_code, fileName, content);
   const fileId = randomUUID();
@@ -1870,13 +1882,26 @@ async function attachGeneratedArtifact(checklist: ChecklistContextRow, content: 
     `UPDATE employee_joining_document_checklist
         SET fill_status = CASE WHEN employee_review_status = 'confirmed' THEN 'ready_for_esign' ELSE fill_status END,
             status = CASE
+              -- A regenerated draft must never walk a finished document backwards.
+              -- This CASE used to end at 'draft_generated' unconditionally, so
+              -- regenerating any document that had already been signed reset it to
+              -- "draft" and destroyed the completion — with fill_status and
+              -- completed_at left behind as the only evidence it had ever been
+              -- signed. It happened in production once (MAS47814's employment
+              -- contract, signed 2026-08-01 11:13, reset at 17:21).
+              --
+              -- ats.convert.service.ts already documents this hazard and works
+              -- around it by not calling the generator at all. That protects one
+              -- call site; the corruption belongs to this write, so the guard
+              -- belongs here, where every caller gets it.
+              WHEN status IN (${TERMINAL_CHECKLIST_STATUSES.map(() => '?').join(', ')}) THEN status
               WHEN employee_review_status = 'confirmed' THEN 'ready_for_esign'
               WHEN fill_status = 'hr_fill_required' THEN 'hr_fill_required'
               ELSE 'draft_generated'
             END,
             updated_at = NOW()
       WHERE id = ?`,
-    [checklist.checklist_id],
+    [...TERMINAL_CHECKLIST_STATUSES, checklist.checklist_id],
   );
   return fileId;
 }
