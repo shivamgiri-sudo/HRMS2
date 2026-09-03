@@ -49,6 +49,12 @@ interface BranchRow {
   branch_code: string;
 }
 
+interface ProcessRow {
+  id: string;
+  process_name: string;
+  process_code: string;
+}
+
 interface ScopeRow {
   id: string;
   role_key: string;
@@ -96,8 +102,11 @@ const ROLE_COLORS: Record<string, string> = {
   employee:          "bg-gray-100 text-gray-600",
 };
 
-// Roles that require a branch assignment for proper data scoping
+// Roles that require a branch assignment for proper data scoping.
+// `hr` and the HR variants were missing, which is why an HR user showed no scope pin here
+// despite holding real branch scope rows in user_assignment_scope.
 const BRANCH_SCOPED_ROLES = new Set([
+  "hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr",
   "branch_head", "bm", "branch_manager",
   "branch_hr", "hr_branch",
   "branch_finance", "payroll_branch",
@@ -108,6 +117,20 @@ const BRANCH_SCOPED_ROLES = new Set([
   "qa", "quality_analyst",
   "trainer", "team_leader", "tl",
   "operations_manager",
+]);
+
+// Roles that can additionally be narrowed to specific PROCESSES. A process scope is what makes
+// "an HR executive sees only their own processes" true: buildScopeWhereClause turns a
+// scope_type='process' row into (process_id = ? AND branch_id = ?), and a holder of one of these
+// roles with no scope row at all gets an empty list rather than the whole organisation.
+//
+// Until this UI existed the dialog only ever wrote scope_type:"branch", so the 20 process rows
+// live in production had all been created out of band and no HR user had one.
+const PROCESS_SCOPED_ROLES = new Set([
+  "hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "branch_hr", "hr_branch",
+  "recruiter", "process_manager", "manager", "assistant_manager",
+  "team_leader", "tl", "trainer", "qa", "quality_analyst", "tq_head",
+  "wfm", "wfm_spoc", "rta",
 ]);
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -161,6 +184,13 @@ export function UserRolesManager() {
   const [roleDialogUser, setRoleDialogUser] = useState<UserRow | null>(null);
   const [addRole, setAddRole] = useState<string>("");
   const [addBranchId, setAddBranchId] = useState<string>("");
+  const [addProcessId, setAddProcessId] = useState<string>("");
+  // The "map an existing role" panel below. Separate state from the add-role flow because every
+  // user who needs mapping already HOLDS their role — all 16 hr accounts do — so mapping could
+  // not be done at all while scope assignment only happened at the moment a role was granted.
+  const [scopeRole, setScopeRole] = useState<string>("");
+  const [scopeBranchId, setScopeBranchId] = useState<string>("");
+  const [scopeProcessId, setScopeProcessId] = useState<string>("");
   const [removeRole, setRemoveRole] = useState<string>("");
   const [blockDialogUser, setBlockDialogUser] = useState<UserRow | null>(null);
 
@@ -194,6 +224,30 @@ export function UserRolesManager() {
       return res.data ?? [];
     },
     staleTime: 10 * 60 * 1000,
+  });
+
+  // Processes for the branch being chosen. The endpoint filters to processes that actually have
+  // active employees in that branch, so the list offers real postings rather than the full 132.
+  const { data: addProcesses = [] } = useQuery<ProcessRow[]>({
+    queryKey: ["access-processes", addBranchId],
+    queryFn: async () => {
+      const qs = addBranchId ? `?branchId=${encodeURIComponent(addBranchId)}` : "";
+      const res = await hrmsApi.get<{ data: ProcessRow[] }>(`/api/access/processes${qs}`);
+      return res.data ?? [];
+    },
+    enabled: !!addBranchId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: scopeProcesses = [] } = useQuery<ProcessRow[]>({
+    queryKey: ["access-processes", scopeBranchId],
+    queryFn: async () => {
+      const qs = scopeBranchId ? `?branchId=${encodeURIComponent(scopeBranchId)}` : "";
+      const res = await hrmsApi.get<{ data: ProcessRow[] }>(`/api/access/processes${qs}`);
+      return res.data ?? [];
+    },
+    enabled: !!scopeBranchId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: userScopes = [], isLoading: scopesLoading } = useQuery<ScopeRow[]>({
@@ -234,16 +288,22 @@ export function UserRolesManager() {
   });
 
   const assignScopeMutation = useMutation({
-    mutationFn: ({ userId, roleKey, branchId }: { userId: string; roleKey: string; branchId: string }) =>
+    // scope_type is derived, not hardcoded. A row carrying both branch and process becomes
+    // (process_id = ? AND branch_id = ?) in buildScopeWhereClause — the narrowest grant, and the
+    // one "this HR executive owns these processes in this branch" actually means.
+    mutationFn: ({ userId, roleKey, branchId, processId }: {
+      userId: string; roleKey: string; branchId?: string; processId?: string;
+    }) =>
       hrmsApi.post("/api/access/roles/assign-scope", {
         user_id: userId,
         role_key: roleKey,
-        scope_type: "branch",
-        branch_id: branchId,
+        scope_type: processId ? "process" : "branch",
+        branch_id: branchId || null,
+        process_id: processId || null,
       }),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["user-scopes", roleDialogUser?.id] });
-      toast({ title: "Role + branch scope assigned" });
+      toast({ title: vars.processId ? "Process scope assigned" : "Branch scope assigned" });
     },
     onError: (e: Error) => toast({ title: "Scope error", description: e.message, variant: "destructive" }),
   });
@@ -296,13 +356,19 @@ export function UserRolesManager() {
   );
 
   const isBranchScoped = BRANCH_SCOPED_ROLES.has(addRole);
+  const isProcessScoped = PROCESS_SCOPED_ROLES.has(addRole);
 
   const handleAddRole = async () => {
     if (!roleDialogUser || !addRole) return;
     await assignRoleMutation.mutateAsync({ userId: roleDialogUser.id, roleKey: addRole });
     setRoleDialogUser((prev) => prev ? { ...prev, roles: [...prev.roles, addRole] } : prev);
     if (isBranchScoped && addBranchId) {
-      assignScopeMutation.mutate({ userId: roleDialogUser.id, roleKey: addRole, branchId: addBranchId });
+      assignScopeMutation.mutate({
+        userId: roleDialogUser.id,
+        roleKey: addRole,
+        branchId: addBranchId,
+        processId: isProcessScoped && addProcessId ? addProcessId : undefined,
+      });
     } else if (!isBranchScoped) {
       toast({ title: "Role assigned" });
     }
@@ -593,7 +659,7 @@ export function UserRolesManager() {
                   <Plus className="h-3.5 w-3.5" /> Add Role
                 </p>
                 <div className="flex gap-2">
-                  <Select value={addRole} onValueChange={(v) => { setAddRole(v); setAddBranchId(""); }}>
+                  <Select value={addRole} onValueChange={(v) => { setAddRole(v); setAddBranchId(""); setAddProcessId(""); }}>
                     <SelectTrigger className="flex-1 text-sm rounded-xl">
                       <SelectValue placeholder="Select role to add…" />
                     </SelectTrigger>
@@ -630,7 +696,7 @@ export function UserRolesManager() {
                       <MapPin className="h-3 w-3" />
                       Select branch for this role (required for proper data scoping)
                     </p>
-                    <Select value={addBranchId} onValueChange={setAddBranchId}>
+                    <Select value={addBranchId} onValueChange={(v) => { setAddBranchId(v); setAddProcessId(""); }}>
                       <SelectTrigger className="text-sm rounded-xl">
                         <SelectValue placeholder="Choose branch…" />
                       </SelectTrigger>
@@ -649,7 +715,112 @@ export function UserRolesManager() {
                     </Select>
                   </div>
                 )}
+
+                {/* Optional process narrowing, once a branch is chosen */}
+                {isBranchScoped && isProcessScoped && addBranchId && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-slate-500 font-semibold flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      Narrow to one process (optional — leave blank for the whole branch)
+                    </p>
+                    <Select value={addProcessId} onValueChange={setAddProcessId}>
+                      <SelectTrigger className="text-sm rounded-xl">
+                        <SelectValue placeholder="Whole branch" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {addProcesses.length === 0 ? (
+                          <SelectItem value="__none__" disabled>No processes with active staff in this branch</SelectItem>
+                        ) : (
+                          addProcesses.map((pr) => (
+                            <SelectItem key={pr.id} value={pr.id}>
+                              {pr.process_name}
+                              {pr.process_code && <span className="ml-2 text-xs text-slate-400">({pr.process_code})</span>}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
+
+              {/* Map an EXISTING role to a branch/process.
+                  Without this, scope could only be granted at the moment a role was first
+                  assigned — so none of the users who already hold their role could ever be
+                  mapped, which is every HR executive in the system. */}
+              {roleDialogUser.roles.length > 0 && (
+                <div className="rounded-2xl border border-blue-100 p-4 space-y-3 bg-blue-50/30">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 flex items-center gap-1">
+                    <MapPin className="h-3.5 w-3.5" /> Map an existing role to a branch / process
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Scoped pages show only the branches and processes mapped here. A role with no
+                    mapping sees nothing on those pages rather than everything.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Select value={scopeRole} onValueChange={(v) => { setScopeRole(v); setScopeBranchId(""); setScopeProcessId(""); }}>
+                      <SelectTrigger className="text-sm rounded-xl">
+                        <SelectValue placeholder="Role…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roleDialogUser.roles.map((rk) => (
+                          <SelectItem key={rk} value={rk}>{roleMap.get(rk) ?? rk}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={scopeBranchId} onValueChange={(v) => { setScopeBranchId(v); setScopeProcessId(""); }}>
+                      <SelectTrigger className="text-sm rounded-xl">
+                        <SelectValue placeholder="Branch…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {branches.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={scopeProcessId} onValueChange={setScopeProcessId} disabled={!scopeBranchId}>
+                      <SelectTrigger className="text-sm rounded-xl">
+                        <SelectValue placeholder={scopeBranchId ? "Whole branch" : "Pick a branch first"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {scopeProcesses.length === 0 ? (
+                          <SelectItem value="__none__" disabled>No processes with active staff in this branch</SelectItem>
+                        ) : (
+                          scopeProcesses.map((pr) => (
+                            <SelectItem key={pr.id} value={pr.id}>{pr.process_name}</SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-slate-400">
+                      {scopeProcessId
+                        ? "Grants this one process in this branch."
+                        : scopeBranchId
+                          ? "Grants the whole branch. Add one row per process to narrow it."
+                          : ""}
+                    </p>
+                    <Button
+                      size="sm"
+                      className="rounded-xl shrink-0"
+                      disabled={!scopeRole || !scopeBranchId || assignScopeMutation.isPending}
+                      onClick={() => {
+                        if (!roleDialogUser || !scopeRole || !scopeBranchId) return;
+                        assignScopeMutation.mutate({
+                          userId: roleDialogUser.id,
+                          roleKey: scopeRole,
+                          branchId: scopeBranchId,
+                          processId: scopeProcessId || undefined,
+                        });
+                        setScopeProcessId("");
+                      }}
+                    >
+                      {assignScopeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add mapping"}
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {/* Remove a role */}
               {roleDialogUser.roles.length > 0 && (
