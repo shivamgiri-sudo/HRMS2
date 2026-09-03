@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
+import { classifyEsignState } from "./esignState.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -55,7 +56,13 @@ async function candidateSnapshot(candidateId: string): Promise<RowDataPacket | n
        c.mobile,
        c.email,
        c.applied_for_branch,
-       c.applied_for_process,
+       -- ats_candidate.applied_for_process holds a process NAME on almost every row
+       -- ('Back Office', 'Outbound Agent'), but the newer intake writes a process_master
+       -- UUID instead — 69 rows overall, and 6 of the 20 most recently touched candidates,
+       -- i.e. exactly the ones HR is working in this screen. Those rendered as a raw
+       -- 'b0afc80e-6969-11f1-adb1-00155d0ab410' in the Summary tab. All 69 resolve against
+       -- process_master, so COALESCE names them and leaves the legacy text rows untouched.
+       COALESCE(pm.process_name, c.applied_for_process) AS applied_for_process,
        c.created_at,
        c.current_stage,
        c.status AS candidate_status,
@@ -94,6 +101,7 @@ async function candidateSnapshot(candidateId: string): Promise<RowDataPacket | n
        ob.employee_id,
        DATEDIFF(CURRENT_DATE(), DATE(COALESCE(p.submitted_at, c.created_at))) AS aging_days
      FROM ats_candidate c
+     LEFT JOIN process_master pm ON pm.id = c.applied_for_process
      LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      LEFT JOIN (
        SELECT candidate_id, COUNT(*) AS total_documents,
@@ -226,6 +234,70 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
     [candidateId],
   );
 
+  // Joining-document e-sign checklist.
+  //
+  // The Joining Control Room showed no e-sign state at all, while the data was sitting in
+  // `employee_joining_document_checklist` the whole time — MAS63459 has 9 rows there, 6 of
+  // them `esign_completed` with `signature_mode = 'aadhaar_esign_verified'`. HR had to leave
+  // for /ats/joining-documents-tracker to learn whether a joiner had signed anything.
+  //
+  // Keyed on BOTH ids defensively. The table carries `employee_id` on all 596 live rows but
+  // `candidate_id` on only 495. Measured, the employee-id arm recovers exactly 0 rows today:
+  // the 101 candidate-less rows belong to 12 employees who have no `ats_onboarding_bridge`
+  // row at all, so this screen cannot reach them by either key. It is kept because the
+  // reverse case — a bridged joiner whose checklist rows were written without the candidate
+  // link — would otherwise show a confident, wrong "0 of 0 signed", and `bridge` is already
+  // loaded above so the second key costs no extra round trip.
+  const bridgeEmployeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  const [esignRows] = await db.execute<RowDataPacket[]>(
+    `SELECT document_code, document_name, owner_type, action_type, status, fill_status,
+            signature_mode, mandatory, due_at, completed_at, verification_status,
+            employee_review_status, hr_remarks, updated_at
+       FROM employee_joining_document_checklist
+      WHERE candidate_id = ? OR (? IS NOT NULL AND employee_id = ?)
+      ORDER BY mandatory DESC, document_name`,
+    [candidateId, bridgeEmployeeId, bridgeEmployeeId],
+  );
+
+  const esignDocuments = esignRows.map((row) => ({
+    document_code: String(row.document_code ?? ""),
+    document_name: String(row.document_name ?? row.document_code ?? "Document"),
+    owner_type: row.owner_type ?? null,
+    action_type: row.action_type ?? null,
+    status: row.status ?? null,
+    // classifyEsignState is TOTAL — an unrecognised status buckets to not_started and is
+    // logged once, never dropped. That is what keeps completed+in_progress+not_started
+    // equal to the row count, so the "6 of 9 signed" headline cannot overstate itself.
+    bucket: classifyEsignState(row.status as string | null),
+    fill_status: row.fill_status ?? null,
+    signature_mode: row.signature_mode ?? null,
+    mandatory: Number(row.mandatory ?? 0) === 1,
+    due_at: row.due_at ?? null,
+    completed_at: row.completed_at ?? null,
+    verification_status: row.verification_status ?? null,
+    employee_review_status: row.employee_review_status ?? null,
+    hr_remarks: row.hr_remarks ?? null,
+    updated_at: row.updated_at ?? null,
+  }));
+
+  const esignSignable = esignDocuments.filter((doc) => doc.action_type === "esign");
+  const esign = {
+    documents: esignDocuments,
+    total: esignDocuments.length,
+    completed: esignDocuments.filter((doc) => doc.bucket === "completed").length,
+    in_progress: esignDocuments.filter((doc) => doc.bucket === "in_progress").length,
+    not_started: esignDocuments.filter((doc) => doc.bucket === "not_started").length,
+    signable_total: esignSignable.length,
+    signable_completed: esignSignable.filter((doc) => doc.bucket === "completed").length,
+    // Kit-level state the dispatcher maintains on the bridge row; shown beside the checklist
+    // so HR can tell "nothing sent yet" from "sent and unsigned" without reading nine rows.
+    kit_status: bridge[0]?.joining_document_status ?? null,
+    kit_completion_pct: bridge[0]?.joining_document_completion_pct ?? null,
+    kit_completed_at: bridge[0]?.joining_document_completed_at ?? null,
+    digilocker_status: bridge[0]?.digilocker_status ?? null,
+    penny_drop_status: bridge[0]?.penny_drop_status ?? null,
+  };
+
   const taskLabels: Record<string, string> = {
     WFM_PROCESS_ALIGNMENT: "WFM Process Alignment",
     IT_EMAIL_DOMAIN_ASSET: "IT Email, Domain & Asset",
@@ -265,6 +337,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
     statutory: statutory[0] ?? null,
     dpdp,
     withdrawals,
+    esign,
     employee: bridge[0] ?? null,
     provisioningTasks: provTasks.map((t) => ({
       task_code: t.task_code,
