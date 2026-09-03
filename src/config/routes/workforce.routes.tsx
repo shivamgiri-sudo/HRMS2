@@ -118,7 +118,14 @@ export const workforceRouteElements = (
           not whose data comes back. pageCode must stay identical here, in
           pageRoutePageCodes.ts and in navConfig.tsx or nav and access disagree. */}
       <Route path="/wfm/team-attendance"        element={
-        <ProtectedRoute roles={['super_admin','admin','hr','wfm','manager','assistant_manager','tl','team_leader','process_manager','branch_head']}>
+        /* No roles prop: TEAM_ATTENDANCE follows the reporting line, not a role.
+           access.service.ts grants the page code to anyone holding at least one active direct
+           report, and 1662 revoked the role grants that used to stand in for that. A roles list
+           here gates ahead of the Gate and undoes it - measured 2026-09-03, 39 of the 65
+           reporting managers hold only the `employee` role, so the previous list admitted 26 of
+           them and refused the rest at the URL before the page code was ever consulted.
+           The page code is the single gate, and it is strictly narrower than the old list. */
+        <ProtectedRoute>
           {/* TEAM_ATTENDANCE, not TEAM_ATTENDANCE_MONTH: the latter exists in no migration, so
               the page gate denied everyone. TEAM_ATTENDANCE is the code the grants were
               actually issued against (102_role_page_access_seed, 309, and tq_head in the RBAC
