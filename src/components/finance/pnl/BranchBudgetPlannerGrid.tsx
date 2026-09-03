@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Wrench } from "lucide-react";
 import {
   BRANCH_SHARING_METHODS,
@@ -201,6 +202,58 @@ export function BranchBudgetPlannerGrid({
   const [filter, setFilter] = useState<"all" | "planned" | "gaps">("all");
   /** Row index whose cost-centre scope popover is open. */
   const [scopeRow, setScopeRow] = useState<number | null>(null);
+  /* The popover used to be an absolutely positioned box inside the first column's cell, which put
+     it inside a scroll container whose first column is sticky. Two things broke: the scroller
+     clipped it, and the sticky cells of the rows BELOW painted over it — same z-index, later in
+     the DOM, so they win. It now renders in a portal on document.body at fixed coordinates
+     measured from its trigger, above everything including the full-page overlay (z-[70]). */
+  const scopeAnchorRef = useRef<HTMLElement | null>(null);
+  const scopePanelRef = useRef<HTMLDivElement | null>(null);
+  const [scopePos, setScopePos] = useState<{ top: number; left: number } | null>(null);
+  const SCOPE_PANEL_WIDTH = 224; // w-56
+
+  useLayoutEffect(() => {
+    if (scopeRow === null) { setScopePos(null); return; }
+    const place = () => {
+      const anchor = scopeAnchorRef.current;
+      if (!anchor) return;
+      const r = anchor.getBoundingClientRect();
+      // A trigger scrolled out of the grid's viewport must take the panel with it, otherwise the
+      // panel hangs over unrelated rows.
+      if (r.bottom < 0 || r.top > window.innerHeight) { setScopeRow(null); return; }
+      const height = scopePanelRef.current?.offsetHeight ?? 260;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - SCOPE_PANEL_WIDTH - 8));
+      const below = r.bottom + 4;
+      // Flip above the trigger when the panel would run off the bottom of the window.
+      const top = below + height > window.innerHeight - 8
+        ? Math.max(8, r.top - height - 4)
+        : below;
+      setScopePos({ top, left });
+    };
+    place();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Capture phase + stopPropagation so Escape closes the popover instead of also dropping the
+      // grid out of full-page mode, whose listener sits on window too.
+      e.stopPropagation();
+      setScopeRow(null);
+    };
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (scopePanelRef.current?.contains(target) || scopeAnchorRef.current?.contains(target)) return;
+      setScopeRow(null);
+    };
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [scopeRow]);
   /** Full-page mode: 38 rows x 7 cost centres does not fit a page that also carries a hero,
    *  a tab bar and a driver card, so the grid can take the whole viewport while planning. */
   const [fullPage, setFullPage] = useState(false);
@@ -631,11 +684,22 @@ export function BranchBudgetPlannerGrid({
                                       : scopeCount(line) < costCentres.length
                                         ? "border-amber-400 bg-amber-50 text-amber-900"
                                         : "border-slate-400 bg-white text-slate-700 hover:bg-slate-100"}`}
-                                  onClick={() => setScopeRow(scopeRow === index ? null : index)}>
+                                  onClick={(e) => {
+                                    scopeAnchorRef.current = e.currentTarget;
+                                    setScopeRow(scopeRow === index ? null : index);
+                                  }}>
                                   {line.planningLevel === "branch" ? `${scopeCount(line)}/${costCentres.length} CC` : "1 CC"}
                                 </button>
-                                {scopeRow === index && (
-                                  <div className="absolute left-0 top-6 z-50 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+                                {scopeRow === index && createPortal(
+                                  <div ref={scopePanelRef} role="dialog"
+                                    aria-label={`Cost centres for ${line.subHead ?? ""}`}
+                                    style={{
+                                      top: scopePos?.top ?? 0,
+                                      left: scopePos?.left ?? 0,
+                                      width: SCOPE_PANEL_WIDTH,
+                                      visibility: scopePos ? "visible" : "hidden",
+                                    }}
+                                    className="fixed z-[80] rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
                                     <div className="mb-1 flex items-center justify-between">
                                       <span className="text-[12px] font-semibold uppercase tracking-wide text-slate-600">Applies to</span>
                                       <button type="button" className="text-[11px] text-blue-700 underline"
@@ -674,7 +738,8 @@ export function BranchBudgetPlannerGrid({
                                     </div>
                                     <button type="button" className="mt-1 w-full rounded border border-slate-300 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                                       onClick={() => setScopeRow(null)}>Done</button>
-                                  </div>
+                                  </div>,
+                                  document.body
                                 )}
                               </span>
                             )}
