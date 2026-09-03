@@ -438,8 +438,25 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
   }
 
   // Apply override to attendance_daily_record
-  const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
-  const newLwp = override.new_lwp ?? lwpMap[override.new_status] ?? null;
+  // Loss of pay for the new status. Covers EVERY status attendance_daily_record allows,
+  // because lwp_value is NOT NULL: the old three-entry map returned undefined for
+  // leave_approved / holiday / week_off / week_off_worked / missing_punch, `?? null` turned
+  // that into NULL, and the UPDATE below died with ER_BAD_NULL_ERROR. The whole approve
+  // 500'd, the override stayed 'pending' and the day never changed — reported live on
+  // 2026-09-03 for MAS47905 changed to Leave, the first real use this API has ever had.
+  //
+  // Values are what production actually holds per status (last 120 days): present 0.00
+  // (67,497 rows), half_day 0.50 (17,473), absent 1.00 (18,412), leave_approved 0.00 (all
+  // 117), holiday 0.00 (497), week_off 0.00 (851), week_off_worked 0.00 (94).
+  //
+  // missing_punch is deliberately absent: it is genuinely split live — 19,716 rows at 0.00
+  // and 3,113 at 1.00 — because whether an unresolved punch is unpaid is a policy call, not
+  // a derivation. It therefore keeps whatever the day already carries.
+  const lwpMap: Record<string, number> = {
+    present: 0, half_day: 0.5, absent: 1.0,
+    leave_approved: 0, holiday: 0, week_off: 0, week_off_worked: 0,
+  };
+  const newLwp = override.new_lwp ?? lwpMap[override.new_status] ?? current.lwp_value ?? 0;
   const appliedRecordId = current.id;
 
   // Update existing record — preserve old state in the record's own audit columns
