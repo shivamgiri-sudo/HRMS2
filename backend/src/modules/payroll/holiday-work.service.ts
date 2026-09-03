@@ -9,6 +9,7 @@ interface EmployeeMasterRow {
   salary_start_date: string | null;
   branch_id: string | null;
   process_id: string | null;
+  cost_centre_id: string | null;
   designation_id: string | null;
   employment_end_date: string | null;
 }
@@ -24,9 +25,6 @@ interface CostCentreRow {
   holiday_id: string;
 }
 
-interface DesignationMappingRow {
-  designation_id: string;
-}
 
 interface ExtraPayoutRow {
   extra_payout: number;
@@ -59,7 +57,7 @@ export async function resolveHolidaysForEmployeeV2(
   // ── Step 1: Employee master data ──────────────────────────────────────────
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.date_of_joining, e.salary_start_date, e.branch_id,
-            e.process_id, e.designation_id,
+            e.process_id, e.cost_centre_id, e.designation_id,
             ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date
      FROM employees e
      WHERE e.id = ?
@@ -83,12 +81,34 @@ export async function resolveHolidaysForEmployeeV2(
   const dateFrom = `${runMonth}-01`;
   const dateTo   = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
 
+  // Fetch eligible holidays using the same branch + cost-centre + designation
+  // scope rules as attendance-engine.service.ts and leaveChargeableDays.ts.
+  //
+  // Rule: branch_id IS NULL = applies to all branches; otherwise branch-specific.
+  // Cost-centre: NOT EXISTS mapping rows = all employees; EXISTS = must match.
+  // Designation: NOT EXISTS mapping rows = all employees; EXISTS = must match.
+  // Mandatory-work override (is_mandatory=1) is handled separately in the loop.
   const [holidayRows] = await db.execute<RowDataPacket[]>(
-    `SELECT lhm.id, lhm.holiday_date, lhm.holiday_type, lhm.active_status
+    `SELECT lhm.id, lhm.holiday_date, lhm.holiday_type
      FROM leave_holiday_master lhm
      WHERE lhm.holiday_date BETWEEN ? AND ?
-       AND lhm.active_status = 1`,
-    [dateFrom, dateTo]
+       AND lhm.active_status = 1
+       AND (lhm.branch_id IS NULL OR lhm.branch_id = ?)
+       AND (
+         NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+         OR EXISTS (
+           SELECT 1 FROM holiday_cost_centre_mapping hccm
+           WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = ?
+         )
+       )
+       AND (
+         NOT EXISTS (SELECT 1 FROM holiday_designation_mapping WHERE holiday_id = lhm.id)
+         OR EXISTS (
+           SELECT 1 FROM holiday_designation_mapping hdm
+           WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = ?
+         )
+       )`,
+    [dateFrom, dateTo, emp.branch_id ?? null, emp.cost_centre_id ?? null, emp.designation_id ?? null]
   );
 
   const holidays = holidayRows as HolidayRow[];
@@ -126,49 +146,24 @@ export async function resolveHolidaysForEmployeeV2(
     // on every row in this database, which is why it is never read on its own.
     if (holidayDateStr > payableThroughDate) continue;
 
-    // Cost-centre mandatory work override check
+    // Mandatory-work override: if the employee's branch/process was mandated to work
+    // this holiday (is_mandatory=1), it is not a paid holiday for them.
     if (emp.branch_id || emp.process_id) {
       const ccParams: unknown[] = [holiday.id];
       const ccConditions: string[] = ["holiday_id = ?", "is_mandatory = 1"];
-
-      // Build an OR clause for branch_id / process_id scope
       const scopeClauses: string[] = [];
       if (emp.branch_id)  { scopeClauses.push("branch_id = ?");  ccParams.push(emp.branch_id); }
       if (emp.process_id) { scopeClauses.push("process_id = ?"); ccParams.push(emp.process_id); }
+      if (scopeClauses.length > 0) ccConditions.push(`(${scopeClauses.join(" OR ")})`);
 
-      if (scopeClauses.length > 0) {
-        ccConditions.push(`(${scopeClauses.join(" OR ")})`);
-      }
-
-      const [ccRows] = await db.execute<RowDataPacket[]>(
+      const [mandatoryRows] = await db.execute<RowDataPacket[]>(
         `SELECT holiday_id FROM holiday_cost_centre_mapping
          WHERE ${ccConditions.join(" AND ")}
          LIMIT 1`,
         ccParams
       );
-      // A mandatory cost-centre override means this employee worked that holiday
-      if ((ccRows as CostCentreRow[]).length > 0) continue;
+      if ((mandatoryRows as CostCentreRow[]).length > 0) continue;
     }
-
-    // Designation mapping check
-    const [desigMappingRows] = await db.execute<RowDataPacket[]>(
-      `SELECT designation_id
-       FROM holiday_designation_mapping
-       WHERE holiday_id = ?`,
-      [holiday.id]
-    );
-
-    const mappedDesignations = (desigMappingRows as DesignationMappingRow[]).map(
-      (r) => r.designation_id
-    );
-
-    if (mappedDesignations.length > 0) {
-      // Restricted to specific designations — employee must be in the list
-      if (!emp.designation_id || !mappedDesignations.includes(emp.designation_id)) {
-        continue;
-      }
-    }
-    // If no mappings exist, all designations are eligible — fall through
 
     eligibleHolidayCount++;
     eligibleHolidayDates.push(String(holiday.holiday_date));
