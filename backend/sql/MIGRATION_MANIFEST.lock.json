@@ -685,7 +685,8 @@
     "1662_team_attendance_follows_reporting_line.sql",
     "1663_deduction_types_tds_upload.sql",
     "1664_social_feed_page_access.sql",
-    "1665_incentive_types_canonical_list.sql"
+    "1665_incentive_types_canonical_list.sql",
+    "1667_grn_accounting_period_standalone_index.sql"
   ],
   "approvedDeletions": [
     {
@@ -906,6 +907,11 @@
     "fix_noida_branch_head_assignment.sql",
     "review_only_cleanup_test_demo_hrms2.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql"
+    "verify_ats_fix.sql",
+    "1647_portal_kpi_config.sql",
+    "1651_migrate_unmigrated_employees.sql",
+    "1652_rename_duplicate_employees_to_db_bill_codes.sql",
+    "1652_update_duplicate_employee_data.sql",
+    "1653_insert_hrms_employees_to_dbbill.sql"
   ]
 }
