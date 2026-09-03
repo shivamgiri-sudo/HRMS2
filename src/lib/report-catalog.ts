@@ -687,7 +687,6 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_center", label: "CostCenter", format: "text", width: 130 },
       { key: "emp_location", label: "EmpLocation", format: "text", width: 100 },
       { key: "billable", label: "Billable", format: "text", width: 70, align: "center" },
-      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
       { key: "day_1", label: "Day 1", format: "text", width: 150 },
       { key: "day_2", label: "Day 2", format: "text", width: 150 },
       { key: "day_3", label: "Day 3", format: "text", width: 150 },
@@ -726,6 +725,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
       { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
       { key: "weekoff_count", label: "W", format: "number", width: 40, align: "center" },
+      { key: "total_working_days", label: "Total Working Days", format: "number", width: 110, align: "right" },
       { key: "sal_days", label: "SalDays", format: "number", width: 70, align: "right" },
       { key: "total", label: "Total", format: "number", width: 50, align: "center" },
     ],
@@ -2543,6 +2543,9 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "week_start", label: "Week Start", format: "date", width: 100 },
       { key: "week_off_1", label: "WO 1", format: "text", width: 80 },
       { key: "week_off_2", label: "WO 2", format: "text", width: 80 },
+      // Surfaced so a week carrying more than two recorded week-offs is visible rather than
+      // silently truncated by the two columns above.
+      { key: "week_off_count", label: "WO Count", format: "number", width: 80, align: "center" },
       { key: "rotational", label: "Rotational", format: "boolean", width: 80 },
     ],
     viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
@@ -3198,6 +3201,11 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 150 },
       { key: "leave_code", label: "Leave Code", format: "text", width: 150 },
       { key: "leave_name", label: "Leave Type", format: "text", width: 150 },
+      // The executor returns balance_year and this catalog had no column for it, so the ledger
+      // year the allocation belongs to was fetched and discarded. It matters here: the report
+      // spans years unless a Year filter is applied, and without it two rows for the same
+      // employee and leave type are indistinguishable.
+      { key: "balance_year", label: "Year", format: "number", width: 70, align: "center" },
       { key: "allocated_days", label: "Allocated", format: "number", width: 100, align: "right" },
       { key: "adjusted_days", label: "Adjusted Days", format: "number", width: 100, align: "right" },
       { key: "used_days", label: "Used Days", format: "number", width: 100, align: "right" },

@@ -235,6 +235,13 @@ export async function leaveAllocationRegister(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            lt.leave_name, lt.leave_code,
            la.balance_year, la.allocated_days, la.adjusted_days, la.used_days,
+           -- Both catalogs declare remaining_days and it was never selected, so the Remaining
+           -- column was an em-dash on all 5,358 rows while its three inputs sat beside it.
+           -- Formula is the module's documented one (see the header note): allocated + adjusted
+           -- - used, floored at 0 so an over-drawn ledger row reads 0 rather than negative,
+           -- matching leaveLapseSummary and the *_remain buckets in leaveBalance.
+           GREATEST(ROUND(COALESCE(la.allocated_days,0) + COALESCE(la.adjusted_days,0)
+                          - COALESCE(la.used_days,0), 2), 0) AS remaining_days,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,

@@ -683,7 +683,9 @@
     "1660_pf_management_payroll_head_grant.sql",
     "1661_restrict_audit_security_access_control_to_super_admin.sql",
     "1662_team_attendance_follows_reporting_line.sql",
-    "1663_deduction_types_tds_upload.sql"
+    "1663_deduction_types_tds_upload.sql",
+    "1664_social_feed_page_access.sql",
+    "1665_incentive_types_canonical_list.sql"
   ],
   "approvedDeletions": [
     {

@@ -14,6 +14,7 @@ import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js
 import {
   appendScopeConditions,
   appendFilterConditions,
+  businessToday,
   dateParam,
   monthParam,
   applyPagination,
@@ -254,9 +255,11 @@ export async function weekOffCalendar(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  // businessToday(), not a UTC substring of toISOString(): in IST the latter names yesterday
+  // for the last 5.5 hours of every day, so a default range ending "today" dropped the
+  // current day's roster.
+  const to    = dateParam(filters.to, businessToday());
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
@@ -286,16 +289,53 @@ export async function weekOffCalendar(
     params.push(options.cursor);
   }
 
+  /**
+   * One row per employee per WEEK, which is the shape both catalogs declare
+   * (week_start, week_off_1, week_off_2, rotational).
+   *
+   * This query used to emit one row per week-off DATE, under the names week_off_date and
+   * week_off_day. Neither is a declared column, so the grid drew four headers no row could
+   * ever fill and the two columns holding the actual values were not displayed at all — a
+   * report that returned data and showed none of it.
+   *
+   * week_start is the Monday of the week: WEEKDAY() is 0 for Monday regardless of the server's
+   * default_week_format, so subtracting it is stable where YEARWEEK's mode is not.
+   *
+   * week_off_1 / week_off_2 come from an ordered GROUP_CONCAT split. A roster week normally
+   * carries one or two week-offs; if a third were ever recorded it is not shown, and
+   * week_off_count is emitted so that case is visible rather than silently truncated.
+   *
+   * `rotational` asks whether this employee's week-off MOVES, which is a question about the
+   * whole period and not about one week — so it is a correlated count of distinct week-off
+   * weekdays across the filtered range. The dates are embedded as literals rather than bound:
+   * a placeholder in the SELECT list would bind before the WHERE clause's own parameters and
+   * shift every one of them. dateParam guarantees /^\d{4}-\d{2}-\d{2}$/ or substitutes the
+   * fallback, so neither value can carry anything but a date. Same reasoning, and the same
+   * safety argument, as the embedded balance_year in leave.executor.ts.
+   */
   const base = `
-    SELECT wra.id AS _cursor,
+    SELECT MIN(wra.id) AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           wra.roster_date AS week_off_date,
-           DAYNAME(wra.roster_date)  AS week_off_day,
-           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-           COALESCE(p.process_name, 'UNASSIGNED') AS process_name
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           DATE_SUB(wra.roster_date, INTERVAL WEEKDAY(wra.roster_date) DAY) AS week_start,
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(DAYNAME(wra.roster_date) ORDER BY wra.roster_date), ',', 1
+           ) AS week_off_1,
+           CASE WHEN COUNT(*) > 1 THEN SUBSTRING_INDEX(SUBSTRING_INDEX(
+             GROUP_CONCAT(DAYNAME(wra.roster_date) ORDER BY wra.roster_date), ',', 2), ',', -1)
+           END AS week_off_2,
+           COUNT(*) AS week_off_count,
+           CASE WHEN (
+             SELECT COUNT(DISTINCT WEEKDAY(w2.roster_date))
+               FROM wfm_roster_assignment w2
+              WHERE w2.employee_id = e.id
+                AND w2.is_week_off = 1
+                AND w2.roster_date BETWEEN '${from}' AND '${to}'
+           ) > 1 THEN 1 ELSE 0 END AS rotational
       FROM wfm_roster_assignment wra
       JOIN employees e              ON e.id  = wra.employee_id
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
@@ -303,7 +343,10 @@ export async function weekOffCalendar(
       LEFT JOIN process_master p    ON p.id  = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY wra.id ASC`;
+     GROUP BY e.id, e.employee_code, employee_name, b.branch_name,
+              sp_cc.cost_centre_code, sp_cc.cost_centre_name, p.process_name,
+              DATE_SUB(wra.roster_date, INTERVAL WEEKDAY(wra.roster_date) DAY)
+     ORDER BY e.employee_code ASC, week_start ASC`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire

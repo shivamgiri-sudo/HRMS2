@@ -52,7 +52,10 @@ function currentPeriod() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function normalizePeriod(value?: string) {
+// Exported so pnl-statement.service.ts can normalize a period the same way before calling
+// getCachedAllocationSummary directly (bypassing getSummary()'s trend fan-out — see PERF FIX
+// comment there, 2026-09-02). Behavior unchanged; only visibility widened.
+export function normalizePeriod(value?: string) {
   return value && /^\d{4}-\d{2}$/.test(value) ? value : currentPeriod();
 }
 

@@ -197,6 +197,38 @@ export const PAYROLL_REGISTER_BODY = `
            CASE WHEN e.active_status = 1 THEN 'ACTIVE' ELSE 'INACTIVE' END AS employee_state,
            COALESCE(spl.basic,0) AS basic_pay,
            COALESCE(spl.hra,0) AS hra,
+           /**
+            * Earning components, pivoted out of salary_prep_line_component.
+            *
+            * Both catalogs declare bonus / conv / portfolio / medical_allowance / lta /
+            * other_allowance / pli, and none of them were selected — salary_prep_line only
+            * carries basic, hra and special_allowance as flat columns, so those seven cells
+            * rendered em-dashes on every row of the payroll register. For 2026-07 that hid
+            * real money: BONUS is populated on 965 lines (up to 12,495), CONV on 965 and
+            * PORTFOLIO on 287 (up to 27,572). MEDICAL, LTA, OTHER_ALLOW and PLI are defined
+            * in salary_component_master but carry no rows in that run, so they correctly
+            * resolve to 0 rather than being dropped.
+            *
+            * Correlated scalar subqueries rather than a GROUP BY derived table for two
+            * reasons: (line_id, component_code) is UNIQUE (uq_line_component), so each is a
+            * single unique-index lookup on an 860k-row table; and they introduce no bind
+            * parameters, which this shared constant cannot afford — every caller appends its
+            * own params positionally, so a placeholder added here would shift all of them.
+            */
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'BONUS'), 0) AS bonus,
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'CONV'), 0) AS conv,
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'PORTFOLIO'), 0) AS portfolio,
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'MEDICAL'), 0) AS medical_allowance,
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'LTA'), 0) AS lta,
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'OTHER_ALLOW'), 0) AS other_allowance,
+           COALESCE((SELECT c.amount FROM salary_prep_line_component c
+                      WHERE c.line_id = spl.id AND c.component_code = 'PLI'), 0) AS pli,
            COALESCE(spl.gross_salary,0) AS gross_salary,
            COALESCE(spl.pf_employee,0) AS pf_employee,
            COALESCE(spl.esic_employee,0) AS esic_employee,

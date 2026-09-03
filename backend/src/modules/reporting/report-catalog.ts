@@ -1588,9 +1588,17 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
       { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
       { key: "balance_year", label: "Year", format: "number", width: 60 },
-      { key: "opening_balance", label: "Opening", format: "number", width: 80, align: "right" },
+      // Realigned to what the executor emits, and to the frontend catalog.
+      //
+      // This declared opening_balance and carry_forward, which leave_balance_ledger does not
+      // have — its only measure columns are allocated_days, used_days and adjusted_days (see
+      // the header note in leave.executor.ts). Both keys therefore rendered em-dashes in
+      // Decision Center, while adjusted_days / used_days / remaining_days, which the executor
+      // does return, had no column to land in.
       { key: "allocated_days", label: "Allocated", format: "number", width: 80, align: "right" },
-      { key: "carry_forward", label: "Carry Forward", format: "number", width: 100, align: "right" },
+      { key: "adjusted_days", label: "Adjusted", format: "number", width: 80, align: "right" },
+      { key: "used_days", label: "Used", format: "number", width: 80, align: "right" },
+      { key: "remaining_days", label: "Remaining", format: "number", width: 90, align: "right" },
     ],
     filters: [F_YEAR, F_BRANCH, { key: "leaveType", label: "Leave Type", type: "text" }],
     viewRoles: ROLES_HR_ADMIN,
@@ -4042,6 +4050,9 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "week_start", label: "Week Start", format: "date", width: 100 },
       { key: "week_off_1", label: "WO 1", format: "text", width: 80 },
       { key: "week_off_2", label: "WO 2", format: "text", width: 80 },
+      // Surfaced so a week carrying more than two recorded week-offs is visible rather than
+      // silently truncated by the two columns above.
+      { key: "week_off_count", label: "WO Count", format: "number", width: 80, align: "center" },
       { key: "rotational", label: "Rotational", format: "boolean", width: 80 },
     ],
     filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
@@ -4815,6 +4826,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
       { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
       { key: "weekoff_count", label: "W", format: "number", width: 40, align: "center" },
+      { key: "total_working_days", label: "Total Working Days", format: "number", width: 110, align: "right" },
       { key: "sal_days", label: "SalDays", format: "number", width: 70, align: "right" },
       { key: "total", label: "Total", format: "number", width: 50, align: "center" },
     ],

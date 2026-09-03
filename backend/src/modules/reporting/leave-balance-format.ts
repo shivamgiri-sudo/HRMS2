@@ -40,7 +40,19 @@ export interface LeaveBalanceColumn {
   align?: 'left' | 'center' | 'right';
 }
 
-/** The 17 output columns, in the exact order A → Q. */
+/**
+ * The 18 output columns: the authority workbook's A → Q, plus employee_status in R.
+ *
+ * R is APPENDED rather than inserted. The report now reports both populations, so a row's
+ * Active/Inactive state has to be on the face of it — but the authority layout above pins
+ * A → Q and its four merges (A1:D1, F1:I1, J1:M1, N1:Q1), so inserting the column next to
+ * the other employee details would have shifted every leave group one column right and
+ * broken every merge. Appending leaves A → Q byte-identical to the supplied workbook.
+ *
+ * It is also in the catalogs at the same last position, so the screen and this workbook show
+ * the same columns in the same order — the two disagreeing is the defect class this whole
+ * module exists to prevent.
+ */
 export const LEAVE_BALANCE_COLUMNS: LeaveBalanceColumn[] = [
   { key: 'emp_code',        label: 'EmpCode',      format: 'text',   width: 10,             align: 'center' },
   { key: 'emp_name',        label: 'EmpName',      format: 'text',   width: 32,             align: 'left'   },
@@ -62,15 +74,18 @@ export const LEAVE_BALANCE_COLUMNS: LeaveBalanceColumn[] = [
   { key: 'ml_remain',       label: 'ML',           format: 'number', width: 3.7109375,      align: 'center' },
   { key: 'el_remain',       label: 'EL',           format: 'number', width: 3,              align: 'center' },
   { key: 'ptl_mtl_remain',  label: 'PTL/MTL',      format: 'number', width: 8.5703125,      align: 'center' },
+
+  { key: 'employee_status', label: 'Employee Status', format: 'text', width: 14,            align: 'center' },
 ];
 
-/** Worksheet row 1 / table header row 1 — grouped spans. */
+/** Worksheet row 1 / table header row 1 — grouped spans. Must sum to LEAVE_BALANCE_COLUMNS.length. */
 export const LEAVE_BALANCE_HEADER_GROUPS = [
   { label: 'Emp Details',   colSpan: 4 },
   { label: '',              colSpan: 1 }, // E1 stays blank and unmerged
   { label: 'Current Leave', colSpan: 4 },
   { label: 'Leave Taken',   colSpan: 4 },
   { label: 'Leave Remain',  colSpan: 4 },
+  { label: '',              colSpan: 1 }, // R1 blank and unmerged, above Employee Status
 ];
 
 /** Keys whose zero value must render as a blank cell (Leave Taken group only). */
