@@ -142,7 +142,16 @@ export const platformRouteElements = (
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
       <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
-      <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_head']}><Gate pageCode="BULK_UPLOAD"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
+      {/* Gated on BULK_UPLOAD_APPROVALS, not BULK_UPLOAD.
+        * branch_head holds NO BULK_UPLOAD grant (live, 2026-09-03) — so the only role
+        * allowed to approve a gated batch was being turned away by the gate on the very
+        * page built for them. BULK_UPLOAD_APPROVALS is the code migration 1522 created for
+        * this queue and already grants branch_head, branch_admin, payroll_head and
+        * super_admin; migration 1657 adds wfm and payroll_hr read-only so a creator can
+        * watch their own batch. This route is also listed in PAGE_CODE_BY_ROUTE, which
+        * makes the `roles` prop below inert — the page code is the single gate. The list is
+        * kept as documentation of who the code is expected to admit. */}
+      <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','branch_head','branch_admin','payroll_head','wfm','payroll_hr']}><Gate pageCode="BULK_UPLOAD_APPROVALS"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
       <Route path="/assets"          element={<ProtectedRoute><Assets /></ProtectedRoute>} />
       <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
       <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
