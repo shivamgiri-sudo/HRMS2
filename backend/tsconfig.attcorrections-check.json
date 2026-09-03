@@ -1,0 +1,19 @@
+{
+  // Typecheck for the Attendance Lookup correction endpoints: the exception resolve/reopen
+  // writes, the discard gate widened to payroll_head, and the leave list scope that gives
+  // payroll_head org-wide read.
+  //
+  //     npx tsc -p tsconfig.attcorrections-check.json
+  //
+  // Scoped for the same reason as tsconfig.attendance-check.json: the repo-wide run is slow
+  // enough to be killed mid-flight, and a killed tsc leaves ~350MB processes behind.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/wfm/attendance-exceptions.routes.ts",
+    "src/modules/discard/discard.routes.ts",
+    "src/modules/discard/discard.service.ts",
+    "src/modules/leave/leave.secure.routes.ts",
+    "src/modules/attendance/attendance.manual-override.routes.ts"
+  ]
+}

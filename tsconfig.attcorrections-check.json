@@ -1,0 +1,21 @@
+{
+  // Typecheck for the Attendance Lookup correction UI (drawer tabs + change-status dialog).
+  //
+  //     npx tsc -p tsconfig.attcorrections-check.json
+  //
+  // Scoped for the same reason as tsconfig.budgettopup-check.json: the repo-wide app project
+  // reports pre-existing errors elsewhere that bury anything introduced here.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/attendance",
+    "src/pages/AdminAttendanceView.tsx",
+    "src/hooks/useAttendanceCorrections.ts",
+    "src/hooks/useAttendanceHub.ts",
+    "src/hooks/useDiscard.ts",
+    "src/vite-env.d.ts"
+  ],
+  // The __tests__ folder is Node-side (fs/path/__dirname) and this project has no "node"
+  // types, so including it reports 4 pre-existing errors that have nothing to do with the
+  // components. vitest runs those files with its own config.
+  "exclude": ["src/components/attendance/__tests__"]
+}

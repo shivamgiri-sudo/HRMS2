@@ -157,6 +157,12 @@ function monthsInRange(from: string, to: string): string[] {
  * branch fails closed for wfm rather than being treated as in-scope.
  */
 async function checkScope(actor: DiscardActor, employeeId: string): Promise<DiscardBlocker | null> {
+  // payroll_head is org-wide, like super_admin: payroll owns every branch's salary, and
+  // hasScopedAccess would fail it closed for having no user_assignment_scope row rather
+  // than for being out of scope. Checked before the employee lookup because the answer
+  // does not depend on the employee.
+  if (actor.roles?.includes("payroll_head") || actor.role === "payroll_head") return null;
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id, lob_id, department_id, reporting_manager_id, manager_id
        FROM employees WHERE id = ? LIMIT 1`,

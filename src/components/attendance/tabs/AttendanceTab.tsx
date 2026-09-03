@@ -1,9 +1,11 @@
 import { useState, useMemo } from "react";
 import { format, startOfMonth, addMonths, subMonths } from "date-fns";
-import { Calendar, Table, ChevronLeft, ChevronRight, Radio, Fingerprint } from "lucide-react";
+import { Calendar, Table, ChevronLeft, ChevronRight, Radio, Fingerprint, Pencil } from "lucide-react";
 import { AttendanceCalendar, adrRecordsToAttendanceDays } from "@/components/attendance/AttendanceCalendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAttendanceDailyRecords, useAttendanceSummary } from "@/hooks/useAttendanceHub";
+import { useCanCorrectAttendance } from "@/hooks/useAttendanceCorrections";
+import { ChangeAttendanceStatusDialog } from "@/components/attendance/ChangeAttendanceStatusDialog";
 import { formatTime24 } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -45,11 +47,18 @@ function fmtMins(m: number | null) {
 
 type SourceFilter = "all" | "biometric" | "dialler";
 
-interface Props { employeeId: string; }
+interface Props {
+  employeeId: string;
+  /** Shown in the change-status dialog so the reviewer can see whose day they are editing. */
+  employeeLabel?: string;
+}
 
-export function AttendanceTab({ employeeId }: Props) {
+export function AttendanceTab({ employeeId, employeeLabel }: Props) {
   const [viewMode, setViewMode] = useState<"calendar" | "table">("calendar");
   const [currentMonth, setCurrentMonth] = useState<Date>(startOfMonth(new Date()));
+  /** The day whose status is being changed. Table view only — a calendar cell has no room. */
+  const [editingDay, setEditingDay] = useState<{ date: string; status: string | null; isLocked: boolean } | null>(null);
+  const { canCorrect } = useCanCorrectAttendance();
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
   const { monthStr, monthStart, monthEnd, monthLabel } = useMemo(() => ({
@@ -278,6 +287,7 @@ export function AttendanceTab({ employeeId }: Props) {
                   <th className="px-4 py-3 text-left">Hours</th>
                   <th className="px-4 py-3 text-left">Net Hours</th>
                   <th className="px-4 py-3 text-left">Source</th>
+                  {canCorrect && <th className="px-4 py-3 text-right">Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -309,6 +319,22 @@ export function AttendanceTab({ employeeId }: Props) {
                           {srcMeta.label}
                         </span>
                       </td>
+                      {canCorrect && (
+                        <td className="px-4 py-2.5 text-right">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                            onClick={() => setEditingDay({
+                              date: r.date?.slice(0, 10),
+                              status: r.status ?? null,
+                              isLocked: Boolean((r as any).is_locked),
+                            })}
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Change
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -316,6 +342,21 @@ export function AttendanceTab({ employeeId }: Props) {
             </table>
           )}
         </div>
+      )}
+
+      {/* Change-status dialog. Mounted once for the whole tab rather than per row — 31 rows
+          would otherwise each carry their own Radix portal. */}
+      {canCorrect && editingDay && (
+        <ChangeAttendanceStatusDialog
+          open
+          onOpenChange={(open) => { if (!open) setEditingDay(null); }}
+          employeeId={employeeId}
+          employeeLabel={employeeLabel ?? "This employee"}
+          date={editingDay.date}
+          currentStatus={editingDay.status}
+          isLocked={editingDay.isLocked}
+          onChanged={() => setEditingDay(null)}
+        />
       )}
     </div>
   );

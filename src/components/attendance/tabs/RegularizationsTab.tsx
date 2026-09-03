@@ -1,5 +1,9 @@
+import { useState } from "react";
+import { Undo2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRegularizationHistory } from "@/hooks/useAttendanceHub";
+import { useCanDiscard } from "@/hooks/useDiscard";
+import { DiscardDialog } from "@/components/discard/DiscardDialog";
 
 const STATUS_COLORS: Record<string, string> = {
   pending:          "bg-amber-50 text-amber-700",
@@ -11,7 +15,11 @@ const STATUS_COLORS: Record<string, string> = {
 interface Props { employeeId: string; }
 
 export function RegularizationsTab({ employeeId }: Props) {
-  const { data: records = [], isLoading } = useRegularizationHistory(employeeId);
+  const { data: records = [], isLoading, refetch } = useRegularizationHistory(employeeId);
+  // Reuses the dialog the Regularization and Disputes pages already use, so a reversal from
+  // here restores the attendance days and writes the same audit row it does there.
+  const { canDiscard } = useCanDiscard();
+  const [discardTarget, setDiscardTarget] = useState<{ id: string; isDispute: boolean } | null>(null);
 
   if (isLoading) return (
     <div className="space-y-2">
@@ -36,6 +44,7 @@ export function RegularizationsTab({ employeeId }: Props) {
             <th className="px-4 py-3 text-left">Requested</th>
             <th className="px-4 py-3 text-left">Submitted</th>
             <th className="px-4 py-3 text-left">Status</th>
+            {canDiscard && <th className="px-4 py-3 text-right">Action</th>}
           </tr>
         </thead>
         <tbody>
@@ -59,11 +68,37 @@ export function RegularizationsTab({ employeeId }: Props) {
                     {(r.status ?? "—").replace(/_/g, " ")}
                   </span>
                 </td>
+                {canDiscard && (
+                  <td className="px-4 py-2.5 text-right">
+                    {/* Only an approved request has anything to reverse — a pending or rejected
+                        one never changed a day, and the backend refuses it anyway. */}
+                    {r.status === "approved" ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+                        onClick={() => setDiscardTarget({ id: r.id, isDispute: Boolean((r as any).dispute_type) })}
+                      >
+                        <Undo2 className="h-3 w-3" />
+                        Discard
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-slate-300">—</span>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}
         </tbody>
       </table>
+
+      <DiscardDialog
+        open={Boolean(discardTarget)}
+        onOpenChange={(open) => { if (!open) setDiscardTarget(null); }}
+        entityType={discardTarget?.isDispute ? "dispute" : "regularization"}
+        entityId={discardTarget?.id ?? null}
+        onDiscarded={() => { setDiscardTarget(null); void refetch(); }}
+      />
     </div>
   );
 }

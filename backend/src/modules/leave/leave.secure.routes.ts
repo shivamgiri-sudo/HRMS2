@@ -24,7 +24,13 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 const LEAVE_VIEW_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "hr", "payroll_hr", "payroll_branch", "wfm"];
 
 async function leaveListScope(userId: string): Promise<{ sql: string; params: unknown[] }> {
-  if (await hasAnyRole(userId, "super_admin")) return { sql: "1=1", params: [] };
+  // payroll_head reads org-wide. It is not in LEAVE_VIEW_SCOPE_ROLES below because that
+  // path needs a user_assignment_scope row to widen from, and the live payroll_head
+  // holders have none — they would have fallen through to the self-only fallback and seen
+  // their own leave and nobody else's, which is not a scope restriction so much as a
+  // broken screen (Attendance Lookup's Leave tab shows one employee at a time and would
+  // have been permanently empty for them). Payroll signs off every branch's salary.
+  if (await hasAnyRole(userId, "super_admin", "payroll_head")) return { sql: "1=1", params: [] };
   const scoped = await buildScopeWhereClause(userId, LEAVE_VIEW_SCOPE_ROLES, { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" }, { allowAdminBypass: false, allowCeoAllRead: false });
   if (scoped.sql !== "1=0") return scoped;
   const callerEmp = await getEmployeeForUser(userId);

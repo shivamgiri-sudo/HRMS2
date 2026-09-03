@@ -1,12 +1,13 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Wallet, ClipboardList, TreePalm } from "lucide-react";
+import { Calendar, Wallet, ClipboardList, TreePalm, AlertTriangle } from "lucide-react";
 import type { HubEmployee } from "@/hooks/useAttendanceHub";
 import { AttendanceTab } from "./tabs/AttendanceTab";
 import { SalaryTab } from "./tabs/SalaryTab";
 import { RegularizationsTab } from "./tabs/RegularizationsTab";
 import { LeaveTab } from "./tabs/LeaveTab";
+import { ExceptionsTab } from "./tabs/ExceptionsTab";
 
 const STATUS_COLORS: Record<string, string> = {
   active:      "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -94,10 +95,17 @@ export function AttendanceHubDrawer({ employee, onClose }: Props) {
                     <TreePalm className="h-3.5 w-3.5" />
                     Leave
                   </TabsTrigger>
+                  <TabsTrigger value="exceptions" className="flex items-center gap-1.5 text-xs rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Exceptions
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="attendance">
-                  <AttendanceTab employeeId={employee.id} />
+                  <AttendanceTab
+                    employeeId={employee.id}
+                    employeeLabel={`${employee.full_name}${employee.employee_code ? ` (${employee.employee_code})` : ""}`}
+                  />
                 </TabsContent>
                 <TabsContent value="salary">
                   <SalaryTab employeeId={employee.id} />
@@ -107,6 +115,9 @@ export function AttendanceHubDrawer({ employee, onClose }: Props) {
                 </TabsContent>
                 <TabsContent value="leave">
                   <LeaveTab employeeId={employee.id} />
+                </TabsContent>
+                <TabsContent value="exceptions">
+                  <ExceptionsTab employeeId={employee.id} />
                 </TabsContent>
               </Tabs>
             </div>

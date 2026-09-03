@@ -12,7 +12,7 @@
 // (payroll included because `salary_payable_days_mismatch` blocks a payroll run).
 
 import { Router } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
@@ -33,7 +33,21 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) =>
 const VIEW_ROLES = [
   'wfm', 'branch_wfm', 'hr', 'admin', 'super_admin', 'ceo', 'payroll',
   'manager', 'process_manager', 'branch_head',
+  // payroll_head is a distinct role_key from 'payroll' — requireRole does a literal match
+  // with no alias expansion, so listing 'payroll' does not admit it. Added for the
+  // Attendance Lookup drawer's Exceptions tab, which shows one employee's exceptions to
+  // the person correcting their attendance.
+  'payroll_head',
 ] as const;
+
+/**
+ * Who may close an exception. Deliberately narrower than VIEW_ROLES: resolving one is a
+ * statement that the underlying data problem has been dealt with, and a payroll month is
+ * signed off on the back of it. Payroll Head owns that call, Super Admin overrides.
+ */
+const RESOLVE_ROLES = ['super_admin', 'payroll_head'] as const;
+
+const MIN_RESOLVE_REASON = 10;
 
 // Mirrors the live ENUM (migrations 535 / 536 / 542 / 543).
 const ISSUE_TYPES = new Set([
@@ -371,5 +385,154 @@ attendanceExceptionsRouter.get(
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="attendance-exceptions-${stamp}.csv"`);
     return res.send(`${header}\n${body}`);
+  }),
+);
+
+// ── Resolve / reopen one exception ────────────────────────────────────────────
+// The only write endpoints on this store. Until now the table was append-only from the
+// nightly reconciliation worker's point of view: `resolved_at` was set by the worker's own
+// auto-fix and by nothing else, so a human who had dealt with an issue had no way to say
+// so and it stayed on the worklist forever. 18,038 rows, ~6,000 of them open.
+//
+// Resolving does NOT correct attendance. The correction goes through
+// /api/attendance/manual-overrides (which rewrites attendance_daily_record under approval)
+// or through a regularization; this only records that a human has closed the exception,
+// with their reason. Keeping the two apart is deliberate — one audit trail per kind of
+// change, rather than a resolve that silently edits payable days.
+
+/** Load one exception with the same employee joins the list uses, for scope + audit. */
+async function getExceptionForWrite(id: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ari.id, ari.issue_type, ari.severity, ari.issue_date, ari.employee_id,
+            ari.resolved_at, ari.review_notes, ari.reviewed_by,
+            COALESCE(emp.employee_code, ari.employee_code) AS employee_code,
+            emp.branch_id, emp.process_id, emp.department_id, emp.reporting_manager_id
+       FROM attendance_reconciliation_issue ari
+       LEFT JOIN employees emp ON emp.id = ari.employee_id
+      WHERE ari.id = ?
+      LIMIT 1`,
+    [id],
+  );
+  return (rows as any[])[0] ?? null;
+}
+
+/**
+ * Row scope for a single exception, mirroring buildWhere's list scoping.
+ *
+ * An `unmapped_cosec_user` row has employee_id IS NULL — there is no employee to scope
+ * against, so only a caller with a global scope may touch it. Failing closed here matches
+ * the list, which surfaces those rows to global viewers only.
+ */
+async function callerMayWrite(req: any, row: any): Promise<boolean> {
+  const scope = await resolveUserBusinessScope(req.authUser);
+  const condition = buildEmployeeScopeCondition(scope, {
+    employeeId: 'emp.id',
+    branchId: 'emp.branch_id',
+    processId: 'emp.process_id',
+    departmentId: 'emp.department_id',
+    managerEmployeeId: 'emp.reporting_manager_id',
+  });
+  const isGlobal = condition.sql === '1=1' || scope.assignments.some((a) => a.scopeType === 'all');
+  if (isGlobal) return true;
+  if (!row.employee_id) return false;
+
+  // Re-run the caller's own scope predicate against this one employee rather than
+  // reimplementing it — a scope rule that changes shape stays enforced here for free.
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employees emp WHERE emp.id = ? AND (${condition.sql}) LIMIT 1`,
+    [row.employee_id, ...condition.params],
+  );
+  return (rows as any[]).length > 0;
+}
+
+attendanceExceptionsRouter.post(
+  '/:id/resolve',
+  requireWriteAccess,
+  requireRole(...RESOLVE_ROLES),
+  h(async (req, res) => {
+    const reason = String(req.body?.reason ?? '').trim();
+    if (reason.length < MIN_RESOLVE_REASON) {
+      return res.status(400).json({
+        success: false,
+        error: `A reason of at least ${MIN_RESOLVE_REASON} characters is required to resolve an exception.`,
+      });
+    }
+
+    const row = await getExceptionForWrite(String(req.params.id));
+    if (!row) return res.status(404).json({ success: false, error: 'Exception not found' });
+    if (row.resolved_at) {
+      return res.status(409).json({ success: false, error: 'This exception is already resolved.' });
+    }
+    if (!(await callerMayWrite(req, row))) {
+      return res.status(403).json({ success: false, error: 'This employee is outside your assigned scope.' });
+    }
+
+    await db.execute(
+      `UPDATE attendance_reconciliation_issue
+          SET resolved_at = NOW(), reviewed_by = ?, reviewed_at = NOW(), review_notes = ?
+        WHERE id = ? AND resolved_at IS NULL`,
+      [req.authUser.id, reason, row.id],
+    );
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser?.id,
+      actor_role: req.authUser?.role ?? 'unknown',
+      action_type: 'ATTENDANCE_EXCEPTION_RESOLVED',
+      module_key: 'attendance',
+      entity_type: 'attendance_reconciliation_issue',
+      entity_id: row.id,
+      reason,
+      old_value_json: { resolved_at: null, issue_type: row.issue_type, severity: row.severity },
+      new_value_json: { resolved_at: 'now', employee_code: row.employee_code, issue_date: row.issue_date },
+      req,
+    });
+
+    return res.json({ success: true, data: { id: row.id, resolved: true } });
+  }),
+);
+
+attendanceExceptionsRouter.post(
+  '/:id/reopen',
+  requireWriteAccess,
+  requireRole(...RESOLVE_ROLES),
+  h(async (req, res) => {
+    const reason = String(req.body?.reason ?? '').trim();
+    if (reason.length < MIN_RESOLVE_REASON) {
+      return res.status(400).json({
+        success: false,
+        error: `A reason of at least ${MIN_RESOLVE_REASON} characters is required to reopen an exception.`,
+      });
+    }
+
+    const row = await getExceptionForWrite(String(req.params.id));
+    if (!row) return res.status(404).json({ success: false, error: 'Exception not found' });
+    if (!row.resolved_at) {
+      return res.status(409).json({ success: false, error: 'This exception is already open.' });
+    }
+    if (!(await callerMayWrite(req, row))) {
+      return res.status(403).json({ success: false, error: 'This employee is outside your assigned scope.' });
+    }
+
+    await db.execute(
+      `UPDATE attendance_reconciliation_issue
+          SET resolved_at = NULL, reviewed_by = ?, reviewed_at = NOW(), review_notes = ?
+        WHERE id = ?`,
+      [req.authUser.id, reason, row.id],
+    );
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser?.id,
+      actor_role: req.authUser?.role ?? 'unknown',
+      action_type: 'ATTENDANCE_EXCEPTION_REOPENED',
+      module_key: 'attendance',
+      entity_type: 'attendance_reconciliation_issue',
+      entity_id: row.id,
+      reason,
+      old_value_json: { resolved_at: row.resolved_at, review_notes: row.review_notes },
+      new_value_json: { resolved_at: null },
+      req,
+    });
+
+    return res.json({ success: true, data: { id: row.id, resolved: false } });
   }),
 );

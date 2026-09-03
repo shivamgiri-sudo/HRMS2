@@ -76,11 +76,21 @@ export interface DiscardResult {
   payrollRecalcStatus: string | null;
 }
 
-/** Only super_admin and wfm may discard. Deliberately narrower than useIsAdminOrHR. */
+/**
+ * Only super_admin, wfm and payroll_head may discard. Deliberately narrower than
+ * useIsAdminOrHR, and it must stay in step with discardGate in discard.routes.ts — a role
+ * shown the button but refused by the API gets a 403 where it expected a reversal.
+ *
+ * payroll_head was added with the Attendance Lookup corrections: the person fixing an
+ * employee's attendance has to be able to reverse the leave or regularization that caused
+ * the wrong day, and payroll owns that call org-wide.
+ */
 export function useCanDiscard(): { canDiscard: boolean; isLoading: boolean } {
   const { roleKeys, isLoading } = useWorkforceAccess();
   return {
-    canDiscard: (roleKeys ?? []).some((r: string) => r === "super_admin" || r === "wfm"),
+    canDiscard: (roleKeys ?? []).some(
+      (r: string) => r === "super_admin" || r === "wfm" || r === "payroll_head"
+    ),
     isLoading,
   };
 }

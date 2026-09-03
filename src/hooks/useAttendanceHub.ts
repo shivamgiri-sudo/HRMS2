@@ -402,6 +402,25 @@ export function useRegularizationHistory(employeeId: string | null) {
 
 // ── Leave ──────────────────────────────────────────────────────────────────
 
+/**
+ * One employee's leave requests, newest first.
+ *
+ * Feeds the hub drawer's Leave tab, which showed balances only — a balance says how many
+ * days are left but not which request consumed them, so there was nothing to reverse from.
+ * /api/leave/requests is row-scoped server-side; payroll_head and super_admin read org-wide.
+ */
+export function useEmployeeLeaveRequests(employeeId: string | null, year: number) {
+  return useQuery({
+    queryKey: ["leave-requests", "employee", employeeId, year],
+    enabled: !!employeeId,
+    staleTime: 0,
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>(`/api/leave/requests?employeeId=${employeeId}&year=${year}&limit=100`);
+      return (res?.data ?? []) as any[];
+    },
+  });
+}
+
 export function useLeaveBalance(employeeId: string | null, year: number) {
   return useQuery({
     queryKey: ["leave-balance", employeeId, year],

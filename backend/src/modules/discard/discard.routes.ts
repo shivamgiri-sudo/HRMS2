@@ -15,18 +15,24 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
   fn(req, res).catch(next);
 
 /**
- * Restricted to super_admin and wfm.
+ * Restricted to super_admin, wfm and payroll_head.
  *
  * `wfm` is listed explicitly even though `super_admin` short-circuits
  * requireRole — the list is what admits WFM. Branch scope for wfm is enforced
  * inside the service against user_assignment_scope, because route middleware
  * cannot see which employee the record belongs to.
  *
+ * `payroll_head` was added for the Attendance Lookup drawer, where the person
+ * correcting an employee's attendance must be able to reverse the leave or
+ * regularization that produced the wrong day. It is org-wide in the service's
+ * scope check, like super_admin — payroll owns every branch's salary, and the
+ * two live holders carry no branch assignment rows to scope against.
+ *
  * requireRole alias-expands wfm to wfm_analyst / wfm_spoc / ho_wfm. Verified
  * harmless: none of those exist in workforce_role_catalog, and user_roles.role_key
  * is FK-constrained to it (user_roles_ibfk_1), so nobody can hold them.
  */
-const discardGate = [requireWriteAccess, requireRole("super_admin", "wfm")];
+const discardGate = [requireWriteAccess, requireRole("super_admin", "wfm", "payroll_head")];
 
 function actorFrom(req: any): DiscardActor {
   return {
