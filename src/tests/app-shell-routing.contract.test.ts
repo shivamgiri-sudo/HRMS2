@@ -339,13 +339,6 @@ describe("application shell routing contracts", () => {
       // (d5) Token-gated KPI capture page — opened via a direct link with an access token,
       // not navigable from the sidebar.
       "/kpi-capture",
-
-      // (d6) Drill-down destination, not a standalone sidebar page. Gated by the same
-      // PAYROLL_BRANCH_READINESS pageCode as /payroll/branch-readiness (already in the menu,
-      // above) and defined immediately next to it in payroll.routes.tsx — BranchCostCentreAttendance
-      // is the cost-centre-level attendance sign-off view reached from within that readiness flow,
-      // not a page meant to have its own menu entry.
-      "/payroll/readiness/cost-centres",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),

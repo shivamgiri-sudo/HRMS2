@@ -101,6 +101,8 @@ export const OWN_COMPANY_SQL =
 export async function getIndirectCostActuals(periodCode: string): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   const [rows] = await db.execute<RowDataPacket[]>(
+    // The process subquery is correlated on ccm.id, which ONLY_FULL_GROUP_BY refuses beside a
+    // GROUP BY. Resolved per row in a derived table first, then aggregated.
     // Two GRN paths write spend, and only counting one of them reported zero cost against a
     // budget that had genuinely consumed: the Smart GRN writes per-line rows to
     // grn_cost_allocation, while the ordinary GRN keeps budget_line_id and the amount on
@@ -117,37 +119,23 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
     // drill-through) already reads. No live row currently has the two differ — confirmed against
     // production on 2026-08-29 — so this changes no number today; it stops the two tabs
     // (P&L Statement here vs the Process Matrix's view) silently disagreeing the day one does.
-    //
-    // PERF FIX (2026-09-02): the process fallback used to be PROCESS_FROM_EMPLOYEES, a
-    // per-row correlated subquery — the exact pattern the comment on PROCESS_BY_COST_CENTRE
-    // documents as taking "over two minutes" for a single period against this same GRN volume.
-    // Confirmed live: this function alone was taking 30-46s+ per call (uncached, called on every
-    // /api/finance/pnl/statement request), the dominant reason that endpoint needed 2-3 retries
-    // and 60-90s+ waits in the browser. Swapped to a LEFT JOIN against the already-existing
-    // PROCESS_BY_COST_CENTRE precomputed lookup — identical derivation (same GROUP BY, same
-    // ORDER BY COUNT(*) DESC tie-break), already used two blocks below in this same file for
-    // exactly this reason. Confirmed live, period 2026-07: identical 12 rows/amounts either way
-    // (e.g. NOIDA-2/MNP branch pool 37,31,190.06, matching the pre-fix figure exactly), query
-    // time 30-46s+ (never observed to finish within several minutes on a second run) -> ~1.7s.
     `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
        SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
-              COALESCE(a.process_id, pc1.process_id) AS process_id,
+              COALESCE(a.process_id, ${PROCESS_FROM_EMPLOYEES}) AS process_id,
               a.pnl_cost_amount AS amount
          FROM grn_cost_allocation a
          JOIN grn_request g ON g.id = a.grn_request_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc1 ON pc1.cost_centre_id = ccm.id
         WHERE a.lifecycle_status = 'consumed'
           AND DATE_FORMAT(g.bill_date, '%Y-%m') = ?
 
        UNION ALL
 
        SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
-              COALESCE(g.process_id, pc2.process_id) AS process_id,
+              COALESCE(g.process_id, ${PROCESS_FROM_EMPLOYEES}) AS process_id,
               g.pnl_cost_amount AS amount
          FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
-         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc2 ON pc2.cost_centre_id = ccm.id
         WHERE g.budget_line_id IS NOT NULL
           AND g.status NOT IN ('draft', 'rejected', 'cancelled')
           AND DATE_FORMAT(g.bill_date, '%Y-%m') = ?

@@ -98,17 +98,7 @@ export default function NativeBGVVerificationCenter() {
   const { user } = useAuth();
   const { roleKeys } = useWorkforceAccess();
   const role = (user as any)?.role ?? "";
-  // Mirrors the backend's own view-level grants for this module (bgv-verification.routes.ts
-  // GET /queue, /candidates, /candidates/:id, /status/:id, /report — branch_hr and the other
-  // HR variants are already allowed there). This list used to be stuck at
-  // ["admin","super_admin","hr","recruiter"] — a leftover from before migration 1645 extended
-  // BGV visibility to branch/HO/process/recruitment/payroll HR, so those roles got 403'd by
-  // the API right after passing this page-level check, or (worse, once the page_access DB
-  // grant below is applied) blocked here even though the API would have let them through.
-  const ALLOWED = [
-    "admin", "super_admin", "hr", "recruiter",
-    "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr",
-  ];
+  const ALLOWED = ["admin", "super_admin", "hr", "recruiter"];
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [selected, setSelected] = useState<BgvStatus | null>(null);
   const [selectedId, setSelectedId] = useState("");

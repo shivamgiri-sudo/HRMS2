@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import {
   pollBatchJob, isBatchJobStarted, describeProgress,
@@ -15,6 +16,19 @@ import {
   canUseProductivityTab,
 } from "@/components/wfm/ProductivityUpload";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 type UploadTemplate = {
   id: string;
@@ -573,7 +587,319 @@ function csvHealthHasBlockingError(health: CsvHealth | null) {
   );
 }
 
-type HubTab = "master" | "apr" | "productivity";
+// ── Deduction Types Management ────────────────────────────────────────────────
+
+interface DeductionType {
+  id: string;
+  deduction_code: string;
+  deduction_name: string;
+  description: string | null;
+  is_prorated: 0 | 1;
+  active_status: 0 | 1;
+}
+
+function emptyDedForm() {
+  return { deduction_code: "", deduction_name: "", description: "", is_prorated: false as boolean };
+}
+
+function DeductionTypesTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: typesData, isLoading } = useQuery<{ success: boolean; data: DeductionType[] }>({
+    queryKey: ["deduction-types-all"],
+    queryFn: () => hrmsApi.get("/api/payroll/deduction-types"),
+  });
+  const types: DeductionType[] = (typesData as any)?.data ?? [];
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm, setAddForm] = useState(emptyDedForm());
+  const [editOpen, setEditOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState(emptyDedForm());
+
+  const inv = () => qc.invalidateQueries({ queryKey: ["deduction-types-all"] });
+
+  const addMutation = useMutation({
+    mutationFn: (body: ReturnType<typeof emptyDedForm>) =>
+      hrmsApi.post("/api/payroll/deduction-types", { ...body, is_prorated: body.is_prorated ? 1 : 0 }),
+    onSuccess: () => { void inv(); setAddOpen(false); setAddForm(emptyDedForm()); toast({ title: "Deduction type added" }); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const editMutation = useMutation({
+    mutationFn: (body: ReturnType<typeof emptyDedForm>) =>
+      hrmsApi.patch(`/api/payroll/deduction-types/${editId}`, { ...body, is_prorated: body.is_prorated ? 1 : 0 }),
+    onSuccess: () => { void inv(); setEditOpen(false); toast({ title: "Deduction type updated" }); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      hrmsApi.patch(`/api/payroll/deduction-types/${id}`, { active }),
+    onSuccess: () => void inv(),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function openEdit(t: DeductionType) {
+    setEditId(t.id);
+    setEditForm({
+      deduction_code: t.deduction_code,
+      deduction_name: t.deduction_name,
+      description: t.description ?? "",
+      is_prorated: t.is_prorated === 1,
+    });
+    setEditOpen(true);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">Deduction Types</h2>
+          <p className="text-sm text-slate-500 mt-0.5">Manage deduction codes used in payroll deduction uploads.</p>
+        </div>
+        <Button onClick={() => { setAddForm(emptyDedForm()); setAddOpen(true); }}>
+          + Add Deduction Type
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Code</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Prorated</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">Loading…</TableCell>
+                </TableRow>
+              )}
+              {!isLoading && types.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No deduction types found.</TableCell>
+                </TableRow>
+              )}
+              {types.map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-mono text-sm">{t.deduction_code}</TableCell>
+                  <TableCell>{t.deduction_name}</TableCell>
+                  <TableCell className="text-slate-500 text-sm">{t.description || "—"}</TableCell>
+                  <TableCell>{t.is_prorated ? "Yes" : "No"}</TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={t.active_status ? "default" : "secondary"}
+                      className={t.active_status ? "bg-green-600 text-white" : ""}
+                    >
+                      {t.active_status ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="space-x-2">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(t)}>Edit</Button>
+                    <Button
+                      size="sm"
+                      variant={t.active_status ? "destructive" : "outline"}
+                      onClick={() => toggleMutation.mutate({ id: t.id, active: !t.active_status })}
+                      disabled={toggleMutation.isPending}
+                    >
+                      {t.active_status ? "Deactivate" : "Activate"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Add Deduction Type</DialogTitle></DialogHeader>
+          <DeductionTypeForm form={addForm} onChange={setAddForm} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button onClick={() => addMutation.mutate(addForm)} disabled={addMutation.isPending}>
+              {addMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Edit Deduction Type</DialogTitle></DialogHeader>
+          <DeductionTypeForm form={editForm} onChange={setEditForm} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={() => editMutation.mutate(editForm)} disabled={editMutation.isPending}>
+              {editMutation.isPending ? "Saving…" : "Update"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+interface DeductionTypeFormProps {
+  form: ReturnType<typeof emptyDedForm>;
+  onChange: (f: ReturnType<typeof emptyDedForm>) => void;
+}
+
+function DeductionTypeForm({ form, onChange }: DeductionTypeFormProps) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label>Code *</Label>
+          <Input
+            value={form.deduction_code}
+            onChange={(e) => onChange({ ...form, deduction_code: e.target.value.toUpperCase() })}
+            placeholder="e.g. SHORT_COLL"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label>Name *</Label>
+          <Input
+            value={form.deduction_name}
+            onChange={(e) => onChange({ ...form, deduction_name: e.target.value })}
+            placeholder="e.g. Short Collection"
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label>Description</Label>
+        <Textarea
+          value={form.description ?? ""}
+          onChange={(e) => onChange({ ...form, description: e.target.value })}
+          rows={2}
+        />
+      </div>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={!!form.is_prorated}
+          onChange={(e) => onChange({ ...form, is_prorated: e.target.checked })}
+        />
+        Prorated by payable days
+      </label>
+    </div>
+  );
+}
+
+// ── TDS Upload ─────────────────────────────────────────────────────────────────
+
+function TdsUploadTab() {
+  const [runs, setRuns] = useState<any[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const tdsFileRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    hrmsApi.get<any>("/api/payroll/runs?limit=24")
+      .then((r) => setRuns((r as any)?.data ?? []))
+      .catch(() => {});
+  }, []);
+
+  async function handleTdsUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !selectedRunId) return;
+    const text = await file.text();
+    const lines = text.split("\n").slice(1).filter(Boolean);
+    const entries: { employee_code: string; tds_amount: number }[] = [];
+    for (const line of lines) {
+      const sep = line.includes("\t") ? "\t" : ",";
+      const cols = line.split(sep);
+      const empCode = cols[0]?.trim();
+      const taxAmt = Number(cols[3]?.trim());
+      if (empCode && Number.isFinite(taxAmt) && taxAmt >= 0) {
+        entries.push({ employee_code: empCode, tds_amount: taxAmt });
+      }
+    }
+    if (!entries.length) {
+      setMsg({ text: "No valid rows found in CSV", ok: false });
+      if (tdsFileRef.current) tdsFileRef.current.value = "";
+      return;
+    }
+    setUploading(true);
+    setMsg(null);
+    try {
+      const res = await hrmsApi.post<any>(`/api/payroll/runs/${selectedRunId}/manual-tds`, entries);
+      setMsg({ text: (res as any)?.message ?? "TDS entries saved. Recalculate the run to apply.", ok: true });
+    } catch (err: any) {
+      setMsg({ text: (err as Error)?.message ?? "Upload failed", ok: false });
+    } finally {
+      setUploading(false);
+      if (tdsFileRef.current) tdsFileRef.current.value = "";
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-slate-950">TDS Upload</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Upload manual TDS amounts per employee for a payroll run. Format:{" "}
+          <span className="font-mono bg-slate-100 px-1 rounded text-slate-700 text-xs">
+            Emp Code, Employee Name, Branch, Tax Amount
+          </span>
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-xs font-medium text-slate-700 whitespace-nowrap">Payroll Run</label>
+        <select
+          value={selectedRunId}
+          onChange={(e) => { setSelectedRunId(e.target.value); setMsg(null); }}
+          className="h-9 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 w-64"
+        >
+          <option value="">Select a run…</option>
+          {runs.map((r: any) => (
+            <option key={r.id} value={r.id}>{r.run_month} — {r.status}</option>
+          ))}
+        </select>
+      </div>
+
+      {selectedRunId && (
+        <div className="flex flex-wrap gap-3 items-center">
+          <a
+            href={`/api/payroll/runs/${selectedRunId}/tds-upload-template`}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 inline-flex items-center gap-1.5"
+          >
+            ↓ Download Template
+          </a>
+          <label className={`h-9 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-xs font-medium text-slate-600 inline-flex items-center gap-1.5 cursor-pointer hover:border-[#073f78] hover:bg-blue-50 hover:text-[#073f78] ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
+            ↑ {uploading ? "Uploading…" : "Upload CSV"}
+            <input ref={tdsFileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleTdsUpload} />
+          </label>
+        </div>
+      )}
+
+      {msg && (
+        <div className={`rounded-xl border p-3 text-sm ${msg.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+          {msg.text}
+        </div>
+      )}
+
+      {!selectedRunId && (
+        <p className="text-xs text-slate-400">Select a payroll run to enable template download and upload.</p>
+      )}
+    </section>
+  );
+}
+
+// ── Main BulkUploadHub ─────────────────────────────────────────────────────────
+
+type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload";
 
 export default function BulkUploadHub() {
   const { user } = useAuth();
@@ -587,12 +913,17 @@ export default function BulkUploadHub() {
   // roles — which are left untouched.
   const workforceAccess = useWorkforceAccess();
   const canUploadProductivity = canUseProductivityTab(workforceAccess);
+  const roleKeys: string[] = (workforceAccess as any)?.roleKeys ?? [];
+  const canManageDeductionTypes = roleKeys.some((r) =>
+    ["super_admin", "hr_admin", "payroll", "payroll_head", "finance"].includes(r)
+  );
+  const canUploadTds = roleKeys.some((r) => ["payroll_head", "super_admin"].includes(r));
 
-  // Belt and braces against the tab ever being active for someone without the grant: the button
-  // that sets it is not rendered for them, but the grant can also disappear mid-session (the
-  // role query refetches), and a tab left active would then render a panel they may not see.
   const effectiveTab: HubTab =
-    activeTab === "productivity" && !canUploadProductivity ? "master" : activeTab;
+    activeTab === "productivity" && !canUploadProductivity ? "master" :
+    activeTab === "deduction-types" && !canManageDeductionTypes ? "master" :
+    activeTab === "tds-upload" && !canUploadTds ? "master" :
+    activeTab;
 
   const [templates, setTemplates] = useState<UploadTemplate[]>([]);
   const [batches, setBatches] = useState<UploadBatch[]>([]);
@@ -1117,6 +1448,34 @@ export default function BulkUploadHub() {
                   WFM Productivity Upload
                 </button>
               )}
+              {canManageDeductionTypes && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("deduction-types")}
+                  aria-pressed={effectiveTab === "deduction-types"}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "deduction-types"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Deduction Types
+                </button>
+              )}
+              {canUploadTds && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("tds-upload")}
+                  aria-pressed={effectiveTab === "tds-upload"}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "tds-upload"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  TDS Upload
+                </button>
+              )}
             </div>
           </section>
 
@@ -1130,6 +1489,16 @@ export default function BulkUploadHub() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <ProductivityUpload />
             </section>
+          )}
+
+          {canManageDeductionTypes && effectiveTab === "deduction-types" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <DeductionTypesTab />
+            </section>
+          )}
+
+          {canUploadTds && effectiveTab === "tds-upload" && (
+            <TdsUploadTab />
           )}
 
           {effectiveTab === "master" && activeImportBatchId && (

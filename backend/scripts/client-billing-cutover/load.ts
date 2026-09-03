@@ -268,45 +268,31 @@ async function loadOneInvoice(
     const description = buildDescription(row.src_invoicedescription, row.src_invoicedeleteremarks);
     const invoiceStatus = mapInvoiceStatus(row.src_bill_no);
 
-    // Whether this legacy row already had a client_invoice header is checked BEFORE the upsert
-    // below, not inferred from the upsert's own affectedRows. affectedRows === 1 used to be
-    // read as "fresh INSERT ran" per MySQL's documented ON DUPLICATE KEY UPDATE convention
-    // (1 = inserted, 2 = updated, 0 = updated to an identical value) -- but this pool returns 1
-    // for an unchanged-value update too (confirmed empirically against this exact connection:
-    // re-running an identical ON DUPLICATE KEY UPDATE reports affectedRows=1, not 0), which
-    // this repo's mysql2 version/config combination evidently does not honor by default. That
-    // made every already-loaded row that re-runs to no actual change misreport as "loaded" --
-    // confirmed live 2026-09-02: a second run against 10,742 already-migrated invoices reported
-    // "loaded=10742, already_loaded=0". The line-item existence check below already protected
-    // real data from duplication regardless (it never depended on this flag being right), so
-    // nothing was ever actually double-written -- only the printed summary was wrong, which
-    // still matters: this pipeline is what a daily worker's logs are read to trust.
-    const [existingHeader] = await conn.execute<RowDataPacket[]>(
-      `SELECT 1 AS x FROM client_invoice WHERE legacy_id = ? LIMIT 1`,
-      [row.src_id],
-    );
-    const isFreshInsert = existingHeader.length === 0;
-
-    await conn.execute<ResultSetHeader>(INVOICE_INSERT_SQL, [
+    const [result] = await conn.execute<ResultSetHeader>(INVOICE_INSERT_SQL, [
       row.target_id, row.target_cost_centre_id, invoiceStatus, row.src_category, row.src_finance_year,
       row.src_month, invoiceDate, description, row.src_proforma_bill_no, row.src_bill_no,
       row.target_gst_type, row.target_apply_gst ?? 0, totalAmount, igstAmount, cgstAmount, sgstAmount,
       grandTotal, options.createdBy, row.src_id,
     ]);
 
-    // The line-item existence check stays regardless of isFreshInsert's accuracy -- belt and
-    // braces, and cheap (one indexed COUNT) next to the header write it guards.
-    const [existingLines] = await conn.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS c FROM client_invoice_line WHERE invoice_id = ?`,
-      [row.target_id],
-    );
-    const lineCount = Number((existingLines[0] as { c: number }).c);
-    if (lineCount === 0) {
-      await conn.execute(
-        `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
-         VALUES (?, ?, 'charge', ?, 1, ?, ?)`,
-        [randomUUID(), row.target_id, `Migrated historical invoice total (legacy id ${row.src_id})`, totalAmount, totalAmount],
+    // affectedRows === 1 -> fresh INSERT; === 2 -> ON DUPLICATE KEY UPDATE branch ran
+    // (MySQL's own documented convention for this exact idiom). Only insert the
+    // synthesized line item on a fresh row — an update-path re-run must never
+    // duplicate it.
+    const isFreshInsert = (result as ResultSetHeader).affectedRows === 1;
+    if (isFreshInsert) {
+      const [existingLines] = await conn.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS c FROM client_invoice_line WHERE invoice_id = ?`,
+        [row.target_id],
       );
+      const lineCount = Number((existingLines[0] as { c: number }).c);
+      if (lineCount === 0) {
+        await conn.execute(
+          `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
+           VALUES (?, ?, 'charge', ?, 1, ?, ?)`,
+          [randomUUID(), row.target_id, `Migrated historical invoice total (legacy id ${row.src_id})`, totalAmount, totalAmount],
+        );
+      }
     }
 
     await conn.commit();
@@ -349,31 +335,27 @@ async function loadOneCreditNote(
     const description = buildDescription(row.src_creditdescription, null);
     const creditStatus = mapCreditStatus(row.src_credit_approve);
 
-    // Same fix as loadOneInvoice above, for the same reason -- see its comment.
-    const [existingHeader] = await conn.execute<RowDataPacket[]>(
-      `SELECT 1 AS x FROM client_credit_note WHERE legacy_id = ? LIMIT 1`,
-      [row.src_id],
-    );
-    const isFreshInsert = existingHeader.length === 0;
-
-    await conn.execute<ResultSetHeader>(CREDIT_NOTE_INSERT_SQL, [
+    const [result] = await conn.execute<ResultSetHeader>(CREDIT_NOTE_INSERT_SQL, [
       row.target_id, row.target_invoice_id, row.target_cost_centre_id, row.src_category, row.src_finance_year,
       row.src_month, creditDate, description, row.src_credit_no, creditStatus,
       row.target_gst_type, row.target_apply_gst ?? 0, totalAmount, igstAmount, cgstAmount, sgstAmount,
       grandTotal, options.createdBy, row.src_id,
     ]);
 
-    const [existingLines] = await conn.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS c FROM client_credit_note_line WHERE credit_note_id = ?`,
-      [row.target_id],
-    );
-    const lineCount = Number((existingLines[0] as { c: number }).c);
-    if (lineCount === 0) {
-      await conn.execute(
-        `INSERT INTO client_credit_note_line (id, credit_note_id, particulars, qty, rate, amount)
-         VALUES (?, ?, ?, 1, ?, ?)`,
-        [randomUUID(), row.target_id, `Migrated historical credit note total (legacy id ${row.src_id})`, totalAmount, totalAmount],
+    const isFreshInsert = (result as ResultSetHeader).affectedRows === 1;
+    if (isFreshInsert) {
+      const [existingLines] = await conn.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS c FROM client_credit_note_line WHERE credit_note_id = ?`,
+        [row.target_id],
       );
+      const lineCount = Number((existingLines[0] as { c: number }).c);
+      if (lineCount === 0) {
+        await conn.execute(
+          `INSERT INTO client_credit_note_line (id, credit_note_id, particulars, qty, rate, amount)
+           VALUES (?, ?, ?, 1, ?, ?)`,
+          [randomUUID(), row.target_id, `Migrated historical credit note total (legacy id ${row.src_id})`, totalAmount, totalAmount],
+        );
+      }
     }
 
     await conn.commit();

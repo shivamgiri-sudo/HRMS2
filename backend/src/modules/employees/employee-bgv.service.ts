@@ -274,7 +274,7 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
   // view unable to drift from the BGV report screen and PDF.
   let score = reportRow?.bgv_score ?? 0;
   if (!score && checks.length > 0) {
-    score = await computeAndSaveScore(candidateId).then((r) => r.score).catch(() => 0);
+    score = await computeAndSaveScore(candidateId).catch(() => 0);
   }
 
   // Determine missing mandatory checks

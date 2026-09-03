@@ -72,13 +72,7 @@ function makeState(opts: {
   headerActive?: boolean;
   lines?: FakeLine[];
   costCentres?: Array<{ id: string; branch_id: string; active_status: number }>;
-  vendors?: Array<{
-    id: string; vendor_name: string; is_active: number;
-    // GSTIN capture (2026-09-02): the fake router returns the row verbatim, so a test that
-    // wants to exercise the poisoned-value path sets gstin_share_count directly rather than
-    // simulating the real self-join subquery resolveCanonicalVendor issues in production.
-    gst_number?: string | null; gstin_share_count?: number;
-  }>;
+  vendors?: Array<{ id: string; vendor_name: string; is_active: number }>;
   subheadClosed?: boolean;
 }) {
   const inserted: Array<{ sql: string; params: unknown[] }> = [];
@@ -209,89 +203,6 @@ describe("Field-level validation", () => {
     const result = await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
     expect(result.id).toBeTruthy();
     expect(stateRef.current.inserted).toHaveLength(1);
-  });
-});
-
-describe("Vendor GSTIN capture (2026-09-02)", () => {
-  // grn_request.vendor_gstin was empty on 99.96% of GRNs because nothing at creation time ever
-  // wrote it — see resolveCanonicalVendor's own comment. These pin what now gets written into
-  // the INSERT's vendor_gstin column (12th bound param on the budgeted-path INSERT).
-
-  it("captures a checksum-valid, non-shared vendor GSTIN", async () => {
-    stateRef.current = makeState({
-      lines: [budgetedLine()],
-      vendors: [{
-        id: "vendor-1", vendor_name: "Acme", is_active: 1,
-        gst_number: "09AAACM5866H1Z6", gstin_share_count: 1,
-      }],
-    });
-    const { grnService } = await import("../grn.service.js");
-    await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
-    expect(stateRef.current.inserted[0].params).toContain("09AAACM5866H1Z6");
-  });
-
-  it("drops a GSTIN that fails the statutory checksum", async () => {
-    stateRef.current = makeState({
-      lines: [budgetedLine()],
-      vendors: [{
-        id: "vendor-1", vendor_name: "Acme", is_active: 1,
-        // Real, live example: passes the structural regex, fails the check digit.
-        gst_number: "24AAACV2808CAZV", gstin_share_count: 1,
-      }],
-    });
-    const { grnService } = await import("../grn.service.js");
-    await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
-    expect(stateRef.current.inserted[0].params).not.toContain("24AAACV2808CAZV");
-  });
-
-  it('drops "na" and other non-GSTIN placeholder text', async () => {
-    stateRef.current = makeState({
-      lines: [budgetedLine()],
-      vendors: [{ id: "vendor-1", vendor_name: "Acme", is_active: 1, gst_number: "na", gstin_share_count: 1 }],
-    });
-    const { grnService } = await import("../grn.service.js");
-    await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
-    expect(stateRef.current.inserted[0].params).not.toContain("na");
-    expect(stateRef.current.inserted[0].params).not.toContain("NA");
-  });
-
-  it("drops a checksum-valid GSTIN shared across many unrelated vendors — a real, live example: "
-    + "24AAACS4457Q2ZV is stamped on 530 of vendor_master's 1,425 populated rows, across vendors "
-    + "with no relationship to each other", async () => {
-    stateRef.current = makeState({
-      lines: [budgetedLine()],
-      vendors: [{
-        id: "vendor-1", vendor_name: "Acme", is_active: 1,
-        gst_number: "24AAACS4457Q2ZV", gstin_share_count: 530,
-      }],
-    });
-    const { grnService } = await import("../grn.service.js");
-    await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
-    expect(stateRef.current.inserted[0].params).not.toContain("24AAACS4457Q2ZV");
-  });
-
-  it("still trusts a GSTIN shared by a small, plausible number of vendor rows (a real head-office/branch pair)", async () => {
-    stateRef.current = makeState({
-      lines: [budgetedLine()],
-      vendors: [{
-        id: "vendor-1", vendor_name: "Acme Branch 2", is_active: 1,
-        gst_number: "09AAACM5866H1Z6", gstin_share_count: 2,
-      }],
-    });
-    const { grnService } = await import("../grn.service.js");
-    await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
-    expect(stateRef.current.inserted[0].params).toContain("09AAACM5866H1Z6");
-  });
-
-  it("is null, not a crash, when the vendor has no gst_number at all", async () => {
-    stateRef.current = makeState({
-      lines: [budgetedLine()],
-      vendors: [{ id: "vendor-1", vendor_name: "Acme", is_active: 1 }],
-    });
-    const { grnService } = await import("../grn.service.js");
-    const result = await grnService.createDraft(VALID_PAYLOAD, "u1", "branch_admin");
-    expect(result.id).toBeTruthy();
-    expect(stateRef.current.inserted[0].params).toContain(null);
   });
 });
 

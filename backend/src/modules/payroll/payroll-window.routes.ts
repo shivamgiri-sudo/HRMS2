@@ -84,15 +84,51 @@ router.patch('/runs/:id/tds-mode', requireRole('payroll', 'super_admin', 'payrol
   return res.json({ success: true, message: `TDS mode set to ${tds_mode}` });
 }));
 
+// ── GET /api/payroll/runs/:id/tds-upload-template ────────────────────────────
+// Download CSV template: Emp Code, Employee Name, Branch, Tax Amount
+router.get('/runs/:id/tds-upload-template', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const runId = req.params.id;
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`, [runId]
+  );
+  const run = (runRows[0] as any);
+  if (!run) return res.status(404).json({ success: false, message: 'Run not found' });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+            COALESCE(bm.branch_name, '') AS branch,
+            COALESCE(srmt.tds_amount, 0) AS tax_amount
+     FROM salary_prep_line spl
+     JOIN employees e ON e.id = spl.employee_id
+     LEFT JOIN branch_master bm ON bm.id = e.branch_id
+     LEFT JOIN salary_run_manual_tds srmt ON srmt.run_id = spl.run_id AND srmt.employee_id = spl.employee_id
+     WHERE spl.run_id = ?
+     ORDER BY e.employee_code`,
+    [runId]
+  );
+
+  const lines = ['Emp Code,Employee Name,Branch,Tax Amount'];
+  for (const r of rows as RowDataPacket[]) {
+    const name = String(r.employee_name ?? '').replace(/,/g, ' ');
+    const branch = String(r.branch ?? '').replace(/,/g, ' ');
+    lines.push(`${r.employee_code},${name},${branch},${r.tax_amount}`);
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="tds_upload_${run.run_month}.csv"`);
+  return res.send(lines.join('\n'));
+}));
+
 // ── POST /api/payroll/runs/:id/manual-tds ────────────────────────────────────
-// Upsert manual TDS amounts for employees in a run. Body: array of { employee_id, tds_amount, remarks? }
+// Upsert manual TDS amounts. Body: array of { employee_id | employee_code, tds_amount, remarks? }
 router.post('/runs/:id/manual-tds', requireRole('payroll', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
   const actorUserId = req.authUser!.id;
-  const entries = req.body as Array<{ employee_id: string; tds_amount: number; remarks?: string }>;
+  const entries = req.body as Array<{ employee_id?: string; employee_code?: string; tds_amount: number; remarks?: string }>;
 
   if (!Array.isArray(entries) || entries.length === 0) {
-    return res.status(400).json({ success: false, message: 'Body must be a non-empty array of {employee_id, tds_amount}' });
+    return res.status(400).json({ success: false, message: 'Body must be a non-empty array of {employee_id|employee_code, tds_amount}' });
   }
 
   const [runRows] = await db.execute<RowDataPacket[]>(
@@ -104,20 +140,42 @@ router.post('/runs/:id/manual-tds', requireRole('payroll', 'super_admin'), h(asy
     return res.status(409).json({ success: false, message: `Run is ${run.status}` });
   }
 
+  // Resolve employee_codes to employee_ids for CSV-uploaded rows
+  const codeEntries = entries.filter((e) => !e.employee_id && e.employee_code);
+  const codeToId = new Map<string, string>();
+  if (codeEntries.length > 0) {
+    const codes = [...new Set(codeEntries.map((e) => e.employee_code!.toUpperCase()))];
+    const placeholders = codes.map(() => '?').join(',');
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, UPPER(employee_code) AS code FROM employees WHERE UPPER(employee_code) IN (${placeholders})`,
+      codes,
+    );
+    for (const r of empRows as RowDataPacket[]) codeToId.set(r.code, r.id);
+  }
+
   let upserted = 0;
+  const notFound: string[] = [];
   for (const entry of entries) {
+    const employeeId = entry.employee_id ?? codeToId.get((entry.employee_code ?? '').toUpperCase());
+    if (!employeeId) {
+      notFound.push(entry.employee_code ?? 'unknown');
+      continue;
+    }
     const amt = Math.max(0, Number(entry.tds_amount) || 0);
     await db.execute(
       `INSERT INTO salary_run_manual_tds (id, run_id, employee_id, tds_amount, remarks, uploaded_by)
        VALUES (UUID(), ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE tds_amount = VALUES(tds_amount), remarks = VALUES(remarks),
                                uploaded_by = VALUES(uploaded_by), updated_at = NOW()`,
-      [runId, entry.employee_id, amt, entry.remarks ?? null, actorUserId]
+      [runId, employeeId, amt, entry.remarks ?? null, actorUserId]
     );
     upserted++;
   }
 
-  return res.json({ success: true, message: `${upserted} TDS entries saved. Recalculate the run to apply them.` });
+  const msg = notFound.length
+    ? `${upserted} saved; ${notFound.length} employee codes not found: ${notFound.slice(0, 5).join(', ')}`
+    : `${upserted} TDS entries saved. Recalculate the run to apply them.`;
+  return res.json({ success: true, message: msg });
 }));
 
 // ── GET /api/payroll/runs/:id/manual-tds ─────────────────────────────────────

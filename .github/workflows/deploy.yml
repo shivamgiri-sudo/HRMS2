@@ -347,40 +347,19 @@ jobs:
           # A deploy that waits too long costs minutes. A deploy that gives up too early rolls
           # back a good release and leaves code and schema at different versions, which is the
           # more expensive mistake, so the budget is generous rather than tight.
-          # `--max-time 15`, not 3. This is the change that actually mattered on 2026-09-02, when
-          # three deploys in a row failed here and rolled back — leaving production on 1fbb8218
-          # while main was 40+ commits ahead. The backend was NOT unhealthy: measured directly on
-          # the box while the gate was failing, /api/health answered 200. It was answering SLOWLY.
-          #
-          # GET /api/health serves the cached schema state on the happy path, but falls back to a
-          # live verifySchemaVersion() whenever that cached state is invalid — a fresh unpooled
-          # connection plus a walk of 450+ migration files, tens of seconds. Every 3s curl gave up
-          # mid-answer and, because the gate polls every 2s, each timed-out probe started another
-          # one, so the endpoint never got to finish a single check. A 3-second ceiling on a probe
-          # whose slow path is measured in tens of seconds does not test liveness, it tests
-          # latency, and it fails exactly when a release has schema work to do — the case this
-          # gate exists to protect.
-          #
-          # 120 attempts of curl(<=15s)+sleep(2s). The floor is ~4 minutes if every probe returns
-          # instantly and the ceiling is ~30 minutes if every one runs to its timeout; in practice
-          # a boot applying migrations lands in the middle. The asymmetry from the note above still
-          # holds — waiting too long costs minutes, giving up too early rolls back a good release
-          # and leaves code and schema at different versions — so the budget stays generous.
           wait_for_backend_health() {
-            for attempt in $(seq 1 120); do
-              if curl -fsS --max-time 15 http://127.0.0.1:5055/api/health >/dev/null; then
+            for attempt in $(seq 1 90); do
+              if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
                 if [ "$attempt" -gt 30 ]; then
                   echo "Backend became healthy on attempt ${attempt} — slower than the old 30-attempt budget."
                   echo "That is normal when this release applies migrations at boot."
                 fi
                 return 0
               fi
-              echo "Waiting for backend health (${attempt}/120)"
+              echo "Waiting for backend health (${attempt}/90)"
               sleep 2
             done
-            echo "Backend did not become healthy within 120 attempts."
-            echo "Last response from /api/health (no timeout, for the record):"
-            curl -s -o /dev/null -w 'status=%{http_code} time=%{time_total}s\n' http://127.0.0.1:5055/api/health || true
+            echo "Backend did not become healthy within 90 attempts (~5 minutes)."
             return 1
           }
 

@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { isValidGstin } from "../gst/gst-export.service.js";
 import { resolvePendingWith } from "./finance-workflow-role.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
@@ -180,34 +179,13 @@ async function writeGrnAudit(
   });
 }
 
-/**
- * Resolves a vendor for a GRN, and — since 2026-09-02 — that vendor's GSTIN, when it can
- * actually be trusted. This is the fix for the GRN side of GSTR-3B Table 4 / ITC being
- * unclaimable: grn_request.vendor_gstin was empty on 99.96% of rows because nothing at
- * creation time ever populated it (it was only ever written later, by the AI-extraction
- * confirm step or a manual edit — used on essentially nothing: 2 confirmed extractions,
- * ever, out of 85,104 GRNs).
- *
- * vendor_master.gst_number LOOKS 78% populated (1,425/1,829), which is not the same as
- * trustworthy — checked live: a single value, `24AAACS4457Q2ZV`, is stamped on 530 of those
- * 1,425 rows across completely unrelated vendors (individuals, ad agencies, security
- * companies — not one legal entity's branches). That is a bulk-import/default-value defect,
- * not 530 businesses sharing a registration, and copying it onto every future GRN for those
- * vendors would make the ITC problem worse, not better — a confident-looking wrong GSTIN is a
- * worse failure than an honestly empty one.
- *
- * So a vendor's gst_number is only trusted here when it passes the same statutory checksum
- * the GST export already validates against (isValidGstin — modulus-36 check digit) AND is not
- * shared by more than a couple of vendor_master rows (a real head-office/branch relationship
- * can legitimately share one registration; hundreds of unrelated vendors cannot).
- */
 async function resolveCanonicalVendor(
   grnType: GrnType,
   requestedVendorId: string | undefined,
   preferredVendorId: string | null | undefined
 ) {
   if (grnType === "imprest") {
-    return { vendorId: null, vendorName: null, vendorGstin: null as string | null };
+    return { vendorId: null, vendorName: null };
   }
 
   const vendorId = requestedVendorId?.trim() || preferredVendorId || null;
@@ -216,10 +194,9 @@ async function resolveCanonicalVendor(
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT vm.id, vm.vendor_name, vm.is_active, vm.gst_number,
-            (SELECT COUNT(*) FROM vendor_master vm2 WHERE vm2.gst_number = vm.gst_number) AS gstin_share_count
-       FROM vendor_master vm
-      WHERE vm.id = ?
+    `SELECT id, vendor_name, is_active
+       FROM vendor_master
+      WHERE id = ?
       LIMIT 1`,
     [vendorId]
   );
@@ -229,16 +206,9 @@ async function resolveCanonicalVendor(
     throw new Error("Selected vendor is inactive and cannot be used for a GRN");
   }
 
-  const rawGstin = String(vendor.gst_number ?? "").trim().toUpperCase();
-  const vendorGstin =
-    rawGstin && isValidGstin(rawGstin) && Number(vendor.gstin_share_count ?? 0) <= 2
-      ? rawGstin
-      : null;
-
   return {
     vendorId: String(vendor.id),
     vendorName: String(vendor.vendor_name),
-    vendorGstin,
   };
 }
 
@@ -432,12 +402,12 @@ async function createUnbudgetedDraft(
   await db.execute(
     `INSERT INTO grn_request
      (id, grn_number, grn_type, branch_id, company_code, process_id, cost_centre_id, cost_class,
-      vendor_id, vendor_name, vendor_gstin, head, sub_head, quantity, unit, unit_rate,
+      vendor_id, vendor_name, head, sub_head, quantity, unit, unit_rate,
       tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
       amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
       bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
       financial_year, budget_id, budget_line_id, is_unbudgeted, created_by, created_at)
-     VALUES (?,NULL,?,?,?,NULL,?,'direct',?,?,?,?,?,?,'amount',0,
+     VALUES (?,NULL,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
              'exclusive',0,'cgst_sgst',100,
              0,0,0,0,0,
              ?,?,?,?,?,?,'draft',?,NULL,NULL,1,?,NOW())`,
@@ -449,7 +419,6 @@ async function createUnbudgetedDraft(
       payload.costCentreId,
       vendor.vendorId,
       vendor.vendorName,
-      vendor.vendorGstin,
       head,
       subHead,
       Number(payload.quantity),
@@ -688,12 +657,12 @@ export const grnService = {
     await db.execute(
       `INSERT INTO grn_request
        (id, grn_number, grn_type, branch_id, company_code, process_id, cost_centre_id, cost_class,
-        vendor_id, vendor_name, vendor_gstin, head, sub_head, quantity, unit, unit_rate,
+        vendor_id, vendor_name, head, sub_head, quantity, unit, unit_rate,
         tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
         amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
         bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
         financial_year, budget_id, budget_line_id, created_by, created_at)
-       VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
+       VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
       [
         id,
         payload.grnType,
@@ -704,7 +673,6 @@ export const grnService = {
         costClass,
         vendor.vendorId,
         vendor.vendorName,
-        vendor.vendorGstin,
         budgetLine.head,
         budgetLine.sub_head ?? "",
         quantity,

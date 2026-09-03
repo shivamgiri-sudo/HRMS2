@@ -159,9 +159,7 @@ describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
 
     const grnService = read("src/modules/finance/grn.service.ts");
     expect(grnService).toContain('if (grnType === "imprest") {');
-    // vendorGstin joined the return shape 2026-09-02 (GRN vendor GSTIN capture) — imprest still
-    // has no vendor at all, so it stays null alongside the other two.
-    expect(grnService).toContain("return { vendorId: null, vendorName: null, vendorGstin: null as string | null };");
+    expect(grnService).toContain("return { vendorId: null, vendorName: null };");
   });
 
   it("the approval queue's unbudgeted banner is already grnType-agnostic", () => {
