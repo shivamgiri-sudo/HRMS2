@@ -55,7 +55,7 @@ function makeExecute(opts: { lines: Line[]; allocated?: AllocatedStatuses[] }) {
     // spendRows — real grn_cost_allocation rows. Deliberately empty: this test is only about
     // lines with NO (or partial) allocation rows; the measured half is covered elsewhere.
     if (s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head")) return [[], []];
-    if (s.includes("g.funding_cost_centre_id AS funding_cost_centre_id")) return [[], []];
+    if (s.includes("AS funding_cost_centre_id")) return [[], []];
 
     // simpleGrnRows — the fallback under test.
     if (s.includes("CASE WHEN NOT EXISTS")) {

@@ -69,14 +69,19 @@ function makeExecute(opts: {
       return [[...groups.values()], []];
     }
 
-    // fundedElsewhereRows: grouped by (cost_centre_id, funding_cost_centre_id), only the spilled subset.
-    if (s.includes("g.funding_cost_centre_id AS funding_cost_centre_id")) {
+    // fundedElsewhereRows: grouped by (cost_centre_id, funding centre), only the spilled subset.
+    // Mirrors the corrected SQL: who paid is COALESCE(funding_cost_centre_id, line.cost_centre_id),
+    // compared NULL-safely (MySQL <=>). Reading the column alone and calling NULL "the pool" was
+    // the 2026-09-03 bug — see the service's own comment on that query.
+    if (s.includes("AS funding_cost_centre_id")) {
       const groups = new Map<string, { cost_centre_id: string | null; funding_cost_centre_id: string | null; reserved: number; consumed: number }>();
       for (const a of allocations) {
-        const spilled = a.funding_cost_centre_id == null || a.funding_cost_centre_id !== a.cost_centre_id || a.cost_centre_id == null;
+        const line = lines.find((l) => l.id === a.budget_line_id)!;
+        const funder = a.funding_cost_centre_id ?? line.cost_centre_id;
+        const spilled = !(funder === a.cost_centre_id || (funder == null && a.cost_centre_id == null));
         if (!spilled) continue;
-        const key = JSON.stringify([a.cost_centre_id, a.funding_cost_centre_id]);
-        const g = groups.get(key) ?? { cost_centre_id: a.cost_centre_id, funding_cost_centre_id: a.funding_cost_centre_id, reserved: 0, consumed: 0 };
+        const key = JSON.stringify([a.cost_centre_id, funder]);
+        const g = groups.get(key) ?? { cost_centre_id: a.cost_centre_id, funding_cost_centre_id: funder, reserved: 0, consumed: 0 };
         if (a.lifecycle_status === "reserved") g.reserved += a.pnl_cost_amount;
         else g.consumed += a.pnl_cost_amount;
         groups.set(key, g);
@@ -114,6 +119,44 @@ describe("no spill — the new fields are present and zero, nothing else changes
     expect(ccA.consumed).toBe(1000);
     expect(ccA.fundedElsewhere).toEqual({ reserved: 0, consumed: 0 });
     expect(ccA.fundingSources).toEqual([]);
+  });
+});
+
+describe("NULL funding_cost_centre_id is 'not captured', never 'the pool paid'", () => {
+  /**
+   * The live shape, and the bug this rule was corrected for on 2026-09-03.
+   *
+   * `funding_cost_centre_id` was added by migration 1630 with NO backfill, and that migration's
+   * own header says NULL there means "not captured". The first version of this query read NULL as
+   * "the branch-common pool paid", so every cost centre with any spend was reported as entirely
+   * funded elsewhere: 2 of 1,860 live allocation rows had the column set, and BSS/BO/NOIDA-2/576
+   * carried a "₹16,30,832.01 funded elsewhere" badge against budget lines it owns outright.
+   */
+  it("does not flag a spill when the column is NULL but the funding line is the centre's OWN", async () => {
+    execute.mockImplementation(makeExecute({
+      lines: [{ id: "line-A", cost_centre_id: "cc-A", head: "Rent", sub_head: null, gross_amount: 10000 }],
+      allocations: [{ cost_centre_id: "cc-A", funding_cost_centre_id: null, budget_line_id: "line-A", lifecycle_status: "consumed", pnl_cost_amount: 1630832.01 }],
+      costCentres: [{ id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" }],
+    }));
+    const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
+    const ccA = rows.find((r) => r.costCentreId === "cc-A")!;
+    expect(ccA.consumed).toBe(1630832.01);
+    expect(ccA.fundedElsewhere).toEqual({ reserved: 0, consumed: 0 });
+    expect(ccA.fundingSources).toEqual([]);
+  });
+
+  /** Unattributed spend on a branch-level line: with no incurring centre there is no "elsewhere"
+   *  to have been funded from, and that money is already reported by the isUnattributed row. */
+  it("does not flag the unattributed bucket drawing a branch-level line", async () => {
+    execute.mockImplementation(makeExecute({
+      lines: [{ id: "line-pool", cost_centre_id: null, head: "Electricity", sub_head: null, gross_amount: 50000 }],
+      allocations: [{ cost_centre_id: null, funding_cost_centre_id: null, budget_line_id: "line-pool", lifecycle_status: "consumed", pnl_cost_amount: 31286.94 }],
+      costCentres: [],
+    }));
+    const { rows } = await budgetCostCentreUtilizationService.get("budget-1");
+    const unattributed = rows.find((r) => r.isUnattributed)!;
+    expect(unattributed.consumed).toBe(31286.94);
+    expect(unattributed.fundedElsewhere).toEqual({ reserved: 0, consumed: 0 });
   });
 });
 

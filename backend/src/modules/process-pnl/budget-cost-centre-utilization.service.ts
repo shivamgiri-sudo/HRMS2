@@ -46,10 +46,17 @@ import { db } from "../../db/mysql.js";
  * of the one fact migration 1630 exists to preserve: which budget actually absorbed the money.
  *
  * `fundedElsewhere` is additive, not a new total: it is the portion of THIS row's own
- * reserved+consumed whose `funding_cost_centre_id` differs from `cost_centre_id` (funded by a
- * named sibling centre) or is NULL on a real allocation (funded from the branch-common pool).
+ * reserved+consumed that a budget OTHER than this cost centre's own paid for — a named sibling
+ * centre, or the branch-common pool when the funding line is branch-level.
  * `budgeted`/`reserved`/`consumed`/`available` above are completely unchanged by this addition —
  * a reader who ignores the new field sees exactly the report that existed before it.
+ *
+ * Who paid is read as `COALESCE(funding_cost_centre_id, finance_budget_line.cost_centre_id)`, NOT
+ * from the column alone. Migration 1630 added that column with no backfill and its own header says
+ * NULL there means "not captured" — but the first version of this query read NULL as "the branch
+ * pool paid". Corrected 2026-09-03: only 2 of 1,860 live allocation rows had the column set, so
+ * every cost centre with spend was reported as entirely funded elsewhere. The funding line's own
+ * cost centre is the same fact and is always populated. See the query below for the detail.
  */
 
 export type BudgetCostCentreHeadRow = {
@@ -82,9 +89,9 @@ export type BudgetCostCentreRow = {
   reserved: number;
   consumed: number;
   available: number;
-  /** Portion of reserved+consumed above whose funding_cost_centre_id differs from this row's own
-   *  cost_centre_id (or is NULL on a real allocation — the branch pool). Additive, not a new
-   *  total: reserved/consumed already include this money: it always did, under the old
+  /** Portion of reserved+consumed above that a budget OTHER than this row's own cost centre paid
+   *  for — the funding line belongs to a sibling centre, or is branch-level (the pool). Additive,
+   *  not a new total: reserved/consumed already include this money: it always did, under the old
    *  attribution-only view. This says how much of it this cost centre's OWN budget did not pay
    *  for. Zero for every row until a GRN actually spills across cost centres or draws the pool. */
   fundedElsewhere: { reserved: number; consumed: number };
@@ -192,14 +199,31 @@ export const budgetCostCentreUtilizationService = {
       [budgetId]
     );
 
-    // Same rows as spendRows, split out where funding_cost_centre_id names a DIFFERENT centre
-    // than cost_centre_id (a sibling's budget paid) or is NULL (the branch pool paid) — see this
-    // file's own "FUNDED-ELSEWHERE" banner above. Deliberately a separate query rather than an
-    // extra column on spendRows: this one is grouped by (incurring centre, FUNDING centre) so the
-    // per-source breakdown below can be built directly, and it only ever contains the subset that
-    // actually spilled — most cost centres will have zero rows here.
+    // Same rows as spendRows, split out where the budget that PAID is not this row's own cost
+    // centre — see this file's own "FUNDED-ELSEWHERE" banner above. Deliberately a separate query
+    // rather than an extra column on spendRows: this one is grouped by (incurring centre, FUNDING
+    // centre) so the per-source breakdown below can be built directly, and it only ever contains
+    // the subset that actually spilled — most cost centres will have zero rows here.
+    //
+    // WHO PAID is `COALESCE(g.funding_cost_centre_id, l.cost_centre_id)`, not the column alone.
+    // The column records the funding line's owner at save time, but migration 1630 shipped with
+    // no backfill and its own header states that NULL there means "not captured", NOT "the branch
+    // pool paid". Reading NULL as the pool was wrong on essentially the whole register: on
+    // 2026-09-03 only 2 of 1,860 live allocation rows had the column set, so EVERY cost centre
+    // with any spend wore a "funded elsewhere" badge equal to its own entire Reserved+Consumed —
+    // BSS/BO/NOIDA-2/576 was flagged for ₹16,30,832.01 against budget lines it owns outright.
+    // finance_budget_line.cost_centre_id is the same fact, is always populated, and needs no
+    // backfill; the column stays as the override for the re-funding path in grn-smart.service.ts,
+    // which repoints a row at a different line after the reviewer signed off.
+    //
+    // NULL-safe `<=>` rather than `<>`: a branch-level funding line (l.cost_centre_id IS NULL) is
+    // a genuine pool draw and must be caught, and a plain inequality against NULL is never true.
+    // It also means the unattributed bucket (cost_centre_id IS NULL) drawing a branch-level line
+    // no longer counts as "funded elsewhere" — with no incurring centre there is no "elsewhere"
+    // to be funded from, and that row is already reported as the data-quality figure it is.
     const [fundedElsewhereRows] = await db.query<RowDataPacket[]>(
-      `SELECT g.cost_centre_id AS cost_centre_id, g.funding_cost_centre_id AS funding_cost_centre_id,
+      `SELECT g.cost_centre_id AS cost_centre_id,
+              COALESCE(g.funding_cost_centre_id, l.cost_centre_id) AS funding_cost_centre_id,
               SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,
               SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.pnl_cost_amount ELSE 0 END) AS consumed
          FROM grn_cost_allocation g
@@ -207,10 +231,8 @@ export const budgetCostCentreUtilizationService = {
         WHERE l.budget_id = ?
           AND g.lifecycle_status IN ('reserved', 'consumed')
           AND g.budget_line_id IS NOT NULL
-          AND (g.funding_cost_centre_id IS NULL
-               OR g.funding_cost_centre_id <> g.cost_centre_id
-               OR g.cost_centre_id IS NULL)
-        GROUP BY g.cost_centre_id, g.funding_cost_centre_id`,
+          AND NOT (COALESCE(g.funding_cost_centre_id, l.cost_centre_id) <=> g.cost_centre_id)
+        GROUP BY g.cost_centre_id, COALESCE(g.funding_cost_centre_id, l.cost_centre_id)`,
       [budgetId]
     );
 
