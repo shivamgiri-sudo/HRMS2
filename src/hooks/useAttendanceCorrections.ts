@@ -211,7 +211,11 @@ export function useRejectOverride() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ overrideId, reason }: { overrideId: string; reason: string }) => {
-      await hrmsApi.post(`/api/attendance/manual-overrides/${overrideId}/reject`, { rejection_reason: reason });
+      // The endpoint reads `reason`, not `rejection_reason` — it stores it INTO the
+      // rejection_reason column, which is where the wrong field name came from. Sending the
+      // column name produced "reason is mandatory and must be at least 10 characters" on a
+      // request that carried a perfectly good reason.
+      await hrmsApi.post(`/api/attendance/manual-overrides/${overrideId}/reject`, { reason });
     },
     onSuccess: () => invalidateAttendance(qc),
   });

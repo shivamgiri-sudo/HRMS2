@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAttendanceDailyRecords, useAttendanceSummary } from "@/hooks/useAttendanceHub";
 import { useCanCorrectAttendance } from "@/hooks/useAttendanceCorrections";
 import { ChangeAttendanceStatusDialog } from "@/components/attendance/ChangeAttendanceStatusDialog";
+import { PendingOverridesPanel } from "@/components/attendance/PendingOverridesPanel";
 import { formatTime24 } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -104,6 +105,11 @@ export function AttendanceTab({ employeeId, employeeLabel }: Props) {
 
   return (
     <div className="space-y-4">
+      {/* Changes that were recorded but never applied — a closed payroll month waiting on a
+          Super Admin, or an approve that failed. Without this they are invisible AND they
+          block a retry on the same day, which is a dead end. */}
+      <PendingOverridesPanel employeeId={employeeId} enabled={canCorrect} />
+
       {/* Month navigator + view toggle */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
