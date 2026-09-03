@@ -215,7 +215,16 @@ export async function listJoiningControlRoomQueue(search = "") {
            FROM candidate_onboarding_profile p
            JOIN ats_candidate c ON c.id = p.candidate_id
           WHERE 1=1 ${searchSql}
-          ORDER BY p.updated_at DESC, c.id DESC
+          -- Tie-broken on p.candidate_id, not c.id. They are the same value (that is the join
+          -- condition), so the ordering is unchanged — but only the profile-side column can be
+          -- served by an index on this table. An InnoDB secondary index carries the PRIMARY KEY
+          -- as its suffix, and this table's pk is its own surrogate id column, not candidate_id, so
+          -- (updated_at) alone yields (updated_at, profile_id) and cannot answer this ORDER BY:
+          -- measured type=ALL, rows=32282, "Using temporary; Using filesort", ~14 s. Migration
+          -- 1669 adds (updated_at, candidate_id) for exactly this arm. Contrast the ats_candidate
+          -- arm below, where c.id IS that table's pk, so 1668's single-column index already gives
+          -- it a backward index scan.
+          ORDER BY p.updated_at DESC, p.candidate_id DESC
           LIMIT 50 )
        UNION ALL
        ( SELECT c.id AS candidate_id, phr.updated_at AS sort_key

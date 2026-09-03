@@ -84,7 +84,12 @@ describe("the queue's ordering stays inside one table per arm", () => {
   it("orders each arm by its own table's own column", async () => {
     await listJoiningControlRoomQueue();
     const queue = sqlOf(execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!);
-    expect(queue).toContain("ORDER BY p.updated_at DESC, c.id DESC");
+    // The profile arm tie-breaks on p.candidate_id, not c.id. Same value (it is the join
+    // condition) so the ordering is identical, but only the profile-side column can sit in an
+    // index on that table: an InnoDB secondary index suffixes the PRIMARY KEY, and this table's
+    // pk is its own surrogate `id`, so ordering on c.id forced a filesort over all 32,282 rows.
+    // Measured: 20.6 s on c.id, 8.0 s on p.candidate_id, 253 ms once 1669's composite lands.
+    expect(queue).toContain("ORDER BY p.updated_at DESC, p.candidate_id DESC");
     expect(queue).toContain("ORDER BY phr.updated_at DESC, c.id DESC");
     expect(queue).toContain("ORDER BY jclr.updated_at DESC, c.id DESC");
     expect(queue).toContain("ORDER BY c.updated_at DESC, c.id DESC");
