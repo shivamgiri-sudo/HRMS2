@@ -74,6 +74,29 @@ function num(value: unknown): number | null {
 }
 
 /**
+ * Name whatever currently holds a locked attendance row.
+ *
+ * "Locked by a correction or payroll process" told the reviewer their reversal did nothing
+ * and gave them no way forward — reported live on 2026-09-03, where an approved leave and an
+ * approved regularization sat on the SAME day and the regularization held the lock, so
+ * discarding the leave silently changed nothing and read as an error. The row already
+ * carries who took it; saying so turns a dead end into the next step.
+ */
+function describeLockHolder(adr: any): string {
+  const trim = (v: unknown) => String(v ?? "").trim().slice(0, 80);
+
+  if (adr?.regularization_id) {
+    return "an approved regularization or attendance dispute on the same day — discard that one first";
+  }
+  if (adr?.override_by) {
+    const why = trim(adr.override_reason);
+    return why ? `a manual attendance change (${why})` : "a manual attendance change";
+  }
+  const reason = trim(adr?.status_change_reason);
+  return reason ? `another correction (${reason})` : "another correction or a payroll process";
+}
+
+/**
  * Decide, without writing anything, how one regularization/dispute date is put
  * back. Preview and execution both call this, so what the dialog promises and
  * what the transaction does cannot drift apart.
@@ -102,7 +125,7 @@ export function planRegularizationRestore(
   }
   if (Number(adr.is_locked ?? 0) === 1 && !ownedByThis) {
     return { ...base, mode: "skip_locked", restoredStatus: currentStatus, restoredLwp: currentLwp,
-      note: "Attendance row is locked by another correction; it was left untouched." };
+      note: `Attendance row is locked by ${describeLockHolder(adr)}; it was left untouched.` };
   }
 
   if (snapshot) {
@@ -155,7 +178,7 @@ export function planLeaveRestore(
   }
   if (Number(adr.is_locked ?? 0) === 1) {
     return { ...base, mode: "skip_locked", restoredStatus: currentStatus, restoredLwp: currentLwp,
-      note: "Attendance row is locked by a correction or payroll process; it was left untouched." };
+      note: `Attendance row is locked by ${describeLockHolder(adr)}; it was left untouched.` };
   }
   // Only days the approval actually marked are reverted. A day already changed to
   // something else since is left alone.
