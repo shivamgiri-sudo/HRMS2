@@ -186,6 +186,19 @@ describe("migration manifest — duplicates", () => {
     // portal agent while 1641_deactivate_test_slabs_and_deduplicate_packages.sql
     // already exists. Neither is renamed — both are applied by filename in
     // schema_migrations and renaming an applied migration re-runs it.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(65);
+    //
+    // 65 -> 67 (2026-09-03): 1652_gst_tally_export_page_access.sql and
+    // 1653_bgv_page_access_hr_variants.sql were registered against the existing
+    // 1652_employee_attendance_exception_bucket.sql and
+    // 1653_payroll_payable_days_override.sql. Same shape as every collision
+    // above: concurrent sessions took the same next-available number. These two
+    // are not new work — both are ALREADY APPLIED on production (verified in
+    // schema_migrations, 2026-09-03) and were simply never added to the
+    // manifest, which meant a fresh install or a DR restore would have rebuilt a
+    // database where the GST/Tally Export page and the BGV Verification Center
+    // were invisible to the roles that own them. Renaming them to free numbers
+    // is the one thing that would break: schema_migrations keys on the filename,
+    // so a renamed file reads as never-applied and runs again.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(67);
   });
 });

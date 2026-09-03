@@ -343,25 +343,32 @@ export const gstExportService = {
   },
 
   /**
-   * The registrations a batch can actually be generated for — every distinct (entity, GSTIN)
-   * branch_master currently carries a real GSTIN for, with the branch count and most recent
-   * invoice date behind each so the picker shows which registrations are live, not just which
-   * ones exist. Exists so the frontend never hardcodes a GSTIN: the moment a new one is
-   * backfilled (Delhi's, eventually), it appears here with no frontend change.
+   * The registrations a return can be prepared for: one row per distinct GSTIN.
+   *
+   * The frontend has always called GET /api/gst/registrations to fill its picker, and
+   * gstExportApi.ts documents this GROUP BY as the shape it expects — but the route and this
+   * method were never written, so the call fell through to the catch-all and answered 401.
+   * With an empty picker there is no registration to generate a batch for, which makes the
+   * whole GST/Tally Export page unusable rather than merely incomplete.
+   *
+   * A registration with no invoice yet is still listed (LEFT JOIN, not JOIN): it exists, past
+   * periods still need it, and the picker flags it by its null latest_invoice_date. Only
+   * approved invoices count towards that date, matching collectRows(), so the figure means
+   * "the last invoice this registration actually raised", not "the last one someone drafted".
    */
   async listRegistrations() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT bm.gstin AS company_gstin,
-              bm.gst_state_code,
-              MIN(bm.company_name) AS company_name,
-              COUNT(DISTINCT bm.id) AS branch_count,
-              MAX(ci.invoice_date) AS latest_invoice_date
+      `SELECT bm.gstin                        AS company_gstin,
+              MAX(bm.gst_state_code)          AS gst_state_code,
+              MAX(bm.company_name)            AS company_name,
+              COUNT(DISTINCT bm.id)           AS branch_count,
+              MAX(ci.invoice_date)            AS latest_invoice_date
          FROM branch_master bm
          LEFT JOIN cost_centre_master cm ON cm.branch_id = bm.id
-         LEFT JOIN client_invoice ci ON ci.cost_centre_id = cm.id
+         LEFT JOIN client_invoice ci ON ci.cost_centre_id = cm.id AND ci.invoice_status = 'approved'
         WHERE bm.gstin IS NOT NULL AND bm.gstin <> ''
-        GROUP BY bm.gstin, bm.gst_state_code
-        ORDER BY company_name, bm.gstin`
+        GROUP BY bm.gstin
+        ORDER BY company_name, company_gstin`
     );
     return rows;
   },

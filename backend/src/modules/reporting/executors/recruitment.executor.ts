@@ -276,21 +276,61 @@ export async function candidateTracker(
     params.push(options.cursor);
   }
 
+  /**
+   * Emits the names both catalogs declare. candidate_id, candidate_name, source, last_activity
+   * and recruiter were declared and never produced, so five of twelve columns rendered
+   * em-dashes on every row while the values sat in differently-named aliases (candidate_code,
+   * full_name) or were simply not selected.
+   *
+   * The original aliases are kept alongside the declared ones: nothing else is known to read
+   * them, but they cost one projection each and removing them could break a saved export.
+   *
+   * Source coverage is thin — sourcing_channel is filled on 5,702 of 38,328 rows — so the
+   * column is COALESCEd to 'Unknown' rather than left NULL, which distinguishes "not recorded"
+   * from a rendering fault. recruiter falls back across the three recruiter name columns this
+   * table carries (recruiter_assigned_name 5,655, recruiter_name 5,035, plus the joined user)
+   * because different intake paths populate different ones.
+   */
   const base = `
     SELECT c.id AS _cursor,
            c.candidate_code,
+           c.candidate_code AS candidate_id,
            c.full_name,
+           c.full_name AS candidate_name,
            c.mobile,
            c.email,
            c.status AS application_status,
            c.current_stage,
            c.created_at AS applied_date,
            c.offer_doj AS joining_date,
+           COALESCE(NULLIF(TRIM(c.sourcing_channel), ''), 'Unknown') AS source,
+           -- Latest real movement: the newest stage transition, falling back to the row's own
+           -- updated_at when the candidate has no stage history.
+           COALESCE(sl.last_stage_at, c.updated_at) AS last_activity,
+           COALESCE(
+             NULLIF(TRIM(c.recruiter_assigned_name), ''),
+             NULLIF(TRIM(c.recruiter_name), ''),
+             -- The name lives on employees, not on auth_user, which holds only the
+             -- credential columns (id/email/password_hash/...). ru.full_name does not
+             -- exist, so this whole query threw ER_BAD_FIELD_ERROR and the report
+             -- returned nothing. Same shape the recruiter-productivity query above
+             -- already uses: employees joined off the recruiter's user id, email last.
+             NULLIF(TRIM(ru_emp.full_name), ''),
+             NULLIF(TRIM(CONCAT(COALESCE(ru_emp.first_name, ''), ' ', COALESCE(ru_emp.last_name, ''))), ''),
+             ru.email
+           ) AS recruiter,
            jd.designation_name AS job_title,
            c.applied_for_branch AS branch_name,
            c.applied_for_process AS process_name
       FROM ats_candidate c
       LEFT JOIN job_requisition jd ON jd.id = c.requisition_id
+      LEFT JOIN auth_user ru ON ru.id = COALESCE(c.assigned_recruiter_id, c.recruiter_id)
+      LEFT JOIN employees ru_emp ON ru_emp.user_id = ru.id AND ru_emp.active_status = 1
+      LEFT JOIN (
+        SELECT candidate_id, MAX(stage_date) AS last_stage_at
+          FROM ats_candidate_stage_log
+         GROUP BY candidate_id
+      ) sl ON sl.candidate_id = c.id
      WHERE ${clauses.join(" AND ")}
      ORDER BY c.id ASC`;
 
@@ -373,10 +413,37 @@ export async function sourceEffectiveness(
    * in mas_hrms. It is emitted as NULL rather than a fabricated number, so the column reads
    * as "not captured" instead of implying a cost the business never recorded.
    */
-  const SHORTLISTED = "LOWER(c.status) IN ('shortlisted','interview','interviewed','selected','offered','onboarded','joined')";
-  const INTERVIEWED = "LOWER(c.status) IN ('interview','interviewed','selected','offered','onboarded','joined')";
-  const OFFERED     = "LOWER(c.status) IN ('offered','onboarded','joined')";
-  const JOINED      = "LOWER(c.status) IN ('onboarded','joined')";
+  /**
+   * Funnel stages, derived from the columns this schema actually populates.
+   *
+   * `status` does NOT carry funnel stages — its live values are Inactive(31,345),
+   * Rejected(2,909), Selected(1,703), Waiting(1,426), No Show(596), Hold(221) and a few
+   * others. It has no 'shortlisted', 'interviewed', 'offered' or 'joined'. The funnel lives in
+   * current_stage: Applied(34,900), Offered(1,247), Round 1- HR Screening(944),
+   * Round 2- Op's(495), Arrival(248), Interview - Skill Test(156), Round 3- Client(74),
+   * offer_approved(54), Selection Discussion(34), Onboarded(28), converted(16).
+   *
+   * profile_status is the only 100%-filled progression column (registered 36,515 /
+   * selected 1,238 / onboarding_sent 435 / onboarded 81 / profile_submitted 59), so it backs
+   * up the joined test where current_stage was never advanced.
+   *
+   * offer_status exists on the table but is filled on 0 of 38,328 rows, so it is not used —
+   * reading it would have produced a column of zeros that looked like a computed result.
+   */
+  const PRE_FUNNEL  = "LOWER(COALESCE(c.current_stage,'')) IN ('', 'applied', 'new', 'screening')";
+  const SHORTLISTED = `NOT (${PRE_FUNNEL})`;
+  const INTERVIEWED =
+    "(LOWER(COALESCE(c.current_stage,'')) LIKE 'round %' " +
+    " OR LOWER(COALESCE(c.current_stage,'')) LIKE 'round_%' " +
+    " OR LOWER(COALESCE(c.current_stage,'')) LIKE 'interview%' " +
+    " OR LOWER(COALESCE(c.current_stage,'')) IN ('selection discussion','offered','offer_approved','onboarded','converted','selected'))";
+  const OFFERED =
+    "(LOWER(COALESCE(c.current_stage,'')) IN ('offered','offer_approved','onboarded','converted') " +
+    " OR c.offer_doj IS NOT NULL OR c.offer_salary IS NOT NULL)";
+  const JOINED =
+    "(LOWER(COALESCE(c.current_stage,'')) IN ('onboarded','converted') " +
+    " OR LOWER(COALESCE(c.profile_status,'')) = 'onboarded' " +
+    " OR c.employee_code IS NOT NULL)";
 
   const base = `
     SELECT COALESCE(c.sourcing_channel, 'Unknown') AS source,
@@ -435,6 +502,15 @@ export async function recruiterProductivity(
   // to whichever recruiter happened to sit on the imported row.
   clauses.push(excludeEmployeeShapedCandidatesSql("c"));
 
+  // The From/To controls the Library offers were never read, so a recruiter's productivity was
+  // reported over all time no matter what period was chosen — the same 58 rows for every range.
+  // Applied to created_at, this table's real applied_date, wrapped in DATE() so a DATETIME on
+  // the closing day is not excluded by the inclusive upper bound.
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to   = dateParam(filters.to, businessToday());
+  clauses.push("DATE(c.created_at) BETWEEN ? AND ?");
+  params.push(from, to);
+
   const base = `
     SELECT c.assigned_recruiter_id,
            COALESCE(
@@ -456,11 +532,57 @@ export async function recruiterProductivity(
            -- id is the grain this report is actually about, so counting it distinctly makes
            -- the numbers independent of how many rows the join produces.
            COUNT(DISTINCT c.id) AS total_candidates,
+           COUNT(DISTINCT c.id) AS candidates_sourced,
            COUNT(DISTINCT CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN c.id END) AS offers_made,
-           COUNT(DISTINCT CASE WHEN c.offer_doj IS NOT NULL THEN c.id END) AS joinings
+           COUNT(DISTINCT CASE WHEN c.offer_doj IS NOT NULL THEN c.id END) AS joinings,
+           /**
+            * Declared-but-never-produced columns. Seven of nine were em-dashes on every row:
+            * branch_name, active_requisitions, candidates_sourced, interviews_scheduled,
+            * hires, avg_time_to_fill, offer_acceptance_rate.
+            *
+            * candidates_sourced and hires are aliases of measures already computed here.
+            *
+            * branch_name is the recruiter's OWN branch from the employees row, not the
+            * candidate's applied_for_branch — a recruiter working several branches would
+            * otherwise split into one row per branch and break the "one row per recruiter"
+            * grain this report declares.
+            *
+            * interviews_scheduled counts candidates who reached an interview stage, from
+            * current_stage. status carries no interview value (its values are Inactive,
+            * Rejected, Selected, Waiting, No Show, Hold), so it cannot answer this.
+            *
+            * active_requisitions counts distinct requisition_id, which is populated on only
+            * 531 of 38,328 rows — so this reads low for reasons of data capture, not
+            * arithmetic. Counted distinctly rather than left unmapped so the number that does
+            * exist is shown.
+            *
+            * avg_time_to_fill is application date to expected joining date, over the rows
+            * where both are present (offer_doj is filled on 1,048 rows).
+            *
+            * offer_acceptance_rate is joinings/offers_made as a percentage, guarded against
+            * divide-by-zero so a recruiter with no offers reads NULL rather than erroring.
+            */
+           COUNT(DISTINCT CASE WHEN c.offer_doj IS NOT NULL THEN c.id END) AS hires,
+           COALESCE(NULLIF(TRIM(recruiter_branch.branch_name), ''), 'UNASSIGNED') AS branch_name,
+           COUNT(DISTINCT c.requisition_id) AS active_requisitions,
+           COUNT(DISTINCT CASE
+             WHEN LOWER(COALESCE(c.current_stage,'')) LIKE 'round %'
+               OR LOWER(COALESCE(c.current_stage,'')) LIKE 'round_%'
+               OR LOWER(COALESCE(c.current_stage,'')) LIKE 'interview%'
+               OR LOWER(COALESCE(c.current_stage,'')) IN ('selection discussion','offered','offer_approved','onboarded','converted')
+             THEN c.id END) AS interviews_scheduled,
+           ROUND(AVG(CASE WHEN c.offer_doj IS NOT NULL AND c.created_at IS NOT NULL
+                          THEN DATEDIFF(c.offer_doj, c.created_at) END), 1) AS avg_time_to_fill,
+           ROUND(
+             COUNT(DISTINCT CASE WHEN c.offer_doj IS NOT NULL THEN c.id END) * 100.0
+             / NULLIF(COUNT(DISTINCT CASE WHEN LOWER(c.status) IN ('selected','offered','onboarded','joined') THEN c.id END), 0),
+             2
+           ) AS offer_acceptance_rate
       FROM ats_candidate c
       LEFT JOIN auth_user recruiter_user ON recruiter_user.id = c.assigned_recruiter_id
       LEFT JOIN employees recruiter_emp ON recruiter_emp.user_id = recruiter_user.id AND recruiter_emp.active_status = 1
+      -- The recruiter's own branch, for the declared branch_name column.
+      LEFT JOIN branch_master recruiter_branch ON recruiter_branch.id = recruiter_emp.branch_id
      WHERE ${clauses.join(" AND ")}
      -- ONLY_FULL_GROUP_BY is enabled and MySQL resolves the alias to its underlying expression,
      -- so grouping by the alias alone fails: recruiter_emp.full_name is then a nonaggregated
@@ -478,7 +600,11 @@ export async function recruiterProductivity(
                 NULLIF(TRIM(CONCAT(COALESCE(recruiter_emp.first_name, ''), ' ', COALESCE(recruiter_emp.last_name, ''))), ''),
                 recruiter_user.email,
                 c.recruiter_assigned_name
-              )
+              ),
+              -- Same reasoning as the name above: group by the emitted expression, not by
+              -- recruiter_branch.branch_name, so ONLY_FULL_GROUP_BY is satisfied and the grain
+              -- is stated as "one row per recruiter as named, at their branch as shown".
+              COALESCE(NULLIF(TRIM(recruiter_branch.branch_name), ''), 'UNASSIGNED')
      ORDER BY total_candidates DESC`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -518,22 +644,64 @@ export async function offerTracker(
     params.push(options.cursor);
   }
 
+  /**
+   * Emits the seven names both catalogs declare and this query never produced:
+   * candidate_name, offer_date, offered_ctc, offer_status, expected_joining, actual_joining,
+   * decline_reason. Seven of ten columns were em-dashes on every row.
+   *
+   * Where the value existed under another alias it is simply also emitted under the declared
+   * one (offered_ctc from offer_salary, expected_joining from offer_doj). The date fields have
+   * no column on ats_candidate at all and are derived from ats_candidate_stage_log, which is
+   * the real record of when each transition happened:
+   *   offer_date     first transition INTO an offer stage
+   *   actual_joining first transition INTO onboarded/converted
+   *
+   * offer_status does NOT come from ats_candidate.offer_status: that column exists but is
+   * filled on 0 of 38,328 rows. It is derived from the signals that are populated —
+   * joining_confirmation (Yes 265 / Need Clarification 7 / No 2) and the joined stage — so the
+   * column states something true instead of being uniformly empty.
+   *
+   * decline_reason maps to rejection_voc (1,421 rows). hard_reject_reason is 0/38,328 and
+   * rejection_reason does not exist, so rejection_voc is the only populated source.
+   */
   const base = `
     SELECT c.id AS _cursor,
            c.candidate_code,
            c.full_name,
+           c.full_name AS candidate_name,
            c.mobile,
            c.email,
            c.status AS application_status,
            c.current_stage,
            c.offer_salary AS offer_ctc,
+           c.offer_salary AS offered_ctc,
            c.joining_confirmation AS offer_accepted,
+           sl.offer_stage_at AS offer_date,
            c.offer_doj AS joining_date,
+           c.offer_doj AS expected_joining,
+           sl.joined_stage_at AS actual_joining,
+           CASE
+             WHEN LOWER(COALESCE(c.current_stage,'')) IN ('onboarded','converted')
+               OR LOWER(COALESCE(c.profile_status,'')) = 'onboarded' THEN 'Joined'
+             WHEN LOWER(COALESCE(c.joining_confirmation,'')) = 'yes'  THEN 'Accepted'
+             WHEN LOWER(COALESCE(c.joining_confirmation,'')) = 'no'   THEN 'Declined'
+             WHEN TRIM(COALESCE(c.joining_confirmation,'')) <> ''     THEN c.joining_confirmation
+             WHEN LOWER(COALESCE(c.status,'')) = 'rejected'           THEN 'Rejected'
+             ELSE 'Pending'
+           END AS offer_status,
+           c.rejection_voc AS decline_reason,
            jd.designation_name AS job_title,
            c.applied_for_branch AS branch_name,
            c.applied_for_process AS process_name
       FROM ats_candidate c
       LEFT JOIN job_requisition jd ON jd.id = c.requisition_id
+      LEFT JOIN (
+        SELECT candidate_id,
+               MIN(CASE WHEN LOWER(to_stage) IN ('offered','offer','offer_approved') THEN stage_date END) AS offer_stage_at,
+               MIN(CASE WHEN LOWER(to_stage) IN ('onboarded','converted')             THEN stage_date END) AS joined_stage_at
+          FROM ats_candidate_stage_log
+         GROUP BY candidate_id
+      ) sl ON sl.candidate_id = c.id
      WHERE ${clauses.join(" AND ")}
      ORDER BY c.id ASC`;
 
@@ -572,20 +740,67 @@ export async function joiningPending(
     params.push(options.cursor);
   }
 
+  /**
+   * Emits the six declared names this query never produced: candidate_name,
+   * offer_acceptance_date, expected_joining, days_to_joining, recruiter, last_contact.
+   *
+   * Note what this report selects on: current_stage reached offer AND offer_doj IS NULL. So
+   * expected_joining is NULL for every row BY CONSTRUCTION — that is the definition of the
+   * worklist, not a mapping fault, and the column is emitted so the grid shows a blank rather
+   * than an em-dash that reads like a fetch failure. days_to_joining is likewise NULL here;
+   * it is kept because the catalogs declare it and a future variant of this list that includes
+   * dated offers will populate it.
+   *
+   * The other four come from real sources:
+   *   offer_acceptance_date  stage_log transition into offer_approved, or the offer stage where
+   *                          joining_confirmation is 'Yes'
+   *   recruiter              recruiter_assigned_name / recruiter_name / joined auth_user
+   *   last_contact           newest stage transition, falling back to updated_at
+   */
   const base = `
     SELECT c.id AS _cursor,
            c.candidate_code,
            c.full_name,
+           c.full_name AS candidate_name,
            c.mobile,
            c.email,
            c.status AS application_status,
            c.current_stage,
            DATEDIFF(CURDATE(), c.created_at) AS days_since_application,
+           COALESCE(sl.accepted_stage_at,
+                    CASE WHEN LOWER(COALESCE(c.joining_confirmation,'')) = 'yes'
+                         THEN sl.offer_stage_at END) AS offer_acceptance_date,
+           c.offer_doj AS expected_joining,
+           CASE WHEN c.offer_doj IS NULL THEN NULL
+                ELSE DATEDIFF(c.offer_doj, CURDATE()) END AS days_to_joining,
+           COALESCE(
+             NULLIF(TRIM(c.recruiter_assigned_name), ''),
+             NULLIF(TRIM(c.recruiter_name), ''),
+             -- The name lives on employees, not on auth_user, which holds only the
+             -- credential columns (id/email/password_hash/...). ru.full_name does not
+             -- exist, so this whole query threw ER_BAD_FIELD_ERROR and the report
+             -- returned nothing. Same shape the recruiter-productivity query above
+             -- already uses: employees joined off the recruiter's user id, email last.
+             NULLIF(TRIM(ru_emp.full_name), ''),
+             NULLIF(TRIM(CONCAT(COALESCE(ru_emp.first_name, ''), ' ', COALESCE(ru_emp.last_name, ''))), ''),
+             ru.email
+           ) AS recruiter,
+           COALESCE(sl.last_stage_at, c.updated_at) AS last_contact,
            jd.designation_name AS job_title,
            c.applied_for_branch AS branch_name,
            c.applied_for_process AS process_name
       FROM ats_candidate c
       LEFT JOIN job_requisition jd ON jd.id = c.requisition_id
+      LEFT JOIN auth_user ru ON ru.id = COALESCE(c.assigned_recruiter_id, c.recruiter_id)
+      LEFT JOIN employees ru_emp ON ru_emp.user_id = ru.id AND ru_emp.active_status = 1
+      LEFT JOIN (
+        SELECT candidate_id,
+               MAX(stage_date) AS last_stage_at,
+               MIN(CASE WHEN LOWER(to_stage) IN ('offered','offer')   THEN stage_date END) AS offer_stage_at,
+               MIN(CASE WHEN LOWER(to_stage) = 'offer_approved'       THEN stage_date END) AS accepted_stage_at
+          FROM ats_candidate_stage_log
+         GROUP BY candidate_id
+      ) sl ON sl.candidate_id = c.id
      WHERE ${clauses.join(" AND ")}
      ORDER BY c.id ASC`;
 

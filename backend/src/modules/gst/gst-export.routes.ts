@@ -34,16 +34,6 @@ function actor(req: AuthenticatedRequest) {
 
 router.use(requireAuth);
 
-/** GET /api/gst/registrations — the (entity, GSTIN) pairs a batch can be generated for. */
-router.get(
-  "/registrations",
-  requireRole(...GST_READ_ROLES),
-  h(async (_req, res) => {
-    const data = await gstExportService.listRegistrations();
-    return res.json({ success: true, data });
-  })
-);
-
 /** POST /api/gst/exports — generate a batch for one registration + month. */
 router.post(
   "/exports",
@@ -73,6 +63,22 @@ router.post(
         error: error instanceof Error ? error.message : "Unable to generate GST export batch",
       });
     }
+  })
+);
+
+/**
+ * GET /api/gst/registrations — the GSTINs a batch can be generated for.
+ *
+ * The picker on the export page has always called this; it had no route until now and
+ * answered 401 (a missing /api/* path lands on the authenticated catch-all here, not on a
+ * 404), so the page opened with an empty registration list and nothing could be generated.
+ */
+router.get(
+  "/registrations",
+  requireRole(...GST_READ_ROLES),
+  h(async (_req, res) => {
+    const data = await gstExportService.listRegistrations();
+    return res.json({ success: true, data });
   })
 );
 
