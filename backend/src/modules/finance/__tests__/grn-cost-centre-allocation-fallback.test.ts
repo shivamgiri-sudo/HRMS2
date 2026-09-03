@@ -48,7 +48,10 @@ describe("grnService.listGrns — cost centre filter matches split-GRN allocatio
     expect(sql).toContain("FROM grn_cost_allocation gca");
     expect(sql).toContain("gca.grn_request_id = g.id");
     expect(sql).toContain("gca.cost_centre_id = ?");
-    expect(sql).toContain("gca.lifecycle_status IN ('reserved', 'consumed')");
+    // 'draft' is in the set on purpose: a submitted-but-not-yet-Branch-Head-approved GRN holds
+    // its allocation at 'draft', and a SPLIT one has grn_request.cost_centre_id NULL, so without
+    // it that GRN is invisible in the drill-down while an unsplit one at the same stage shows.
+    expect(sql).toContain("gca.lifecycle_status IN ('draft', 'reserved', 'consumed')");
     // Bound three times: the header column, the allocation EXISTS clause, and the split-share
     // ctx_alloc subquery (this drill-down's own-cost-centre-share join, added alongside this
     // same fix so the row list shows a split GRN's share here rather than its full header total).
@@ -77,6 +80,11 @@ describe("grnService.listGrns — cost centre filter matches split-GRN allocatio
     expect(sql).toContain("LEFT JOIN (");
     expect(sql).toContain("ctx_alloc.amount_with_tax AS context_amount_with_tax");
     expect(sql).toContain("ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount");
+    // Per-lifecycle split, so BudgetGrnDrillDownDialog can say which of the budget row's two
+    // figures each listed GRN lands in — and flag the pending ones that land in neither.
+    expect(sql).toContain("ctx_alloc.reserved_pnl_cost_amount AS context_reserved_pnl_cost_amount");
+    expect(sql).toContain("ctx_alloc.consumed_pnl_cost_amount AS context_consumed_pnl_cost_amount");
+    expect(sql).toContain("ctx_alloc.pending_pnl_cost_amount AS context_pending_pnl_cost_amount");
     expect(sql).toContain("ON ctx_alloc.grn_request_id = g.id");
     expect(sql).toContain("AND bl.head = ?");
     expect(sql).toContain("AND bl.sub_head = ?");

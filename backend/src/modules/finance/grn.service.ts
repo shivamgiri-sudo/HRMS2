@@ -1444,15 +1444,24 @@ export const grnService = {
     if (filters.costCentreId) {
       const headMatch = filters.head ? "AND bl.head = ?" : "";
       const subHeadMatch = filters.subHead ? "AND bl.sub_head = ?" : "";
+      // 'draft' rides along deliberately. A GRN still at 'submitted' holds its allocation at
+      // lifecycle_status='draft', so it adds to NEITHER the Reserved nor the Consumed figure on
+      // the budget line — yet it still shows in this drill-down (its header cost_centre_id/head
+      // match). Splitting the share out per lifecycle lets the dialog say so per row and foot the
+      // list back to the two numbers on the row that was clicked, instead of listing a GRN that
+      // silently belongs to neither. See [[hrms2-grn-drilldown-draft-alloc-unreconciled]].
       contextAllocationJoin = `
          LEFT JOIN (
            SELECT gca.grn_request_id,
                   SUM(gca.amount_with_tax) AS amount_with_tax,
-                  SUM(gca.pnl_cost_amount) AS pnl_cost_amount
+                  SUM(gca.pnl_cost_amount) AS pnl_cost_amount,
+                  SUM(CASE WHEN gca.lifecycle_status = 'reserved' THEN gca.pnl_cost_amount ELSE 0 END) AS reserved_pnl_cost_amount,
+                  SUM(CASE WHEN gca.lifecycle_status = 'consumed' THEN gca.pnl_cost_amount ELSE 0 END) AS consumed_pnl_cost_amount,
+                  SUM(CASE WHEN gca.lifecycle_status = 'draft' THEN gca.pnl_cost_amount ELSE 0 END) AS pending_pnl_cost_amount
              FROM grn_cost_allocation gca
              JOIN finance_budget_line bl ON bl.id = gca.budget_line_id
             WHERE gca.cost_centre_id = ?
-              AND gca.lifecycle_status IN ('reserved', 'consumed')
+              AND gca.lifecycle_status IN ('draft', 'reserved', 'consumed')
               ${headMatch}
               ${subHeadMatch}
             GROUP BY gca.grn_request_id
@@ -1491,7 +1500,7 @@ export const grnService = {
           SELECT 1 FROM grn_cost_allocation gca
            WHERE gca.grn_request_id = g.id
              AND gca.cost_centre_id = ?
-             AND gca.lifecycle_status IN ('reserved', 'consumed')
+             AND gca.lifecycle_status IN ('draft', 'reserved', 'consumed')
         )
       )`);
       params.push(filters.costCentreId, filters.costCentreId);
@@ -1546,7 +1555,7 @@ export const grnService = {
             SELECT 1 FROM grn_cost_allocation gca_h
             JOIN finance_budget_line bl_h ON bl_h.id = gca_h.budget_line_id
             WHERE gca_h.grn_request_id = g.id
-              AND gca_h.lifecycle_status IN ('reserved', 'consumed')
+              AND gca_h.lifecycle_status IN ('draft', 'reserved', 'consumed')
               AND bl_h.head = ?
           )
         )`);
@@ -1565,7 +1574,7 @@ export const grnService = {
             SELECT 1 FROM grn_cost_allocation gca_s
             JOIN finance_budget_line bl_s ON bl_s.id = gca_s.budget_line_id
             WHERE gca_s.grn_request_id = g.id
-              AND gca_s.lifecycle_status IN ('reserved', 'consumed')
+              AND gca_s.lifecycle_status IN ('draft', 'reserved', 'consumed')
               AND bl_s.sub_head = ?
           )
         )`);
@@ -1670,7 +1679,13 @@ export const grnService = {
               -- spend). The frontend prefers these over amount_with_tax/pnl_cost_amount whenever
               -- they are non-NULL.
               ctx_alloc.amount_with_tax AS context_amount_with_tax,
-              ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount
+              ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount,
+              -- How much of that share actually sits in each of the budget row's two figures.
+              -- 'pending' is the allocation still at lifecycle_status='draft' (GRN not past Branch
+              -- Head yet): real money in flight that neither Reserved nor Consumed contains.
+              ctx_alloc.reserved_pnl_cost_amount AS context_reserved_pnl_cost_amount,
+              ctx_alloc.consumed_pnl_cost_amount AS context_consumed_pnl_cost_amount,
+              ctx_alloc.pending_pnl_cost_amount AS context_pending_pnl_cost_amount
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id

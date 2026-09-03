@@ -16,6 +16,11 @@ export type GrnDrillDownContext = {
   costCentreName: string;
   head: string;
   subHead: string | null;
+  /** The Reserved / Consumed figures shown on the row that was clicked. Passed through purely so
+   *  this dialog can foot its own list back to them — a GRN that lands in neither (see
+   *  budgetBucket below) is otherwise indistinguishable from one that does. */
+  reserved?: number;
+  consumed?: number;
 };
 
 type GrnRow = {
@@ -36,6 +41,14 @@ type GrnRow = {
    *  See GET /api/finance/grns's context_alloc join. */
   context_amount_with_tax: number | null;
   context_pnl_cost_amount: number | null;
+  /** How this row's share splits across the budget line's two figures. A GRN still at 'submitted'
+   *  holds its allocation at lifecycle_status='draft', so it lands in `pending` — real money in
+   *  flight that neither the Reserved nor the Consumed column on the clicked row contains. NULL
+   *  when this GRN has no allocation rows at all (the older direct-budget-line path, where
+   *  finance_budget_line.reserved_amount/consumed_amount is the counter instead). */
+  context_reserved_pnl_cost_amount: number | null;
+  context_consumed_pnl_cost_amount: number | null;
+  context_pending_pnl_cost_amount: number | null;
   status: string;
   description: string | null;
   remarks: string | null;
@@ -108,6 +121,71 @@ function lifecycleTone(status: string): "ok" | "warn" | "neutral" {
   if (status === "consumed") return "ok";
   if (status === "reserved") return "warn";
   return "neutral";
+}
+
+/**
+ * Which of the clicked budget row's two figures this GRN actually lands in.
+ *
+ * The list itself is matched on the GRN's header cost centre/head/sub-head, so it deliberately
+ * shows GRNs at every approval stage. The budget row's numbers are not: Reserved counts
+ * grn_cost_allocation rows at lifecycle_status='reserved' (Branch Head approved) and Consumed
+ * counts 'consumed' (Finance Head approved). A GRN still at 'submitted' holds its allocation at
+ * 'draft' and lands in NEITHER — which is why a ₹235 Reserved / ₹0 Consumed line can list three
+ * GRNs totalling ₹757 and still be arithmetically right. Saying so per row is the whole point of
+ * this classification; without it the dialog looks like it contradicts the row that opened it.
+ *
+ * Allocation lifecycle wins when the GRN has allocation rows, because that is exactly what
+ * budget-cost-centre-utilization.service.ts sums. When it has none, that service falls back to
+ * finance_budget_line.reserved_amount/consumed_amount — no per-GRN column exposes that, so the
+ * GRN's own approval stage is the honest stand-in.
+ */
+type BudgetBucket = "consumed" | "reserved" | "pending" | "none";
+
+const BUDGET_BUCKET_LABEL: Record<BudgetBucket, string> = {
+  consumed: "In Consumed",
+  reserved: "In Reserved",
+  pending: "Not counted yet",
+  none: "Not counted",
+};
+
+const BUDGET_BUCKET_CLASS: Record<BudgetBucket, string> = {
+  consumed: "text-emerald-700",
+  reserved: "text-amber-700",
+  pending: "text-blue-700",
+  none: "text-slate-400",
+};
+
+/** Terminal stages whose allocations were released/reversed — they will never reach either figure. */
+const NON_COUNTING_STATUSES = new Set(["rejected", "cancelled", "consumption_reversed"]);
+
+function budgetBucket(grn: GrnRow): BudgetBucket {
+  const consumed = Number(grn.context_consumed_pnl_cost_amount ?? 0);
+  const reserved = Number(grn.context_reserved_pnl_cost_amount ?? 0);
+  const pending = Number(grn.context_pending_pnl_cost_amount ?? 0);
+  if (consumed > 0) return "consumed";
+  if (reserved > 0) return "reserved";
+  if (pending > 0) return "pending";
+  if (NON_COUNTING_STATUSES.has(grn.status)) return "none";
+  // No allocation rows for this context at all — read the header's approval stage instead.
+  if (grn.status === "submitted" || grn.status === "draft") return "pending";
+  if (grn.status === "branch_head_approved") return "reserved";
+  return "consumed";
+}
+
+/** The share of this GRN that sits in its bucket — the allocation split when there is one, else
+ *  the GRN's own P&L cost (net of recoverable GST, matching what the budget row counts). */
+function budgetBucketAmount(grn: GrnRow, bucket: BudgetBucket): number {
+  const perBucket =
+    bucket === "consumed"
+      ? grn.context_consumed_pnl_cost_amount
+      : bucket === "reserved"
+        ? grn.context_reserved_pnl_cost_amount
+        : bucket === "pending"
+          ? grn.context_pending_pnl_cost_amount
+          : null;
+  if (perBucket != null && Number(perBucket) > 0) return Number(perBucket);
+  if (bucket === "none") return 0;
+  return Number(grn.context_pnl_cost_amount ?? grn.pnl_cost_amount ?? grn.amount_with_tax ?? 0);
 }
 
 /**
@@ -185,6 +263,18 @@ export function BudgetGrnDrillDownDialog({
 
   const rows = query.data?.data ?? [];
 
+  /** Foots the list back to the budget row that opened it: every GRN listed belongs to exactly one
+   *  bucket, and reserved/consumed here must equal the two figures on that row. `pending` is the
+   *  money in flight that the row shows nowhere — the reason this list can total more than it. */
+  const totals = rows.reduce(
+    (accumulator, grn) => {
+      const bucket = budgetBucket(grn);
+      accumulator[bucket] += budgetBucketAmount(grn, bucket);
+      return accumulator;
+    },
+    { consumed: 0, reserved: 0, pending: 0, none: 0 } as Record<BudgetBucket, number>
+  );
+
   return (
     <Dialog open={Boolean(context)} onOpenChange={(open) => { onOpenChange(open); if (!open) setExpandedGrnId(null); }}>
       <DialogContent className="max-w-4xl">
@@ -214,11 +304,13 @@ export function BudgetGrnDrillDownDialog({
                   <th className="h-8 px-3 font-medium">Bill Date</th>
                   <th className="h-8 px-3 text-right font-medium">Amount</th>
                   <th className="h-8 px-3 font-medium">Status</th>
+                  <th className="h-8 px-3 text-right font-medium">Counts as</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {rows.map((grn) => {
                   const isOpen = expandedGrnId === grn.id;
+                  const bucket = budgetBucket(grn);
                   return (
                     <Fragment key={grn.id}>
                       <tr
@@ -253,10 +345,13 @@ export function BudgetGrnDrillDownDialog({
                         <td className="px-3 py-2">
                           <StatusStamp tone={grnStatusTone(grn.status)}>{labelStatus(grn.status)}</StatusStamp>
                         </td>
+                        <td className={`px-3 py-2 text-right font-medium ${BUDGET_BUCKET_CLASS[bucket]}`}>
+                          {BUDGET_BUCKET_LABEL[bucket]}
+                        </td>
                       </tr>
                       {isOpen && (
                         <tr className="bg-slate-50/60">
-                          <td colSpan={6} className="p-0">
+                          <td colSpan={7} className="p-0">
                             <GrnDetailPanel
                               grn={grn}
                               context={context}
@@ -275,8 +370,66 @@ export function BudgetGrnDrillDownDialog({
             </table>
           </div>
         )}
+        {rows.length > 0 && <ReconciliationFooter totals={totals} context={context} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Ties the list above back to the row that opened it. Reserved and Consumed here are the same two
+ * numbers as on that row; "Not counted yet" is spend already raised against this head at this cost
+ * centre that has not passed Branch Head, so no figure on the budget row contains it. Showing it
+ * separately is the difference between "these numbers are wrong" and "this money is not committed
+ * yet" — the two look identical without it.
+ */
+function ReconciliationFooter({
+  totals,
+  context,
+}: {
+  totals: Record<BudgetBucket, number>;
+  context: GrnDrillDownContext | null;
+}) {
+  const rowReserved = context?.reserved;
+  const rowConsumed = context?.consumed;
+  // A paise-level gap is rounding across allocation splits, not a real disagreement.
+  const drifts =
+    (rowReserved != null && Math.abs(rowReserved - totals.reserved) > 1) ||
+    (rowConsumed != null && Math.abs(rowConsumed - totals.consumed) > 1);
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+        <span className="font-semibold text-slate-700">This list adds up to</span>
+        <span className="text-emerald-700">
+          Consumed <span className="tabular-nums font-semibold">{money(totals.consumed)}</span>
+        </span>
+        <span className="text-amber-700">
+          Reserved <span className="tabular-nums font-semibold">{money(totals.reserved)}</span>
+        </span>
+        <span className="text-blue-700">
+          Not counted yet <span className="tabular-nums font-semibold">{money(totals.pending)}</span>
+        </span>
+        {totals.none > 0 && (
+          <span className="text-slate-400">
+            Rejected / reversed <span className="tabular-nums font-semibold">{money(totals.none)}</span>
+          </span>
+        )}
+      </div>
+      <p className="mt-2 leading-relaxed text-slate-500">
+        A GRN only reaches <span className="font-medium text-amber-700">Reserved</span> once Branch
+        Head approves it, and <span className="font-medium text-emerald-700">Consumed</span> once
+        Finance Head does. Anything still awaiting Branch Head is listed here but is in neither
+        figure on the budget row, so this list can total more than the row shows.
+      </p>
+      {(rowReserved != null || rowConsumed != null) && (
+        <p className={`mt-1.5 ${drifts ? "font-medium text-rose-600" : "text-slate-500"}`}>
+          {drifts
+            ? `Does not match the budget row (Reserved ${money(rowReserved ?? 0)}, Consumed ${money(rowConsumed ?? 0)}) — report this.`
+            : `Matches the budget row: Reserved ${money(rowReserved ?? 0)}, Consumed ${money(rowConsumed ?? 0)}.`}
+        </p>
+      )}
+    </div>
   );
 }
 

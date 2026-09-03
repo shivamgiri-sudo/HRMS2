@@ -3059,7 +3059,7 @@ export default function BranchBudgetManagementWorkspace() {
                                   <tr
                                     key={`${rowKey}:${cc.costCentreId ?? "__unattributed__"}`}
                                     className="cursor-pointer bg-slate-50/60 hover:bg-slate-100"
-                                    onClick={() => setGrnDrillDown({ costCentreId: cc.costCentreId, costCentreName: cc.costCentreName, head: line.head, subHead })}
+                                    onClick={() => setGrnDrillDown({ costCentreId: cc.costCentreId, costCentreName: cc.costCentreName, head: line.head, subHead, reserved: cc.reserved, consumed: cc.consumed })}
                                     title="View GRNs raised against this head/sub-head at this cost centre"
                                   >
                                     <td className="py-1.5 pl-10 pr-3 text-slate-600">{cc.costCentreName}</td>
@@ -3278,7 +3278,7 @@ export default function BranchBudgetManagementWorkspace() {
                                     <tr
                                       key={`${rowKey}:${h.head}:${h.subHead ?? ""}`}
                                       className="cursor-pointer bg-slate-50/60 hover:bg-slate-100"
-                                      onClick={() => setGrnDrillDown({ costCentreId: cc.costCentreId, costCentreName: cc.costCentreName, head: h.head, subHead: h.subHead ?? null })}
+                                      onClick={() => setGrnDrillDown({ costCentreId: cc.costCentreId, costCentreName: cc.costCentreName, head: h.head, subHead: h.subHead ?? null, reserved: h.reserved, consumed: h.consumed })}
                                       title="View GRNs raised against this head/sub-head at this cost centre"
                                     >
                                       <td className="py-1.5 pl-10 pr-3 text-slate-600">

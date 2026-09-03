@@ -1,0 +1,13 @@
+{
+  // Typecheck for the Branch Budget GRN drill-down (Variance / Cost Centre tabs → "View GRNs").
+  // Same reason as tsconfig.grn-check.json: the root tsconfig has `"files": []`, so
+  // `npm run typecheck` compiles nothing, and tsconfig.app.json buries new errors under a few
+  // hundred pre-existing ones.
+  //
+  //     npx tsc -p tsconfig.grndrill-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/budget/BudgetGrnDrillDownDialog.tsx",
+    "src/vite-env.d.ts"
+  ]
+}
