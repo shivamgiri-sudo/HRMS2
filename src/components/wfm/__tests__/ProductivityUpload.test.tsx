@@ -598,8 +598,12 @@ describe("BulkUploadHub — productivity tab gating", () => {
   });
 
   it("can never leave the productivity tab active for someone without the grant", () => {
+    // The collapse must still send an ungranted productivity tab to "master", but it is no
+    // longer a single ternary: deduction-types and tds-upload were given the same treatment,
+    // so effectiveTab is now a chain ending in `activeTab`. Matching the old one-liner made
+    // this test fail on a file whose guard is intact — it blocked every deploy on 2026-09-03.
     expect(HUB).toMatch(
-      /activeTab === "productivity" && !canUploadProductivity \? "master" : activeTab/,
+      /activeTab === "productivity" && !canUploadProductivity \? "master" :[\s\S]*?activeTab;/,
     );
     // Every tab-conditional render reads the collapsed tab, not the raw state, or the fallback
     // above would be decorative.

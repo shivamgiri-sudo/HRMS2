@@ -262,6 +262,11 @@ describe("application shell routing contracts", () => {
       "/payroll/cost-summary",
       "/payroll/disbursal",
       "/payroll/process-readiness",
+      // Added 2026-09-03 with the cost-centre attendance sign-off. A drill-down, not a page:
+      // PayrollReadinessDashboard links to it twice as
+      // /payroll/readiness/cost-centres?branchId=…&month=…, and it shares that dashboard's own
+      // page code (PAYROLL_BRANCH_READINESS). A sidebar entry would open it with no branch.
+      "/payroll/readiness/cost-centres",
       "/payroll/run-lifecycle",
       "/payroll/statutory-config",
       "/payroll/statutory-filing",
@@ -339,6 +344,15 @@ describe("application shell routing contracts", () => {
       // (d5) Token-gated KPI capture page — opened via a direct link with an access token,
       // not navigable from the sidebar.
       "/kpi-capture",
+
+      // (d6) Drill-down of a page that IS in the menu. BranchCostCentreAttendance is reached
+      // from PayrollReadinessDashboard by <Link to="/payroll/readiness/cost-centres?branchId=
+      // ...&month=..."> in two places (the branch row and the detail panel), and it is
+      // meaningless without those parameters — a sidebar entry would open it for no branch and
+      // no month. It carries the same pageCode as its parent (PAYROLL_BRANCH_READINESS, see
+      // pageRoutePageCodes.ts), so it inherits the parent's access rather than needing a grant
+      // of its own.
+      "/payroll/readiness/cost-centres",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
