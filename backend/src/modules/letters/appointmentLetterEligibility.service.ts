@@ -51,6 +51,23 @@ export const TERMINAL_DOCUMENT_STATUSES = [
   "verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded",
 ] as const;
 
+/**
+ * The EPF forms, which do not gate the appointment letter.
+ *
+ * They are statutory provident-fund paperwork on a deliberately separate track,
+ * not part of the employment agreement the letter concludes. joiningKitAssembly's
+ * KIT_DOCUMENT_CODES excludes them from the e-sign kit for the same reason and
+ * spells it out: they are AcroForms with their own consent receipt, correction
+ * loop, payroll review stage and company-seal step, and Form 2 alone carries 53
+ * fields of statutory nominee data. Because they sit outside the kit they finish
+ * days or weeks after the six kit documents do — so counting them here held every
+ * appointment letter behind PF paperwork the letter does not depend on.
+ *
+ * They remain mandatory and still count towards joining-document completion on
+ * the tracker; this exclusion is scoped to this one gate.
+ */
+const EPF_DOCUMENT_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"] as const;
+
 export async function evaluateAppointmentLetterEligibility(employeeId: string): Promise<EligibilityResult> {
   const blockers: EligibilityBlocker[] = [];
   const warnings: EligibilityBlocker[] = [];
@@ -128,8 +145,9 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
             SUM(CASE WHEN status IN (${placeholders}) THEN 1 ELSE 0 END) AS mandatory_done,
             GROUP_CONCAT(CASE WHEN status NOT IN (${placeholders}) THEN document_name END SEPARATOR ', ') AS pending_names
        FROM employee_joining_document_checklist
-      WHERE employee_id = ? AND mandatory = 1`,
-    [...TERMINAL_DOCUMENT_STATUSES, ...TERMINAL_DOCUMENT_STATUSES, employeeId],
+      WHERE employee_id = ? AND mandatory = 1
+        AND document_code NOT IN (${EPF_DOCUMENT_CODES.map(() => "?").join(",")})`,
+    [...TERMINAL_DOCUMENT_STATUSES, ...TERMINAL_DOCUMENT_STATUSES, employeeId, ...EPF_DOCUMENT_CODES],
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const d = (docs as RowDataPacket[])[0];
   const total = Number(d?.mandatory_total ?? 0);
@@ -161,11 +179,15 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
   // covers the case where none exist.
   if (total > 0) {
     const [esignRows] = await db.execute<RowDataPacket[]>(
+      // EPF excluded here too, for the same reason as above and to keep the two
+      // gates consistent: an employee whose only signed document was an EPF form
+      // has not signed their joining kit, which is what this check is asking.
       `SELECT COUNT(*) AS signed_count
          FROM employee_joining_document_checklist
         WHERE employee_id = ? AND mandatory = 1
+          AND document_code NOT IN (${EPF_DOCUMENT_CODES.map(() => "?").join(",")})
           AND status IN ('esign_completed', 'signed_verified', 'wet_signed_uploaded')`,
-      [employeeId],
+      [employeeId, ...EPF_DOCUMENT_CODES],
     ).catch(() => [[]] as unknown as [RowDataPacket[]]);
     const signedCount = Number((esignRows as RowDataPacket[])[0]?.signed_count ?? 0);
     if (signedCount === 0) {

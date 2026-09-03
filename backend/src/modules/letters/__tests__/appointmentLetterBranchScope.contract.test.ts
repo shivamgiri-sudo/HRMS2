@@ -77,3 +77,40 @@ describe("Appointment letters — employee search", () => {
     expect(appointmentLetterSearchTerm("  Ravi  ")).toBe("%Ravi%");
   });
 });
+
+/**
+ * The EPF forms do not gate the appointment letter.
+ *
+ * They are statutory PF paperwork on a separate track — joiningKitAssembly's
+ * KIT_DOCUMENT_CODES already excludes them from the e-sign kit, so they finish
+ * days or weeks after the six kit documents. Counting them in the letter's
+ * document gate held every appointment letter behind paperwork the letter does
+ * not depend on (RAVIKAR MISHRA, MAS63459: six of eight documents signed
+ * 2026-09-02, blocked on Form 11 and Form 2 sitting at employee_review_pending).
+ */
+describe("Appointment letters — EPF forms are not a blocker", () => {
+  const eligibility = readFileSync(
+    resolve(process.cwd(), "src/modules/letters/appointmentLetterEligibility.service.ts"),
+    "utf8"
+  );
+
+  it("names both EPF documents in one shared constant", () => {
+    const list = eligibility.match(/EPF_DOCUMENT_CODES = \[(.*?)\]/s)?.[1] ?? "";
+    expect(list).toContain('"EPF_DECLARATION"');
+    expect(list).toContain('"EPF_NOMINATION_FORM2"');
+  });
+
+  it("excludes them from the mandatory-documents gate", () => {
+    const gate = eligibility.slice(eligibility.indexOf("AS mandatory_total"));
+    const clause = gate.slice(0, gate.indexOf(").catch("));
+    expect(clause).toContain("document_code NOT IN (");
+    expect(clause).toContain("...EPF_DOCUMENT_CODES");
+  });
+
+  it("excludes them from the joining-kit e-sign gate too", () => {
+    const gate = eligibility.slice(eligibility.indexOf("AS signed_count"));
+    const clause = gate.slice(0, gate.indexOf(").catch("));
+    expect(clause).toContain("document_code NOT IN (");
+    expect(clause).toContain("...EPF_DOCUMENT_CODES");
+  });
+});
