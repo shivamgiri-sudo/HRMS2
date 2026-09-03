@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import * as service from './social-feed.service.js';
+import { SOCIAL_LINK_PLATFORMS } from './social-feed.types.js';
 
 export const socialFeedRouter = Router();
 
@@ -65,5 +66,42 @@ socialFeedRouter.post(
   h(async (_req, res) => {
     const results = await service.syncAllPlatforms();
     return res.json({ success: true, synced: results });
+  }),
+);
+
+// ── Public profile links — admin read/write ───────────────────────────────
+// The matching read endpoint for unauthenticated callers (the login page)
+// lives in social-links.public.routes.ts, mounted above the "/api" catch-all.
+
+socialFeedRouter.get(
+  '/admin/profile-links',
+  requireRole('super_admin', 'hr_admin'),
+  h(async (_req, res) => {
+    const links = await service.getProfileLinks();
+    return res.json({ success: true, links });
+  }),
+);
+
+const profileLinkSchema = z.object({
+  platform: z.enum(SOCIAL_LINK_PLATFORMS),
+  profile_url: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .url()
+    .refine((u) => /^https?:\/\//i.test(u), 'URL must start with http:// or https://'),
+  handle: z.string().trim().max(120).optional().nullable(),
+  enabled: z.boolean().optional(),
+});
+
+socialFeedRouter.put(
+  '/admin/profile-links',
+  requireRole('super_admin', 'hr_admin'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const body = z.object({ links: z.array(profileLinkSchema).min(1) }).parse(req.body);
+    await service.saveProfileLinks(body.links, req.authUser?.id ?? null);
+    const links = await service.getProfileLinks();
+    return res.json({ success: true, links });
   }),
 );

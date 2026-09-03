@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, OkPacket } from 'mysql2';
-import type { SocialPost, PlatformConfig, FetchedPost, SocialPlatform, SaveConfigInput } from './social-feed.types.js';
+import type { SocialPost, PlatformConfig, FetchedPost, SocialPlatform, SaveConfigInput, SocialProfileLink, SaveProfileLinkInput } from './social-feed.types.js';
+import { SOCIAL_LINK_DEFAULTS } from './social-feed.types.js';
 
 export async function getPosts(
   platform: SocialPlatform | 'all',
@@ -114,4 +115,67 @@ export async function getPostCount(platform: SocialPlatform): Promise<number> {
     [platform],
   );
   return Number((rows[0] as any)?.cnt ?? 0);
+}
+
+// ── Public profile links (social_profile_link, migration 1656) ─────────────
+
+const PROFILE_LINK_COLUMNS =
+  'platform, label, profile_url, handle, display_order, enabled';
+
+/**
+ * Reads the six public company social URLs.
+ *
+ * Returns [] — not an error — when migration 1656 has not been applied yet
+ * (errno 1146, table missing). Both callers fall back to the defaults compiled
+ * into the frontend bundle, so an un-migrated backend renders the same links it
+ * rendered before this table existed. Any other error propagates.
+ */
+export async function getProfileLinks(): Promise<SocialProfileLink[]> {
+  try {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT ${PROFILE_LINK_COLUMNS}
+       FROM social_profile_link
+       ORDER BY display_order, platform`,
+    );
+    return rows.map((r) => ({
+      ...r,
+      enabled: Boolean(r.enabled),
+      display_order: Number(r.display_order),
+    })) as SocialProfileLink[];
+  } catch (err) {
+    if ((err as { errno?: number }).errno === 1146) {
+      console.warn('[social-feed] social_profile_link missing — migration 1656 not applied; serving bundle defaults');
+      return [];
+    }
+    throw err;
+  }
+}
+
+export async function saveProfileLink(
+  input: SaveProfileLinkInput,
+  updatedBy: string | null,
+): Promise<void> {
+  const meta = SOCIAL_LINK_DEFAULTS[input.platform];
+  // INSERT ... ON DUPLICATE KEY rather than a bare UPDATE: if the seed row for
+  // this platform is missing (table created by hand, seed skipped), an UPDATE
+  // would touch zero rows and report success while nothing changed.
+  await db.query<OkPacket>(
+    `INSERT INTO social_profile_link
+       (platform, label, profile_url, handle, display_order, enabled, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       profile_url = VALUES(profile_url),
+       handle      = VALUES(handle),
+       enabled     = VALUES(enabled),
+       updated_by  = VALUES(updated_by)`,
+    [
+      input.platform,
+      meta.label,
+      input.profile_url,
+      input.handle ?? null,
+      meta.display_order,
+      input.enabled === false ? 0 : 1,
+      updatedBy,
+    ],
+  );
 }

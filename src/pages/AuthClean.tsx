@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Twitter, Youtube, MapPin, Megaphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSocialProfileLinks, type SocialLinkPlatform } from "@/hooks/useSocialFeed";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,19 +20,25 @@ const FEATURES = [
   { icon: CheckCircle2, label: "Leave & Payroll", desc: "Streamlined approvals and payroll processing" },
 ];
 
-const SOCIAL_LINKS = [
-  { label: "Website",   href: "https://mascallnet.ai",                               icon: Globe,     color: "#06b6d4" },
-  { label: "LinkedIn",  href: "https://in.linkedin.com/company/mas-callnet-pvt-ltd", icon: Linkedin,  color: "#0077B5" },
-  { label: "Instagram", href: "https://instagram.com/teammas9",                      icon: Instagram, color: "#E1306C" },
-  { label: "X",         href: "https://x.com/MCallnet",                              icon: Twitter,   color: "#ffffff" },
-  { label: "Facebook",  href: "https://facebook.com/TeamMas9",                       icon: Facebook,  color: "#1877F2" },
-  { label: "YouTube",   href: "https://youtube.com/@MasCallnet",                     icon: Youtube,   color: "#FF0000" },
-];
+// Icon + brand colour per platform. The destination URL is NOT held here any
+// more: it comes from social_profile_link (migration 1656) so a superadmin can
+// correct a handle from /social-feed/admin without a code change. The hook falls
+// back to the same URLs that used to be hardcoded here, so this row still
+// renders with the right links when the API is unreachable.
+const SOCIAL_ICONS: Record<SocialLinkPlatform, { icon: typeof Globe; color: string }> = {
+  website:   { icon: Globe,     color: "#06b6d4" },
+  linkedin:  { icon: Linkedin,  color: "#0077B5" },
+  instagram: { icon: Instagram, color: "#E1306C" },
+  twitter:   { icon: Twitter,   color: "#ffffff" },
+  facebook:  { icon: Facebook,  color: "#1877F2" },
+  youtube:   { icon: Youtube,   color: "#FF0000" },
+};
 
 type ForgotPasswordChannel = 'email' | 'sms';
 type ForgotPasswordStep = 'send' | 'verify';
 
 export default function AuthClean() {
+  const { data: socialLinks } = useSocialProfileLinks();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [resetEmail, setResetEmail] = useState("");
@@ -320,10 +327,12 @@ export default function AuthClean() {
         <div className="relative z-10 space-y-3">
           {/* Social icons */}
           <div className="flex items-center gap-3">
-            {SOCIAL_LINKS.map(({ label, href, icon: Icon, color }) => (
+            {(socialLinks ?? []).filter(l => l.enabled && SOCIAL_ICONS[l.platform]).map(({ platform, label, profile_url }) => {
+              const { icon: Icon, color } = SOCIAL_ICONS[platform];
+              return (
               <a
-                key={label}
-                href={href}
+                key={platform}
+                href={profile_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 title={label}
@@ -338,7 +347,8 @@ export default function AuthClean() {
               >
                 <Icon className="h-5 w-5" />
               </a>
-            ))}
+              );
+            })}
           </div>
           <div className="flex items-center gap-2">
             <span

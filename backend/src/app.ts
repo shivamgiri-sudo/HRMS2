@@ -276,6 +276,7 @@ import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes
 import { pushRouter } from "./modules/push/push.routes.js";
 import { locationRouter } from "./modules/location/location.routes.js";
 import { socialFeedRouter } from "./modules/social-feed/social-feed.routes.js";
+import { socialLinksPublicRouter } from "./modules/social-feed/social-links.public.routes.js";
 import { mcnmeetRouter } from "./modules/mcnmeet/mcnmeet.routes.js";
 
 export const app = express();
@@ -523,6 +524,13 @@ app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 // token, so it must sit above the catch-all too. Mounted below it, every
 // "Review & Sign All" button in every kit email would answer 401.
 app.use("/api/public/joining-kit", publicJoiningKitRouter);
+// The company's public social profile links (website, LinkedIn, Instagram, X,
+// Facebook, YouTube) are rendered on the LOGIN page, which by definition has no
+// session, so this read has to sit above the "/api" clientRouter mount below
+// that applies requireAuth to every /api/* path. Read-only, and only marketing
+// URLs -- the API credentials for the same platforms stay behind
+// /api/social-feed/admin/*, which is super_admin / hr_admin.
+app.use("/api/public/social-links", socialLinksPublicRouter);
 app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  AlertTriangle, CheckCircle2, ExternalLink, Loader, RefreshCcw,
+  AlertTriangle, CheckCircle2, Loader, RefreshCcw,
   Settings, Share2, X, Youtube,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -8,7 +8,11 @@ import {
   useSocialFeedAdminConfig,
   useSaveSocialConfig,
   useSyncSocialFeed,
+  useAdminSocialProfileLinks,
+  useSaveSocialProfileLinks,
+  SOCIAL_LINK_DEFAULTS,
   type SocialPlatform,
+  type SocialLinkPlatform,
 } from "@/hooks/useSocialFeed";
 
 // ── Platform definitions ────────────────────────────────────────────────────
@@ -259,6 +263,157 @@ function PlatformRow({
   );
 }
 
+// ── Public profile links editor ──────────────────────────────
+// These are the URLs the login page icons and the feed cards open. They used to
+// be hardcoded in the bundle (five copies across two files, which had drifted
+// apart) — this card writes them to social_profile_link instead, so a handle can
+// be corrected without a code change or a frontend deploy.
+
+const LINK_ORDER: SocialLinkPlatform[] = [
+  "website", "linkedin", "instagram", "twitter", "facebook", "youtube",
+];
+
+type LinkDraft = { profile_url: string; handle: string; enabled: boolean };
+
+function ProfileLinksCard() {
+  const { data, isLoading, isError, refetch } = useAdminSocialProfileLinks();
+  const save = useSaveSocialProfileLinks();
+  const [drafts, setDrafts] = useState<Record<string, LinkDraft>>({});
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Seed the inputs once the saved rows arrive; anything the API did not return
+  // falls back to the same default the public page would render.
+  useEffect(() => {
+    if (!data) return;
+    const next: Record<string, LinkDraft> = {};
+    for (const platform of LINK_ORDER) {
+      const row = data.find((l) => l.platform === platform);
+      next[platform] = {
+        profile_url: row?.profile_url ?? SOCIAL_LINK_DEFAULTS[platform].profile_url,
+        handle: row?.handle ?? SOCIAL_LINK_DEFAULTS[platform].handle,
+        enabled: row ? row.enabled : true,
+      };
+    }
+    setDrafts(next);
+  }, [data]);
+
+  const update = (platform: string, patch: Partial<LinkDraft>) => {
+    setDrafts((d) => ({ ...d, [platform]: { ...d[platform], ...patch } }));
+    setMsg(null);
+    setErr(null);
+  };
+
+  const handleSaveLinks = () => {
+    setMsg(null);
+    setErr(null);
+    const invalid = LINK_ORDER.filter(
+      (p) => !/^https?:\/\/\S+$/i.test((drafts[p]?.profile_url ?? "").trim()),
+    );
+    if (invalid.length) {
+      setErr(
+        `Enter a full URL starting with https:// for: ${invalid
+          .map((p) => SOCIAL_LINK_DEFAULTS[p].label)
+          .join(", ")}`,
+      );
+      return;
+    }
+    save.mutate(
+      LINK_ORDER.map((platform) => ({
+        platform,
+        profile_url: drafts[platform].profile_url.trim(),
+        handle: drafts[platform].handle.trim() || null,
+        enabled: drafts[platform].enabled,
+      })),
+      {
+        onSuccess: () => setMsg("Saved. The login page and the feed cards now use these links."),
+        onError: () => setErr("Could not save. Check that you are signed in as super admin."),
+      },
+    );
+  };
+
+  return (
+    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 px-6 py-4">
+        <div className="flex items-center gap-2">
+          <Share2 className="h-4 w-4 text-slate-500" />
+          <p className="text-sm font-black text-slate-950">Public Profile Links</p>
+        </div>
+        <p className="mt-1 text-xs text-slate-500">
+          Where the social icons on the login screen and the Follow / Open buttons on{" "}
+          <a href="/social-feed" className="text-blue-600 hover:underline">/social-feed</a>{" "}
+          send people. Changing a URL here takes effect for everyone without a code change.
+        </p>
+      </div>
+
+      {isError ? (
+        <div className="flex items-center gap-3 px-6 py-4 text-sm font-semibold text-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Could not load the links.
+          <button onClick={() => void refetch()} className="ml-auto cursor-pointer underline">Retry</button>
+        </div>
+      ) : isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader className="h-6 w-6 animate-spin text-slate-300" />
+        </div>
+      ) : (
+        <>
+          <div className="divide-y divide-slate-100">
+            {LINK_ORDER.map((platform) => {
+              const draft = drafts[platform];
+              if (!draft) return null;
+              return (
+                <div key={platform} className="grid gap-3 px-6 py-4 sm:grid-cols-[110px_1fr_170px_auto] sm:items-center">
+                  <p className="text-xs font-black text-slate-700">
+                    {SOCIAL_LINK_DEFAULTS[platform].label}
+                  </p>
+                  <input
+                    type="url"
+                    value={draft.profile_url}
+                    onChange={(e) => update(platform, { profile_url: e.target.value })}
+                    placeholder={SOCIAL_LINK_DEFAULTS[platform].profile_url}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-slate-400"
+                  />
+                  <input
+                    type="text"
+                    value={draft.handle}
+                    onChange={(e) => update(platform, { handle: e.target.value })}
+                    placeholder={SOCIAL_LINK_DEFAULTS[platform].handle}
+                    title="Shown on the feed card, e.g. @mascallnet"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-slate-400"
+                  />
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={draft.enabled}
+                      onChange={(e) => update(platform, { enabled: e.target.checked })}
+                      className="h-4 w-4 cursor-pointer accent-slate-700"
+                    />
+                    Show
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 px-6 py-4">
+            <button
+              onClick={handleSaveLinks}
+              disabled={save.isPending}
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
+            >
+              {save.isPending ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Save Links
+            </button>
+            {msg && <span className="text-xs font-semibold text-green-700">{msg}</span>}
+            {err && <span className="text-xs font-semibold text-red-700">{err}</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function NativeSocialFeedAdmin() {
@@ -359,6 +514,9 @@ export default function NativeSocialFeedAdmin() {
           </div>
         )}
 
+        {/* Public profile links */}
+        <ProfileLinksCard />
+
         {/* X/Twitter & LinkedIn guidance */}
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 px-6 py-4">
@@ -380,18 +538,14 @@ export default function NativeSocialFeedAdmin() {
               <p className="text-xs font-semibold text-slate-700">LinkedIn</p>
               <p className="mt-1 text-xs text-slate-500">
                 LinkedIn has no free public feed API. The LinkedIn tab shows a follow card linking to the company page.
-                To update the LinkedIn page URL, edit{" "}
-                <code className="rounded bg-slate-100 px-1 text-[11px]">src/pages/NativeSocialFeed.tsx → LinkedInCard</code>.
+                To point it at a different page, edit the LinkedIn row in <strong>Public Profile Links</strong> above.
               </p>
             </div>
             <div className="px-6 py-4">
               <p className="text-xs font-semibold text-slate-700">Facebook (embed)</p>
               <p className="mt-1 text-xs text-slate-500">
-                Facebook tab uses the official Page Plugin embed — shows live posts from{" "}
-                <a href="https://facebook.com/TeamMas9" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-600 hover:underline">
-                  facebook.com/TeamMas9 <ExternalLink className="h-3 w-3" />
-                </a>
-                {" "}with no API setup needed.
+                Facebook tab uses the official Page Plugin embed — no API setup needed. It shows live posts from
+                whichever page the <strong>Facebook</strong> row in Public Profile Links points at.
               </p>
             </div>
           </div>

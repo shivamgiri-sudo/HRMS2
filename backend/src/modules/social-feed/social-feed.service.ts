@@ -4,7 +4,8 @@ import * as repo from './social-feed.repository.js';
 import { fetchFacebookPosts } from './social-feed.adapters/facebook.adapter.js';
 import { fetchInstagramPosts } from './social-feed.adapters/instagram.adapter.js';
 import { fetchYouTubePosts } from './social-feed.adapters/youtube.adapter.js';
-import type { SocialPlatform, SaveConfigInput } from './social-feed.types.js';
+import type { SocialPlatform, SaveConfigInput, SocialProfileLink, SaveProfileLinkInput } from './social-feed.types.js';
+import { SOCIAL_LINK_PLATFORMS, SOCIAL_LINK_DEFAULTS } from './social-feed.types.js';
 
 async function syncPlatform(platform: SocialPlatform): Promise<number> {
   const config = await repo.getConfig(platform);
@@ -91,4 +92,40 @@ export async function getPostCounts() {
     }),
   );
   return counts;
+}
+
+// ── Public profile links (social_profile_link, migration 1656) ─────────────
+
+/**
+ * The six public company social URLs, always complete: any platform the table
+ * has no row for (migration 1656 unapplied, or a row deleted by hand) is filled
+ * from SOCIAL_LINK_DEFAULTS, which carries the same values the frontend bundle
+ * falls back to. Callers therefore never have to handle a partial list.
+ */
+export async function getProfileLinks(): Promise<SocialProfileLink[]> {
+  const stored = await repo.getProfileLinks();
+  const byPlatform = new Map(stored.map((l) => [l.platform, l]));
+
+  return SOCIAL_LINK_PLATFORMS.map((platform) => {
+    const row = byPlatform.get(platform);
+    if (row) return row;
+    const d = SOCIAL_LINK_DEFAULTS[platform];
+    return {
+      platform,
+      label: d.label,
+      profile_url: d.profile_url,
+      handle: d.handle,
+      display_order: d.display_order,
+      enabled: true,
+    };
+  }).sort((a, b) => a.display_order - b.display_order);
+}
+
+export async function saveProfileLinks(
+  links: SaveProfileLinkInput[],
+  updatedBy: string | null,
+): Promise<void> {
+  for (const link of links) {
+    await repo.saveProfileLink(link, updatedBy);
+  }
 }

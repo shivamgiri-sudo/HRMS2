@@ -3,7 +3,7 @@ import { ExternalLink, MessageCircle, Play, RefreshCw, ThumbsUp } from "lucide-r
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VideoModal } from "@/components/social/VideoModal";
-import { useSocialFeed, type SocialPost, type SocialPlatformFilter } from "@/hooks/useSocialFeed";
+import { useSocialFeed, useSocialLinkMap, type SocialPost, type SocialPlatformFilter } from "@/hooks/useSocialFeed";
 import { useQueryClient } from "@tanstack/react-query";
 
 // ── MCN brand ──────────────────────────────────────────────────────────────
@@ -184,7 +184,8 @@ function FeedList({ platform, onPlayVideo }: { platform: SocialPlatformFilter; o
 
 // ── Facebook embed — iframe approach (works without JS SDK) ────────────────
 function FacebookEmbed() {
-  const src = `https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2FTeamMas9&tabs=timeline&width=500&height=700&small_header=true&adapt_container_width=true&hide_cover=false&show_facepile=false`;
+  const pageUrl = useSocialLinkMap().facebook.profile_url;
+  const src = `https://www.facebook.com/plugins/page.php?href=${encodeURIComponent(pageUrl)}&tabs=timeline&width=500&height=700&small_header=true&adapt_container_width=true&hide_cover=false&show_facepile=false`;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
@@ -203,7 +204,7 @@ function FacebookEmbed() {
         />
       </div>
       <div className="flex items-center justify-end border-t border-slate-100 px-4 py-3">
-        <a href="https://www.facebook.com/TeamMas9" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-semibold text-[#1877F2] hover:underline cursor-pointer">
+        <a href={pageUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-semibold text-[#1877F2] hover:underline cursor-pointer">
           Open Facebook page <ExternalLink className="h-3 w-3" />
         </a>
       </div>
@@ -215,11 +216,12 @@ function FacebookEmbed() {
 // Instagram allows embedding individual public posts via their oEmbed endpoint.
 // Without a post URL we show the profile card + recent post iframes.
 const INSTAGRAM_POST_URLS = [
-  // Add real post URLs from https://www.instagram.com/teammas9/ here
+  // Add real post URLs from https://www.instagram.com/mascallnet/ here
   // e.g. "https://www.instagram.com/p/C_XXXXXXXX/"
 ];
 
 function InstagramEmbed() {
+  const ig = useSocialLinkMap().instagram;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
@@ -230,10 +232,10 @@ function InstagramEmbed() {
             <svg className="h-8 w-8" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" /></svg>
           </div>
           <div>
-            <p className="text-base font-black" style={{ color: MCN_NAVY }}>@teammas9</p>
+            <p className="text-base font-black" style={{ color: MCN_NAVY }}>{ig.handle ?? ig.label}</p>
             <p className="text-sm text-slate-500">MAS Callnet on Instagram</p>
           </div>
-          <a href="https://instagram.com/teammas9" target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1.5 rounded-2xl px-4 py-2 text-sm font-bold text-white cursor-pointer hover:opacity-90 shrink-0" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
+          <a href={ig.profile_url} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex items-center gap-1.5 rounded-2xl px-4 py-2 text-sm font-bold text-white cursor-pointer hover:opacity-90 shrink-0" style={{ background: "linear-gradient(135deg,#833AB4,#FD1D1D,#F77737)" }}>
             Follow <ExternalLink className="h-3.5 w-3.5" />
           </a>
         </div>
@@ -259,7 +261,7 @@ function InstagramEmbed() {
           <div className="w-full rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-8 text-center">
             <p className="text-sm text-slate-600 font-medium">Instagram post embedding requires individual post URLs.</p>
             <p className="mt-2 text-xs text-slate-400">
-              Visit <a href="https://instagram.com/teammas9" target="_blank" rel="noopener noreferrer" className="text-pink-600 underline">@teammas9</a> and share recent post links with admin to display them here.
+              Visit <a href={ig.profile_url} target="_blank" rel="noopener noreferrer" className="text-pink-600 underline">{ig.handle ?? ig.label}</a> and share recent post links with admin to display them here.
             </p>
           </div>
         )}
@@ -272,6 +274,7 @@ function InstagramEmbed() {
 declare global { interface Window { twttr?: { widgets: { load: (el?: HTMLElement) => void } } } }
 
 function TwitterEmbed() {
+  const x = useSocialLinkMap().twitter;
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -292,15 +295,18 @@ function TwitterEmbed() {
       }
     };
     inject();
-  }, []);
+    // x.profile_url is a dependency: the timeline anchor below is rewritten when
+    // an admin changes the handle, and widgets.load() has to run again over the
+    // new href or the iframe keeps showing the previous account.
+  }, [x.profile_url]);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
       <div className="bg-black px-4 py-3 flex items-center gap-3">
         <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.74l7.73-8.835L1.254 2.25H8.08l4.259 5.622 5.905-5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
-        <p className="text-white font-black text-sm">@MASCallnet on X</p>
-        <a href="https://twitter.com/MASCallnet" target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer">
+        <p className="text-white font-black text-sm">{x.handle ?? x.label} on X</p>
+        <a href={x.profile_url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer">
           Open <ExternalLink className="h-3 w-3" />
         </a>
       </div>
@@ -311,7 +317,8 @@ function TwitterEmbed() {
           data-height="700"
           data-theme="light"
           data-tweet-limit="6"
-          href="https://twitter.com/MASCallnet"
+          key={x.profile_url}
+          href={x.profile_url}
         >
           <div className="flex items-center justify-center py-16">
             <div className="text-center">
@@ -327,6 +334,10 @@ function TwitterEmbed() {
 
 // ── LinkedIn ───────────────────────────────────────────────────────────────
 function LinkedInCard() {
+  const li = useSocialLinkMap().linkedin;
+  // The follow widget wants the company slug, which is the last path segment of
+  // the page URL (…/company/<slug>[/]).
+  const slug = li.profile_url.replace(/\/+$/, "").split("/").pop() || "mas-callnet";
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
       <McnStripe h={3} />
@@ -338,13 +349,13 @@ function LinkedInCard() {
           <p className="text-lg font-black" style={{ color: MCN_NAVY }}>MAS Callnet on LinkedIn</p>
           <p className="mt-1 text-sm text-slate-500 max-w-sm">LinkedIn does not provide a free embeddable feed. Follow our company page directly for career opportunities, company news, and milestones.</p>
         </div>
-        <a href="https://www.linkedin.com/company/mas-callnet" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-2xl bg-[#0A66C2] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-[#004182] cursor-pointer">
+        <a href={li.profile_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-2xl bg-[#0A66C2] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-[#004182] cursor-pointer">
           Follow on LinkedIn <ExternalLink className="h-3.5 w-3.5" />
         </a>
         {/* LinkedIn follow button widget */}
         <div className="mt-2">
           <script src="https://platform.linkedin.com/in.js" type="text/javascript"> lang: en_US</script>
-          <script type="IN/FollowCompany" data-id="mas-callnet" data-counter="bottom"></script>
+          <script type="IN/FollowCompany" data-id={slug} data-counter="bottom"></script>
         </div>
       </div>
     </div>
