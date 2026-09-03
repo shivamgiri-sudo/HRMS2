@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { AlertTriangle, ArrowUpRight, CheckCircle2, ShieldAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { PnlDrilldownDrawer } from "@/components/finance/pnl/PnlDrilldownDrawer";
+import type { PnlDrilldownParams } from "@/hooks/usePnlDrilldown";
 import {
   Sheet,
   SheetContent,
@@ -9,6 +12,22 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { BpoPnlRow, BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
+
+/**
+ * The lines a reader can open from this drawer, and what each resolves to.
+ *
+ * Same restriction as the statement view: only metrics whose drilldown total equals the figure it
+ * is opened from. The KPI tiles above are summaries (EBITDA, margin, budget utilisation) that no
+ * single transaction set explains, so they stay read-only and these are offered separately rather
+ * than making a tile lie about what clicking it would show.
+ */
+const DRILL_TARGETS: { label: string; params: Pick<PnlDrilldownParams, "metric" | "peopleBucket"> }[] = [
+  { label: "Recognised revenue", params: { metric: "revenue" } },
+  { label: "Agent salary", params: { metric: "people", peopleBucket: "agent_salary" } },
+  { label: "DSC people", params: { metric: "people", peopleBucket: "dsc_people" } },
+  { label: "BMC people", params: { metric: "people", peopleBucket: "bmc_people" } },
+  { label: "Indirect / GRN spend", params: { metric: "indirect" } },
+];
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -35,6 +54,7 @@ export function ProcessPnlRowDrawer({
   onOpenChange: (open: boolean) => void;
 }) {
   const processAlerts = alerts.filter((alert) => alert.processId === row.processId);
+  const [drilldown, setDrilldown] = useState<PnlDrilldownParams | null>(null);
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -64,6 +84,26 @@ export function ProcessPnlRowDrawer({
                 </div>
               ))}
             </dl>
+          </section>
+
+          <section>
+            <h3 className="text-sm font-semibold text-slate-950">Underlying transactions</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Open the rows behind a figure — invoices, salary lines, GRN spend — for this process.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {DRILL_TARGETS.map((target) => (
+                <Button
+                  key={target.label}
+                  variant="outline"
+                  size="sm"
+                  className="transition-all duration-200"
+                  onClick={() => setDrilldown({ ...target.params, period, processId: row.processId })}
+                >
+                  {target.label}
+                </Button>
+              ))}
+            </div>
           </section>
 
           <section>
@@ -113,6 +153,13 @@ export function ProcessPnlRowDrawer({
           </Button>
         </div>
       </SheetContent>
+
+      <PnlDrilldownDrawer
+        params={drilldown}
+        scopeLabel={row.processName}
+        open={Boolean(drilldown)}
+        onOpenChange={(next) => { if (!next) setDrilldown(null); }}
+      />
     </Sheet>
   );
 }

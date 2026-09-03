@@ -3,6 +3,27 @@ import { Download, Loader2, RefreshCw } from "lucide-react";
 import type { PnlStatement, PnlStatementViewBy } from "@/hooks/usePnlStatement";
 import { useRefreshRunningSalarySnapshot } from "@/hooks/usePnlStatement";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { PnlDrilldownDrawer } from "@/components/finance/pnl/PnlDrilldownDrawer";
+import type { PnlDrilldownParams } from "@/hooks/usePnlDrilldown";
+
+/**
+ * Which statement lines can be opened, and what they resolve to.
+ *
+ * Deliberately NOT every line. A cell is clickable only where the drilldown's own total equals
+ * that cell by construction — Recognised Revenue is the invoice + credit-note + provision set the
+ * revenue drilldown returns; Agent/DSC/BMC each tie to their own bucket in the classification
+ * snapshot; Total Indirect Cost is the GRN set. The other revenue lines (Minimum Commitment
+ * Top-up, Incentives, SLA Deduction …) are components the drilldown cannot yet decompose, so
+ * opening them would show a list whose total visibly disagrees with the number clicked. Left
+ * closed until the service can answer them exactly — a wrong drilldown is worse than none.
+ */
+const DRILLDOWN_BY_COMPONENT: Record<string, Pick<PnlDrilldownParams, "metric" | "peopleBucket">> = {
+  recognized_revenue: { metric: "revenue" },
+  agent_salary: { metric: "people", peopleBucket: "agent_salary" },
+  dsc_people: { metric: "people", peopleBucket: "dsc_people" },
+  bmc_people: { metric: "people", peopleBucket: "bmc_people" },
+  total_idc: { metric: "indirect" },
+};
 
 /** Mirrors PNL_WRITE_ROLES on the refresh endpoint; the backend enforces it regardless. */
 const PNL_REFRESH_ROLES = ["super_admin", "admin", "finance", "finance_head", "accounts_head", "payroll_head"];
@@ -52,6 +73,24 @@ export function PnlStatementView({
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const { hasAnyRole } = useWorkforceAccess();
   const refresh = useRefreshRunningSalarySnapshot();
+  const [drilldown, setDrilldown] = useState<{ params: PnlDrilldownParams; label: string } | null>(null);
+
+  /**
+   * A column's id is the entity the statement is grouped by, so it is a drilldown scope only when
+   * that entity is one the drilldown understands. LOB is not — it has no scope key — so those
+   * columns stay non-clickable rather than silently drilling the wrong thing.
+   */
+  function drilldownFor(componentKey: string, columnId: string, columnName: string) {
+    const mapped = DRILLDOWN_BY_COMPONENT[componentKey];
+    if (!mapped || !period) return null;
+    if (viewBy === "process") {
+      return { params: { ...mapped, period, processId: columnId }, label: columnName };
+    }
+    if (viewBy === "branch") {
+      return { params: { ...mapped, period, branchId: columnId }, label: columnName };
+    }
+    return null;
+  }
 
   const asOf = statement?.peopleCostAsOf ?? null;
   const isStale = !!asOf && asOf < istToday();
@@ -270,11 +309,25 @@ export function PnlStatementView({
                         {isChild && <span className="mr-1.5 text-slate-300">↳</span>}
                         {row.displayName}
                       </td>
-                      {statement.columns.map((column) => (
-                        <td key={column.id} className={`px-4 py-2 text-right tabular-nums ${isChild ? "text-slate-500" : "text-slate-700"}`}>
-                          {formatValue(row.values[column.id], row.format)}
-                        </td>
-                      ))}
+                      {statement.columns.map((column) => {
+                        const target = drilldownFor(row.componentKey, column.id, column.name);
+                        const value = row.values[column.id];
+                        const canOpen = Boolean(target) && value !== null && value !== undefined;
+                        return (
+                          <td
+                            key={column.id}
+                            className={`px-4 py-2 text-right tabular-nums ${isChild ? "text-slate-500" : "text-slate-700"} ${
+                              canOpen
+                                ? "cursor-pointer underline decoration-dotted decoration-slate-300 underline-offset-4 transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
+                                : ""
+                            }`}
+                            onClick={canOpen ? () => setDrilldown(target) : undefined}
+                            title={canOpen ? `View the ${row.displayName.toLowerCase()} behind this figure` : undefined}
+                          >
+                            {formatValue(value, row.format)}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 }
@@ -285,6 +338,13 @@ export function PnlStatementView({
         </div>
         </>
       )}
+
+      <PnlDrilldownDrawer
+        params={drilldown?.params ?? null}
+        scopeLabel={drilldown?.label}
+        open={Boolean(drilldown)}
+        onOpenChange={(next) => { if (!next) setDrilldown(null); }}
+      />
     </div>
   );
 }

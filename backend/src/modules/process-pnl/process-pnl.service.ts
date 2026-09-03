@@ -835,6 +835,29 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
 
 async function getExpenseMap(processIds: string[], start: string, end: string): Promise<Map<string, ExpenseMeta>> {
   const map = new Map<string, ExpenseMeta>();
+/**
+ * DEAD BY DESIGN — do not "fix" this by pointing it at `expense_claim`.
+ *
+ * Every expense-claim path in this file queries `expense_claims` + `expense_items`: a two-table
+ * schema (header with claim_number, child line items keyed by expense_claim_id) that was never
+ * created in mas_hrms. The tableExists() guards therefore always fail and these blocks return
+ * empty, which is the CORRECT P&L answer — verified against production 2026-09-03.
+ *
+ * The flat `expense_claim` table that does exist is not the same thing and must not be
+ * substituted:
+ *   - 0 of its 5,634 rows are approved (all status='submitted'), so none is a booked cost;
+ *   - cost_centre_id is NULL on 100% of rows, so nothing can be attributed to a process;
+ *   - employee_id is a NUL-byte placeholder on 5,631 of 5,634 (only 3 resolve to a real
+ *     employee, Rs 36,151 in total), so an employee -> process join cannot work either;
+ *   - its largest rows are capex ("Capex", "workstations"), which P&L excludes by design;
+ *   - 112 rows share an exact amount and date with an existing GRN, so folding them in would
+ *     double-count spend already recognised through grn_cost_allocation;
+ *   - it has received nothing since 2026-06-24.
+ *
+ * Wiring it in would book unapproved capex against no process on top of possibly-duplicated
+ * spend. The gap is reported instead by pnl-cost-leakage.service.ts, which surfaces this ledger
+ * as an unusable source rather than silently importing it.
+ */
   if (
     processIds.length === 0 ||
     !(await tableExists("expense_claims")) ||
@@ -1383,6 +1406,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
   // process-pnl surface reads, via the shared getInvoicedRevenueActuals() helper.
   const hasInvoiceSnapshot = await tableExists("billing_invoice_particular_snapshot");
   const salaryColumns = await listColumns("salary_prep_line").catch(() => new Set<string>());
+  // Dead by design — see the expense-claim note above; never repoint at `expense_claim`.
   const hasExpenseClaims = await tableExists("expense_claims");
   const hasExpenseItems = await tableExists("expense_items");
   const costCentreProcessIdSupported = await hasCostCentreProcessId();
@@ -2317,6 +2341,7 @@ export const processPnlService = {
       }
     }
 
+  // Dead by design — see the expense-claim note above; never repoint at `expense_claim`.
     if (await tableExists("expense_claims") && await tableExists("expense_items")) {
       const expenseRows = await queryRows<RowDataPacket>(
         `SELECT ec.claim_number, ei.expense_date, ei.amount, ec.status

@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PnlDrilldownDrawer } from "@/components/finance/pnl/PnlDrilldownDrawer";
+import type { PnlDrilldownMetric, PnlDrilldownParams } from "@/hooks/usePnlDrilldown";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePnlLiveReconciliation, type PnlReconciliationRow } from "@/hooks/usePnlLiveReconciliation";
@@ -36,6 +39,21 @@ function sortRows(rows: PnlReconciliationRow[]) {
     return a.costCentreCode.localeCompare(b.costCentreCode);
   });
 }
+
+/**
+ * This table is named "Drilldown" but had no row click until now — every figure was a dead end.
+ *
+ * Each of these four columns is a whole transaction set for one cost centre, so each ties to its
+ * drilldown by construction. Operating Profit is deliberately absent: the reconciliation computes
+ * it as revenue - payroll - GRN (its own header calls it indicative and simplified), so there is
+ * no single set of rows that adds up to it.
+ */
+const CELL_METRIC: Record<string, PnlDrilldownMetric> = {
+  recognisedRevenue: "revenue",
+  payrollCost: "people",
+  grnActual: "indirect",
+  allocatedBudget: "budget",
+};
 
 export function PnlReconciliationPanel({
   period,
@@ -204,10 +222,38 @@ export function PnlReconciliationPanel({
                     <td className="px-3 py-2 text-slate-600">{row.branchName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(row.revenueInvoice)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(row.revenueAccrual)}</td>
-                    <td className="px-3 py-2 text-right font-medium tabular-nums">{money(row.recognisedRevenue)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{money(row.payrollCost)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{money(row.grnActual)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{money(row.allocatedBudget)}</td>
+                    <td
+                      className="cursor-pointer px-3 py-2 text-right font-medium tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => setDrilldown({
+                        params: { metric: CELL_METRIC.recognisedRevenue, period, costCentreId: row.costCentreId },
+                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                      })}
+                      title="View the underlying rows"
+                    >{money(row.recognisedRevenue)}</td>
+                    <td
+                      className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => setDrilldown({
+                        params: { metric: CELL_METRIC.payrollCost, period, costCentreId: row.costCentreId },
+                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                      })}
+                      title="View the underlying rows"
+                    >{money(row.payrollCost)}</td>
+                    <td
+                      className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => setDrilldown({
+                        params: { metric: CELL_METRIC.grnActual, period, costCentreId: row.costCentreId },
+                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                      })}
+                      title="View the underlying rows"
+                    >{money(row.grnActual)}</td>
+                    <td
+                      className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => setDrilldown({
+                        params: { metric: CELL_METRIC.allocatedBudget, period, costCentreId: row.costCentreId },
+                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                      })}
+                      title="View the underlying rows"
+                    >{money(row.allocatedBudget)}</td>
                     <td className={`px-3 py-2 text-right font-semibold tabular-nums ${row.operatingProfit < 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(row.operatingProfit)}</td>
                     <td className="px-3 py-2">
                       <div className="flex max-w-64 flex-wrap gap-1">
@@ -234,6 +280,13 @@ export function PnlReconciliationPanel({
           ))}
         </div>
       )}
+
+      <PnlDrilldownDrawer
+        params={drilldown?.params ?? null}
+        scopeLabel={drilldown?.label}
+        open={Boolean(drilldown)}
+        onOpenChange={(next) => { if (!next) setDrilldown(null); }}
+      />
     </div>
   );
 }

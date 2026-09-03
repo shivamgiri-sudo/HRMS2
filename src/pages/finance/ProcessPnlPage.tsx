@@ -16,6 +16,9 @@ import { useCeoOverview } from "@/hooks/useCeoOverview";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
+import { PnlCostLeakagePanel } from "@/components/finance/pnl/PnlCostLeakagePanel";
+import { PnlDailyTrendChart } from "@/components/finance/pnl/PnlDailyTrendChart";
+import { PnlSeatForecastCard } from "@/components/finance/pnl/PnlSeatForecastCard";
 import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
 import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
@@ -390,6 +393,7 @@ export default function ProcessPnlPage() {
             <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
             <TabsTrigger value="statement">P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
+            <TabsTrigger value="leakage">Cost Leakage</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -492,6 +496,10 @@ export default function ProcessPnlPage() {
             <PnlReconciliationPanel period={period} branchId={branchId || undefined} />
           </TabsContent>
 
+          <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <PnlCostLeakagePanel period={period} />
+          </TabsContent>
+
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
             <ProcessPnlMatrixToolbar
               preset={matrixPreset}
@@ -526,6 +534,10 @@ export default function ProcessPnlPage() {
           </TabsContent>
 
           <TabsContent value="statement" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <div className="mb-4 space-y-4">
+              <PnlSeatForecastCard period={period} branchId={branchId || undefined} />
+              <PnlDailyTrendChart period={period} branchId={branchId || undefined} />
+            </div>
             <PnlStatementView
               statement={statementQuery.data}
               isLoading={statementQuery.isLoading}

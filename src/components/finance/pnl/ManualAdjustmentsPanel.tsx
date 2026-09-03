@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSeatRevenueForecast } from "@/hooks/useSeatRevenueForecast";
 import { AlertCircle, Check, X } from "lucide-react";
 import {
   useManualAdjustments,
@@ -37,6 +38,13 @@ function statusBadgeClass(status: string) {
  * elsewhere on this page. Only APPROVED entries count toward the Adjusted Total; pending and
  * rejected entries are visible here for tracking but never move any figure.
  */
+/**
+ * System-suggested Projected Revenue.
+ *
+ * The forecast is offered, never imposed: it fills the box only when the user asks for it, and the
+ * value stays fully editable afterwards. Approval, and the guarantee that an approved projected
+ * figure never enters reported profit, are unchanged.
+ */
 export function ManualAdjustmentsPanel({
   processId,
   processName,
@@ -68,6 +76,10 @@ export function ManualAdjustmentsPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+
+  // Only consulted to suggest a figure — this never writes and never changes a reported number.
+  const forecastQuery = useSeatRevenueForecast(period);
+  const suggested = forecastQuery.data?.byProcess.find((p) => p.processId === processId) ?? null;
 
   const listQuery = useManualAdjustments({ processId, period });
   const createMutation = useCreateManualAdjustment();
@@ -171,6 +183,28 @@ export function ManualAdjustmentsPanel({
               onChange={(e) => setReason(e.target.value)}
             />
           </div>
+          {type === "projected_revenue" && suggested && suggested.projectedMonthEnd > 0 && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+              <span>
+                Seat forecast for this process:{" "}
+                <span className="font-semibold text-slate-800">
+                  {currency(suggested.projectedMonthEnd)}
+                </span>{" "}
+                ({suggested.billableSeats} billable seats
+                {forecastQuery.data?.classificationPeriod
+                  ? `, classified from ${forecastQuery.data.classificationPeriod}`
+                  : ""}
+                )
+              </span>
+              <button
+                type="button"
+                className="cursor-pointer rounded-md border border-slate-300 px-1.5 py-0.5 font-semibold text-slate-700 transition-colors duration-200 hover:bg-slate-100"
+                onClick={() => setAmount(String(Math.round(suggested.projectedMonthEnd)))}
+              >
+                Use this figure
+              </button>
+            </p>
+          )}
           {formError && <p className="mt-1.5 text-[11px] text-rose-600">{formError}</p>}
           <button
             type="button"

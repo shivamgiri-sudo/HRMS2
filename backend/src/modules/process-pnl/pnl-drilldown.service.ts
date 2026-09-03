@@ -59,7 +59,33 @@ export interface PnlDrilldownScope {
 export type PnlDrilldownQuery = PnlDrilldownScope & {
   metric: "revenue" | "people" | "indirect" | "budget";
   period: string;
+  /**
+   * Return people cost grouped by designation (headcount + total) instead of one row per employee.
+   *
+   * CLAUDE.md forbids exposing payroll/salary data through management or any non-payroll surface,
+   * and the per-employee form of this drilldown is exactly that: a named person against their
+   * gross + employer contributions. The route sets this for every caller who is entitled to the
+   * P&L but not to payroll (ceo, coo, admin, branch_head, process_manager), so those roles still
+   * get a truthful breakdown of the same total without a single individual's salary in it.
+   *
+   * Enforced at the route, not in the component — a frontend that forgot to pass it must not be
+   * able to leak salary.
+   */
+  aggregatePeople?: boolean;
+  /**
+   * Narrow people cost to one P&L line: Agent Salary, DSC People or BMC People.
+   *
+   * Without this, clicking any one of those three cells would open the same undifferentiated list
+   * of everyone in scope, whose total is the sum of all three — a drilldown that visibly disagrees
+   * with the cell it was opened from. The Agent/DSC/BMC split exists only on
+   * pnl_running_salary_snapshot.pnl_bucket (resolved once at snapshot time by resolveBucket), and
+   * pnl-statement.service.ts sources those three lines from exactly that split, so a bucketed
+   * drilldown reads the snapshot rather than posted payroll — the same basis as the cell.
+   */
+  peopleBucket?: PnlPeopleBucket;
 };
+
+export type PnlPeopleBucket = "agent_salary" | "dsc_people" | "bmc_people";
 
 const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
 
@@ -165,6 +191,139 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
   return { metric: "revenue", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows };
 }
 
+/**
+ * The employee-side scope predicate against pnl_running_salary_snapshot, which carries its own
+ * branch/process/cost-centre attribution (resolved once at snapshot time) rather than joining
+ * back to employees.
+ */
+function snapshotScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } {
+  if (scope.costCentreId) return { sql: "s.cost_centre_id = ?", param: scope.costCentreId };
+  if (scope.processId) return { sql: "s.process_id = ?", param: scope.processId };
+  return { sql: "s.branch_id = ?", param: scope.branchId! };
+}
+
+/**
+ * Running-salary fallback for a period payroll has not run for yet.
+ *
+ * Without this the people drilldown was silently empty for every open period. Measured live
+ * 2026-09-03: the latest salary_prep_run is 2026-07, so both 2026-08 and 2026-09 have zero
+ * salary_prep_line rows — while the statement's own people cost for 2026-08 is real (Rs 138.19
+ * lakh across 1,011 snapshot rows), because pnl-statement.service.ts prefers salary_prep_line
+ * only once payroll has actually run and otherwise reads pnl_running_salary_snapshot. A drilldown
+ * that reads only the posted payroll therefore renders "None" underneath a populated cell — the
+ * exact drilldown-does-not-tie-to-summary failure this module's own doc comment warns about.
+ *
+ * Same precedence as the statement: posted payroll wins; this is consulted only when there is
+ * none. Rows are flagged estimated, since an earned-till-date accrual is not a locked payslip.
+ */
+async function peopleSnapshotRows(
+  period: string,
+  scope: PnlDrilldownScope,
+  aggregate: boolean,
+  bucket?: PnlPeopleBucket,
+): Promise<DrilldownRow[]> {
+  if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
+  const s = snapshotScopeSql(scope);
+  const bucketSql = bucket ? " AND s.pnl_bucket = ?" : "";
+  const bucketParams = bucket ? [bucket] : [];
+  const rows: DrilldownRow[] = [];
+  if (aggregate) {
+    const [groupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(TRIM(s.designation_name), ''), 'Unspecified designation') AS designation_name,
+              COUNT(*) AS headcount, SUM(COALESCE(s.earned_salary_till_date,0)) AS amount
+         FROM pnl_running_salary_snapshot s
+        WHERE s.period_code = ? AND ${s.sql}${bucketSql}
+        GROUP BY designation_name
+        ORDER BY amount DESC`,
+      [period, s.param, ...bucketParams],
+    );
+    for (const r of groupRows) {
+      const headcount = n(r.headcount);
+      rows.push({
+        id: `snap-grp-${String(r.designation_name)}`,
+        label: String(r.designation_name),
+        detail: `${headcount} employee${headcount === 1 ? "" : "s"} · ${basisNote(bucket)}`,
+        amount: n(r.amount),
+        date: null,
+      });
+    }
+    return rows;
+  }
+  const [lineRows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.id, s.employee_code, s.designation_name, s.pnl_bucket, s.as_of_date,
+            COALESCE(s.earned_salary_till_date,0) AS amount, e.full_name
+       FROM pnl_running_salary_snapshot s
+       LEFT JOIN employees e ON e.id = s.employee_id
+      WHERE s.period_code = ? AND ${s.sql}${bucketSql}
+      ORDER BY amount DESC`,
+    [period, s.param, ...bucketParams],
+  );
+  for (const r of lineRows) {
+    rows.push({
+      id: `snap-${r.id}`,
+      label: r.full_name ? String(r.full_name) : String(r.employee_code ?? "Unnamed"),
+      detail: [r.employee_code, r.designation_name, basisNote(bucket)]
+        .filter(Boolean).join(" · "),
+      amount: n(r.amount),
+      date: r.as_of_date ? String(r.as_of_date) : null,
+    });
+  }
+  return rows;
+}
+
+/** Why this row's figure is what it is — the snapshot means two different things depending on
+ *  whether it was reached as a fallback or asked for by bucket. */
+function basisNote(bucket?: PnlPeopleBucket): string {
+  return bucket
+    ? "earned to date, per the Agent/DSC/BMC classification snapshot"
+    : "earned to date, payroll not yet run";
+}
+
+/**
+ * People cost grouped by designation — the payroll-safe form of peopleDrilldownRows().
+ *
+ * Same source rows, same scope predicate, same total; only the grain differs. Sums the identical
+ * gross + employer-contribution expression so a role that sees this and a role that sees the
+ * per-employee list can never be shown two different numbers for the same cell.
+ */
+async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+  const rows: DrilldownRow[] = [];
+  const emp = employeeScopeSql(scope);
+  if (await tableExists("salary_prep_line")) {
+    const [groupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(des.designation_name, 'Unspecified designation') AS designation_name,
+              COUNT(*) AS headcount,
+              SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) AS amount
+         FROM salary_prep_line l
+         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN employees e ON e.id = l.employee_id
+         LEFT JOIN designation_master des ON des.id = e.designation_id
+        WHERE r.run_month = ? AND ${emp.sql}
+        GROUP BY designation_name
+        ORDER BY amount DESC`,
+      [period, emp.param],
+    );
+    for (const r of groupRows) {
+      const headcount = n(r.headcount);
+      rows.push({
+        id: `sal-grp-${String(r.designation_name)}`,
+        label: String(r.designation_name),
+        detail: `${headcount} employee${headcount === 1 ? "" : "s"}`,
+        amount: n(r.amount),
+        date: null,
+      });
+    }
+  }
+  if (rows.length === 0) {
+    const fallback = await peopleSnapshotRows(period, scope, true);
+    return {
+      metric: "people", scope: { period, ...scope }, rows: fallback,
+      total: fallback.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: fallback.length > 0,
+    };
+  }
+  return { metric: "people", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
+}
+
 async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
   const emp = employeeScopeSql(scope);
@@ -188,6 +347,13 @@ async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
         date: null,
       });
     }
+  }
+  if (rows.length === 0) {
+    const fallback = await peopleSnapshotRows(period, scope, false);
+    return {
+      metric: "people", scope: { period, ...scope }, rows: fallback,
+      total: fallback.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: fallback.length > 0,
+    };
   }
   return { metric: "people", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
 }
@@ -219,9 +385,46 @@ async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): 
   return { metric: "indirect", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
 }
 
-async function budgetDrilldownRows(period: string, branchId: string): Promise<PnlDrilldownResult> {
+/**
+ * The cost-centre-side scope predicate for budget lines.
+ *
+ * finance_budget_line_snapshot carries no cost_centre_id (or code) column of its own: for
+ * expense_type='CostCenter' rows the cost centre lives in `expense_type_name`, holding the centre's
+ * code (e.g. 'BSS/BO/CORP/318'). Measured live on 2026-09 data, all 93 of that period's CostCenter
+ * lines join cleanly to cost_centre_master on that code, so process/cost-centre scope is resolvable
+ * without a schema change — it just has to go through this join rather than a direct column.
+ */
+function budgetCostCentreScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } | null {
+  if (scope.costCentreId) {
+    return {
+      sql: `l.expense_type_name COLLATE utf8mb4_unicode_ci IN (
+              SELECT ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                FROM cost_centre_master ccm WHERE ccm.id = ?)`,
+      param: scope.costCentreId,
+    };
+  }
+  if (scope.processId) {
+    return {
+      sql: `l.expense_type_name COLLATE utf8mb4_unicode_ci IN (
+              SELECT ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                FROM cost_centre_master ccm
+               WHERE ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                                 WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL))`,
+      param: scope.processId,
+    };
+  }
+  return null;
+}
+
+async function budgetDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
+  const cc = budgetCostCentreScopeSql(scope);
   if (await tableExists("finance_budget_line_snapshot")) {
+    // Branch scope filters on the budget header's branch; process/cost-centre scope filters on the
+    // line's own cost centre and deliberately leaves the header unrestricted, since a budget header
+    // for one branch can carry lines for a cost centre a process spans.
+    const lineScopeSql = cc ? cc.sql : "bm.id = ?";
+    const lineScopeParam = cc ? cc.param : scope.branchId!;
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT l.bill_source_id, l.expense_type_name, l.amount, b.branch_name
          FROM finance_budget_line_snapshot l
@@ -229,10 +432,10 @@ async function budgetDrilldownRows(period: string, branchId: string): Promise<Pn
            ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
          LEFT JOIN (SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm FROM branch_master GROUP BY UPPER(TRIM(branch_name))) bm
                 ON bm.nm COLLATE utf8mb4_unicode_ci = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-        WHERE l.period_code = ? AND l.expense_type = 'CostCenter' AND bm.id = ?
+        WHERE l.period_code = ? AND l.expense_type = 'CostCenter' AND ${lineScopeSql}
           AND b.active_status = 1 AND b.is_rejected = 0
         ORDER BY l.amount DESC`,
-      [period, branchId],
+      [period, lineScopeParam],
     );
     for (const r of lineRows) {
       rows.push({
@@ -248,7 +451,13 @@ async function budgetDrilldownRows(period: string, branchId: string): Promise<Pn
     // per header. budgetByBranch() (ceo-overview.service.ts) UNIONs this into its summary; a
     // drilldown that only listed lines would under-total by exactly this amount, caught live by
     // this session's own reconciliation strip (Rs 36,500 mismatch, 2026-08-22) before shipping.
-    if (await tableExists("finance_budget_snapshot")) {
+    //
+    // Branch scope only. A top-up is recorded against the budget HEADER with no cost centre of its
+    // own, so there is no honest way to attribute it to one process or cost centre — including it
+    // under those scopes would inflate their total by another scope's money. Omitted rather than
+    // guessed, matching how budget-cost-centre-utilization.service.ts refuses to pro-rate
+    // unattributed spend.
+    if (!cc && (await tableExists("finance_budget_snapshot"))) {
       const [topUpRows] = await db.execute<RowDataPacket[]>(
         `SELECT b.bill_source_id, b.reopen_additional_amount, b.branch_name
            FROM finance_budget_snapshot b
@@ -256,7 +465,7 @@ async function budgetDrilldownRows(period: string, branchId: string): Promise<Pn
                   ON bm.nm COLLATE utf8mb4_unicode_ci = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
           WHERE b.period_code = ? AND bm.id = ? AND b.active_status = 1 AND b.is_rejected = 0
             AND b.reopen_additional_amount <> 0`,
-        [period, branchId],
+        [period, scope.branchId!],
       );
       for (const r of topUpRows) {
         rows.push({
@@ -270,7 +479,7 @@ async function budgetDrilldownRows(period: string, branchId: string): Promise<Pn
     }
   }
   rows.sort((a, b) => b.amount - a.amount);
-  return { metric: "budget", scope: { period, branchId }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
+  return { metric: "budget", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
 }
 
 export async function getPnlDrilldown(query: PnlDrilldownQuery): Promise<PnlDrilldownResult> {
@@ -282,10 +491,25 @@ export async function getPnlDrilldown(query: PnlDrilldownQuery): Promise<PnlDril
   };
   switch (query.metric) {
     case "revenue": return revenueDrilldownRows(query.period, scope);
-    case "people": return peopleDrilldownRows(query.period, scope);
+    case "people": {
+      // A bucketed request is answered from the snapshot outright — posted payroll carries no
+      // Agent/DSC/BMC column to filter on, and the statement's own bucket lines read the same
+      // snapshot, so this is the source that ties to the clicked cell.
+      if (query.peopleBucket) {
+        const rows = await peopleSnapshotRows(
+          query.period, scope, Boolean(query.aggregatePeople), query.peopleBucket,
+        );
+        return {
+          metric: "people", scope: { period: query.period, ...scope, bucket: query.peopleBucket },
+          rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: rows.length > 0,
+        };
+      }
+      return query.aggregatePeople
+        ? peopleDrilldownRowsAggregated(query.period, scope)
+        : peopleDrilldownRows(query.period, scope);
+    }
     case "indirect": return indirectDrilldownRows(query.period, scope);
     case "budget":
-      if (!query.branchId) throw Object.assign(new Error("budget drilldown requires branchId"), { statusCode: 400 });
-      return budgetDrilldownRows(query.period, query.branchId);
+      return budgetDrilldownRows(query.period, scope);
   }
 }

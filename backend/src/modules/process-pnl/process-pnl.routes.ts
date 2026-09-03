@@ -31,6 +31,10 @@ import { checkBudgetExceptions, checkSharingMethodReadiness } from "./budget-rea
 import { budgetCoverageService } from "./budget-coverage.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
+import { getCostLeakageReview, getStafflessCostCentreSpend } from "./pnl-cost-leakage.service.js";
+import { getDailyTrend } from "./pnl-daily-trend.service.js";
+import { getPnlDrilldown } from "./pnl-drilldown.service.js";
+import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
@@ -1433,6 +1437,180 @@ router.get(
       branchIds,
       includeInactive: String(req.query.includeInactive ?? "false") === "true",
     });
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * Row-level detail behind one P&L cell — "what actually makes up this number".
+ *
+ * Scope is exactly one of branchId / processId / costCentreId, matching what
+ * getPnlDrilldown() accepts and what the summary cells themselves are keyed by. Both branch and
+ * process are re-resolved through the finance access scope, so a branch head or process manager
+ * drilling into a cell can only ever reach their own — the same refusal-not-silent-narrowing
+ * behaviour as /pnl/reconciliation above.
+ *
+ * PAYROLL PRIVACY. The `people` metric's natural form is one row per employee with their gross
+ * plus employer contributions — payroll data, which CLAUDE.md forbids on management surfaces.
+ * Only roles entitled to payroll get that; everyone else gets the same total grouped by
+ * designation. Decided here rather than in the component so a frontend mistake cannot leak it.
+ */
+const PNL_PEOPLE_DETAIL_ROLES = new Set(["super_admin", "finance", "finance_head", "accounts_head", "payroll_head"]);
+
+router.get(
+  "/pnl/drilldown",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const metric = String(req.query.metric ?? "");
+    if (!["revenue", "people", "indirect", "budget"].includes(metric)) {
+      throw Object.assign(new Error("metric must be one of: revenue, people, indirect, budget"), { statusCode: 400 });
+    }
+    const period = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+    }
+
+    const user = actor(req);
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const requestedProcessId = req.query.processId ? String(req.query.processId) : undefined;
+    const costCentreId = req.query.costCentreId ? String(req.query.costCentreId) : undefined;
+
+    const scopeKeysGiven = [requestedBranchId, requestedProcessId, costCentreId].filter(Boolean).length;
+    if (scopeKeysGiven !== 1) {
+      throw Object.assign(
+        new Error("exactly one of branchId, processId or costCentreId is required"),
+        { statusCode: 400 }
+      );
+    }
+
+    const branchId = requestedBranchId
+      ? await resolveFinanceBranchScope({
+          userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedBranchId,
+        })
+      : undefined;
+    const processId = requestedProcessId
+      ? await resolveFinanceProcessScope({
+          userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedProcessId,
+        })
+      : undefined;
+
+    // A cost centre carries no scope resolver of its own, so confine it the way every other
+    // cost-centre read in this file does — assertBranchOf treats an unmapped cost centre as a
+    // denial rather than as unrestricted.
+    if (costCentreId) {
+      await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
+    }
+
+    const roles = [user.role, ...(user.roles ?? [])].filter(Boolean).map(String);
+    const aggregatePeople = !roles.some((r) => PNL_PEOPLE_DETAIL_ROLES.has(r));
+
+    const bucketParam = req.query.peopleBucket ? String(req.query.peopleBucket) : undefined;
+    if (bucketParam && !["agent_salary", "dsc_people", "bmc_people"].includes(bucketParam)) {
+      throw Object.assign(
+        new Error("peopleBucket must be one of: agent_salary, dsc_people, bmc_people"),
+        { statusCode: 400 }
+      );
+    }
+
+    const data = await getPnlDrilldown({
+      metric: metric as "revenue" | "people" | "indirect" | "budget",
+      period,
+      peopleBucket: bucketParam as "agent_salary" | "dsc_people" | "bmc_people" | undefined,
+      branchId: requestedBranchId ? (branchId ?? requestedBranchId) : undefined,
+      processId: requestedProcessId ? (processId ?? requestedProcessId) : undefined,
+      costCentreId,
+      aggregatePeople,
+    });
+    res.json({ success: true, data: { ...data, peopleAggregated: metric === "people" && aggregatePeople } });
+  })
+);
+
+/**
+ * Day-by-day revenue, cost and operating margin for a month.
+ *
+ * Read-only. Two of its four series are real daily measurements and two are a monthly figure
+ * spread across days; the response labels each so the chart can draw them differently.
+ */
+router.get(
+  "/pnl/daily-trend",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+    }
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await getDailyTrend(period, branchId ? { branchId } : {});
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * Seat-count x seat-rate revenue forecast.
+ *
+ * Read-only and informational: it suggests a figure for the existing Projected Revenue manual
+ * adjustment and never touches recognised revenue, operating profit or EBITDA. Branch-scoped
+ * through the finance access scope like every other read here.
+ */
+router.get(
+  "/pnl/seat-revenue-forecast",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+    }
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await getSeatRevenueForecast(period, branchId ? { branchId } : {});
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * Cost Leakage Review — spend that reaches no process P&L line.
+ *
+ * Read-only and additive: it reports, it never reclassifies anything. Gated to the same finance
+ * roles as the unlinked-GRN reviewer it sits alongside, because it exposes company-wide spend
+ * totals that the branch-scoped roles in PNL_READ_ROLES are not entitled to see whole.
+ */
+router.get(
+  "/pnl/cost-leakage",
+  requireRole("super_admin", "admin", "finance_head", "accounts_head"),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+    }
+    const data = await getCostLeakageReview(period);
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/cost-leakage/cost-centre",
+  requireRole("super_admin", "admin", "finance_head", "accounts_head"),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    const costCentreId = String(req.query.costCentreId ?? "");
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
+    }
+    if (!costCentreId) {
+      throw Object.assign(new Error("costCentreId is required"), { statusCode: 400 });
+    }
+    const data = await getStafflessCostCentreSpend(period, costCentreId);
     res.json({ success: true, data });
   })
 );
