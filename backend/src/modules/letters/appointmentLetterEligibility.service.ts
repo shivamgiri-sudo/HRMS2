@@ -267,16 +267,63 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
  * the joining-documents tracker and IT provisioning queue: they were never real
  * onboarding work items.
  */
-export async function listAppointmentLetterQueue(limit = 200): Promise<EligibilityResult[]> {
+export type AppointmentLetterQueueFilters = {
+  /**
+   * A WHERE fragment on e.branch_id straight out of buildScopeWhereClause() —
+   * "1=1" for an org-wide user, "1=0" for one whose roles carry no scope row at
+   * all. Left undefined the queue is org-wide, so every caller that serves a
+   * request must pass it.
+   */
+  scopeSql?: string;
+  scopeParams?: unknown[];
+  /** Employee name or code. Applied in SQL, i.e. before the LIMIT. */
+  search?: string | null;
+};
+
+/** The name as it is displayed everywhere else in this module. */
+const EMPLOYEE_DISPLAY_NAME_SQL =
+  `COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))))`;
+
+/**
+ * % and _ are wildcards to LIKE, so an unescaped search box is a way to match
+ * rows the searcher did not ask for — "%" alone would return the whole branch.
+ */
+export function appointmentLetterSearchTerm(raw: string): string {
+  return `%${raw.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+export async function listAppointmentLetterQueue(
+  limit = 200,
+  filters: AppointmentLetterQueueFilters = {},
+): Promise<EligibilityResult[]> {
+  const conds: string[] = [
+    "e.active_status = 1",
+    "e.legacy_emp_id IS NULL",
+    `NOT EXISTS (SELECT 1 FROM appointment_letter_issue i
+                   WHERE i.employee_id = e.id AND i.status <> 'revoked')`,
+    // Branch RBAC. Applied in the id query rather than by filtering the results,
+    // so an out-of-branch employee never reaches the per-employee evaluation
+    // below — that evaluation reads salary and document records.
+    `(${filters.scopeSql ?? "1=1"})`,
+  ];
+  const params: unknown[] = [...(filters.scopeParams ?? [])];
+
+  // The search runs in SQL, not over the returned page: the queue is capped at
+  // `limit` rows ordered by joining date, so a client-side filter could never
+  // find anyone past that cap.
+  const search = String(filters.search ?? "").trim();
+  if (search) {
+    conds.push(`(${EMPLOYEE_DISPLAY_NAME_SQL} LIKE ? OR e.employee_code LIKE ?)`);
+    params.push(appointmentLetterSearchTerm(search), appointmentLetterSearchTerm(search));
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id
        FROM employees e
-      WHERE e.active_status = 1
-        AND e.legacy_emp_id IS NULL
-        AND NOT EXISTS (SELECT 1 FROM appointment_letter_issue i
-                         WHERE i.employee_id = e.id AND i.status <> 'revoked')
+      WHERE ${conds.join("\n        AND ")}
       ORDER BY e.date_of_joining DESC
       LIMIT ${Number(limit) || 200}`,
+    params,
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
   const out: EligibilityResult[] = [];

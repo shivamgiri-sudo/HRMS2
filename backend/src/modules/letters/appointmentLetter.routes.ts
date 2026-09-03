@@ -12,7 +12,9 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import {
+  appointmentLetterSearchTerm,
   evaluateAppointmentLetterEligibility, listAppointmentLetterQueue,
 } from "./appointmentLetterEligibility.service.js";
 import { issueAppointmentLetter, revokeAppointmentLetter } from "./appointmentLetterIssue.service.js";
@@ -31,10 +33,52 @@ const VIEW_ROLES = [...ISSUE_ROLES, "payroll", "branch_head"] as const;
 
 router.use(requireAuth);
 
+/**
+ * Branch RBAC.
+ *
+ * requireRole() above only asks *what* the user is; every route here also has to
+ * ask *whose employees* they may act on. A branch HR holds the same `hr` role as
+ * a head-office HR, so without this the queue, the issued list and every
+ * per-employee action were org-wide for all of them.
+ *
+ * The axis is the branch alone, as decided for this screen: a scope row of any
+ * other type (process, department, team) contributes nothing and leaves the user
+ * with an empty queue rather than a wider one. scope_type='all' — which every
+ * payroll_head and the head-office admin/hr accounts hold — still means org-wide,
+ * and super_admin bypasses inside buildScopeWhereClause().
+ */
+async function branchScope(req: AuthenticatedRequest, branchColumn: string) {
+  return buildScopeWhereClause(req.authUser!.id, [...VIEW_ROLES], { branchId: branchColumn });
+}
+
+/**
+ * True when this employee sits inside the actor's branch scope.
+ *
+ * Issuing, previewing and eligibility all take an employee id from the URL, so
+ * list-level scoping alone would leave the whole flow reachable by guessing or
+ * remembering an id from another branch.
+ */
+async function employeeInScope(req: AuthenticatedRequest, employeeId: string): Promise<boolean> {
+  const scope = await branchScope(req, "e.branch_id");
+  if (scope.sql === "1=1") return true;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 AS ok FROM employees e WHERE e.id = ? AND (${scope.sql}) LIMIT 1`,
+    [employeeId, ...scope.params],
+  );
+  return (rows as RowDataPacket[]).length > 0;
+}
+
+const OUT_OF_SCOPE = "Forbidden: this employee is outside your assigned branch scope";
+
 /** The work list: who can be issued to, and why the rest cannot. */
 router.get("/appointment-letters/queue", requireRole(...VIEW_ROLES), h(async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 200) || 200, 500);
-  const rows = await listAppointmentLetterQueue(limit);
+  const scope = await branchScope(req, "e.branch_id");
+  const rows = await listAppointmentLetterQueue(limit, {
+    scopeSql: scope.sql,
+    scopeParams: scope.params,
+    search: typeof req.query.search === "string" ? req.query.search : null,
+  });
   return res.json({
     success: true,
     data: {
@@ -46,11 +90,17 @@ router.get("/appointment-letters/queue", requireRole(...VIEW_ROLES), h(async (re
 }));
 
 router.get("/appointment-letters/eligibility/:employeeId", requireRole(...VIEW_ROLES), h(async (req, res) => {
+  if (!(await employeeInScope(req, req.params.employeeId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
   return res.json({ success: true, data: await evaluateAppointmentLetterEligibility(req.params.employeeId) });
 }));
 
 /** Issue. Warnings need force=true; critical blockers can never be forced. */
 router.post("/appointment-letters/:employeeId/issue", requireRole(...ISSUE_ROLES), h(async (req, res) => {
+  if (!(await employeeInScope(req, req.params.employeeId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
   const b = req.body as Record<string, unknown>;
   const data = await issueAppointmentLetter({
     employeeId: req.params.employeeId,
@@ -62,22 +112,45 @@ router.post("/appointment-letters/:employeeId/issue", requireRole(...ISSUE_ROLES
 }));
 
 router.get("/appointment-letters", requireRole(...VIEW_ROLES), h(async (req, res) => {
+  // The letter row carries its own branch_id, but the employee's is the one that
+  // stays current if they move, so the employee's is preferred and the letter's
+  // is the fallback for a letter whose employee row has since gone.
+  const scope = await branchScope(req, "COALESCE(e.branch_id, i.branch_id)");
+  const conds = [`(${scope.sql})`];
+  const params: unknown[] = [...scope.params];
+
+  const search = String(req.query.search ?? "").trim();
+  if (search) {
+    conds.push("(i.employee_name LIKE ? OR i.employee_code LIKE ? OR i.letter_number LIKE ?)");
+    const term = appointmentLetterSearchTerm(search);
+    params.push(term, term, term);
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, letter_number, employee_id, employee_code, employee_name, designation,
-            branch_name, date_of_joining, is_ca_issued, employee_esign_status,
-            status, issued_at, revoked_at
-       FROM appointment_letter_issue
-      ORDER BY issued_at DESC
+    `SELECT i.id, i.letter_number, i.employee_id, i.employee_code, i.employee_name, i.designation,
+            i.branch_name, i.date_of_joining, i.is_ca_issued, i.employee_esign_status,
+            i.status, i.issued_at, i.revoked_at
+       FROM appointment_letter_issue i
+       LEFT JOIN employees e ON e.id = i.employee_id
+      WHERE ${conds.join(" AND ")}
+      ORDER BY i.issued_at DESC
       LIMIT ${Math.min(Number(req.query.limit ?? 100) || 100, 500)}`,
+    params,
   );
   return res.json({ success: true, data: rows });
 }));
 
 /** Download the signed PDF. */
 router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES), h(async (req, res) => {
+  // Scoped in the lookup rather than after it: the PDF carries the employee's
+  // salary, so an out-of-branch letter must not even be read back here.
+  const scope = await branchScope(req, "COALESCE(e.branch_id, i.branch_id)");
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT letter_number, signed_file_path FROM appointment_letter_issue WHERE id = ? LIMIT 1`,
-    [req.params.issueId],
+    `SELECT i.letter_number, i.signed_file_path
+       FROM appointment_letter_issue i
+       LEFT JOIN employees e ON e.id = i.employee_id
+      WHERE i.id = ? AND (${scope.sql}) LIMIT 1`,
+    [req.params.issueId, ...scope.params],
   );
   const r = (rows as RowDataPacket[])[0];
   if (!r) return res.status(404).json({ success: false, message: "Letter not found" });
@@ -103,6 +176,9 @@ router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES),
  */
 router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES), h(async (req, res) => {
   const { employeeId } = req.params;
+  if (!(await employeeInScope(req, employeeId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
             d.name AS designation_name
@@ -161,6 +237,18 @@ router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES
 }));
 
 router.post("/appointment-letters/:issueId/revoke", requireRole("super_admin", "admin", "payroll_head"), h(async (req, res) => {
+  // admin is a branch-scoped role for some holders, so revoke is scoped too.
+  const scope = await branchScope(req, "COALESCE(e.branch_id, i.branch_id)");
+  const [owned] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 AS ok
+       FROM appointment_letter_issue i
+       LEFT JOIN employees e ON e.id = i.employee_id
+      WHERE i.id = ? AND (${scope.sql}) LIMIT 1`,
+    [req.params.issueId, ...scope.params],
+  );
+  if ((owned as RowDataPacket[]).length === 0) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
   const reason = String((req.body as Record<string, unknown>).reason ?? "");
   await revokeAppointmentLetter({ issueId: req.params.issueId, actorUserId: req.authUser!.id, reason });
   return res.json({ success: true, message: "Appointment letter revoked." });

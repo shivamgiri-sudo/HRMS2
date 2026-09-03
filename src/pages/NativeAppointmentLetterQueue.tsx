@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, BadgeCheck, Ban, CheckCircle2, Download, FileSignature,
-  Loader2, RefreshCw, ShieldAlert, Users, XCircle,
+  Loader2, RefreshCw, Search, ShieldAlert, Users, X, XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -41,23 +41,38 @@ export default function NativeAppointmentLetterQueue() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<"eligible" | "blocked" | "issued">("eligible");
+  const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+
+  // Debounced, because the search runs on the server: the queue is capped at 200
+  // employees ordered by joining date, so filtering the loaded page would never
+  // find anyone below that cap.
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setSearching(true);
     setError(null);
+    const qs = appliedSearch ? `?search=${encodeURIComponent(appliedSearch)}` : "";
     try {
       const [q, i] = await Promise.all([
-        hrmsApi.get<{ data: { eligible: QueueRow[]; blocked: QueueRow[] } }>("/api/letters/appointment-letters/queue"),
-        hrmsApi.get<{ data: IssuedRow[] }>("/api/letters/appointment-letters"),
+        hrmsApi.get<{ data: { eligible: QueueRow[]; blocked: QueueRow[] } }>(`/api/letters/appointment-letters/queue${qs}`),
+        hrmsApi.get<{ data: IssuedRow[] }>(`/api/letters/appointment-letters${qs}`),
       ]);
       setQueue(q.data);
       setIssued(i.data ?? []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to load the appointment letter queue.");
     } finally {
+      // The skeleton is for the first load only. A search that blanked the list
+      // on every keystroke would hide the result it was about to show.
       setLoading(false);
+      setSearching(false);
     }
-  }, []);
+  }, [appliedSearch]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -143,6 +158,9 @@ export default function NativeAppointmentLetterQueue() {
                 Issued at the end of joining formalities. The company signature is applied before the
                 letter reaches the employee, who then accepts it with Aadhaar eSign.
               </p>
+              <p className="mt-1.5 text-xs text-blue-200">
+                Shows the employees in your assigned branch.
+              </p>
             </div>
             <button
               type="button" onClick={() => void load()}
@@ -196,6 +214,40 @@ export default function NativeAppointmentLetterQueue() {
               <p className="text-xs font-medium text-slate-500">Letters issued</p>
             </div>
           </div>
+        </div>
+
+        {/* Employee search */}
+        <div className="rounded-2xl border border-blue-200 bg-white shadow-sm p-3">
+          <label htmlFor="appointment-letter-search" className="sr-only">Search employees</label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              id="appointment-letter-search"
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by employee name, code or letter number"
+              className="min-h-[44px] w-full rounded-xl border border-slate-200 bg-white pl-10 pr-24 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            />
+            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2">
+              {searching && <Loader2 className="h-4 w-4 animate-spin text-blue-400" />}
+              {search && (
+                <button
+                  type="button" onClick={() => setSearch("")}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+                >
+                  <X className="h-3.5 w-3.5" /> Clear
+                </button>
+              )}
+            </div>
+          </div>
+          {appliedSearch && !searching && (
+            <p className="mt-2 px-1 text-xs text-slate-500">
+              {counts.eligible + counts.blocked + counts.issued === 0
+                ? <>Nobody in your branch matches “{appliedSearch}”.</>
+                : <>Showing matches for “{appliedSearch}” — {counts.eligible} eligible, {counts.blocked} blocked, {counts.issued} issued.</>}
+            </p>
+          )}
         </div>
 
         {/* Tabs */}
@@ -255,7 +307,7 @@ export default function NativeAppointmentLetterQueue() {
                     </div>
                   ))}
                 </div>
-              ) : <Empty text="Nobody is ready for an appointment letter yet. Check the Blocked tab to see what each person is waiting on." />
+              ) : <Empty text={appliedSearch ? `No eligible employee matches “${appliedSearch}”.` : "Nobody is ready for an appointment letter yet. Check the Blocked tab to see what each person is waiting on."} />
             )}
 
             {/* Blocked tab */}
@@ -290,7 +342,7 @@ export default function NativeAppointmentLetterQueue() {
                     </div>
                   ))}
                 </div>
-              ) : <Empty text="Nothing is blocked." />
+              ) : <Empty text={appliedSearch ? `No blocked employee matches “${appliedSearch}”.` : "Nothing is blocked."} />
             )}
 
             {/* Issued tab */}
@@ -342,7 +394,7 @@ export default function NativeAppointmentLetterQueue() {
                     </div>
                   ))}
                 </div>
-              ) : <Empty text="No appointment letters have been issued yet." />
+              ) : <Empty text={appliedSearch ? `No issued letter matches “${appliedSearch}”.` : "No appointment letters have been issued yet."} />
             )}
 
           </div>
