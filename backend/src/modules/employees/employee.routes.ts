@@ -1367,11 +1367,45 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
     params.push(...(scoped.params ?? []));
   }
   if (anomalyOnly) {
-    conds.push("(COALESCE(att.lwp_days, 0) > 2 OR COALESCE(att.missing_punch_count, 0) > 0)");
+    // Resolved as a set of employee ids rather than a condition on a joined aggregate, so
+    // the page query below can still cut to 50 rows before any per-employee work happens.
+    // The GROUP BY runs once over one month of attendance (~0.1s) and MySQL materialises it
+    // as a semi-join.
+    conds.push(`e.id IN (
+      SELECT employee_id
+        FROM attendance_daily_record FORCE INDEX (idx_adr_date_employee)
+       WHERE record_date >= ? AND record_date <= ?
+       GROUP BY employee_id
+      HAVING SUM(CASE
+                 WHEN attendance_status NOT IN ('week_off','holiday','leave_approved')
+                 THEN COALESCE(lwp_value, 0) ELSE 0
+               END) > 2
+          OR COUNT(CASE WHEN attendance_status = 'missing_punch' THEN 1 END) > 0)`);
+    params.push(monthStart, monthEnd);
   }
   const where = `WHERE ${conds.join(" AND ")}`;
 
-  // PERFORMANCE FIX: Use indexed queries and simpler aggregations
+  /*
+   * PERF (2026-09-03): pick the page of 50 employees FIRST, then enrich only those.
+   *
+   * This query took 10-12s in production and the page it serves was reported as "takes a
+   * lot of time to load". The cost was never the aggregation — it was doing the enrichment
+   * for every active employee and then throwing 95% of it away. The old shape joined
+   * employees to a month-wide GROUP BY over attendance_daily_record and to a per-employee
+   * LATERAL over salary_prep_line, and only then applied ORDER BY employee_code LIMIT 50.
+   * MySQL cannot push that LIMIT through a LATERAL, so the salary lookup ran for all 1,028
+   * active employees at ~30ms each (~126 salary lines per employee, sorted per employee)
+   * instead of the 50 that are displayed.
+   *
+   * Measured live, interleaved A/B/A/B so load drift hits both shapes equally:
+   *   old 11,702ms / 11,452ms / 10,176ms
+   *   new  1,173ms /  1,206ms /  1,307ms
+   *
+   * Every filter, the search and the scope clause live in the inner query because each one
+   * only reads e.*, so the row set is identical to before — this reorders work, it does not
+   * change which employees or numbers come back. anomalyOnly is the one filter that reads
+   * attendance, which is why it became the id subquery above.
+   */
   const mainQuery = `SELECT e.id, e.employee_code,
             e.full_name,
             e.employment_status, e.date_of_joining,
@@ -1382,32 +1416,31 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
             COALESCE(att.missing_punch_count, 0) AS missing_punch_count,
             sal.net_salary  AS last_salary_net,
             sal.run_month   AS last_salary_month
-       FROM employees e
+       FROM (
+         SELECT e.id, e.employee_code, e.full_name, e.employment_status, e.date_of_joining,
+                e.branch_id, e.process_id, e.designation_id, e.department_id
+           FROM employees e
+           ${where}
+          ORDER BY e.employee_code ASC
+          LIMIT ${limit} OFFSET ${offset}
+       ) e
        LEFT JOIN branch_master bm       ON bm.id   = e.branch_id
        LEFT JOIN process_master pm      ON pm.id   = e.process_id
        LEFT JOIN designation_master dm  ON dm.id   = e.designation_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
-       LEFT JOIN (
-         SELECT employee_id,
-                COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) AS present_days,
+       LEFT JOIN LATERAL (
+         SELECT COUNT(CASE WHEN a.attendance_status = 'present' THEN 1 END) AS present_days,
                 SUM(CASE
-                    WHEN attendance_status NOT IN ('week_off','holiday','leave_approved')
-                    THEN COALESCE(lwp_value, 0)
+                    WHEN a.attendance_status NOT IN ('week_off','holiday','leave_approved')
+                    THEN COALESCE(a.lwp_value, 0)
                     ELSE 0
                 END) AS lwp_days,
-                COALESCE(SUM(late_mark), 0) AS late_marks,
-                COUNT(CASE WHEN attendance_status = 'missing_punch' THEN 1 END) AS missing_punch_count
-           -- PERF (2026-08-18): attendance_daily_record has accumulated 7 overlapping
-           -- employee_id/record_date indexes across separate fix attempts (550/1011
-           -- migrations). The optimizer picks uq_emp_date (full index scan, ~120K rows)
-           -- over the purpose-built range index below on this table's current size/stats
-           -- (measured live: 8.5-9.8s query -> 2.6-2.9s with the hint). ANALYZE TABLE does
-           -- not change the choice, so the hint is pinned explicitly rather than left to
-           -- the planner. Verified this is still the index that exists in production.
-           FROM attendance_daily_record FORCE INDEX (idx_adr_date_employee)
-          WHERE record_date >= ? AND record_date <= ?
-          GROUP BY employee_id
-       ) att ON att.employee_id = e.id
+                COALESCE(SUM(a.late_mark), 0) AS late_marks,
+                COUNT(CASE WHEN a.attendance_status = 'missing_punch' THEN 1 END) AS missing_punch_count
+           FROM attendance_daily_record a
+          WHERE a.employee_id = e.id
+            AND a.record_date >= ? AND a.record_date <= ?
+       ) att ON TRUE
        LEFT JOIN LATERAL (
          SELECT spl.net_salary, spr.run_month
            FROM salary_prep_line spl
@@ -1416,37 +1449,17 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
           ORDER BY spr.run_month DESC, spr.created_at DESC
           LIMIT 1
        ) sal ON TRUE
-       ${where}
-       ORDER BY e.employee_code ASC
-       LIMIT ${limit} OFFSET ${offset}`;
+       ORDER BY e.employee_code ASC`;
 
-  const countQuery = anomalyOnly
-    ? `SELECT COUNT(*) AS total
-         FROM employees e
-         LEFT JOIN (
-           SELECT employee_id,
-                  COALESCE(SUM(
-                    CASE
-                      WHEN attendance_status NOT IN ('week_off','holiday','leave_approved')
-                      THEN COALESCE(lwp_value, 0)
-                      ELSE 0
-                    END
-                  ), 0) AS lwp_days,
-                  SUM(attendance_status = 'missing_punch') AS missing_punch_count
-             FROM attendance_daily_record FORCE INDEX (idx_adr_date_employee)
-            WHERE record_date BETWEEN ? AND ?
-            GROUP BY employee_id
-         ) att ON att.employee_id = e.id
-         ${where}`
-    : `SELECT COUNT(*) AS total FROM employees e ${where}`;
-
-  const countParams = anomalyOnly
-    ? [monthStart, monthEnd, ...params]
-    : params;
+  // One count for both views now: the anomaly filter is part of `where` itself, so the
+  // old anomalyOnly-specific count with its own copy of the aggregate is gone.
+  const countQuery = `SELECT COUNT(*) AS total FROM employees e ${where}`;
 
   const [[rows], [countRows]] = await Promise.all([
-    db.execute<RowDataPacket[]>(mainQuery, [monthStart, monthEnd, ...params]),
-    db.execute<RowDataPacket[]>(countQuery, countParams),
+    // The month bounds bind AFTER the filter params: they now belong to the attendance
+    // LATERAL, which sits textually after the paged subquery that carries `where`.
+    db.execute<RowDataPacket[]>(mainQuery, [...params, monthStart, monthEnd]),
+    db.execute<RowDataPacket[]>(countQuery, params),
   ]);
 
   const data = (rows as any[]).map((r: any) => ({
