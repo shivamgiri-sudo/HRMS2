@@ -18,6 +18,7 @@ import {
   CalendarOff,
   AlertOctagon,
   Lock,
+  Pencil,
 } from "lucide-react";
 import { format } from "date-fns";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -162,6 +163,8 @@ interface AttendanceCalendarProps {
   recordsLoading?: boolean;
   /** Badge text when `records` is supplied — the server's source verdict is not fetched then. */
   sourceLabel?: string;
+  /** Opens the caller's change-status dialog for a day. Payroll Head / Super Admin only. */
+  onChangeStatus?: (date: string, currentStatus: string | null, isLocked: boolean) => void;
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
@@ -356,12 +359,17 @@ function StatusBadge({ status }: { status: DayStatus }) {
 // ─── Day Detail Sheet ─────────────────────────────────────────────────────────
 
 function DayDetailSheet({
-  open, onClose, employeeId, date,
+  open, onClose, employeeId, date, onChangeStatus,
 }: {
   open: boolean;
   onClose: () => void;
   employeeId: string;
   date: string | null;
+  /**
+   * Supplied only by Attendance Lookup, and only for Payroll Head / Super Admin. Absent
+   * everywhere else, so no other caller of this calendar grows a correction button.
+   */
+  onChangeStatus?: (date: string, currentStatus: string | null, isLocked: boolean) => void;
 }) {
   const { data, isLoading, error } = useQuery<DayDetail>({
     queryKey: ["day-detail", employeeId, date],
@@ -857,6 +865,24 @@ function DayDetailSheet({
 
             <Separator />
 
+            {/* Payroll correction. Deliberately OUTSIDE the isLocked / isPastDate gates
+                below: those govern what an employee may REQUEST, while this is the
+                authority that overrules a locked day — and a locked day is exactly when
+                it is needed, since the panel below can only say "cannot request changes". */}
+            {onChangeStatus && date && (
+              <div className="mb-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-full text-xs"
+                  onClick={() => { onChangeStatus(date, adr?.attendance_status ?? null, isLocked); onClose(); }}
+                >
+                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                  Change attendance status
+                </Button>
+              </div>
+            )}
+
             {/* Action Panel */}
             {isLocked ? (
               <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
@@ -1078,6 +1104,7 @@ export function AttendanceCalendar({
   records,
   recordsLoading = false,
   sourceLabel,
+  onChangeStatus,
 }: AttendanceCalendarProps) {
   // Caller-fed mode: the grid renders `records` and issues no month queries of its own.
   const usesProvidedRecords = records != null;
@@ -1394,6 +1421,7 @@ export function AttendanceCalendar({
         onClose={() => setSheetOpen(false)}
         employeeId={employeeId}
         date={selectedDate}
+        onChangeStatus={onChangeStatus}
       />
     </>
   );

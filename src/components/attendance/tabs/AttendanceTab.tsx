@@ -268,6 +268,13 @@ export function AttendanceTab({ employeeId, employeeLabel }: Props) {
               : sourceFilter === "dialler" ? "APR / Dialler"
               : "All sources"
             }
+            /* The table view has a Change button per row, but this tab opens on the
+               calendar, so without this the correction was one view-switch away from being
+               found at all. Passed only when the viewer may correct, so no other caller of
+               the calendar grows the button. */
+            onChangeStatus={canCorrect
+              ? (date, status, isLocked) => setEditingDay({ date, status, isLocked })
+              : undefined}
           />
         </div>
       ) : (
