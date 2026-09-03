@@ -31,7 +31,16 @@ const NET = 100_000;
 function lineConnection(taxTreatment: string, over: Partial<Record<string, unknown>> = {}) {
   const line = {
     id: "bl1", tax_treatment: taxTreatment, budget_status: "active",
-    gross_amount: 102_000, quantity: 10,
+    /*
+     * pnl_cost_amount is the ceiling availability() measures against, NOT gross_amount.
+     * gross_amount was a mixed-unit ceiling that silently allowed roughly (1/costRatio - 1)
+     * over-spend on ITC lines, so the service moved to the P&L figure. This fixture kept only
+     * gross_amount, so availability() read 0 and every reserve() here refused — the tests were
+     * failing against correct code. For a non_gst/exempt line the two are equal by definition,
+     * which is what production shows: pnl_cost_amount is populated on all 753 live budget lines
+     * and equals gross on the 641 non-ITC ones.
+     */
+    gross_amount: 102_000, pnl_cost_amount: 102_000, quantity: 10,
     reserved_amount: 0, reserved_quantity: 0,
     consumed_amount: 0, consumed_quantity: 0,
     ...over,
@@ -80,15 +89,30 @@ describe("a non-taxable budget line is charged the taxable value", () => {
     ).rejects.toThrow(/exceeds available budget amount/);
   });
 
-  it("a taxable line is unaffected — it is charged the gross", async () => {
-    const conn = lineConnection("exclusive", { gross_amount: 200_000 });
+  it("a taxable line is charged the net too — GST is ITC and never hits the budget", async () => {
+    /*
+     * This assertion used to expect the GROSS, on the theory that only non_gst/exempt lines
+     * needed correcting. The rule has since widened and this test was left behind, failing
+     * against correct code.
+     *
+     * budgetCostRatio() ignores the line's tax treatment entirely — its first parameter is
+     * literally named `_taxTreatment` and is unused — because a budget represents P&L cost, and
+     * for a vendor tax invoice the GST is recoverable as input tax credit and never reaches P&L.
+     * So whenever a taxable value below the gross is supplied, that base is what consumes the
+     * budget, on an `exclusive` line exactly as on a `non_gst` one.
+     *
+     * What still distinguishes the treatments in practice is the DATA, not this branch: for
+     * non-ITC lines pnl_cost_amount equals gross_amount, so charging the base changes nothing.
+     * Measured live, that holds for 641 of 753 budget lines.
+     */
+    const conn = lineConnection("exclusive", { gross_amount: 200_000, pnl_cost_amount: 200_000 });
     await budgetConsumptionService.reserve(conn, "bl1", GROSS, 1, NET);
-    expect(chargedAmount(conn)).toBe(GROSS);
+    expect(chargedAmount(conn)).toBe(NET);
   });
 
   it("falls back to the gross when no net is supplied", async () => {
     // Keeps an un-updated caller on its previous behaviour rather than consuming zero.
-    const conn = lineConnection("non_gst", { gross_amount: 200_000 });
+    const conn = lineConnection("non_gst", { gross_amount: 200_000, pnl_cost_amount: 200_000 });
     await budgetConsumptionService.reserve(conn, "bl1", GROSS, 1);
     expect(chargedAmount(conn)).toBe(GROSS);
   });

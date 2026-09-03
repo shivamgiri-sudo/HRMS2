@@ -35,7 +35,9 @@ const read = (p: string) => fs.readFileSync(path.join(backendRoot, p), "utf8");
 function lineConnection(over: Partial<Record<string, unknown>> = {}) {
   const line = {
     id: "bl1", tax_treatment: "non_gst", budget_status: "active", unit: "Month",
-    gross_amount: 119_000, quantity: 1,
+    // availability() measures against pnl_cost_amount, not gross_amount — see the note in
+    // budget-consumption-net-basis.test.ts. Equal here because this line is not ITC-eligible.
+    gross_amount: 119_000, pnl_cost_amount: 119_000, quantity: 1,
     reserved_amount: 0, reserved_quantity: 1,
     consumed_amount: 0, consumed_quantity: 0,
     ...over,
