@@ -17,6 +17,12 @@ vi.mock('../ats.joiningDocumentsTracker.service.js', async (importOriginal) => (
   bulkSetDueDate: vi.fn(),
   bulkVerifyDocuments: vi.fn(),
   streamBulkDocumentsZip: vi.fn(),
+  // Branch RBAC runs as route middleware on every bulk endpoint. Its default here
+  // is a pass-through — these tests are about the handlers, and a scope resolver
+  // that reached the real database would turn each of them into a 403 for
+  // reasons that have nothing to do with what they assert. The scoping behaviour
+  // itself is asserted in its own describe block below.
+  filterEmployeeIdsToScope: vi.fn(async (_actorUserId: string, ids: string[]) => ids),
 }));
 
 // Mock the middleware modules
@@ -33,7 +39,7 @@ vi.mock('../../../middleware/requireRole.js', () => ({
     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip, DEFAULT_PAGE, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '../ats.joiningDocumentsTracker.service.js';
+import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip, filterEmployeeIdsToScope, DEFAULT_PAGE, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '../ats.joiningDocumentsTracker.service.js';
 
 describe('GET /joining-documents-tracker', () => {
   let app: express.Application;
@@ -704,5 +710,78 @@ describe('POST /joining-documents-tracker/bulk-download', () => {
 
     expect(response.status).toBe(500);
     expect(response.body).toMatchObject({ success: false, message: 'Failed to create ZIP file' });
+  });
+});
+
+/**
+ * Branch RBAC on the bulk endpoints.
+ *
+ * The list query is scoped inside the service, but every bulk endpoint takes
+ * employee ids straight from the request body — ids that are visible on other
+ * screens. Before this, only streamBulkDocumentsZip checked, and only for
+ * branch_head, so an hr or payroll_hr could remind, verify, reassign or re-date
+ * any employee in the company by posting their id.
+ */
+describe('bulk endpoints — branch scope', () => {
+  let app: express.Application;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { joiningDocumentsTrackerRouter } = await import('../ats.joiningDocumentsTracker.routes.js');
+    app = express();
+    app.use(express.json());
+    app.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
+  });
+
+  const bulkEndpoints: Array<{ path: string; body: Record<string, unknown> }> = [
+    { path: '/bulk-remind', body: { employee_ids: ['out-of-branch'] } },
+    { path: '/bulk-generate-checklist', body: { employee_ids: ['out-of-branch'] } },
+    { path: '/bulk-assign', body: { employee_ids: ['out-of-branch'], assigned_hr_user_id: 'hr-1' } },
+    { path: '/bulk-set-due-date', body: { employee_ids: ['out-of-branch'], due_date: '2026-12-31' } },
+    { path: '/bulk-verify', body: { employee_ids: ['out-of-branch'] } },
+  ];
+
+  for (const { path, body } of bulkEndpoints) {
+    it(`${path} refuses a body naming only out-of-scope employees`, async () => {
+      vi.mocked(filterEmployeeIdsToScope).mockResolvedValueOnce([]);
+
+      const response = await request(app)
+        .post(`/joining-documents-tracker${path}`)
+        .set('Authorization', 'Bearer test-token')
+        .send(body);
+
+      expect(response.status).toBe(403);
+      expect(response.body).toMatchObject({ success: false });
+      // The point of the 403: the service must not run at all.
+      expect(sendBulkReminders).not.toHaveBeenCalled();
+      expect(bulkGenerateChecklists).not.toHaveBeenCalled();
+      expect(bulkAssignHR).not.toHaveBeenCalled();
+      expect(bulkSetDueDate).not.toHaveBeenCalled();
+      expect(bulkVerifyDocuments).not.toHaveBeenCalled();
+    });
+  }
+
+  it('narrows a mixed body to the in-scope ids before the handler runs', async () => {
+    vi.mocked(filterEmployeeIdsToScope).mockResolvedValueOnce(['in-branch']);
+    vi.mocked(bulkVerifyDocuments).mockResolvedValueOnce({ success: true, verified: 1, errors: [] });
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/bulk-verify')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_ids: ['in-branch', 'out-of-branch'] });
+
+    expect(response.status).toBe(200);
+    expect(bulkVerifyDocuments).toHaveBeenCalledWith(['in-branch'], 'test-user-id');
+  });
+
+  it('resend-notification refuses an out-of-scope employee', async () => {
+    vi.mocked(filterEmployeeIdsToScope).mockResolvedValueOnce([]);
+
+    const response = await request(app)
+      .post('/joining-documents-tracker/resend-notification')
+      .set('Authorization', 'Bearer test-token')
+      .send({ employee_id: 'out-of-branch' });
+
+    expect(response.status).toBe(403);
   });
 });

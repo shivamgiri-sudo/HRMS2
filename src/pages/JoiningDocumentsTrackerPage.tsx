@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { FileCheck, Users, CheckCircle2, Clock, CircleDashed, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2 } from "lucide-react";
@@ -29,6 +29,12 @@ interface EmployeeRow {
   branch_name: string | null;
   process_name: string | null;
   date_of_joining: string;
+  // The two milestones that sit either side of the joining date. Null means the
+  // step has not happened — the candidate has not submitted the onboarding form,
+  // or no salary has been assigned yet — and the column renders a dash for it
+  // rather than an empty cell that reads as a rendering bug.
+  onboarding_submitted_at: string | null;
+  salary_assigned_at: string | null;
   // `joining_document_status` is deliberately absent. The service still sends the
   // column, but nothing here reads it: the row badge is derived from
   // `joining_document_completion_pct` through the same classifier the tiles use,
@@ -95,11 +101,35 @@ function StatusBadge({ pct }: { pct: number }) {
   return <Badge variant="outline" className={v.cls}>{v.label}</Badge>;
 }
 
+/**
+ * One process-milestone date.
+ *
+ * A dash, not a blank cell, when the step has not happened: an empty cell in a
+ * table of dates reads as data that failed to load, which is the opposite of
+ * what a missing onboarding submission or an unassigned salary means.
+ * formatISTDate renders in Asia/Kolkata, so a timestamp stored at IST midnight
+ * does not display as the previous day.
+ */
+function MilestoneDateCell({ value }: { value: string | null }) {
+  return (
+    <td className="px-4 py-3 text-sm whitespace-nowrap">
+      {value
+        ? <span className="text-slate-600">{formatISTDate(value)}</span>
+        : <span className="text-slate-300">—</span>}
+    </td>
+  );
+}
+
 export default function JoiningDocumentsTrackerPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  // What the query actually runs on. The box used to be the query key directly,
+  // so every keystroke fired a fresh request — seven of them for "ravikar", each
+  // one a pair of aggregate queries, and with keepPreviousData holding the old
+  // rows on screen the page looked like it was ignoring the search entirely.
+  const [appliedSearch, setAppliedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -115,16 +145,26 @@ export default function JoiningDocumentsTrackerPage() {
   const [dueDate, setDueDate] = useState("");
   const [assignedHrUserId, setAssignedHrUserId] = useState("");
 
+  // Debounced rather than searched-on-submit: the box should feel live, and 300ms
+  // is long enough that a typed word is one request instead of seven.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setAppliedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TrackerResponse>({
     // An object, not positional members. A filter added later becomes a new named
     // key on this object, so it cannot silently occupy a position that already
     // meant something else — the failure mode of a positional key, where two
     // different filter states hash to the same entry and the cache serves the
     // wrong page.
-    queryKey: ["joining-documents-tracker", { search, statusFilter, overdueOnly, page, limit }],
+    queryKey: ["joining-documents-tracker", { search: appliedSearch, statusFilter, overdueOnly, page, limit }],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (search) params.set("search", search);
+      if (appliedSearch) params.set("search", appliedSearch);
       if (statusFilter && statusFilter !== "all") params.set("status", statusFilter);
       if (overdueOnly) params.set("overdue_only", "true");
       params.set("page", String(page));
@@ -352,7 +392,7 @@ export default function JoiningDocumentsTrackerPage() {
                 <Input
                   placeholder="Search by name or code..."
                   value={search}
-                  onChange={e => { setSearch(e.target.value); setPage(1); }}
+                  onChange={e => setSearch(e.target.value)}
                   className="pl-10 min-h-[44px]"
                 />
               </div>
@@ -449,6 +489,9 @@ export default function JoiningDocumentsTrackerPage() {
                       <th className="px-4 py-3">Employee</th>
                       <th className="px-4 py-3">Branch</th>
                       <th className="px-4 py-3">Process</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Onboarding</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Joining</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Salary</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Completion</th>
                       <th className="px-4 py-3">Documents</th>
@@ -477,6 +520,9 @@ export default function JoiningDocumentsTrackerPage() {
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-600">{row.branch_name || "-"}</td>
                         <td className="px-4 py-3 text-sm text-slate-600">{row.process_name || "-"}</td>
+                        <MilestoneDateCell value={row.onboarding_submitted_at} />
+                        <MilestoneDateCell value={row.date_of_joining} />
+                        <MilestoneDateCell value={row.salary_assigned_at} />
                         <td className="px-4 py-3">
                           <StatusBadge pct={row.joining_document_completion_pct} />
                         </td>

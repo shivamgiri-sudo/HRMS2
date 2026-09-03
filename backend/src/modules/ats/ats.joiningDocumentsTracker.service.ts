@@ -1,7 +1,6 @@
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import { getUserRoleKeys } from '../../shared/scopeAccess.js';
-import { getEmployeeForUser } from '../../shared/accessGuard.js';
+import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
 import { sendJoiningDocReminderEmail } from './ats.email.service.js';
 import { generateJoiningDocumentChecklist, recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
 // Esign_State_Authority. The eSign counters below are GENERATED from it rather
@@ -22,6 +21,49 @@ const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ?
 
 const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-joining-documents');
 
+/**
+ * The roles this page is mounted for, as the scope resolver sees them.
+ *
+ * Must stay the same list as the requireRole() call in
+ * ats.joiningDocumentsTracker.routes.ts: buildScopeWhereClause() only reads
+ * user_assignment_scope rows whose role_key is in this list, so a role admitted
+ * by the router but missing here would resolve to no scope and an empty page.
+ */
+export const TRACKER_SCOPE_ROLES = ['admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head'];
+
+/**
+ * Who appears on this page at all — anyone who actually has joining documents,
+ * plus current staff, plus a recent pre-joiner.
+ *
+ * Pre-joiners sit at active_status = 0 until their joining date, so filtering on
+ * 1 alone hid precisely the population whose documents must be signed before day
+ * one. But active_status = 0 is overwhelmingly *left the company*, not *not yet
+ * joined* — on live data it covers 57,310 resigned, terminated and inactive
+ * records against a handful who genuinely have a checklist. Presence of a
+ * checklist is the honest test: it is created when a joiner needs documents, so
+ * it admits pre-joiners without admitting leavers.
+ *
+ * Expressed as a joined candidate set rather than as three ORs in the WHERE
+ * because the OR form was unindexable — every branch here uses an index
+ * (idx_emp_active, idx_ejdc_employee, idx_emp_empstatus), which took the page
+ * query from 6.4s to ~0.3s and the search from 5.6s to ~0.1s on live data. The
+ * population is unchanged: both forms return the same 287 employees.
+ *
+ * `employment_status = 'preboarding'` rather than LOWER(...) = 'preboarding' for
+ * the same reason: the column collation is already case-insensitive, and the
+ * function call is what stopped the index being used.
+ */
+const TRACKER_POPULATION_JOIN = `
+    JOIN (
+      SELECT id FROM employees WHERE active_status = 1
+      UNION
+      SELECT DISTINCT k.employee_id FROM employee_joining_document_checklist k
+      UNION
+      SELECT id FROM employees
+       WHERE employment_status = 'preboarding'
+         AND date_of_joining >= DATE_SUB(NOW(), INTERVAL 120 DAY)
+    ) tracker_population ON tracker_population.id = e.id`;
+
 export interface KeyDocumentStatus {
   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
   status: string;
@@ -37,6 +79,20 @@ export interface EmployeeDocumentRow {
   process_name: string;
   lob_name: string | null;
   date_of_joining: string;
+  /**
+   * The three process milestones HR reads this page for, alongside the document
+   * progress. They come from three different systems and were all absent here,
+   * so "has this person's paperwork moved?" could not be answered on the page
+   * that exists to answer it.
+   *
+   * `onboarding_submitted_at` is when the candidate submitted the onboarding
+   * form (candidate_onboarding_profile.submitted_at, reached through
+   * ats_onboarding_bridge); `salary_assigned_at` is when a salary was last
+   * assigned. Both are null for an employee who has not reached that step —
+   * null means "not yet", never zero or an epoch date.
+   */
+  onboarding_submitted_at: string | null;
+  salary_assigned_at: string | null;
   joining_document_status: string | null;
   active_status?: number;
   joining_document_completion_pct: number;
@@ -279,6 +335,8 @@ interface TrackerQueryRow extends RowDataPacket {
   process_name: string | null;
   lob_name: string | null;
   date_of_joining: string;
+  onboarding_submitted_at: string | null;
+  salary_assigned_at: string | null;
   joining_document_status: string | null;
   joining_document_completion_pct: number;
   /** True when the employee has a code but has not reached their joining date yet. */
@@ -312,13 +370,35 @@ interface TrackerSummaryRow extends RowDataPacket {
   needs_correction: number;
 }
 
+/**
+ * Narrow a caller-supplied list of employee ids to the ones inside the actor's
+ * branch scope.
+ *
+ * Every bulk action on this page takes employee ids straight from the request
+ * body. Scoping only the list they were selected from is not enough: the ids are
+ * visible on other screens, and an id that survives into a bulk body is acted on
+ * with no further check. Returns the ids that are genuinely in scope — an empty
+ * array means act on nobody, never on everybody.
+ */
+export async function filterEmployeeIdsToScope(
+  actorUserId: string,
+  employeeIds: string[]
+): Promise<string[]> {
+  if (employeeIds.length === 0) return [];
+  const scope = await buildScopeWhereClause(actorUserId, TRACKER_SCOPE_ROLES, { branchId: 'e.branch_id' });
+  if (scope.sql === '1=1') return employeeIds;
+  if (scope.sql === '1=0') return [];
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT e.id FROM employees e WHERE e.id IN (?) AND (${scope.sql})`,
+    [employeeIds, ...scope.params]
+  );
+  return (rows as Array<{ id: string }>).map((r) => r.id);
+}
+
 export async function getJoiningDocumentsTracker(
   actorUserId: string,
   filters: TrackerQueryParams
 ): Promise<TrackerResponse> {
-  const roleKeys = await getUserRoleKeys(actorUserId);
-  const isBranchHead = roleKeys.includes('branch_head');
-
   // Clamped here as well as at the route, deliberately. The route is one caller and
   // this is the function that builds the OFFSET arithmetic, so it cannot assume its
   // input was already sanitised — a NaN page would otherwise reach the query as
@@ -343,12 +423,12 @@ export async function getJoiningDocumentsTracker(
   // needs documents, so it admits pre-joiners without admitting leavers, and it
   // needs no interpretation of employment_status.
   const whereClauses: string[] = [
-    `(
-      e.active_status = 1
-      OR EXISTS (SELECT 1 FROM employee_joining_document_checklist k WHERE k.employee_id = e.id)
-      OR (LOWER(COALESCE(e.employment_status,'')) = 'preboarding' AND e.date_of_joining >= DATE_SUB(NOW(), INTERVAL 120 DAY))
-    )`,
-    `LOWER(COALESCE(e.employment_status, '')) NOT IN ('resigned', 'terminated')`,
+    // The population predicate lives in TRACKER_POPULATION_JOIN above, not here.
+    // Written as three ORs in the WHERE it was unindexable: MySQL scanned all
+    // 59,356 employee rows and ran the checklist EXISTS once per row, 6.4s per
+    // call — and the page issues two of these per keystroke, which is why the
+    // search box looked broken rather than slow.
+    `(e.employment_status IS NULL OR e.employment_status NOT IN ('resigned', 'terminated'))`,
     'e.employee_code IS NOT NULL',
     // Legacy (db_bill-migrated) employees get a placeholder checklist row from
     // createLegacyJoiningChecklists.ts (mandatory=0, status='verified' — their
@@ -360,35 +440,20 @@ export async function getJoiningDocumentsTracker(
   ];
   const params: (string | number)[] = [];
 
-  // Branch Head scoping
-  if (isBranchHead) {
-    const actorEmployee = await getEmployeeForUser(actorUserId);
-    let actorBranchId: string | undefined;
-    if (actorEmployee?.id) {
-      // Fetch branch_id for the actor's employee record
-      const [branchRows] = await db.execute<RowDataPacket[]>(
-        'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
-        [actorEmployee.id]
-      );
-      actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
-    }
-    if (!actorBranchId) {
-      // Cannot resolve a branch for this branch_head — return empty rather than
-      // falling through to an unrestricted query. `hasPrev` is false even on page 5:
-      // there is no page 1 to go back to when the filtered set is empty by construction.
-      return {
-        rows: [],
-        total: 0,
-        summary: calculateTrackerSummary([]),
-        page,
-        limit,
-        hasNext: false,
-        hasPrev: false,
-      };
-    }
-    whereClauses.push('e.branch_id = ?');
-    params.push(actorBranchId);
-  }
+  // Branch RBAC.
+  //
+  // Only branch_head used to be scoped, by reading the branch off the actor's own
+  // employee row. Every hr and payroll_hr on this page therefore saw all 287
+  // employees across all four branches, even though their role grant is a branch
+  // grant — the same shape of hole the appointment-letter queue had.
+  //
+  // buildScopeWhereClause() is the codebase's one scope resolver: it reads
+  // user_assignment_scope, so scope_type='all' (head-office hr/admin, payroll
+  // heads) still means org-wide, super_admin bypasses inside it, and a user whose
+  // roles carry no scope row at all resolves to 1=0 rather than to everything.
+  const scope = await buildScopeWhereClause(actorUserId, TRACKER_SCOPE_ROLES, { branchId: 'e.branch_id' });
+  whereClauses.push(`(${scope.sql})`);
+  params.push(...(scope.params as (string | number)[]));
 
   // Apply filters
   if (filters.status && filters.status !== 'all') {
@@ -416,9 +481,11 @@ export async function getJoiningDocumentsTracker(
     params.push(filters.completion_max);
   }
 
-  if (filters.search) {
+  if (filters.search && filters.search.trim()) {
     whereClauses.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
-    const searchPattern = `%${filters.search}%`;
+    // % and _ are LIKE wildcards, so an unescaped box lets a typed "%" match the
+    // whole branch rather than nothing.
+    const searchPattern = `%${filters.search.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
     params.push(searchPattern, searchPattern);
   }
 
@@ -480,6 +547,7 @@ export async function getJoiningDocumentsTracker(
    */
   const fromWhereGroupSQL = `
     FROM employees e
+    ${TRACKER_POPULATION_JOIN}
     LEFT JOIN branch_master b ON e.branch_id = b.id
     LEFT JOIN process_master p ON e.process_id = p.id
     LEFT JOIN employee_joining_document_checklist c ON e.id = c.employee_id
@@ -499,6 +567,19 @@ export async function getJoiningDocumentsTracker(
       e.branch_id,
       e.process_id,
       e.date_of_joining,
+
+      -- Correlated scalar subqueries, not joins. ats_onboarding_bridge and
+      -- salary_component_assignments both hold more than one row per employee, so
+      -- joining them would multiply the checklist rows and silently inflate
+      -- COUNT(c.id) — the document counter this page is built on.
+      (SELECT MAX(op.submitted_at)
+         FROM ats_onboarding_bridge ab
+         JOIN candidate_onboarding_profile op ON op.candidate_id = ab.candidate_id
+        WHERE ab.employee_id = e.id) AS onboarding_submitted_at,
+      (SELECT MAX(sca.assigned_at)
+         FROM salary_component_assignments sca
+        WHERE sca.employee_id = e.id) AS salary_assigned_at,
+
       e.joining_document_status,
       e.joining_document_completion_pct,
       e.active_status,
@@ -572,6 +653,8 @@ export async function getJoiningDocumentsTracker(
     process_name: row.process_name || '',
     lob_name: row.lob_name,
     date_of_joining: row.date_of_joining,
+    onboarding_submitted_at: row.onboarding_submitted_at,
+    salary_assigned_at: row.salary_assigned_at,
     joining_document_status: row.joining_document_status,
     joining_document_completion_pct: Number(row.joining_document_completion_pct),
     is_pre_joining: Number(row.active_status ?? 1) === 0,
@@ -1030,39 +1113,22 @@ export async function streamBulkDocumentsZip(
     console.error('[tracker] Archive error during ZIP creation:', err.message);
   });
 
-  // Branch Head scoping — mirrors getJoiningDocumentsTracker's isBranchHead check above.
-  // Without this, a branch_head could reach every other employee's verified documents
-  // by supplying arbitrary employee_ids to this bulk-download endpoint, even though the
-  // regular list-and-select flow already restricts them to their own branch.
+  // Branch RBAC — the same resolver getJoiningDocumentsTracker() uses above.
+  // Without this, any user on this page could reach every other branch's verified
+  // documents by supplying arbitrary employee_ids to this bulk-download endpoint,
+  // even though the list-and-select flow now restricts them to their own branch.
+  // It used to guard branch_head alone, which left hr and payroll_hr — the roles
+  // this page is actually used by — able to download org-wide.
   let scopedEmployeeIds = employeeIds;
   if (actorUserId && employeeIds.length > 0) {
-    const roleKeys = await getUserRoleKeys(actorUserId);
-    if (roleKeys.includes('branch_head')) {
-      const actorEmployee = await getEmployeeForUser(actorUserId);
-      let actorBranchId: string | undefined;
-      if (actorEmployee?.id) {
-        const [branchRows] = await db.execute<RowDataPacket[]>(
-          'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
-          [actorEmployee.id]
-        );
-        actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
-      }
-      if (!actorBranchId) {
-        // Cannot resolve a branch for this branch_head — finalize an empty archive
-        // rather than falling through to an unrestricted query.
-        await archive.finalize();
-        return;
-      }
-      const [allowedRows] = await db.execute<RowDataPacket[]>(
-        'SELECT id FROM employees WHERE id IN (?) AND branch_id = ?',
-        [employeeIds, actorBranchId]
-      );
-      scopedEmployeeIds = (allowedRows as Array<{ id: string }>).map((r) => r.id);
-      if (scopedEmployeeIds.length === 0) {
-        await archive.finalize();
-        return;
-      }
+    const ids = await filterEmployeeIdsToScope(actorUserId, employeeIds);
+    if (ids.length === 0) {
+      // Nothing in scope — finalize an empty archive rather than falling through
+      // to an unrestricted query.
+      await archive.finalize();
+      return;
     }
+    scopedEmployeeIds = ids;
   }
 
   let sql = `

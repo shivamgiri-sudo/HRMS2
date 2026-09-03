@@ -13,6 +13,7 @@ import {
   bulkSetDueDate,
   bulkVerifyDocuments,
   streamBulkDocumentsZip,
+  filterEmployeeIdsToScope,
   clampPage,
   clampLimit,
   type TrackerQueryParams,
@@ -29,6 +30,42 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 // All routes require authentication and specific roles
 joiningDocumentsTrackerRouter.use(requireAuth);
 joiningDocumentsTrackerRouter.use(requireRole('admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head'));
+
+/**
+ * Branch RBAC for the bulk actions.
+ *
+ * The list query is scoped inside the service, but every bulk endpoint takes
+ * employee ids straight from the request body — ids that are visible on other
+ * screens and are acted on with no further check. This narrows the body to the
+ * ids actually inside the caller's branch scope before the handler runs, so a
+ * bulk action can never reach further than the list it was selected from.
+ *
+ * A body naming only out-of-scope employees is refused rather than silently
+ * treated as "act on nobody": the caller asked for something they may not have,
+ * and a 200 saying "0 processed" reads as a no-op bug.
+ */
+function scopeBulkEmployeeIds(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const body = req.body as { employee_ids?: unknown };
+  if (!Array.isArray(body?.employee_ids) || body.employee_ids.length === 0) {
+    // The handler's own 400 is the right answer for a missing list; this
+    // middleware only narrows a list that is actually there.
+    next();
+    return;
+  }
+  void filterEmployeeIdsToScope(req.authUser!.id, body.employee_ids as string[])
+    .then((allowed) => {
+      if (allowed.length === 0) {
+        res.status(403).json({
+          success: false,
+          message: 'Forbidden: those employees are outside your assigned branch scope',
+        });
+        return;
+      }
+      body.employee_ids = allowed;
+      next();
+    })
+    .catch(next);
+}
 
 // GET /api/ats/joining-documents-tracker
 joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: Response) => {
@@ -64,7 +101,7 @@ joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: 
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-remind
-joiningDocumentsTrackerRouter.post('/bulk-remind', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-remind', requireWriteAccess, scopeBulkEmployeeIds, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, custom_message } = req.body as {
       employee_ids?: unknown;
@@ -89,7 +126,7 @@ joiningDocumentsTrackerRouter.post('/bulk-remind', requireWriteAccess, h(async (
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-generate-checklist
-joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', requireWriteAccess, scopeBulkEmployeeIds, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids } = req.body as { employee_ids?: unknown };
 
@@ -107,7 +144,7 @@ joiningDocumentsTrackerRouter.post('/bulk-generate-checklist', requireWriteAcces
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-assign
-joiningDocumentsTrackerRouter.post('/bulk-assign', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-assign', requireWriteAccess, scopeBulkEmployeeIds, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, assigned_hr_user_id } = req.body as {
       employee_ids?: unknown;
@@ -132,7 +169,7 @@ joiningDocumentsTrackerRouter.post('/bulk-assign', requireWriteAccess, h(async (
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-set-due-date
-joiningDocumentsTrackerRouter.post('/bulk-set-due-date', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-set-due-date', requireWriteAccess, scopeBulkEmployeeIds, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids, due_date, document_codes } = req.body as {
       employee_ids?: unknown;
@@ -163,7 +200,7 @@ joiningDocumentsTrackerRouter.post('/bulk-set-due-date', requireWriteAccess, h(a
 }));
 
 // POST /api/ats/joining-documents-tracker/bulk-verify
-joiningDocumentsTrackerRouter.post('/bulk-verify', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
+joiningDocumentsTrackerRouter.post('/bulk-verify', requireWriteAccess, scopeBulkEmployeeIds, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { employee_ids } = req.body as { employee_ids?: unknown };
 
@@ -185,6 +222,15 @@ joiningDocumentsTrackerRouter.post('/resend-notification', requireWriteAccess, h
   const { employee_id } = req.body as { employee_id?: string };
   if (!employee_id) {
     return res.status(400).json({ success: false, message: 'employee_id is required' });
+  }
+
+  // Same branch RBAC as the bulk actions — this one takes a single id, so it does
+  // not pass through scopeBulkEmployeeIds.
+  if ((await filterEmployeeIdsToScope(req.authUser!.id, [employee_id])).length === 0) {
+    return res.status(403).json({
+      success: false,
+      message: 'Forbidden: that employee is outside your assigned branch scope',
+    });
   }
 
   const [empRows] = await db.execute<RowDataPacket[]>(

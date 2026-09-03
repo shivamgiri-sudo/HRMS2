@@ -130,6 +130,16 @@ export default function EmployeeJoiningDocumentsPage() {
   const [remarks, setRemarks] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewTitle, setPreviewTitle] = useState<string | null>(null);
+  // What the browser can actually do with the bytes we just fetched.
+  //
+  // The modal used to put every file into an <iframe> regardless of type. A
+  // browser will not render a Word document that way — it shows its own blocked
+  // placeholder, with no message and no way forward, which is what an HR user hit
+  // when opening an e-signed document whose newest file happened to be the .docx
+  // draft. The type decides the surface: PDFs and images are framed, everything
+  // else is offered as a download instead of a grey rectangle.
+  const [previewKind, setPreviewKind] = useState<"pdf" | "image" | "unsupported">("pdf");
+  const [previewSource, setPreviewSource] = useState<{ id: string; name: string } | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
 
@@ -256,6 +266,16 @@ export default function EmployeeJoiningDocumentsPage() {
     try {
       const blob = await hrmsApi.getBlob(`/api/employees/${employeeId}/joining-documents/files/${fileId}/preview`);
       if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+
+      // A blob with no type at all becomes an unnamed download in the frame
+      // rather than a rendered page, so treat a missing Content-Type as a PDF —
+      // every stored joining document except the handful of Word drafts is one,
+      // and a wrong guess now lands on the same download fallback as a .docx.
+      const mime = (blob.type || "application/pdf").toLowerCase();
+      setPreviewKind(
+        mime.includes("pdf") ? "pdf" : mime.startsWith("image/") ? "image" : "unsupported",
+      );
+      setPreviewSource({ id: fileId, name: title });
       setPreviewUrl(URL.createObjectURL(blob));
       setPreviewTitle(title);
     } catch (err: any) {
@@ -688,7 +708,31 @@ export default function EmployeeJoiningDocumentsPage() {
               </Button>
             </div>
             <div className="flex-1 bg-slate-100 p-2">
-              <iframe src={previewUrl} title={previewTitle || "Preview"} className="h-full w-full rounded-xl bg-white" />
+              {previewKind === "unsupported" ? (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-3 rounded-xl bg-white px-6 text-center">
+                  <FileText className="h-10 w-10 text-slate-300" />
+                  <p className="text-sm font-semibold text-slate-700">
+                    This document can't be shown in the browser
+                  </p>
+                  <p className="max-w-md text-xs text-slate-500">
+                    It is a Word file, not a PDF. The signed copy is usually the PDF on the
+                    same document — download this one to open it in Word.
+                  </p>
+                  <Button
+                    type="button"
+                    className="min-h-[44px]"
+                    onClick={() => void downloadFile(previewSource?.id ?? null, previewSource?.name ?? "document")}
+                  >
+                    <Download className="mr-2 h-4 w-4" /> Download
+                  </Button>
+                </div>
+              ) : previewKind === "image" ? (
+                <div className="flex h-full w-full items-center justify-center overflow-auto rounded-xl bg-white">
+                  <img src={previewUrl} alt={previewTitle || "Preview"} className="max-h-full max-w-full" />
+                </div>
+              ) : (
+                <iframe src={previewUrl} title={previewTitle || "Preview"} className="h-full w-full rounded-xl bg-white" />
+              )}
             </div>
           </div>
         </div>
