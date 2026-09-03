@@ -556,21 +556,12 @@ export const attendanceEngineService = {
   /**
    * Does the dialler feed actually carry this employee?
    *
-   * Enrolment, not activity. The question is whether the APR feed knows this
-   * agent code at all — not whether they logged in on the day being processed.
-   * A covered employee is judged on APR alone: a day with no net login is an
-   * absence. An uncovered one keeps the biometric fallback, because docking
-   * someone for a system that has never held their code is not an attendance
-   * decision, it is an onboarding gap.
+   * Enrolment, not activity. All APR-scoped employees are judged on APR alone —
+   * no APR record on a date = absent (2026-09-03 ruling). This check is retained
+   * for mismatch notification and audit purposes, not for classification gating.
    *
-   * The 30-day look-back is what makes the two populations separable. Asking only
-   * about `date` would answer "did they work today", which is the very thing
-   * being judged, and would put every covered employee's quiet day straight into
-   * absence via the wrong route. Asking about the whole month would flip an
-   * employee's treatment retroactively as rows arrive mid-month.
-   *
-   * As coverage improves this needs no code change: an employee crosses over on
-   * their own, the first time their code appears in the feed.
+   * The 30-day look-back keeps the two populations separable without flipping
+   * an employee's treatment retroactively as rows arrive mid-month.
    */
   async isEnrolledInAprFeed(employeeCode: string, date: string): Promise<boolean> {
     if (!employeeCode) return false;
@@ -1200,20 +1191,9 @@ export const attendanceEngineService = {
         mismatchFlag = 1;
       }
 
-      // Is this employee actually covered by the dialler feed?
-      //
-      // Ruling of 2026-08-07: an Operations Executive is judged on APR alone —
-      // no biometric fallback — because a short or missing dialler login IS the
-      // attendance answer for that role.
-      //
-      // That applies only to people the feed actually carries. In 2026-08 the
-      // feed held 203 of 829 active Operations Executives; the other 626 have no
-      // agent code in it at all. Judging those on APR would put zero net-login
-      // minutes through the operations classifier and dock a full day's pay for
-      // a system they are not enrolled in — measured on live data as 1,577.5
-      // paid days removed and 461 people taken to zero paid days in six days of
-      // one month. So they keep the biometric fallback until their codes are
-      // onboarded, at which point this check flips them over on its own.
+      // Enrolment check — used only by mismatch notifications and future audit queries.
+      // No longer gates classification: APR employees with 0 rawMinutes fall through to the
+      // classifier and land on 'absent' regardless of feed enrolment (2026-09-03 ruling).
       aprFeedCoversEmployee = await this.isEnrolledInAprFeed(emp.employee_code, date);
 
       // No biometric fallback for APR employees.
