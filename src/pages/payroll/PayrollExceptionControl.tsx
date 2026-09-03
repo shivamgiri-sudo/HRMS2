@@ -14,7 +14,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { EmployeePicker, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
+import { EmployeePicker, employeeDisplayName, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
 import {
   Loader2, ShieldCheck, CalendarDays, AlertTriangle, CheckCircle2, X, Fingerprint, Clock,
 } from 'lucide-react';
@@ -545,6 +545,23 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
 
 // ── Tab 2: Payable Days ───────────────────────────────────────────────────────
 
+/**
+ * Payroll Head's standing list of employees who get payable days set directly, no reason
+ * required — an explicit exception the Payroll Head asked for on top of the general rule
+ * (every other employee still requires a reason). Their code/name surface as one-click chips
+ * so the Payroll Head never has to search for them by name.
+ */
+const QUICK_PICK_EMPLOYEES: { code: string; name: string }[] = [
+  { code: 'MAS00001', name: 'DEEPAK KASHYAP' },
+  { code: 'MAS00183', name: 'ASHWANI WADHWA' },
+  { code: 'MAS07197', name: 'SADHNA WADHWA' },
+  { code: 'MAS63086', name: 'NAYANDEEP KAUR' },
+  { code: 'MAS63087', name: 'AMIT KAUR' },
+  { code: 'MAS63088', name: 'RITA DEVI' },
+];
+const QUICK_PICK_CODES = new Set(QUICK_PICK_EMPLOYEES.map((e) => e.code));
+const QUICK_PICK_REASON = 'Pre-approved payable-days entry — Payroll Head standing list, no reason required.';
+
 function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void }) {
   const months = recentMonths();
   const [month, setMonth] = useState(months[0]);
@@ -557,6 +574,7 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
   const [checking, setChecking] = useState(false);
   const [days, setDays] = useState('');
   const [reason, setReason] = useState('');
+  const [resolvingQuick, setResolvingQuick] = useState<string | null>(null);
 
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<any>(null);
@@ -624,7 +642,7 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
     const n = Number(days);
     if (!Number.isFinite(n) || n < 0 || n > 31) return flash('err', 'Payable days must be between 0 and 31');
     if (Math.round(n * 2) !== n * 2) return flash('err', 'Payable days must be a whole or half day (e.g. 25 or 25.5)');
-    if (reason.trim().length < 10) return flash('err', 'Give a reason of at least 10 characters');
+    if (!waiveReason && reason.trim().length < 10) return flash('err', 'Give a reason of at least 10 characters');
 
     setSaving(true);
     try {
@@ -632,7 +650,7 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
         employee_id: employee.id,
         run_month: month,
         payable_days: n,
-        reason: reason.trim(),
+        reason: waiveReason ? QUICK_PICK_REASON : reason.trim(),
       });
       flash('ok', res.message ?? 'Payable days set');
       setEmployee(null); setDays(''); setReason(''); setCurrent(null);
@@ -664,6 +682,24 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
   };
 
   const runClosed = current?.run_closed === true;
+  const waiveReason = employee ? QUICK_PICK_CODES.has(employee.employee_code) : false;
+
+  const pickQuickEmployee = async (code: string) => {
+    setResolvingQuick(code);
+    try {
+      const res = await hrmsApi.get<
+        { employees?: EmployeeSearchResult[]; data?: EmployeeSearchResult[] } | EmployeeSearchResult[]
+      >(`/api/employees?search=${encodeURIComponent(code)}&limit=5`);
+      const list = Array.isArray(res) ? res : (res.employees ?? res.data ?? []);
+      const found = list.find((e) => e.employee_code === code);
+      if (!found) { flash('err', `Could not find ${code} — check they are still an active employee`); return; }
+      setEmployee(found);
+    } catch (e: any) {
+      flash('err', e?.message ?? `Could not look up ${code}`);
+    } finally {
+      setResolvingQuick(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -688,6 +724,26 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
               onSelect={setEmployee}
               disabled={saving}
             />
+            {!employee && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-slate-500">Quick select:</span>
+                {QUICK_PICK_EMPLOYEES.map((q) => (
+                  <button
+                    key={q.code}
+                    type="button"
+                    onClick={() => void pickQuickEmployee(q.code)}
+                    disabled={saving || resolvingQuick !== null}
+                    className="cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {resolvingQuick === q.code ? (
+                      <Loader2 className="inline h-3 w-3 animate-spin" />
+                    ) : (
+                      <>{q.name} <span className="font-mono text-[10px] text-slate-400">({q.code})</span></>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -746,15 +802,27 @@ function PayableDaysTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void
             </p>
           </div>
           <div className="md:col-span-2">
-            <Label className="mb-1.5 block text-sm">Reason <span className="text-red-600">*</span></Label>
-            <Textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              disabled={saving || runClosed}
-              rows={2}
-              placeholder="Why the calculated days are being overridden…"
-              className="rounded-xl text-sm"
-            />
+            {waiveReason ? (
+              <>
+                <Label className="mb-1.5 block text-sm">Reason</Label>
+                <div className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-500">
+                  <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                  Not required for {employee ? employeeDisplayName(employee) : 'this employee'} — Payroll Head standing list.
+                </div>
+              </>
+            ) : (
+              <>
+                <Label className="mb-1.5 block text-sm">Reason <span className="text-red-600">*</span></Label>
+                <Textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  disabled={saving || runClosed}
+                  rows={2}
+                  placeholder="Why the calculated days are being overridden…"
+                  className="rounded-xl text-sm"
+                />
+              </>
+            )}
           </div>
         </div>
 
