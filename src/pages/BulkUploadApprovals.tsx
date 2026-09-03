@@ -13,6 +13,8 @@ import {
   Clock,
   FileCheck,
   RefreshCw,
+  Search,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -183,12 +185,78 @@ interface Outcome {
   error?: string;
 }
 
+/** Which discard entity type a bulk-upload row's batch maps to — only these two
+ *  types ever create a discardable entity; incentive/deduction rows do not. */
+const DISCARD_ENTITY_TYPE: Record<string, "leave" | "regularization" | undefined> = {
+  ATTENDANCE_REGULARIZATION_BULK: "regularization",
+  LEAVE_APPLICATION_BULK: "leave",
+};
+
 export default function BulkUploadApprovals() {
   const [pending, setPending] = useState<PendingBatch[]>([]);
   const [history, setHistory] = useState<DecidedBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Search / branch / date-range filters — apply to both the pending queue and
+  // recent decisions, client-side over what's already loaded (a branch head's
+  // queue is dozens of batches, not thousands — a server round trip per keystroke
+  // would be the wrong tool here).
+  const [search, setSearch] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const branchOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const b of pending) if (b.branch_name) names.add(b.branch_name);
+    for (const b of history) if (b.branch_name) names.add(b.branch_name);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [pending, history]);
+
+  const inDateRange = useCallback(
+    (iso: string | null) => {
+      if (!iso) return !dateFrom && !dateTo;
+      const day = iso.slice(0, 10);
+      if (dateFrom && day < dateFrom) return false;
+      if (dateTo && day > dateTo) return false;
+      return true;
+    },
+    [dateFrom, dateTo],
+  );
+
+  const filteredPending = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return pending.filter((b) => {
+      if (branchFilter && b.branch_name !== branchFilter) return false;
+      if (!inDateRange(b.submitted_for_approval_at ?? b.created_at)) return false;
+      if (!q) return true;
+      return (
+        b.upload_batch_no.toLowerCase().includes(q) ||
+        (b.uploaded_by_name ?? "").toLowerCase().includes(q) ||
+        (b.original_file_name ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [pending, search, branchFilter, inDateRange]);
+
+  const filteredHistory = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return history.filter((b) => {
+      if (branchFilter && b.branch_name !== branchFilter) return false;
+      if (!inDateRange(b.approved_at)) return false;
+      if (!q) return true;
+      return (
+        b.upload_batch_no.toLowerCase().includes(q) ||
+        (b.error_summary ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [history, search, branchFilter, inDateRange]);
+
+  const hasActiveFilters = Boolean(search || branchFilter || dateFrom || dateTo);
+  const clearFilters = useCallback(() => {
+    setSearch(""); setBranchFilter(""); setDateFrom(""); setDateTo("");
+  }, []);
 
   const [openBatch, setOpenBatch] = useState<PendingBatch | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
@@ -203,6 +271,16 @@ export default function BulkUploadApprovals() {
   const [openHistoryBatch, setOpenHistoryBatch] = useState<HistoryBatchFull | null>(null);
   const [historyRows, setHistoryRows] = useState<PreviewRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Discarding rows out of an approved batch — the "reverse it through that
+  // batch" path. Selection is keyed by created_entity_id (what the discard API
+  // actually needs), not row_no.
+  const [selectedEntityIds, setSelectedEntityIds] = useState<Set<string>>(new Set());
+  const [discardReason, setDiscardReason] = useState("");
+  const [discarding, setDiscarding] = useState(false);
+  const [discardOutcome, setDiscardOutcome] = useState<
+    { entityId: string; success: boolean; message: string }[] | null
+  >(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -254,6 +332,9 @@ export default function BulkUploadApprovals() {
     setOpenHistoryBatch(batch);
     setHistoryRows([]);
     setHistoryLoading(true);
+    setSelectedEntityIds(new Set());
+    setDiscardReason("");
+    setDiscardOutcome(null);
     try {
       const res = await hrmsApi.get<{ success: boolean; data?: PreviewRow[]; message?: string }>(
         `/api/bulk-upload/approvals/batches/${batch.id}/preview`,
@@ -440,6 +521,94 @@ export default function BulkUploadApprovals() {
     return sortColumns([...cols], openHistoryBatch?.upload_type_code ?? "");
   }, [historyRows, openHistoryBatch]);
 
+  /** Whether this batch's TYPE and OUTCOME even admit discarding a row out of it.
+   *  Incentive/deduction rows never create a leave/regularization entity, so
+   *  there is nothing here for the discard API to act on; a rejected batch
+   *  never applied anything either. */
+  const discardEntityType = openHistoryBatch
+    ? DISCARD_ENTITY_TYPE[openHistoryBatch.upload_type_code]
+    : undefined;
+  const batchDiscardable =
+    Boolean(discardEntityType) &&
+    (openHistoryBatch?.approval_status === "approved" ||
+      openHistoryBatch?.approval_status === "partially_applied");
+
+  const toggleRowSelection = (entityId: string) => {
+    setSelectedEntityIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entityId)) next.delete(entityId);
+      else next.add(entityId);
+      return next;
+    });
+  };
+
+  const selectableEntityIds = useMemo(
+    () =>
+      batchDiscardable
+        ? historyRows
+            .filter((r) => r.row_status === "imported" && r.created_entity_id)
+            .map((r) => r.created_entity_id as string)
+        : [],
+    [historyRows, batchDiscardable],
+  );
+
+  const toggleSelectAll = () => {
+    setSelectedEntityIds((prev) =>
+      prev.size === selectableEntityIds.length ? new Set() : new Set(selectableEntityIds),
+    );
+  };
+
+  /** Re-fetches this batch's rows without resetting selection/outcome state —
+   *  unlike openHistoryPreview, which is also the "open a different batch" path
+   *  and rightly clears all of that. Used only after a discard, so the outcome
+   *  banner and the trimmed selection survive the refresh. */
+  const refreshHistoryRows = useCallback(async (batch: HistoryBatchFull) => {
+    setHistoryLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data?: PreviewRow[]; message?: string }>(
+        `/api/bulk-upload/approvals/batches/${batch.id}/preview`,
+      );
+      if (res.success) setHistoryRows(res.data ?? []);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const discardSelectedRows = useCallback(async () => {
+    if (!openHistoryBatch || !discardEntityType || selectedEntityIds.size === 0) return;
+    if (discardReason.trim().length < 10) {
+      setError("A reason of at least 10 characters is required — it becomes the permanent record of why this was reversed.");
+      return;
+    }
+    setDiscarding(true);
+    setError("");
+    setDiscardOutcome(null);
+    try {
+      const res = await hrmsApi.post<{
+        success: boolean;
+        data: { entityId: string; success: boolean; message: string }[];
+        message: string;
+      }>(`/api/discard/batch/${openHistoryBatch.id}/rows`, {
+        entityType: discardEntityType,
+        entityIds: [...selectedEntityIds],
+        reason: discardReason.trim(),
+      });
+      setDiscardOutcome(res.data);
+      setNotice(res.message);
+      const succeededIds = new Set(res.data.filter((r) => r.success).map((r) => r.entityId));
+      setSelectedEntityIds((prev) => new Set([...prev].filter((id) => !succeededIds.has(id))));
+      setDiscardReason("");
+      // Re-fetch this batch's rows so a discarded row's status reflects reality
+      // rather than the stale "imported" it showed before this call — without
+      // wiping the outcome banner or trimmed selection this just set.
+      await refreshHistoryRows(openHistoryBatch);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not discard the selected rows.");
+    } finally {
+      setDiscarding(false);
+    }
+  }, [openHistoryBatch, discardEntityType, selectedEntityIds, discardReason, refreshHistoryRows]);
+
   return (
     <DashboardLayout>
     <HrmsModernShell
@@ -470,6 +639,65 @@ export default function BulkUploadApprovals() {
         </div>
       )}
 
+      {/* Filters — apply to both the pending queue and recent decisions below */}
+      <section className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm px-5 py-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex-1 min-w-[220px] text-xs font-semibold text-slate-600">
+            Search
+            <div className="relative mt-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Batch number, uploader, file name…"
+                className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              />
+            </div>
+          </label>
+          <label className="min-w-[180px] text-xs font-semibold text-slate-600">
+            Branch
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            >
+              <option value="">All branches</option>
+              {branchOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-slate-600">
+            From
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+          <label className="text-xs font-semibold text-slate-600">
+            To
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 cursor-pointer"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </section>
+
       {/* Pending approvals section */}
       <section className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
@@ -479,7 +707,10 @@ export default function BulkUploadApprovals() {
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-800">Awaiting Your Approval</h2>
-              <p className="text-xs text-slate-500">{pending.length} batch{pending.length !== 1 ? "es" : ""} pending</p>
+              <p className="text-xs text-slate-500">
+                {filteredPending.length} batch{filteredPending.length !== 1 ? "es" : ""} pending
+                {hasActiveFilters && filteredPending.length !== pending.length ? ` (of ${pending.length})` : ""}
+              </p>
             </div>
           </div>
         </div>
@@ -489,13 +720,15 @@ export default function BulkUploadApprovals() {
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
             <span className="ml-3 text-sm text-slate-500">Loading…</span>
           </div>
-        ) : pending.length === 0 ? (
+        ) : filteredPending.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 mb-3">
               <CheckCircle2 className="h-6 w-6 text-emerald-500" />
             </div>
-            <p className="text-sm font-medium text-slate-700">All clear</p>
-            <p className="text-xs text-slate-500 mt-1">Nothing is waiting for your approval.</p>
+            <p className="text-sm font-medium text-slate-700">{pending.length === 0 ? "All clear" : "No batches match your filters"}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {pending.length === 0 ? "Nothing is waiting for your approval." : "Try clearing a filter above."}
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -512,7 +745,7 @@ export default function BulkUploadApprovals() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {pending.map((batch) => (
+                {filteredPending.map((batch) => (
                   <tr
                     key={batch.id}
                     className="transition-colors duration-150 hover:bg-blue-50/40 cursor-pointer"
@@ -572,13 +805,16 @@ export default function BulkUploadApprovals() {
           </div>
           <div>
             <h2 className="text-sm font-bold text-slate-800">Recent Decisions</h2>
-            <p className="text-xs text-slate-500">{history.length} decision{history.length !== 1 ? "s" : ""} recorded</p>
+            <p className="text-xs text-slate-500">
+              {filteredHistory.length} decision{filteredHistory.length !== 1 ? "s" : ""} recorded
+              {hasActiveFilters && filteredHistory.length !== history.length ? ` (of ${history.length})` : ""}
+            </p>
           </div>
         </div>
 
-        {history.length === 0 ? (
+        {filteredHistory.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center">
-            <p className="text-sm text-slate-500">No decisions yet.</p>
+            <p className="text-sm text-slate-500">{history.length === 0 ? "No decisions yet." : "No decisions match your filters."}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -594,7 +830,7 @@ export default function BulkUploadApprovals() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {history.map((batch) => (
+                {filteredHistory.map((batch) => (
                   <tr
                     key={batch.id}
                     className="transition-colors duration-150 hover:bg-indigo-50/40 cursor-pointer"
@@ -867,6 +1103,18 @@ export default function BulkUploadApprovals() {
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="bg-slate-50 rounded-lg">
+                      {batchDiscardable && (
+                        <th className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectableEntityIds.length > 0 && selectedEntityIds.size === selectableEntityIds.length}
+                            onChange={toggleSelectAll}
+                            disabled={selectableEntityIds.length === 0}
+                            className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 accent-indigo-600 disabled:cursor-not-allowed"
+                            aria-label="Select all discardable rows"
+                          />
+                        </th>
+                      )}
                       <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">#</th>
                       <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">Employee</th>
                       {historyPreviewColumns.map((c) => (
@@ -883,11 +1131,31 @@ export default function BulkUploadApprovals() {
                       const errs = parseJson<string[]>(row.error_messages);
                       const isApplied = row.row_status === "imported";
                       const isErr = row.row_status === "error";
+                      const entityId = row.created_entity_id;
+                      const rowOutcome = entityId ? discardOutcome?.find((o) => o.entityId === entityId) : undefined;
+                      const isSelectable = batchDiscardable && isApplied && Boolean(entityId) && !rowOutcome?.success;
                       return (
                         <tr
                           key={row.row_no}
-                          className={isErr ? "bg-rose-50/60" : isApplied ? "bg-emerald-50/30" : "hover:bg-slate-50/60"}
+                          className={
+                            rowOutcome?.success
+                              ? "bg-slate-100/60"
+                              : isErr ? "bg-rose-50/60" : isApplied ? "bg-emerald-50/30" : "hover:bg-slate-50/60"
+                          }
                         >
+                          {batchDiscardable && (
+                            <td className="px-3 py-2">
+                              {isSelectable && entityId && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedEntityIds.has(entityId)}
+                                  onChange={() => toggleRowSelection(entityId)}
+                                  className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 accent-indigo-600"
+                                  aria-label={`Select row ${row.row_no}`}
+                                />
+                              )}
+                            </td>
+                          )}
                           <td className="px-3 py-2 font-medium text-slate-400">{row.row_no}</td>
                           <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">
                             {row.employee_name ?? <span className="text-slate-400">—</span>}
@@ -898,7 +1166,19 @@ export default function BulkUploadApprovals() {
                             </td>
                           ))}
                           <td className="px-3 py-2">
-                            {isApplied ? (
+                            {rowOutcome ? (
+                              rowOutcome.success ? (
+                                <span className="inline-flex items-center gap-1 text-slate-500 font-medium">
+                                  <Trash2 className="h-3 w-3" />
+                                  discarded
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-rose-600 font-medium" title={rowOutcome.message}>
+                                  <XCircle className="h-3 w-3 shrink-0" />
+                                  {rowOutcome.message}
+                                </span>
+                              )
+                            ) : isApplied ? (
                               <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
                                 <CheckCircle2 className="h-3 w-3" />
                                 applied
@@ -919,6 +1199,41 @@ export default function BulkUploadApprovals() {
                 </table>
               )}
             </div>
+
+            {/* Discard-from-batch panel — only for a batch that actually applied
+                leave/regularization rows. "Reverse it through that batch," made real. */}
+            {batchDiscardable && (
+              <div className="space-y-3 border-t border-slate-100 bg-amber-50/50 px-6 py-4">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Reason for reversal <span className="text-rose-500">*</span>
+                  <span className="font-normal text-slate-400 ml-1">(at least 10 characters — this is the permanent record)</span>
+                  <textarea
+                    value={discardReason}
+                    onChange={(e) => setDiscardReason(e.target.value)}
+                    rows={2}
+                    disabled={discarding}
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-100 disabled:opacity-60"
+                    placeholder="Why are these rows being reversed?"
+                  />
+                </label>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-500">
+                    {selectedEntityIds.size > 0
+                      ? `${selectedEntityIds.size} row(s) selected for reversal.`
+                      : "Select one or more applied rows above to reverse them."}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={discarding || selectedEntityIds.size === 0}
+                    onClick={() => void discardSelectedRows()}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {discarding ? "Discarding…" : `Discard ${selectedEntityIds.size || ""} selected`}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-end border-t border-slate-100 bg-slate-50/60 px-6 py-3 rounded-b-2xl">
               <button

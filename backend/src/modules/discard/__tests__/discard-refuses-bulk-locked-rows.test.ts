@@ -41,9 +41,10 @@ const actor = { userId: "u1", roles: ["super_admin"], role: "super_admin" };
 
 beforeEach(() => {
   getEntityLock.mockReset();
-  execute.mockReset().mockImplementation(async (sql: string) => {
-    if (/FROM leave_request/i.test(sql)) return [[LEAVE]];
-    if (/FROM attendance_regularization/i.test(sql)) return [[REG]];
+  execute.mockReset().mockImplementation(async (sql: string, params?: unknown[]) => {
+    const id = params?.[0];
+    if (/FROM leave_request/i.test(sql)) return [id === LEAVE.id ? [LEAVE] : []];
+    if (/FROM attendance_regularization/i.test(sql)) return [id === REG.id ? [REG] : []];
     return [[]];
   });
 });
@@ -91,5 +92,49 @@ describe("discard refuses a row an approved bulk upload locked", () => {
     const preview = await discardService.previewLeave("leave-1", actor);
 
     expect(preview.blockers.some((b) => b.code === "LOCKED_BY_BULK_UPLOAD")).toBe(false);
+  });
+});
+
+describe("discardBatchRows — the 'reverse it through that batch' path", () => {
+  it("unlocks a row when the caller names the SAME batch that locked it", async () => {
+    getEntityLock.mockResolvedValue({
+      entity_type: "leave_request", upload_batch_id: "batch-A", upload_batch_no: "BATCH-1787", locked_at: "2026-08-20",
+    });
+
+    const preview = await discardService.previewLeave("leave-1", actor, "batch-A");
+    expect(preview.blockers.some((b) => b.code === "LOCKED_BY_BULK_UPLOAD")).toBe(false);
+  });
+
+  it("still refuses when the caller names a DIFFERENT batch than the one that locked it", async () => {
+    getEntityLock.mockResolvedValue({
+      entity_type: "leave_request", upload_batch_id: "batch-A", upload_batch_no: "BATCH-1787", locked_at: "2026-08-20",
+    });
+
+    const preview = await discardService.previewLeave("leave-1", actor, "batch-B");
+    const blocker = preview.blockers.find((b) => b.code === "LOCKED_BY_BULK_UPLOAD");
+    expect(blocker).toBeDefined();
+  });
+
+  it("reports each row's own outcome independently rather than stopping the selection on the first failure", async () => {
+    // Two rows, two DIFFERENT reasons to fail, neither reaching a transaction —
+    // proves discardBatchRows loops and records a distinct outcome per row rather
+    // than throwing (and losing the rest of the selection) on the first one.
+    // "leave-1" is locked by a batch OTHER than the one this call names.
+    // "leave-2" resolves to no row at all (execute's default mock only recognises
+    // leave-1/reg-1), so it fails with NOT_FOUND instead.
+    getEntityLock.mockImplementation(async (_type: string, entityId: string) =>
+      entityId === "leave-1"
+        ? { entity_type: "leave_request", upload_batch_id: "batch-OTHER", upload_batch_no: "BATCH-9999", locked_at: "2026-08-20" }
+        : null,
+    );
+    const results = await discardService.discardBatchRows(
+      "batch-A", "leave", ["leave-1", "leave-2"], actor, "batch found to be wrong",
+    );
+    expect(results).toHaveLength(2);
+    expect(results.find((r) => r.entityId === "leave-1")).toMatchObject({ success: false });
+    expect(results.find((r) => r.entityId === "leave-1")?.message).toContain("BATCH-9999");
+    expect(results.find((r) => r.entityId === "leave-2")).toMatchObject({
+      success: false, message: expect.stringContaining("not found"),
+    });
   });
 });

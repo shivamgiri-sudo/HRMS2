@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { discardService, type DiscardActor } from "./discard.service.js";
 import {
   discardRequestSchema,
+  discardBatchRowsRequestSchema,
   discardHistoryQuerySchema,
 } from "./discard.validation.js";
 
@@ -93,6 +94,34 @@ const discardRegularizationHandler = h(async (req: any, res: any) => {
 
 discardRouter.post("/regularization/:id", ...discardGate, discardRegularizationHandler);
 discardRouter.post("/dispute/:id", ...discardGate, discardRegularizationHandler);
+
+// ─── Batch reversal ──────────────────────────────────────────────────────────
+// The path the bulk-upload lock message has always pointed to: discard one or
+// more rows OUT of a specific approved batch. Same discardGate as everything
+// else here (super_admin/wfm) — approving a batch and reversing one are
+// different authorities, so holding branch_head does not admit this route.
+
+discardRouter.post("/batch/:batchId/rows", ...discardGate, h(async (req, res) => {
+  const parsed = discardBatchRowsRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false, message: "Validation failed", errors: parsed.error.flatten().fieldErrors,
+    });
+  }
+  const results = await discardService.discardBatchRows(
+    req.params.batchId,
+    parsed.data.entityType,
+    parsed.data.entityIds,
+    actorFrom(req),
+    parsed.data.reason,
+  );
+  const succeeded = results.filter((r) => r.success).length;
+  return res.json({
+    success: succeeded === results.length,
+    data: results,
+    message: `${succeeded} of ${results.length} row(s) discarded.`,
+  });
+}));
 
 // ─── History ─────────────────────────────────────────────────────────────────
 

@@ -342,6 +342,7 @@ export async function lockEntities(
 }
 
 export interface EntityLock {
+  upload_batch_id: string;
   upload_batch_no: string | null;
   locked_at: Date | string;
   entity_type: string;
@@ -351,7 +352,11 @@ export interface EntityLock {
  * Is this row locked by an approved bulk upload? Called by the discard path.
  *
  * Returns the lock rather than a boolean so the caller can name the batch in its
- * refusal — "locked by BATCH-1787..." is actionable, "locked" is not.
+ * refusal — "locked by BATCH-1787..." is actionable, "locked" is not. Also
+ * returns `upload_batch_id` (not just the display `upload_batch_no`) so a caller
+ * discarding rows FROM a specific batch (discard.service.ts's `discardBatchRows`)
+ * can verify server-side that the row it is about to unpick genuinely belongs to
+ * that batch, rather than trusting a batch id the client sent.
  */
 export async function getEntityLock(
   entityType: string,
@@ -359,7 +364,7 @@ export async function getEntityLock(
 ): Promise<EntityLock | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT entity_type, upload_batch_no, locked_at
+      `SELECT entity_type, upload_batch_id, upload_batch_no, locked_at
          FROM bulk_upload_locked_entity
         WHERE entity_type = ? AND entity_id = ?
         LIMIT 1`,

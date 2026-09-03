@@ -444,14 +444,24 @@ async function loadAttendanceRows(
  * ("leave_request", "attendance_regularization"), not the discard module's shorter
  * preview names, so they are mapped here rather than passed through.
  */
+/**
+ * `allowedBatchId`, when supplied, is the ONE batch this call is permitted to
+ * unlock rows for — set only by `discardBatchRows` below, which is itself gated
+ * to super_admin/wfm and takes the batch id from the URL, not from anything the
+ * client can put in the row-id list. A lock whose own `upload_batch_id` does not
+ * match `allowedBatchId` still blocks, so passing a batch id cannot be used to
+ * discard some OTHER batch's rows by accident or otherwise.
+ */
 async function bulkUploadLockBlocker(
   entityType: "leave" | "regularization" | "dispute",
   entityId: string,
+  allowedBatchId?: string,
 ): Promise<DiscardBlocker | null> {
   const { getEntityLock } = await import("../bulk-upload/bulk-approval.service.js");
   const lockedType = entityType === "leave" ? "leave_request" : "attendance_regularization";
   const lock = await getEntityLock(lockedType, entityId);
   if (!lock) return null;
+  if (allowedBatchId && lock.upload_batch_id === allowedBatchId) return null;
   return {
     code: "LOCKED_BY_BULK_UPLOAD",
     message:
@@ -473,10 +483,12 @@ async function bulkUploadLockBlocker(
 async function assertNotBulkLocked(
   entityType: "leave_request" | "attendance_regularization",
   entityId: string,
+  allowedBatchId?: string,
 ): Promise<void> {
   const { getEntityLock } = await import("../bulk-upload/bulk-approval.service.js");
   const lock = await getEntityLock(entityType, entityId);
   if (!lock) return;
+  if (allowedBatchId && lock.upload_batch_id === allowedBatchId) return;
   throw httpError(
     `This row was applied by approved bulk upload ${lock.upload_batch_no ?? "(batch number unavailable)"} ` +
     `and is locked. Reverse it through that batch rather than discarding the row on its own.`,
@@ -488,7 +500,7 @@ async function assertNotBulkLocked(
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 export const discardService = {
-  async previewLeave(id: string, actor: DiscardActor): Promise<DiscardPreview> {
+  async previewLeave(id: string, actor: DiscardActor, viaBatchId?: string): Promise<DiscardPreview> {
     const leave = await loadLeave(id);
     if (!leave) throw httpError("Leave request not found", 404, "NOT_FOUND");
 
@@ -511,7 +523,7 @@ export const discardService = {
     const scopeBlocker = await checkScope(actor, leave.employee_id);
     if (scopeBlocker) blockers.push(scopeBlocker);
 
-    const leaveLockBlocker = await bulkUploadLockBlocker("leave", id);
+    const leaveLockBlocker = await bulkUploadLockBlocker("leave", id, viaBatchId);
     if (leaveLockBlocker) blockers.push(leaveLockBlocker);
 
     const months = monthsInRange(String(leave.from_date), String(leave.to_date));
@@ -586,7 +598,7 @@ export const discardService = {
     };
   },
 
-  async previewRegularization(id: string, actor: DiscardActor): Promise<DiscardPreview> {
+  async previewRegularization(id: string, actor: DiscardActor, viaBatchId?: string): Promise<DiscardPreview> {
     const reg = await loadRegularization(id);
     if (!reg) throw httpError("Regularization not found", 404, "NOT_FOUND");
 
@@ -604,7 +616,7 @@ export const discardService = {
     const scopeBlocker = await checkScope(actor, reg.employee_id);
     if (scopeBlocker) blockers.push(scopeBlocker);
 
-    const regLockBlocker = await bulkUploadLockBlocker(isDispute ? "dispute" : "regularization", id);
+    const regLockBlocker = await bulkUploadLockBlocker(isDispute ? "dispute" : "regularization", id, viaBatchId);
     if (regLockBlocker) blockers.push(regLockBlocker);
 
     const sessionDate = String(reg.session_date).slice(0, 10);
@@ -643,8 +655,8 @@ export const discardService = {
     };
   },
 
-  async discardLeave(id: string, actor: DiscardActor, reason: string): Promise<DiscardResult> {
-    const preview = await this.previewLeave(id, actor);
+  async discardLeave(id: string, actor: DiscardActor, reason: string, viaBatchId?: string): Promise<DiscardResult> {
+    const preview = await this.previewLeave(id, actor, viaBatchId);
     if (preview.blockers.length > 0) {
       const first = preview.blockers[0];
       throw httpError(first.message, first.code === "OUT_OF_SCOPE" ? 403 : 409, first.code);
@@ -675,7 +687,7 @@ export const discardService = {
           "NOT_APPROVED"
         );
       }
-      await assertNotBulkLocked("leave_request", id);
+      await assertNotBulkLocked("leave_request", id, viaBatchId);
 
       employeeId = String(leave.employee_id);
       const days = Number(leave.total_days ?? 0);
@@ -787,8 +799,8 @@ export const discardService = {
     });
   },
 
-  async discardRegularization(id: string, actor: DiscardActor, reason: string): Promise<DiscardResult> {
-    const preview = await this.previewRegularization(id, actor);
+  async discardRegularization(id: string, actor: DiscardActor, reason: string, viaBatchId?: string): Promise<DiscardResult> {
+    const preview = await this.previewRegularization(id, actor, viaBatchId);
     if (preview.blockers.length > 0) {
       const first = preview.blockers[0];
       throw httpError(first.message, first.code === "OUT_OF_SCOPE" ? 403 : 409, first.code);
@@ -815,7 +827,7 @@ export const discardService = {
           "NOT_APPROVED"
         );
       }
-      await assertNotBulkLocked("attendance_regularization", id);
+      await assertNotBulkLocked("attendance_regularization", id, viaBatchId);
 
       employeeId = String(reg.employee_id);
       const sessionDate = String(reg.session_date).slice(0, 10);
@@ -927,6 +939,57 @@ export const discardService = {
       balanceAfter: null,
       payrollRecalcStatus: payrollResult.status,
     });
+  },
+
+  /**
+   * The "reverse it through that batch" path the bulk-upload lock message has
+   * promised since it shipped — until this, nothing implemented it, so an
+   * approved-batch row that failed a discard's OTHER checks (payroll closed, out
+   * of scope, ...) was correctly refused, but a row with no such problem had no
+   * way back at all. Not exported to the batch-approval RBAC surface: gated by
+   * this module's own discardGate (super_admin/wfm) in discard.routes.ts, same
+   * as every other discard in the system, because undoing an applied row is a
+   * discard action, not an approval action — a branch head who can approve a
+   * batch is not automatically who this codebase trusts to reverse one.
+   *
+   * One row's failure does not stop the rest — same "partial success, report
+   * every row's own outcome" shape as the bulk-approval decision path
+   * (bulk-approval.routes.ts's runDecision), so a caller picking 50 rows learns
+   * exactly which ones went through.
+   */
+  async discardBatchRows(
+    batchId: string,
+    entityType: "leave" | "regularization",
+    entityIds: string[],
+    actor: DiscardActor,
+    reason: string,
+  ): Promise<Array<{ entityId: string; success: boolean; message: string }>> {
+    const results: Array<{ entityId: string; success: boolean; message: string }> = [];
+    for (const entityId of entityIds) {
+      try {
+        const data =
+          entityType === "leave"
+            ? await this.discardLeave(entityId, actor, reason, batchId)
+            : await this.discardRegularization(entityId, actor, reason, batchId);
+        results.push({
+          entityId,
+          success: true,
+          message:
+            entityType === "leave"
+              ? data.daysRestored
+                ? `${data.daysRestored} day(s) credited back.`
+                : "Leave discarded."
+              : `Attendance restored for ${data.attendance.length} date(s).`,
+        });
+      } catch (err: unknown) {
+        results.push({
+          entityId,
+          success: false,
+          message: err instanceof Error ? err.message : "Discard failed.",
+        });
+      }
+    }
+    return results;
   },
 
   async listDiscards(filters: {
