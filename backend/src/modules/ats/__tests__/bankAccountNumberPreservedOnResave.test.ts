@@ -34,9 +34,15 @@ const CANDIDATE_ID = "a7edfea8-fcfd-4744-9223-f109eefcadaf";
 // profile lookup, the bank-detail write, and the profile_status update, plus
 // whatever getFullOnboardingStatus reads afterward) goes through one
 // SQL-sniffing mock rather than a brittle call-order chain.
-function installTokenAwareMock() {
+function installTokenAwareMock(bankVerificationStatus: string | null = "verified") {
   execute.mockImplementation(async (sql: string) => {
     const s = String(sql);
+    // The penny-drop gate added 2026-09-02 reads this before it will save anything.
+    // Without an answer here every case below fails on the gate rather than on what
+    // it means to assert.
+    if (s.includes("candidate_bank_verification")) {
+      return [bankVerificationStatus ? [{ verification_status: bankVerificationStatus }] : [], []];
+    }
     if (s.includes("ats_onboarding_bridge")) {
       return [[{
         candidate_id: CANDIDATE_ID,
@@ -97,5 +103,51 @@ describe("saveBankDetails — account number resave does not wipe a stored value
     // And the value bound for this submission is NULL, relying on COALESCE
     // in the SQL (not JS) to keep the previously-stored ciphertext.
     expect(params).toContain(null);
+  });
+});
+
+/**
+ * The gate says "not proven"; it must not say "not possible".
+ *
+ * A penny drop that reaches the bank and comes back with a different spelling of the
+ * candidate's name lands on manual_review — a warning for Payroll HR, and by design not a
+ * blocker. Requiring 'verified' exactly turned it into one, and the instruction the
+ * candidate was given ("run the verification and save again once it succeeds") could never
+ * be carried out: the bank returns the same name every time. On 2026-09-03 candidate
+ * 4e619083 ran ten penny drops against SBIN0003044 in seventeen minutes, all charged, and
+ * still finished with no bank row at all.
+ *
+ * Letting a manual_review account save does not let it be paid: employee_bank_detail is
+ * written by employee-creation-orchestrator, which still demands 'verified'.
+ */
+describe("saveBankDetails — a name variance is a warning, not a wall", () => {
+  beforeEach(() => {
+    execute.mockReset();
+  });
+
+  const submission = {
+    bankName: "State Bank of India",
+    branchName: "JALDARSHAN",
+    accountHolderName: "RAHUL GAUTAMBHAI CHHAPANE",
+    accountNo: "20461206664",
+    ifscCode: "SBIN0003044",
+  };
+
+  it("saves an account whose penny drop landed on manual_review, and records that status", async () => {
+    installTokenAwareMock("manual_review");
+
+    await saveBankDetails(TOKEN, submission);
+
+    const insertCall = execute.mock.calls.find(([sql]) => String(sql).includes("candidate_onboarding_bank_detail"));
+    expect(insertCall).toBeDefined();
+    // Saved as manual_review, not as an untested 'not_started': Payroll HR has to be able
+    // to see that this account is waiting on a human.
+    expect(insertCall![1]).toContain("manual_review");
+  });
+
+  it("still refuses an account no penny drop has ever reached", async () => {
+    installTokenAwareMock(null);
+
+    await expect(saveBankDetails(TOKEN, submission)).rejects.toThrow(/penny-drop verification has not passed/);
   });
 });

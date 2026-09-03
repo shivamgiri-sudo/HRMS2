@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
+import { getConfiguredBgvProviderAdapter, resolveBankVerificationOutcome, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
 import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
 import { receiptFlagsFromDocuments } from "./bgv-document-receipt.js";
 import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
@@ -637,12 +637,90 @@ export async function verifyPanForCandidate(candidateId: string, input: { panNum
   return getBgvStatusForCandidate(candidateId);
 }
 
-export async function verifyBankByToken(token: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string }, meta?: { ip?: string; userAgent?: string }) {
-  const tokenData = await validateOnboardingToken(token);
-  return verifyBankForCandidate(tokenData.candidate_id as string, input, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
+/**
+ * The last answer the bank gave for this exact account, if we already paid for it.
+ *
+ * A penny drop moves real money and is billed per attempt, and the bank's answer for one
+ * account + IFSC does not change between two clicks. What does change is the name we
+ * compare it against — a candidate whose record spells his surname differently is told to
+ * "run the verification again", so he does, and each attempt buys the identical response.
+ * One candidate ran ten in seventeen minutes on 2026-09-03.
+ *
+ * Only rows that prove the provider itself confirmed the account are reusable: a bank
+ * registered name is written only where the provider returned 'verified'
+ * (resolveBankVerificationOutcome downgrades from there and never invents a name), so a
+ * stored name plus a status of verified/manual_review is exactly that proof. A failed or
+ * mismatched attempt is never replayed — those can be transient, and must be re-asked.
+ */
+async function findReusableBankAnswer(candidateId: string, accountNo: string, ifscCode: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, provider_key, provider_reference_id, provider_account_holder_name, result_json, created_at
+       FROM candidate_bank_verification
+      WHERE candidate_id = ?
+        AND account_no_hash = ?
+        AND UPPER(COALESCE(ifsc_code, '')) = ?
+        AND verification_status IN ('verified', 'manual_review')
+        AND COALESCE(provider_account_holder_name, '') <> ''
+        AND COALESCE(provider_key, '') NOT LIKE '%mock%'
+        AND created_at >= NOW() - INTERVAL 30 DAY
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [candidateId, hashValue(accountNo), ifscCode.trim().toUpperCase()]
+  ).catch(() => [[] as RowDataPacket[]]);
+  return (rows as RowDataPacket[])[0] ?? null;
 }
 
-export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
+/**
+ * Re-judge a stored bank answer against the candidate's identity as it stands NOW.
+ *
+ * The provider's half is replayed; our half is recomputed. That is what makes the reuse
+ * safe to offer on the button the candidate presses: when HR corrects a misspelled record,
+ * the very next click clears the account against the name the bank already gave us,
+ * without buying the same answer twice.
+ */
+function replayBankAnswer(
+  cached: RowDataPacket,
+  input: { candidateName?: string | null; typedAccountHolderName?: string | null }
+) {
+  const bankRegisteredName = String(cached.provider_account_holder_name ?? "");
+  const outcome = resolveBankVerificationOutcome({
+    providerStatus: "verified",
+    candidateName: input.candidateName,
+    typedAccountHolderName: input.typedAccountHolderName,
+    bankRegisteredName,
+  });
+  const verifiedOn = cached.created_at ? new Date(cached.created_at as string).toISOString().slice(0, 10) : "an earlier attempt";
+  return {
+    status: outcome.status,
+    providerKey: String(cached.provider_key ?? "").trim() || "cached",
+    providerRequestId: null,
+    providerReferenceId: cached.provider_reference_id ? String(cached.provider_reference_id) : null,
+    matchScore: outcome.matchScore,
+    matchedName: bankRegisteredName,
+    resultSummary: `${outcome.reason} (re-using the penny drop of ${verifiedOn} for this same account — the bank was not charged again)`,
+    riskFlags: outcome.riskFlags,
+    raw: {
+      mode: "cached_provider_response",
+      cached_verification_id: cached.id,
+      cached_at: cached.created_at,
+      provider_response: cached.result_json ?? null,
+    },
+  };
+}
+
+export async function verifyBankByToken(token: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string }, meta?: { ip?: string; userAgent?: string }) {
+  const tokenData = await validateOnboardingToken(token);
+  // Named fields only. The route hands its whole request body in, so spreading `input`
+  // would let a candidate set forceProvider themselves and buy an unlimited number of
+  // penny drops — the exact spend the reuse above exists to stop.
+  return verifyBankForCandidate(
+    tokenData.candidate_id as string,
+    { accountNo: input.accountNo, ifscCode: input.ifscCode, accountHolderName: input.accountHolderName },
+    { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent }
+  );
+}
+
+export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string; forceProvider?: boolean }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
   let accountNo = String(input.accountNo ?? "").trim();
@@ -679,8 +757,20 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   }
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
+  // An answer already bought for this exact account is reused rather than re-purchased.
+  // `forceProvider` is the deliberate escape hatch for the HR-authenticated route, for the
+  // case the reuse cannot cover: the account's registered name has genuinely changed at
+  // the bank since the stored attempt.
+  const reusable = accountNo && !input.forceProvider
+    ? await findReusableBankAnswer(candidateId, accountNo, ifscCode)
+    : null;
   let result;
-  if (!accountNo) {
+  if (reusable) {
+    result = replayBankAnswer(reusable, {
+      candidateName: candidate.employee_name ?? candidate.full_name,
+      typedAccountHolderName: accountHolderName,
+    });
+  } else if (!accountNo) {
     result = buildBankManualReviewFallback(
       "Bank verification queued for manual HR review because the raw account number is unavailable in saved onboarding records.",
       { candidateId, ifscCode, bankDetailId },
@@ -811,12 +901,16 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
       candidateId,
     ]
   );
-  await db.execute(
-    `INSERT INTO candidate_bgv_api_request_log
-       (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
-     VALUES (?, ?, ?, ?, 'BANK_VERIFY', ?, ?, 200, ?, ?, ?)` ,
-    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null, JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
-  );
+  // Only a real call is logged as one. This table is what the API cost report bills
+  // against, so recording a replay here would invent a charge that never happened.
+  if (!reusable) {
+    await db.execute(
+      `INSERT INTO candidate_bgv_api_request_log
+         (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
+       VALUES (?, ?, ?, ?, 'BANK_VERIFY', ?, ?, 200, ?, ?, ?)` ,
+      [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null, JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
+    );
+  }
   await logEvent(candidateId, "BANK_VERIFICATION_COMPLETED", result, checkId, meta);
   // Mirror onto the onboarding bridge, which nothing was writing — four
   // candidates had a verified penny drop while all 304 bridge rows still read

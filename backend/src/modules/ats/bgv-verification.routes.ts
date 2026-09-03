@@ -236,7 +236,22 @@ router.post("/candidates/:candidateId/verify/pan", requireAuth, requireRole("adm
 
 router.post("/candidates/:candidateId/verify/bank", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin"), h(async (req: AuthenticatedRequest, res) => {
   await requireBgvCandidateScope(req, req.params.candidateId);
-  return res.json({ success: true, data: await verifyBankForCandidate(req.params.candidateId, req.body, { actorType: "hr", actorId: req.authUser!.id }) });
+  // forceProvider buys a fresh penny drop instead of re-using the answer already held for
+  // this account. Authenticated HR only: on the candidate's own token route it would be a
+  // spend anyone with a link could run up.
+  return res.json({
+    success: true,
+    data: await verifyBankForCandidate(
+      req.params.candidateId,
+      {
+        accountNo: req.body?.accountNo,
+        ifscCode: req.body?.ifscCode,
+        accountHolderName: req.body?.accountHolderName,
+        forceProvider: req.body?.forceProvider === true,
+      },
+      { actorType: "hr", actorId: req.authUser!.id }
+    ),
+  });
 }));
 
 router.post("/candidates/:candidateId/manual-review", requireAuth, requireRole("admin", "hr", "payroll_head"), h(async (req: AuthenticatedRequest, res) => {

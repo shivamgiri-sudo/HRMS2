@@ -157,3 +157,56 @@ describe("classifyNameMatch — missing data", () => {
     }
   });
 });
+
+/**
+ * Spelling, not identity.
+ *
+ * A name reaches us transliterated, so the bank, the PAN and our own record
+ * routinely spell one name three ways. Comparing the letters as typed made a
+ * single letter decisive: on 2026-09-03 a candidate whose bank held
+ * "Mr. RAHUL  CHHAPANE" against a record reading "RAHUL GAUTAM RAO CHHAPANEY"
+ * scored 25/100, went to manual review, and was then refused permission to save
+ * his own bank account ten times over — each refusal costing a real penny drop.
+ *
+ * The tolerance is bounded on purpose. It folds away letters that carry no
+ * sound; it does NOT forgive a substituted consonant, because that is what
+ * separates two people who are otherwise spelled alike.
+ */
+describe("classifyNameMatch — transliterated spelling", () => {
+  it("clears the live case: one trailing letter apart", () => {
+    const result = classifyNameMatch("RAHUL GAUTAM RAO CHHAPANEY", "Mr. RAHUL  CHHAPANE");
+    expect(result.suspicious).toBe(false);
+    expect(result.tier).toBe("variant");
+  });
+
+  it("forgives doubled letters, long vowels and a y written for i", () => {
+    expect(classifyNameMatch("PRAVEEN KUMAAR SHARMA", "PRAVIN KUMAR SHARMA").suspicious).toBe(false);
+    expect(classifyNameMatch("SANGEETA DEVI", "SANGITA DEVI").suspicious).toBe(false);
+    expect(classifyNameMatch("BHATT MEHUL", "BHAT MEHUL").suspicious).toBe(false);
+  });
+
+  it("forgives one vowel inside a long name", () => {
+    expect(classifyNameMatch("MOHAMMED ALI", "MOHAMMAD ALI").suspicious).toBe(false);
+  });
+
+  it("still separates two people one CONSONANT apart", () => {
+    // The pair that rules out a plain edit-distance tolerance.
+    expect(classifyNameMatch("RAMESH KUMAR", "RAKESH KUMAR").suspicious).toBe(true);
+  });
+
+  it("still separates short given names that differ only in their last vowel", () => {
+    expect(classifyNameMatch("RITA SHARMA", "RITU SHARMA").suspicious).toBe(true);
+    expect(classifyNameMatch("ANITA SINGH", "ANIL SINGH").suspicious).toBe(true);
+  });
+
+  it("never scores above 100 when one word matches under two spellings", () => {
+    // Both sides contributed the matched word to the same set, so the old
+    // count divided 3 matches by 2 words and reported 150.
+    const result = classifyNameMatch("MOHAMMED ALI", "MOHAMMAD ALI");
+    expect(result.score).toBeLessThanOrEqual(100);
+  });
+
+  it("a common surname spelled differently is still not distinctive on its own", () => {
+    expect(classifyNameMatch("RAJESH KUMAAR", "HARSH KUMAR").suspicious).toBe(true);
+  });
+});

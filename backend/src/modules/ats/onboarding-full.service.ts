@@ -1635,13 +1635,29 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
   // name or branch legitimately arrives without one; those are allowed through because the
   // COALESCE below leaves the stored (already verified) account untouched. Blocking them
   // would lock a candidate out of editing their own branch name after verifying.
+  //
+  // 'manual_review' counts as having passed, and the row carries that status through.
+  // The gate originally demanded 'verified' exactly, which conflated two different
+  // answers from the provider: "this account does not check out" and "the bank confirmed
+  // the account but spells the owner's name differently". The second is the ordinary
+  // shape of an Indian name and was always meant to be a warning for Payroll HR, never a
+  // stop — the candidate cannot resolve it, because re-running returns the same bank name
+  // every time. On 2026-09-03 that deadlock refused one candidate ten times and charged a
+  // real penny drop for each attempt while telling him to keep trying.
+  //
+  // Nothing unproven reaches payroll by allowing this: employee_bank_detail is written by
+  // employee-creation-orchestrator, which still requires verification_status = 'verified'.
+  // A manual_review account is captured so onboarding can finish, and stays unusable for
+  // payment until a human clears it.
   const submittedAccountNo = String(accountNo ?? "").trim();
+  let submittedVerificationStatus: string | null = null;
   if (submittedAccountNo) {
     const [verifiedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM candidate_bank_verification
+      `SELECT verification_status FROM candidate_bank_verification
         WHERE candidate_id = ?
-          AND verification_status = 'verified'
+          AND verification_status IN ('verified', 'manual_review')
           AND account_no_hash = ?
+        ORDER BY (verification_status = 'verified') DESC, created_at DESC
         LIMIT 1`,
       [candidateId, hashValue(submittedAccountNo)]
     );
@@ -1654,13 +1670,14 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
         { statusCode: 409 }
       );
     }
+    submittedVerificationStatus = String(verifiedRows[0].verification_status);
   }
 
   await db.execute(
     `INSERT INTO candidate_onboarding_bank_detail
        (id, candidate_id, bank_name, branch_name, account_holder_name, account_no_masked,
         account_no_hash, account_no_encrypted, ifsc_code, account_type, cancelled_cheque_document_id, name_on_cheque, verification_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'not_started'))
      ON DUPLICATE KEY UPDATE
        bank_name = VALUES(bank_name), branch_name = VALUES(branch_name), account_holder_name = VALUES(account_holder_name),
        -- The frontend deliberately leaves the account-number field blank on reload
@@ -1677,6 +1694,11 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
        ifsc_code = VALUES(ifsc_code),
        account_type = VALUES(account_type), cancelled_cheque_document_id = VALUES(cancelled_cheque_document_id),
        name_on_cheque = VALUES(name_on_cheque),
+       -- Carries the answer the gate just read, so Payroll HR sees a manual_review
+       -- account as manual_review rather than as an untested 'not_started'. Only
+       -- written when this submission actually carried an account number: a resave
+       -- of the branch name alone must not reset the status of the stored account.
+       verification_status = COALESCE(?, verification_status),
        updated_at = NOW()`,
     [
       id,
@@ -1691,6 +1713,8 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       input.accountType ?? null,
       input.cancelledChequeDocumentId ?? null,
       String(input.nameOnCheque ?? input.name_on_cheque ?? "").trim() || null,
+      submittedVerificationStatus,
+      submittedVerificationStatus,
     ]
   );
 

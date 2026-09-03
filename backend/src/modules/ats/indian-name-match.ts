@@ -115,6 +115,77 @@ function stripGujaratiSuffix(token: string): string {
   return token;
 }
 
+/**
+ * A spelling key: the same word written the way a different clerk would spell it.
+ *
+ * Indian names reach us through transliteration, so one name has several correct
+ * spellings and the bank, the PAN and our own record rarely agree on which.
+ * Comparing the letters as typed made a single letter decisive — a candidate
+ * whose bank held "CHHAPANE" against a record reading "CHHAPANEY" scored 25/100
+ * and was sent to manual review, then blocked from saving his own account at all.
+ *
+ * Only differences that carry no sound are folded away:
+ *   - doubled letters ("chhapane" / "chapane", "bhatt" / "bhat");
+ *   - the long-vowel digraphs ("praveen" / "pravin", "kumaar" / "kumar");
+ *   - a y written for i anywhere but the first letter ("chhapaney" / "chhapane");
+ *   - a trailing vowel, which is the least stable letter in a transliterated
+ *     name ("sangeeta" / "sangit").
+ *
+ * A letter SUBSTITUTED inside the word is deliberately left alone, because that
+ * is what separates real people: "ramesh" and "rakesh" differ by one character
+ * and must stay apart, which is exactly what a plain edit-distance tolerance
+ * would have got wrong. The trailing-vowel rule is likewise held back on short
+ * words, so "rita" and "ritu" also stay apart.
+ */
+export function spellingKey(word: string): string {
+  let value = word
+    .replace(/aa/g, "a")
+    .replace(/ee/g, "i")
+    .replace(/oo/g, "u")
+    .replace(/ii/g, "i")
+    .replace(/uu/g, "u");
+  value = value.charAt(0) + value.slice(1).replace(/y/g, "i");
+  value = value.replace(/(.)\1+/g, "$1");
+  if (value.length >= 6) value = value.replace(/[aeiou]+$/, "");
+  return value.length >= 3 ? value : word;
+}
+
+const COMMON_SURNAME_KEYS = new Set([...COMMON_SURNAMES].map(spellingKey));
+
+const VOWELS = new Set(["a", "e", "i", "o", "u"]);
+
+/**
+ * One vowel written differently inside an otherwise identical word:
+ * "mohammed" / "mohammad", "manisha" / "manesha".
+ *
+ * The consonants must line up exactly and only a single vowel may differ, which
+ * is what keeps "ramesh" and "rakesh" — a CONSONANT apart — two different
+ * people. Held to words of six letters or more so short given names ("sunil" /
+ * "sanil") are still compared strictly.
+ */
+function vowelVariant(a: string, b: string): boolean {
+  if (a.length !== b.length || a.length < 6) return false;
+  let differences = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] === b[i]) continue;
+    if (!VOWELS.has(a[i]) || !VOWELS.has(b[i])) return false;
+    if ((differences += 1) > 1) return false;
+  }
+  return differences === 1;
+}
+
+/** True when two substantive words are the same name, allowing for spelling. */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [keyA, keyB] = [spellingKey(a), spellingKey(b)];
+  return keyA === keyB || vowelVariant(keyA, keyB);
+}
+
+/** A surname shared by millions, whichever way it is spelled. */
+function isCommonSurname(word: string): boolean {
+  return COMMON_SURNAMES.has(word) || COMMON_SURNAME_KEYS.has(spellingKey(word));
+}
+
 interface NameParts { words: string[]; initials: string[] }
 
 function parts(normalized: string): NameParts {
@@ -146,9 +217,10 @@ function freeInitials(mine: NameParts, other: NameParts): string[] {
   return free;
 }
 
-/** A word is satisfied by an identical word, or by an unpaired initial standing for it. */
+/** A word is satisfied by the same word, or by an unpaired initial standing for it. */
 function wordSatisfiedBy(word: string, other: NameParts, otherFreeInitials: string[]): boolean {
-  return other.words.includes(word) || otherFreeInitials.some((i) => word.startsWith(i));
+  return other.words.some((candidate) => sameWord(candidate, word))
+    || otherFreeInitials.some((i) => word.startsWith(i));
 }
 
 export function classifyNameMatch(expected?: string | null, actual?: string | null): NameMatchResult {
@@ -177,6 +249,14 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
     return { ...base, tier: "exact", score: 100, suspicious: false, reason: "same substantive words" };
   }
 
+  // The same words, spelled the way another clerk would spell them.
+  if ([...a.words].map(spellingKey).sort().join(" ") === [...b.words].map(spellingKey).sort().join(" ")) {
+    return {
+      ...base, tier: "variant", score: 90, suspicious: false,
+      reason: "same substantive words, differing only in transliterated spelling",
+    };
+  }
+
   const aFree = freeInitials(a, b);
   const bFree = freeInitials(b, a);
 
@@ -187,7 +267,15 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
     ...a.words.filter((word) => wordSatisfiedBy(word, b, bFree)),
     ...b.words.filter((word) => wordSatisfiedBy(word, a, aFree)),
   ];
-  const score = Math.round((new Set(matchedWords).size / Math.max(a.words.length, b.words.length)) * 100);
+  // Counted one side at a time. Deduplicating the combined list only worked while
+  // a match meant an identical string: once two spellings of one word can match,
+  // they are two entries in a set and the score ran over 100.
+  const score = Math.round((
+    Math.max(
+      a.words.filter((word) => wordSatisfiedBy(word, b, bFree)).length,
+      b.words.filter((word) => wordSatisfiedBy(word, a, aFree)).length,
+    ) / Math.max(a.words.length, b.words.length)
+  ) * 100);
 
   if (!matchedWords.length) {
     return { ...base, tier: "none", score: 0, suspicious: true, reason: "no substantive word in common" };
@@ -195,7 +283,7 @@ export function classifyNameMatch(expected?: string | null, actual?: string | nu
 
   // Agreement has to rest on something more distinctive than a surname millions
   // of unrelated people share.
-  const distinctive = matchedWords.some((word) => !COMMON_SURNAMES.has(word));
+  const distinctive = matchedWords.some((word) => !isCommonSurname(word));
   if (!distinctive) {
     return {
       ...base, tier: "weak", score, suspicious: true,
