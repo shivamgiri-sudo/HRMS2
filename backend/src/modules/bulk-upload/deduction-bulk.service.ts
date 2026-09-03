@@ -41,7 +41,7 @@ export async function importDeductionBatch(
   const rows = await loadStagedRows(batchId);
   if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""));
+  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
   const types = await loadDeductionTypes();
   const errors: string[] = [];
   let staged = 0;
@@ -61,7 +61,7 @@ export async function importDeductionBatch(
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master`;
     else if (!typeCode) validationError = "deduction_type_code is required";
     else if (!types.has(typeCode)) {
       validationError =

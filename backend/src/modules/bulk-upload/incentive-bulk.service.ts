@@ -31,15 +31,19 @@ export const ENTITY_TYPE = "incentive_upload_line";
 interface IncentiveMasterRow extends RowDataPacket {
   id: string;
   incentive_code: string;
+  incentive_name: string;
 }
 
 async function loadIncentiveMasters(): Promise<Map<string, IncentiveMasterRow>> {
   const [rows] = await db.execute<IncentiveMasterRow[]>(
-    "SELECT id, incentive_code FROM incentive_master WHERE active_status = 1",
+    "SELECT id, incentive_code, incentive_name FROM incentive_master WHERE active_status = 1",
   );
   const map = new Map<string, IncentiveMasterRow>();
   for (const r of rows as IncentiveMasterRow[]) {
     map.set(String(r.incentive_code).trim().toUpperCase(), r);
+    // Also index by full name so uploaders can use either the code or the display name
+    const nameKey = String(r.incentive_name).trim().toUpperCase();
+    if (nameKey && !map.has(nameKey)) map.set(nameKey, r);
   }
   return map;
 }
@@ -51,7 +55,7 @@ export async function importIncentiveBatch(
   const rows = await loadStagedRows(batchId);
   if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""));
+  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
   const masters = await loadIncentiveMasters();
   const errors: string[] = [];
   let staged = 0;
@@ -102,18 +106,22 @@ export async function importIncentiveBatch(
   for (const row of rows) {
     const d = row.data;
     const emp = employees.get((d.employee_code ?? "").toUpperCase());
-    const code = (d.incentive_code ?? "").trim().toUpperCase();
-    const master = masters.get(code);
+    // Accept incentive_code by code OR by full incentive_name (case-insensitive)
+    const codeOrName = (d.incentive_code ?? "").trim().toUpperCase();
+    const master = masters.get(codeOrName);
+    // Resolve to the canonical code for downstream writes
+    const code = master?.incentive_code ?? codeOrName;
     const amount = Number(d.amount);
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
-    else if (!code) validationError = "incentive_code is required";
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master`;
+    else if (!codeOrName) validationError = "incentive_code is required";
     else if (!master) {
+      const uniqueCodes = [...new Set([...masters.values()].map((m) => m.incentive_code))].sort();
       validationError =
-        `incentive_code "${d.incentive_code}" is not an active incentive_master code — ` +
-        `valid codes are ${[...masters.keys()].sort().join(", ")}`;
+        `incentive_code "${d.incentive_code}" is not an active incentive code or name — ` +
+        `valid codes are ${uniqueCodes.join(", ")}`;
     } else if (!normalizeMonth(d.pay_month)) {
       validationError = `pay_month must be a month (YYYY-MM or MM-YYYY), got "${d.pay_month}"`;
     } else if (!Number.isFinite(amount) || amount <= 0) {

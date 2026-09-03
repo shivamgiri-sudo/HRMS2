@@ -50,7 +50,7 @@ export async function importLeaveBatch(
   const rows = await loadStagedRows(batchId);
   if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""));
+  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
   const leaveTypes = await loadLeaveTypes();
   const errors: string[] = [];
   let staged = 0;
@@ -62,89 +62,107 @@ export async function importLeaveBatch(
   const { branchId, error: branchError } = resolveSingleBranch(matched);
   if (branchError) throw new BulkUploadError(branchError, 400);
 
-  for (const row of rows) {
-    const d = row.data;
+  // Validate all rows first (CPU-only, no DB) — rows that fail validation are
+  // recorded immediately; only rows that pass are staged against the DB.
+  function validateLeaveRow(d: Record<string, string>): string | null {
     const emp = employees.get((d.employee_code ?? "").toUpperCase());
     const leaveType = leaveTypes.get((d.leave_code ?? "").toUpperCase());
-
-    let validationError: string | null = null;
-    if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
-    else if (!d.leave_code) validationError = "leave_code is required";
-    else if (!leaveType) {
-      validationError =
-        `leave_code "${d.leave_code}" is not in leave_type_master — valid codes are ` +
+    if (!d.employee_code) return "employee_code is required";
+    if (!emp) return `employee_code "${d.employee_code}" is not in the employee master`;
+    if (!d.leave_code) return "leave_code is required";
+    if (!leaveType) {
+      return `leave_code "${d.leave_code}" is not in leave_type_master — valid codes are ` +
         `${[...leaveTypes.keys()].sort().join(", ")}`;
+    }
+    const from = normalizeDate(d.from_date);
+    const to = normalizeDate(d.to_date);
+    if (!from) return `from_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.from_date}"`;
+    if (!to) return `to_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.to_date}"`;
+    d.from_date = from;
+    d.to_date = to;
+    if (d.to_date < d.from_date) return "to_date must be on or after from_date";
+    const days = Number(d.total_days);
+    if (!Number.isFinite(days) || days < 0.5) {
+      return `total_days must be a number of at least 0.5 (got "${d.total_days}")`;
+    }
+    const calendarDays =
+      (new Date(`${d.to_date}T00:00:00`).getTime() -
+        new Date(`${d.from_date}T00:00:00`).getTime()) / 86_400_000 + 1;
+    if (days > calendarDays) {
+      return `total_days ${days} exceeds the ${calendarDays} calendar day(s) between from_date and to_date`;
+    }
+    return null;
+  }
+
+  const toStage: typeof rows = [];
+  for (const row of rows) {
+    const validationError = validateLeaveRow(row.data);
+    if (validationError) {
+      const msg = `Row ${row.rowNo} (${row.data.employee_code || "no code"}): ${validationError}`;
+      errors.push(msg);
+      await markRowFailed(row.rowId, msg);
+      failed++;
     } else {
-      // Normalise both dates in place first: DD-MM-YYYY (what the Hub template guide
-      // instructs) and Excel date serials both have to be accepted.
-      const from = normalizeDate(d.from_date);
-      const to = normalizeDate(d.to_date);
-      if (!from) validationError = `from_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.from_date}"`;
-      else if (!to) validationError = `to_date must be a date (YYYY-MM-DD or DD-MM-YYYY), got "${d.to_date}"`;
-      else {
-        d.from_date = from;
-        d.to_date = to;
-      }
+      toStage.push(row);
     }
+  }
 
-    if (!validationError && emp && leaveType) {
-      if (d.to_date < d.from_date) validationError = "to_date must be on or after from_date";
-      else {
-      const days = Number(d.total_days);
-      if (!Number.isFinite(days) || days < 0.5) {
-        validationError = `total_days must be a number of at least 0.5 (got "${d.total_days}")`;
-      } else {
-        const calendarDays =
-          (new Date(`${d.to_date}T00:00:00`).getTime() -
-            new Date(`${d.from_date}T00:00:00`).getTime()) / 86_400_000 + 1;
-        if (days > calendarDays) {
-          validationError =
-            `total_days ${days} exceeds the ${calendarDays} calendar day(s) between from_date and to_date`;
+  // Group by employee: same person's leave requests share a leave_balance row that
+  // reviewRequest reads and writes — parallel writes for one employee would race.
+  // Different employees are independent and can run concurrently.
+  const byEmployee = new Map<string, typeof rows>();
+  for (const row of toStage) {
+    const key = (row.data.employee_code ?? "").toUpperCase();
+    if (!byEmployee.has(key)) byEmployee.set(key, []);
+    byEmployee.get(key)!.push(row);
+  }
+
+  const groupResults = await mapWithConcurrency(
+    [...byEmployee.values()],
+    BULK_ROW_CONCURRENCY,
+    async (empRows) => {
+      let grpStaged = 0;
+      let grpFailed = 0;
+      const grpErrors: string[] = [];
+      for (const row of empRows) {
+        const d = row.data;
+        const emp = employees.get((d.employee_code ?? "").toUpperCase())!;
+        const leaveType = leaveTypes.get((d.leave_code ?? "").toUpperCase())!;
+        try {
+          const created = await leaveService.submitRequest(
+            {
+              employeeId: emp.id,
+              leaveTypeId: leaveType.id,
+              fromDate: d.from_date,
+              toDate: d.to_date,
+              totalDays: Number(d.total_days),
+              reason: d.reason || null,
+            },
+            userId,
+          );
+          await db.execute(
+            `UPDATE leave_request
+                SET requires_branch_head_approval = 1, approval_level = 'branch_head'
+              WHERE id = ?`,
+            [created.id],
+          );
+          await linkRowToEntity(row.rowId, ENTITY_TYPE, created.id);
+          grpStaged++;
+        } catch (err) {
+          const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
+          grpErrors.push(msg);
+          await markRowFailed(row.rowId, msg);
+          grpFailed++;
         }
-        }
       }
-    }
+      return { grpStaged, grpFailed, grpErrors };
+    },
+  );
 
-    if (validationError || !emp || !leaveType) {
-      const msg = `Row ${row.rowNo} (${d.employee_code || "no code"}): ${validationError}`;
-      errors.push(msg);
-      await markRowFailed(row.rowId, msg);
-      failed++;
-      continue;
-    }
-
-    try {
-      // The same call Apply Leave makes. Balance is NOT touched here.
-      const created = await leaveService.submitRequest(
-        {
-          employeeId: emp.id,
-          leaveTypeId: leaveType.id,
-          fromDate: d.from_date,
-          toDate: d.to_date,
-          totalDays: Number(d.total_days),
-          reason: d.reason || null,
-        },
-        userId,
-      );
-      // Flag it for the branch head explicitly. submitRequest already sets
-      // pending_branch_head for the two EL exception paths; for every other leave
-      // type it sets plain 'pending', and a bulk-uploaded row must still route to
-      // the branch head rather than the employee's reporting manager.
-      await db.execute(
-        `UPDATE leave_request
-            SET requires_branch_head_approval = 1, approval_level = 'branch_head'
-          WHERE id = ?`,
-        [created.id],
-      );
-      await linkRowToEntity(row.rowId, ENTITY_TYPE, created.id);
-      staged++;
-    } catch (err) {
-      const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
-      errors.push(msg);
-      await markRowFailed(row.rowId, msg);
-      failed++;
-    }
+  for (const r of groupResults) {
+    staged += r.grpStaged;
+    failed += r.grpFailed;
+    errors.push(...r.grpErrors);
   }
 
   await markPendingApproval(batchId, branchId, staged, failed);

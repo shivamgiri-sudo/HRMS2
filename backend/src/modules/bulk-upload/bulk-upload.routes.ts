@@ -245,6 +245,32 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
  * Terminal state comes from upload_batch rather than the in-process job map, so a
  * page reloaded (or an API restarted) mid-import still reports the truth.
  */
+/**
+ * GET /batches/active — batches owned by this user currently in 'importing' state.
+ *
+ * The UI calls this on page mount so a user who closed the page mid-import can pick
+ * up the progress bar where they left off, rather than having to know the batch ID or
+ * wait for the next refresh.
+ *
+ * Returns at most the last 5 in-flight batches for this user. The batch_status check
+ * includes 'importing' (import in progress) and 'pending_approval' when
+ * approval_status is NULL (import still claiming) to cover the edge case where the
+ * claim was recorded but the job map was lost in a restart.
+ */
+router.get("/batches/active", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, upload_batch_no, upload_type_code, batch_status, approval_status,
+            total_rows, valid_rows, imported_rows, error_rows, updated_at
+       FROM upload_batch
+      WHERE uploaded_by = ?
+        AND batch_status = 'importing'
+      ORDER BY updated_at DESC
+      LIMIT 5`,
+    [req.authUser!.id],
+  );
+  res.json({ success: true, data: rows });
+}));
+
 router.get("/batches/:id/import-status", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const [batchRows] = await db.execute<RowDataPacket[]>(

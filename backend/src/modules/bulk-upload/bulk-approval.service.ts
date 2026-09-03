@@ -261,7 +261,10 @@ const ACTIVITY_WINDOW_DAYS = 180;
  * upload is thousands of rows, and a per-row SELECT is what made earlier bulk
  * imports exceed the frontend request timeout.
  */
-export async function resolveEmployees(codes: string[]): Promise<Map<string, ResolvedEmployee>> {
+export async function resolveEmployees(
+  codes: string[],
+  options?: { includeInactive?: boolean },
+): Promise<Map<string, ResolvedEmployee>> {
   const unique = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
   const map = new Map<string, ResolvedEmployee>();
   if (unique.length === 0) return map;
@@ -269,36 +272,35 @@ export async function resolveEmployees(codes: string[]): Promise<Map<string, Res
   const CHUNK = 500;
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      // The status test is a fast path only — 'active' means admit without looking further.
-      // It is deliberately NOT wrapped in COALESCE: a NULL status is an unknown, not an
-      // assertion that someone is on staff, so it should have to clear the same attendance
-      // evidence as any other non-active value. `NULL = 'active'` yields NULL, and
-      // `NULL OR TRUE` is TRUE while `NULL OR FALSE` is NULL, so an unknown status is
-      // admitted on evidence and excluded without it — exactly the intent. (This is safe
-      // here precisely because it is an OR; the same NULL would have been a trap under the
-      // `NOT IN` denylist this replaced, which is why that one needed an explicit IS NULL.)
-      // Comparison is case-insensitive under this schema's collation, so 'Active' and
-      // 'active' — both present in the column — match the one spelling.
-      //
-      // EXISTS rather than a JOIN so an employee with 200 attendance rows is still one
-      // result row, and it stops at the first match. Covered by idx_adr_emp_date
-      // (employee_id, record_date).
-      `SELECT id, employee_code, branch_id, process_id, first_name, last_name
-         FROM employees e
-        WHERE employee_code IN (${slice.map(() => "?").join(",")})
-          AND (
-            LOWER(employment_status) = 'active'
-            OR date_of_joining >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-            OR EXISTS (
-                 SELECT 1
-                   FROM attendance_daily_record a
-                  WHERE a.employee_id = e.id
-                    AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-               )
-          )`,
-      [...slice, ACTIVITY_WINDOW_DAYS, ACTIVITY_WINDOW_DAYS],
-    );
+    const placeholders = slice.map(() => "?").join(",");
+    // includeInactive: admit any employee in the master regardless of status or
+    // attendance — needed for leave/deduction uploads that legitimately target
+    // resigned/inactive staff (e.g. back-dated leave, F&F deductions).
+    const sql = options?.includeInactive
+      ? `SELECT id, employee_code, branch_id, process_id, first_name, last_name
+           FROM employees e
+          WHERE employee_code IN (${placeholders})`
+      : // The status test is a fast path only — 'active' means admit without looking
+        // further. date_of_joining covers recently joined staff whose first attendance
+        // record has not yet been created. EXISTS stops at the first match and is
+        // covered by idx_adr_emp_date (employee_id, record_date).
+        `SELECT id, employee_code, branch_id, process_id, first_name, last_name
+           FROM employees e
+          WHERE employee_code IN (${placeholders})
+            AND (
+              LOWER(employment_status) = 'active'
+              OR date_of_joining >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+              OR EXISTS (
+                   SELECT 1
+                     FROM attendance_daily_record a
+                    WHERE a.employee_id = e.id
+                      AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+                 )
+            )`;
+    const params = options?.includeInactive
+      ? slice
+      : [...slice, ACTIVITY_WINDOW_DAYS, ACTIVITY_WINDOW_DAYS];
+    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     for (const r of rows as RowDataPacket[]) {
       map.set(String(r.employee_code).trim().toUpperCase(), {
         id: String(r.id),

@@ -66,6 +66,10 @@ function validateRow(d: Record<string, string>): string | null {
   if (d.requested_status && !VALID_STATUSES.has(d.requested_status)) {
     return `requested_status must be one of: present, half_day, absent (got "${d.requested_status}"). Also accepted: half-day, Half Day, Half_Day`;
   }
+  // Treat "-", "N/A", "na", "none", whitespace as blank (user fills placeholder dashes)
+  if (d.dispute_type && /^[-–—nN\/aA\s]+$/.test(d.dispute_type.trim())) {
+    d.dispute_type = "";
+  }
   if (d.dispute_type && !(DISPUTE_TYPES as readonly string[]).includes(d.dispute_type.toLowerCase())) {
     return `dispute_type "${d.dispute_type}" is not a recognised dispute type`;
   }
@@ -102,7 +106,7 @@ export async function importRegularizationBatch(
   const rows = await loadStagedRows(batchId);
   if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""));
+  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
   const errors: string[] = [];
   let staged = 0;
   let failed = 0;
@@ -115,11 +119,14 @@ export async function importRegularizationBatch(
   const { branchId, error: branchError } = resolveSingleBranch(matched);
   if (branchError) throw new BulkUploadError(branchError, 400);
 
+  // Partition into (a) rows that fail validation immediately — no DB work needed — and
+  // (b) rows that are valid and ready to stage. Validation is CPU-only so it runs first
+  // in a single pass to avoid touching the pool for rows we already know will fail.
+  const toStage: typeof rows = [];
   for (const row of rows) {
     const d = row.data;
     const code = (d.employee_code ?? "").toUpperCase();
     const emp = employees.get(code);
-
     const validationError = validateRow(d);
     if (validationError) {
       const msg = `Row ${row.rowNo} (${d.employee_code || "no code"}): ${validationError}`;
@@ -129,39 +136,70 @@ export async function importRegularizationBatch(
       continue;
     }
     if (!emp) {
-      const msg = `Row ${row.rowNo}: employee_code "${d.employee_code}" is not in the employee master, or has no attendance in the last 180 days`;
+      const msg = `Row ${row.rowNo}: employee_code "${d.employee_code}" is not in the employee master`;
       errors.push(msg);
       await markRowFailed(row.rowId, msg);
       failed++;
       continue;
     }
+    toStage.push(row);
+  }
 
-    try {
-      const created = await wfmService.submitRegularization(
-        {
-          employeeId: emp.id,
-          sessionDate: d.session_date,
-          reason: d.reason,
-          reasonCode: d.reason_code || undefined,
-          requestedStatus: (d.requested_status ? normalizeRequestedStatus(d.requested_status) : null) as never,
-          disputeType: (d.dispute_type?.toLowerCase() || null) as never,
-          newPunchIn: d.new_punch_in || null,
-          newPunchOut: d.new_punch_out || null,
-          supportingNote: d.supporting_note || null,
-          // The uploader is WFM or Super Admin acting on the employee's behalf,
-          // never the employee themselves.
-          requestedByType: "manager",
-        } as never,
-        userId,
-      );
-      await linkRowToEntity(row.rowId, ENTITY_TYPE, created.id);
-      staged++;
-    } catch (err) {
-      const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
-      errors.push(msg);
-      await markRowFailed(row.rowId, msg);
-      failed++;
-    }
+  // Group by employee so consecutive dates for the same person stay serial (they
+  // share a row in attendance_regularization keyed on employee+date, so two parallel
+  // inserts for the same employee would race). Different employees touch disjoint rows
+  // and run concurrently, bounded by BULK_ROW_CONCURRENCY. This is the same grouping
+  // applyRegularizationBatch uses — import now matches apply.
+  const byEmployee = new Map<string, typeof rows>();
+  for (const row of toStage) {
+    const key = (row.data.employee_code ?? "").toUpperCase();
+    if (!byEmployee.has(key)) byEmployee.set(key, []);
+    byEmployee.get(key)!.push(row);
+  }
+
+  const groupResults = await mapWithConcurrency(
+    [...byEmployee.values()],
+    BULK_ROW_CONCURRENCY,
+    async (empRows) => {
+      let grpStaged = 0;
+      let grpFailed = 0;
+      const grpErrors: string[] = [];
+      for (const row of empRows) {
+        const d = row.data;
+        const emp = employees.get((d.employee_code ?? "").toUpperCase())!;
+        try {
+          const created = await wfmService.submitRegularization(
+            {
+              employeeId: emp.id,
+              sessionDate: d.session_date,
+              reason: d.reason,
+              reasonCode: d.reason_code || undefined,
+              requestedStatus: (d.requested_status ? normalizeRequestedStatus(d.requested_status) : null) as never,
+              disputeType: (d.dispute_type?.toLowerCase() || null) as never,
+              newPunchIn: d.new_punch_in || null,
+              newPunchOut: d.new_punch_out || null,
+              supportingNote: d.supporting_note || null,
+              requestedByType: "manager",
+            } as never,
+            userId,
+          );
+          await linkRowToEntity(row.rowId, ENTITY_TYPE, created.id);
+          grpStaged++;
+        } catch (err) {
+          const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
+          grpErrors.push(msg);
+          await markRowFailed(row.rowId, msg);
+          grpFailed++;
+        }
+      }
+      return { grpStaged, grpFailed, grpErrors };
+    },
+  );
+
+  for (const r of groupResults) {
+    staged += r.grpStaged;
+    failed += r.grpFailed;
+    errors.push(...r.grpErrors);
   }
 
   await markPendingApproval(batchId, branchId, staged, failed);

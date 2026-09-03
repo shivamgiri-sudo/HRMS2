@@ -1203,6 +1203,39 @@ export default function BulkUploadHub() {
 
   useEffect(() => {
     loadData();
+
+    // Reconnect to any import that was running when the user navigated away.
+    // Without this, closing and reopening the page during a large import leaves
+    // no progress bar and the user does not know whether to wait or retry.
+    hrmsApi.get<{ success: boolean; data: Array<{ id: string; total_rows: number }> }>(
+      "/api/bulk-upload/batches/active",
+    ).then((res) => {
+      const active = res.data ?? [];
+      if (active.length === 0) return;
+      const batch = active[0]!;
+      setActiveImportBatchId(batch.id);
+      setImportProgress({
+        phase: "running",
+        progress: { total: batch.total_rows ?? null, processed: null, succeeded: null, failed: null },
+      });
+      pollBatchJob(
+        `/api/bulk-upload/batches/${batch.id}/import-status`,
+        { onProgress: setImportProgress },
+      ).then((final) => {
+        if (final.phase === "done") {
+          setMessage(`Import finished for batch. See batch list for details.`);
+        } else if (final.phase === "failed") {
+          setErrorMessage(final.error ?? final.message ?? "Import ended with an error.");
+        }
+        void loadData();
+      }).catch(() => {
+        // Network hiccup — not a reason to show an error; the batch list will reflect the real state.
+        void loadData();
+      }).finally(() => {
+        setActiveImportBatchId(null);
+        setImportProgress(null);
+      });
+    }).catch(() => { /* active-batches endpoint not critical — ignore */ });
   }, []);
 
   async function handleFileChange(file: File | null) {
