@@ -464,6 +464,37 @@ export default function NativeHROnboardingRequests() {
   const [previewGroupIndex, setPreviewGroupIndex] = useState(0);
   const [previewRotation, setPreviewRotation] = useState(0);
   const [previewBlurred, setPreviewBlurred] = useState(false);
+  /*
+   * The browser refused to frame the document.
+   *
+   * PDFs are previewed by fetching the file and pointing an <iframe> at a blob: URL. The
+   * production CSP sets no frame-src, so framing falls back to `default-src 'self'` and a
+   * blob: URL is not 'self' — Chrome/Edge block it and show "Content is blocked. Contact
+   * the site owner", with nothing on the page explaining why. Confirmed against the live
+   * header on 2026-09-04: img-src already lists blob:, which is why image documents preview
+   * and PDFs do not.
+   *
+   * The real fix is one directive in nginx (`frame-src 'self' blob:`), which is outside this
+   * codebase. Until it lands, detect the refusal and offer a route that works. Detection is
+   * the browser's own securitypolicyviolation event, so if the header is fixed this state
+   * simply never becomes true and the in-page viewer resumes with no code change.
+   */
+  const [previewFramingBlocked, setPreviewFramingBlocked] = useState(false);
+
+  // Listens only while a preview is open, and only for a framing refusal of our own blob.
+  useEffect(() => {
+    if (!documentPreviewUrl) return;
+    const onViolation = (e: SecurityPolicyViolationEvent) => {
+      const directive = e.violatedDirective || "";
+      const blocked = e.blockedURI || "";
+      if ((directive.startsWith("frame-src") || directive.startsWith("default-src")) &&
+          (blocked.startsWith("blob") || blocked === "")) {
+        setPreviewFramingBlocked(true);
+      }
+    };
+    document.addEventListener("securitypolicyviolation", onViolation);
+    return () => document.removeEventListener("securitypolicyviolation", onViolation);
+  }, [documentPreviewUrl]);
   const [screenshotWarning, setScreenshotWarning] = useState(false);
 
   // ── Offer / masters state
@@ -1061,6 +1092,7 @@ export default function NativeHROnboardingRequests() {
     setPreviewGroup(group.length > 0 ? group : [preview]);
     setPreviewGroupIndex(index);
     try {
+      setPreviewFramingBlocked(false);
       const blob = await hrmsApi.getBlob(`/api/ats/onboarding-full/documents/preview/${preview.id}`);
       if (documentPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(documentPreviewUrl);
       setDocumentPreviewUrl(URL.createObjectURL(blob));
@@ -2756,6 +2788,42 @@ export default function NativeHROnboardingRequests() {
                   </div>
                 </div>
               ) : (
+                previewFramingBlocked ? (
+                  /*
+                   * The browser refused to frame our blob: URL — see previewFramingBlocked.
+                   * Say so plainly and give a way through, instead of the empty grey panel
+                   * (or the browser's own "Content is blocked. Contact the site owner")
+                   * that this used to be.
+                   */
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-8 text-center">
+                    <p className="text-sm font-semibold text-white/90">
+                      This browser blocked the inline PDF preview
+                    </p>
+                    <p className="max-w-md text-xs text-white/60">
+                      The site's security policy does not allow PDFs to be shown inside the page.
+                      Opening it in a new tab shows the same file. The document itself is fine — image
+                      documents still preview here normally.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { if (documentPreviewUrl) window.open(documentPreviewUrl, '_blank', 'noopener'); }}
+                        className="rounded-lg bg-white/15 px-4 py-2 text-xs font-semibold text-white hover:bg-white/25"
+                      >
+                        Open in a new tab
+                      </button>
+                      {documentPreview.downloadAllowed && (
+                        <button
+                          type="button"
+                          onClick={downloadDocumentPreview}
+                          className="rounded-lg border border-white/25 px-4 py-2 text-xs font-semibold text-white/80 hover:bg-white/10"
+                        >
+                          Download
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
                 /* PDF / other — use iframe with blocking overlay */
                 <div className={`relative h-full w-full transition-all duration-300 ${previewBlurred ? 'blur-xl' : ''}`}>
                   <iframe
@@ -2776,6 +2844,7 @@ export default function NativeHROnboardingRequests() {
                     </div>
                   </div>
                 </div>
+                )
               )}
             </div>
 

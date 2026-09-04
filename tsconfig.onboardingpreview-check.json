@@ -1,0 +1,6 @@
+{
+  // Typecheck for the HR onboarding requests screen (candidate document preview).
+  //     npx tsc -p tsconfig.onboardingpreview-check.json
+  "extends": "./tsconfig.app.json",
+  "include": ["src/pages/NativeHROnboardingRequests.tsx", "src/vite-env.d.ts"]
+}
