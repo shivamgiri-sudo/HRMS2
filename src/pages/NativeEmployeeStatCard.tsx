@@ -29,10 +29,11 @@ import {
   ChevronRight,
   Download,
   Eye,
+  IndianRupee,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useCanSearchEmployees } from "@/hooks/useUserRole";
+import { useCanSearchEmployees, useHasRole } from "@/hooks/useUserRole";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -126,7 +127,7 @@ interface StatCardData {
   journey: JourneyEvent[];
 }
 
-type StatTab = "overview" | "documents" | "attendance" | "leave" | "payslips" | "assets" | "journey";
+type StatTab = "overview" | "documents" | "attendance" | "leave" | "payslips" | "salary" | "assets" | "journey";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -699,12 +700,204 @@ function TabEmpty({ icon, message }: { icon: React.ReactNode; message: string })
   );
 }
 
+/**
+ * The sanctioned salary structure, and every revision of it.
+ *
+ * There was nowhere in the product to read this. The amounts are in
+ * salary_component_assignments — 280 of 292 active employees have a row — and every
+ * revision is kept, so most people carry three to five versions nobody could see.
+ * It sits next to Payslips deliberately: "what we agreed to pay" beside "what we
+ * actually paid" is the comparison a salary query starts from.
+ *
+ * Amounts render as a dash when null rather than ₹0. On live rows that distinction
+ * is real — the current structure for MAS62938 has PF, ESIC and CTC unset while its
+ * superseded versions carry them, and showing those as zero would read as "no PF is
+ * deducted" rather than "this was never filled in".
+ */
+type SalaryLine = { label: string; value: number | null };
+
+function SalaryAmount({ value }: { value: number | null }) {
+  if (value === null || Number.isNaN(value)) return <span className="text-slate-300">—</span>;
+  return <span className="tabular-nums">₹{Math.round(value).toLocaleString("en-IN")}</span>;
+}
+
+function SalaryLines({ title, lines, tone }: { title: string; lines: SalaryLine[]; tone: string }) {
+  const shown = lines.filter((l) => l.value !== null && l.value !== 0);
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className={cn("text-xs font-bold uppercase tracking-wide", tone)}>{title}</p>
+      {shown.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-400">None recorded</p>
+      ) : (
+        <dl className="mt-2 space-y-1.5">
+          {shown.map((l) => (
+            <div key={l.label} className="flex items-center justify-between gap-4 text-sm">
+              <dt className="text-slate-600">{l.label}</dt>
+              <dd className="font-semibold text-slate-900"><SalaryAmount value={l.value} /></dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+type SalaryVersion = {
+  id: string;
+  status: string | null;
+  effective_date: string | null;
+  assigned_at: string | null;
+  assigned_by_name: string | null;
+  salary_slab: string | null;
+  earnings: Record<string, number | null>;
+  deductions: Record<string, number | null>;
+  employer: Record<string, number | null>;
+  totals: { gross: number | null; ctc: number | null; net_estimate: number | null };
+  pf_applicable: boolean | null;
+  esi_applicable: boolean | null;
+};
+
+function SalaryStructureTab({ employeeId }: { employeeId: string }) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["employee-salary-structure-detail", employeeId],
+    queryFn: () =>
+      hrmsApi.get<{ data: { source: string; ctc_annual: number | null; current: SalaryVersion | null; history: SalaryVersion[] } }>(
+        `/api/employees/${employeeId}/salary-structure`,
+      ),
+  });
+
+  if (isLoading) return <p className="py-10 text-center text-sm text-slate-400">Loading salary structure…</p>;
+  if (isError) {
+    return (
+      <p className="py-10 text-center text-sm text-red-600">
+        {(error as Error)?.message || "Unable to load the salary structure."}
+      </p>
+    );
+  }
+
+  const d = data?.data;
+  const current = d?.current ?? null;
+
+  if (!current) {
+    return (
+      <div className="py-10 text-center">
+        <p className="text-sm font-medium text-slate-600">No salary structure is assigned.</p>
+        <p className="mt-1 text-xs text-slate-400">
+          {d?.source === "ctc_percentage_estimate"
+            ? `Only an annual CTC of ₹${Number(d.ctc_annual ?? 0).toLocaleString("en-IN")} is on record — no component breakdown has been assigned yet.`
+            : "Nothing has been recorded for this employee."}
+        </p>
+      </div>
+    );
+  }
+
+  const e = current.earnings;
+  const ded = current.deductions;
+  const history = (d?.history ?? []).filter((v) => v.id !== current.id);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3">
+        <div className="text-sm">
+          <span className="font-semibold text-slate-800">Effective {current.effective_date ? fmtDate(String(current.effective_date)) : "—"}</span>
+          {current.salary_slab && <span className="ml-2 text-slate-500">· {current.salary_slab}</span>}
+          {current.assigned_by_name && <span className="ml-2 text-slate-500">· assigned by {current.assigned_by_name}</span>}
+        </div>
+        <div className="flex gap-2">
+          <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">Active</Badge>
+          <Badge variant="outline" className={current.pf_applicable ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500"}>
+            PF {current.pf_applicable ? "applicable" : "not applicable"}
+          </Badge>
+          <Badge variant="outline" className={current.esi_applicable ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500"}>
+            ESIC {current.esi_applicable ? "applicable" : "not applicable"}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <SalaryLines
+          title="Earnings"
+          tone="text-emerald-600"
+          lines={[
+            { label: "Basic", value: e.basic }, { label: "HRA", value: e.hra },
+            { label: "Conveyance", value: e.conveyance }, { label: "Special allowance", value: e.special_allowance },
+            { label: "Medical allowance", value: e.medical_allowance }, { label: "LTA", value: e.lta },
+            { label: "Bonus", value: e.bonus }, { label: "PLI", value: e.pli },
+            { label: "Portfolio", value: e.portfolio }, { label: "Other allowance", value: e.other_allowance },
+          ]}
+        />
+        <SalaryLines
+          title="Employee deductions"
+          tone="text-rose-600"
+          lines={[
+            { label: "PF (employee)", value: ded.pf_employee }, { label: "ESIC (employee)", value: ded.esic_employee },
+            { label: "Mobile", value: ded.mobile_deduction }, { label: "Insurance", value: ded.insurance_deduction },
+          ]}
+        />
+        <SalaryLines
+          title="Employer contribution"
+          tone="text-blue-600"
+          lines={[
+            { label: "PF (employer)", value: current.employer.employer_pf },
+            { label: "ESIC (employer)", value: current.employer.employer_esi },
+          ]}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {([["Gross", current.totals.gross], ["CTC", current.totals.ctc], ["Net (estimate)", current.totals.net_estimate]] as const).map(
+          ([label, value]) => (
+            <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+              <p className="mt-1 text-xl font-bold text-slate-900"><SalaryAmount value={value} /></p>
+            </div>
+          ),
+        )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white">
+        <p className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-400">
+          Revision history ({history.length})
+        </p>
+        {history.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-slate-400">No earlier versions.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-4 py-2">Effective</th><th className="px-4 py-2">Status</th>
+                  <th className="px-4 py-2 text-right">Basic</th><th className="px-4 py-2 text-right">Gross</th>
+                  <th className="px-4 py-2 text-right">CTC</th><th className="px-4 py-2">Assigned by</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {history.map((v) => (
+                  <tr key={v.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2 whitespace-nowrap">{v.effective_date ? fmtDate(String(v.effective_date)) : "—"}</td>
+                    <td className="px-4 py-2 capitalize text-slate-500">{v.status ?? "—"}</td>
+                    <td className="px-4 py-2 text-right"><SalaryAmount value={v.earnings.basic} /></td>
+                    <td className="px-4 py-2 text-right"><SalaryAmount value={v.totals.gross} /></td>
+                    <td className="px-4 py-2 text-right"><SalaryAmount value={v.totals.ctc} /></td>
+                    <td className="px-4 py-2 text-slate-500">{v.assigned_by_name ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 const TABS: { key: StatTab; label: string; icon: React.ReactNode }[] = [
   { key: "overview",   label: "Overview",   icon: <Zap className="h-4 w-4" /> },
   { key: "attendance", label: "Attendance", icon: <CalendarDays className="h-4 w-4" /> },
   { key: "leave",      label: "Leave",      icon: <Clock className="h-4 w-4" /> },
+  { key: "salary",     label: "Salary",     icon: <IndianRupee className="h-4 w-4" /> },
   { key: "assets",     label: "Assets",     icon: <Package className="h-4 w-4" /> },
   { key: "journey",    label: "Journey",    icon: <TrendingUp className="h-4 w-4" /> },
 ];
@@ -713,6 +906,10 @@ export default function NativeEmployeeStatCard() {
   const { id: urlId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const { canSearchEmployees } = useCanSearchEmployees();
+  // The same roles the API enforces. Deliberately NOT useCanAccessPayroll(), which
+  // also admits hr and admin — the tab would appear and then 403. A tab nobody
+  // outside payroll can open should not be visible to them at all.
+  const canSeeSalary = useHasRole("payroll", "payroll_hr", "payroll_head", "finance_head", "super_admin");
 
   const [searchInput, setSearchInput] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ id: string; name: string; code: string }>>([]);
@@ -962,7 +1159,7 @@ export default function NativeEmployeeStatCard() {
 
               {/* ── Tab Bar ──────────────────────────────────────────────── */}
               <div className="flex overflow-x-auto gap-1 rounded-2xl bg-white p-1 shadow border border-slate-100 no-scrollbar">
-                {TABS.map(tab => (
+                {TABS.filter(tab => tab.key !== "salary" || canSeeSalary).map(tab => (
                   <button key={tab.key} onClick={() => setActiveTab(tab.key)}
                     className={cn(
                       "flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition-all",
@@ -1158,6 +1355,12 @@ export default function NativeEmployeeStatCard() {
                 {/* Payslips */}
                 {activeTab === "payslips" && resolvedId && (
                   <div className="p-6"><PayslipsTab employeeId={resolvedId} isSelf={isSelf} /></div>
+                )}
+
+                {/* Salary structure — the role check is repeated here, not just on the
+                    tab button, so a stale activeTab cannot render it after a role change. */}
+                {activeTab === "salary" && resolvedId && canSeeSalary && (
+                  <div className="p-6"><SalaryStructureTab employeeId={resolvedId} /></div>
                 )}
 
                 {/* Assets */}

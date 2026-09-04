@@ -589,6 +589,125 @@ router.get(`${UUID_ROUTE}/ctc`, h(async (req: any, res: any) => {
   });
 }));
 
+/**
+ * One employee's salary structure, and every version of it.
+ *
+ * There was nowhere in the product to read this. The amounts live in
+ * salary_component_assignments — 279 of 292 active employees have an active row,
+ * basic and gross populated on all 1,782 of them — and every revision is kept, so
+ * 838 employees carry five versions of their structure that nobody could see. The
+ * nearest surfaces each showed a slice: /payroll/salary-review shows CTC/gross/PF
+ * for new joiners only, the payslip viewer shows what was actually paid, and
+ * /ctc above returns three components off a different table.
+ *
+ * SOURCE. salary_component_assignments is what payroll actually pays out, so it is
+ * what this returns. employee_salary_assignment (30,266 rows) holds only an annual
+ * CTC and a percentage template; where an employee has no component row, this
+ * reports `source: "ctc_percentage_estimate"` and returns no components rather
+ * than deriving amounts that no engine ever paid — the same distinction /ctc draws
+ * with compensation_source, and the reason getFixedSalaryComponents exists.
+ *
+ * ACCESS. Salary is the most sensitive record here, and this route hangs off a
+ * general HR page, so it is deliberately NOT on PEOPLE_SCOPE_ROLES: an hr, tl or
+ * manager who may open the employee record still cannot read pay. The branch/scope
+ * check is assertEmployeeAccess's, unchanged — a payroll_hr scoped to one branch
+ * sees their own branch only.
+ */
+const SALARY_SCOPE_ROLES = ["payroll", "payroll_hr", "payroll_head", "finance_head"];
+
+router.get(`${UUID_ROUTE}/salary-structure`, h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const targetId = String(req.params.id);
+
+  // A role check BEFORE the scope check, because canAccessEmployee() is deliberately
+  // generous in ways that are right for a profile and wrong for pay: it admits
+  // 'admin' and 'ceo' outright, the employee themselves, and anyone the target
+  // reports to. Passing SALARY_SCOPE_ROLES to it alone would therefore still hand a
+  // team lead their reports' full salary structure. Holding a payroll role is
+  // required first; hasAnyRole() lets super_admin through, as everywhere else.
+  if (!(await hasAnyRole(userId, ...SALARY_SCOPE_ROLES))) {
+    return res.status(403).json({
+      success: false,
+      message: "Forbidden: salary structure is limited to payroll roles",
+    });
+  }
+  // Then the ordinary branch/process scope check, so a branch-scoped payroll_hr
+  // still only reads their own branch.
+  await assertEmployeeAccess(userId, targetId, SALARY_SCOPE_ROLES);
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.id, s.status, s.effective_date, s.assigned_at, s.salary_slab, s.approval_reference,
+            s.basic, s.hra, s.conveyance, s.special_allowance, s.medical_allowance, s.lta,
+            s.bonus, s.pli, s.portfolio, s.other_allowance,
+            s.gross, s.ctc, s.net_estimate,
+            s.pf_applicable, s.esi_applicable,
+            s.pf_employee, s.esic_employee, s.employer_pf, s.employer_esi,
+            s.mobile_deduction, s.insurance_deduction,
+            -- The assigner as a person. auth_user carries no name, so the employee
+            -- row behind the account is the only place to read one.
+            (SELECT a.full_name FROM employees a WHERE a.user_id = s.assigned_by LIMIT 1) AS assigned_by_name
+       FROM salary_component_assignments s
+      WHERE s.employee_id = ?
+      ORDER BY s.effective_date DESC, s.assigned_at DESC`,
+    [targetId],
+  );
+
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  const versions = (rows as RowDataPacket[]).map((r) => ({
+    id: String(r.id),
+    status: r.status ? String(r.status) : null,
+    effective_date: r.effective_date,
+    assigned_at: r.assigned_at,
+    assigned_by_name: r.assigned_by_name ? String(r.assigned_by_name) : null,
+    salary_slab: r.salary_slab ? String(r.salary_slab) : null,
+    approval_reference: r.approval_reference ? String(r.approval_reference) : null,
+    earnings: {
+      basic: num(r.basic), hra: num(r.hra), conveyance: num(r.conveyance),
+      special_allowance: num(r.special_allowance), medical_allowance: num(r.medical_allowance),
+      lta: num(r.lta), bonus: num(r.bonus), pli: num(r.pli),
+      portfolio: num(r.portfolio), other_allowance: num(r.other_allowance),
+    },
+    deductions: {
+      pf_employee: num(r.pf_employee), esic_employee: num(r.esic_employee),
+      mobile_deduction: num(r.mobile_deduction), insurance_deduction: num(r.insurance_deduction),
+    },
+    employer: { employer_pf: num(r.employer_pf), employer_esi: num(r.employer_esi) },
+    totals: { gross: num(r.gross), ctc: num(r.ctc), net_estimate: num(r.net_estimate) },
+    pf_applicable: r.pf_applicable === null ? null : Number(r.pf_applicable) === 1,
+    esi_applicable: r.esi_applicable === null ? null : Number(r.esi_applicable) === 1,
+  }));
+
+  // "Current" is the active row, not merely the newest: a superseded or draft row
+  // dated later must not be presented as what this person is paid on.
+  const current = versions.find((v) => String(v.status ?? "").toLowerCase() === "active") ?? null;
+
+  if (!current && versions.length === 0) {
+    // No component row at all. Say so, and say whether a CTC-only record exists, so
+    // the page can distinguish "not set up yet" from "we cannot show you".
+    const [ctcOnly] = await db.execute<RowDataPacket[]>(
+      `SELECT ctc_annual FROM employee_salary_assignment
+        WHERE employee_id = ? AND active_status = 1
+        ORDER BY effective_from DESC LIMIT 1`,
+      [targetId],
+    );
+    const ctcRow = (ctcOnly as RowDataPacket[])[0];
+    return res.json({
+      success: true,
+      data: {
+        source: ctcRow ? "ctc_percentage_estimate" : "none",
+        ctc_annual: ctcRow ? Number(ctcRow.ctc_annual) : null,
+        current: null,
+        history: [],
+      },
+    });
+  }
+
+  return res.json({
+    success: true,
+    data: { source: "salary_component_assignments", ctc_annual: null, current, history: versions },
+  });
+}));
+
 // NOTE: there used to be a `router.get(UUID_ROUTE, ...)` here returning `SELECT e.*`
 // unredacted. Because this router is mounted before employee.routes.ts (app.ts) and
 // employee ids are UUIDs, that handler answered every real GET /api/employees/:id
