@@ -57,15 +57,26 @@ function constantExpression(src: string, name: string): string {
 }
 
 describe("esign reconciliation polling budget (R1.2, R11.2)", () => {
-  it("keeps the backoff ladder at [2, 10, 30, 120, 360, 1440] minutes", () => {
+  it("keeps the backoff ladder at [2, 10, 30, 60, 60, 60] minutes", () => {
+    // Revised 2026-09-04, deliberately, after the ORIGINAL ladder's 1440-minute
+    // (24h) tail cost a real signature going unnoticed for hours: MAS63438's
+    // joining-kit Aadhaar eSign completed on Luckpay's side while her transaction
+    // was already on that tail, and the tracker read "0 of 9 signed" until a
+    // human forced a manual check. The early steps this governs most — 2, 10, 30
+    // minutes, where a transaction is plausibly still mid-signature — are
+    // UNCHANGED; only the tail a long-pending transaction settles into is
+    // shortened, from once a day to once an hour. Still a governed constant: any
+    // further change to the ladder, TICK_MS, BATCH_SIZE or GIVE_UP_AFTER_DAYS
+    // widens the Luckpay bill and belongs in this same conversation, not a
+    // silent edit.
     const expr = constantExpression(workerCode, "BACKOFF_MINUTES");
     const ladder = JSON.parse(expr) as number[];
     expect(
       ladder,
-      "BACKOFF_MINUTES is the agreed polling schedule. Shortening any step, or " +
-        "adding a step, means more billed checkESignStatus calls per transaction " +
-        "and a bigger Luckpay bill. R1.2 pins the sequence as implemented.",
-    ).toEqual([2, 10, 30, 120, 360, 1440]);
+      "BACKOFF_MINUTES is the agreed polling schedule. Shortening any step below " +
+        "the value pinned here, or adding a step, means more billed " +
+        "checkESignStatus calls per transaction and a bigger Luckpay bill.",
+    ).toEqual([2, 10, 30, 60, 60, 60]);
   });
 
   it("keeps TICK_MS at 5 minutes", () => {

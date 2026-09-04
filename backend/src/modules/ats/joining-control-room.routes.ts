@@ -1,4 +1,6 @@
 import { Router } from "express";
+import type { RowDataPacket } from "mysql2/promise";
+import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -8,7 +10,9 @@ import {
   getJoiningControlRoomCandidate,
   listJoiningControlRoomQueue,
   lockSalaryRegister,
+  recheckEsignStatus,
   requestDpdpWithdrawal,
+  syncBankDetailFromOnboarding,
   saveJclrDetails,
   savePayrollControlRoomDetails,
   saveStatutoryDeclaration,
@@ -94,6 +98,27 @@ joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-withdrawal", h(asyn
 joiningControlRoomRouter.post("/candidates/:candidateId/readiness", h(async (req, res) => {
   const data = await validateReadiness(req.params.candidateId);
   return res.json({ success: true, data });
+}));
+
+joiningControlRoomRouter.post("/candidates/:candidateId/esign/recheck", h(async (req, res) => {
+  const result = await recheckEsignStatus(req.params.candidateId);
+  const data = await getJoiningControlRoomCandidate(req.params.candidateId);
+  return res.json({ success: true, data: { ...data, recheck: result } });
+}));
+
+joiningControlRoomRouter.post("/candidates/:candidateId/bank-detail/sync", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = (bridge as RowDataPacket[])[0]?.employee_id;
+  if (!employeeId) {
+    return res.status(409).json({ success: false, message: "No employee record exists yet for this candidate" });
+  }
+  const result = await syncBankDetailFromOnboarding(String(employeeId), candidateId, req.authUser!.id);
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, bankSync: result } });
 }));
 
 joiningControlRoomRouter.post("/candidates/:candidateId/salary-register/lock", h(async (req, res) => {

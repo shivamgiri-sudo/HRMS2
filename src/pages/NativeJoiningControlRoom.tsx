@@ -774,6 +774,23 @@ export default function NativeJoiningControlRoom() {
                   </TabsContent>
 
                   <TabsContent value="bank" className="grid gap-4">
+                    {bank && hasEmployeeCode && (
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-3 text-sm">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="text-slate-600">
+                            Nothing copies this verified account into payroll's payment records automatically for an
+                            employee created before this button existed — that is what it does.
+                          </span>
+                          <Button
+                            type="button" variant="outline" size="sm"
+                            onClick={() => action("bank-detail/sync", {}, "Bank details sent to payroll")}
+                            disabled={busy}
+                          >
+                            Send to payroll for salary transfer
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     {bank ? (
                       <DetailSection
                         title="Bank Account"
@@ -844,6 +861,18 @@ export default function NativeJoiningControlRoom() {
                   </TabsContent>
 
                   <TabsContent value="esign" className="grid gap-4">
+                    {/* The background poller backs off to as much as an hour between
+                        checks on a transaction, deliberately, to keep the vendor's
+                        per-call billing sane — so a signature completed a few minutes
+                        ago can still read as pending here. This asks the provider
+                        directly instead of waiting for the schedule. */}
+                    <Button
+                      type="button" variant="outline" className="w-fit"
+                      onClick={() => action("esign/recheck", {}, "Checked with the provider")}
+                      disabled={busy}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" />Check e-sign status now
+                    </Button>
                     {esign && esign.total > 0 ? (
                       <>
                         <div className="grid gap-3 md:grid-cols-4">
@@ -993,10 +1022,11 @@ export default function NativeJoiningControlRoom() {
 
                   <TabsContent value="jclr" className="grid gap-4">
                     <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 text-sm">
-                      <div className="font-semibold text-slate-900">BM / Branch Head JCLR Approval</div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {statusBadge(detail.summary.jclr_approval_status)}
-                        <span className="text-slate-600">JCLR Entry can be completed only after this approval.</span>
+                      <div className="font-semibold text-slate-900">Joining-day logistics</div>
+                      <div className="mt-2 text-slate-600">
+                        Workstation, ID card, transport and training batch for Payroll HR to record.
+                        This is operational handoff information — it does not block onboarding
+                        readiness or offer approval, which are tracked separately above.
                       </div>
                     </div>
                     <div className="grid gap-4 md:grid-cols-4">
@@ -1017,7 +1047,7 @@ export default function NativeJoiningControlRoom() {
                       ))}
                     </div>
                     <Field label="Blocker reason"><Textarea value={jclrForm.blocker_reason || ""} onChange={(e) => setJclrForm({ ...jclrForm, blocker_reason: e.target.value })} /></Field>
-                    <Button type="button" className="w-fit" onClick={() => saveSection("jclr", jclrForm)} disabled={busy || detail.summary.jclr_approval_status !== "approved"}>
+                    <Button type="button" className="w-fit" onClick={() => saveSection("jclr", jclrForm)} disabled={busy}>
                       <ClipboardCheck className="mr-2 h-4 w-4" />Save JCLR Entry
                     </Button>
                   </TabsContent>

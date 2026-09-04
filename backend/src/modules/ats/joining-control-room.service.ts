@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import { classifyEsignState } from "./esignState.js";
+import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,8 +27,18 @@ function readinessBlockers(row: RowDataPacket | null): string[] {
   if (String(row.payroll_status || "").toLowerCase() !== "validated") blockers.push("Payroll HR details are not validated");
   if (row.salary_exception_status && String(row.salary_exception_status) !== "approved") blockers.push("Salary proposal approval is pending");
   if (!row.salary_register_id || Number(row.salary_register_locked || 0) !== 1) blockers.push("Salary register is not locked");
-  if (String(row.jclr_approval_status || "").toLowerCase() !== "approved") blockers.push("BM / Branch Head JCLR approval is pending");
-  if (String(row.jclr_status || "").toLowerCase() !== "ready" && String(row.jclr_status || "").toLowerCase() !== "completed") blockers.push("Payroll HR JCLR entry is not complete");
+  // JCLR (branch-head sign-off + Payroll HR logistics entry) is deliberately NOT a
+  // readiness blocker, per an explicit product decision (2026-09-04): it tracks
+  // physical joining-day logistics — workstation, ID card, transport, training
+  // batch — which is operational handoff information, not a condition of the
+  // candidate being ready to become an employee. It also read from
+  // ats_branch_head_approval, a pre-offer "approve this candidate for hire" table
+  // that a candidate's actual offer approval does not always write to — verified
+  // live, MAS63438's offer carries ats_employment_offer.status = 'bh_approved'
+  // with zero rows in ats_branch_head_approval, so this blocker was unclearable
+  // for anyone who took that path. The JCLR Logistics tab remains, for Payroll HR
+  // to record the same information once it exists; see canSaveJclr below for why
+  // its own save button no longer depends on this gate either.
   if (String(row.statutory_status || "").toLowerCase() !== "verified") blockers.push("EPF/statutory declaration is not verified");
   if (String(row.dpdp_required_status || "").toLowerCase() !== "granted") blockers.push("Required DPDP consent is not granted");
   return blockers;
@@ -552,15 +563,36 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
     );
   }
 
+  // Auto-lock the salary register the moment Payroll HR validates for payroll,
+  // per an explicit product decision (2026-09-04): locking used to be a second,
+  // separate manual step with no button anywhere to trigger it — the backend
+  // endpoint existed, nothing in the product ever called it — so every candidate
+  // sat "validated" but permanently "not locked".
+  //
+  // Best-effort and silent on failure: lockSalaryRegister() itself still enforces
+  // its own preconditions (an approved salary proposal, a resolvable effective
+  // date) and throws a clear 409 if they are not met. Surfacing that failure HERE
+  // would turn "save my effective dates" into a hard error over a salary proposal
+  // this same call may not control, so it is logged and left for the next
+  // validate — or the readiness screen, which still reports "not locked"
+  // accurately — rather than blocking the save that got the candidate this far.
+  await lockSalaryRegister(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] auto-lock skipped for ${candidateId}:`, (error as Error)?.message ?? error);
+  });
+
   return getJoiningControlRoomCandidate(candidateId);
 }
 
 export async function saveJclrDetails(candidateId: string, input: JsonRecord, actorId: string) {
   const existing = await candidateSnapshot(candidateId);
   const oldStatus = existing?.jclr_status ? String(existing.jclr_status) : null;
-  if (String(existing?.jclr_approval_status || "").toLowerCase() !== "approved") {
-    throw Object.assign(new Error("Payroll HR JCLR Entry is blocked until BM / Branch Head JCLR Approval is approved"), { statusCode: 409 });
-  }
+  // No longer gated on jclr_approval_status (2026-09-04, matching readinessBlockers
+  // above): that column comes from ats_branch_head_approval, a pre-offer "approve
+  // this candidate for hire" table a candidate's actual offer approval does not
+  // always write to, which made this throw for anyone who took that path — verified
+  // live against MAS63438, whose offer was genuinely approved
+  // (ats_employment_offer.status = 'bh_approved') with zero rows in that table.
+  // JCLR logistics is operational handoff information, not a workflow gate.
   await db.execute(
     `INSERT INTO jclr_detail
        (id, candidate_id, joining_location, joining_floor, work_station, system_required, headset_required,
@@ -717,6 +749,51 @@ export async function validateReadiness(candidateId: string) {
   return { candidate_id: candidateId, readiness_status: status, blockers, next_action: nextAction(blockers) };
 }
 
+/**
+ * Ask the provider right now, instead of waiting for the background worker's
+ * schedule.
+ *
+ * esign-reconciliation.worker.ts backs a pending transaction off to a fixed
+ * interval — capped, but still up to an hour — specifically to avoid the
+ * per-call billing cost of polling every open transaction on a short cycle. That
+ * is the right default, but it means a completion between two scheduled checks
+ * sits invisible on this exact screen: verified live, MAS63438's kit-level
+ * Aadhaar eSign finished on Luckpay's side hours before the worker's next
+ * scheduled check, and every one of her six kit documents kept reading
+ * `esign_initiated` — correct as of the last check, wrong as of right now.
+ *
+ * This is the one place a manual check is worth the extra provider call: an HR
+ * user pressing "Check now" already has a specific reason to believe something
+ * changed, which is exactly the condition the worker's schedule cannot see.
+ * Every non-terminal transaction for the candidate is checked (not just one),
+ * since a joining kit can carry more than one open transaction.
+ */
+export async function recheckEsignStatus(candidateId: string): Promise<{ checked: number; completed: number }> {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT client_transaction_id
+       FROM employee_document_esign_transaction
+      WHERE (candidate_id = ? OR (? IS NOT NULL AND employee_id = ?))
+        AND status NOT IN ('signed', 'completed', 'failed', 'expired', 'cancelled', 'abandoned_unresolved')`,
+    [candidateId, employeeId, employeeId],
+  );
+
+  let completed = 0;
+  for (const row of rows as RowDataPacket[]) {
+    const outcome = await syncEsignStatus(String(row.client_transaction_id)).catch((error: unknown) => {
+      console.warn(`[joining-control-room] manual esign recheck failed for ${row.client_transaction_id}:`, error);
+      return null;
+    });
+    if (outcome?.state === "completed") completed++;
+  }
+  return { checked: rows.length, completed };
+}
+
 export async function lockSalaryRegister(candidateId: string, actorId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT phr.*, sep.status AS proposal_status, sep.proposed_gross_salary
@@ -761,10 +838,18 @@ export async function lockSalaryRegister(candidateId: string, actorId: string) {
       WHERE candidate_id = ?`,
     [candidateId, candidateId],
   );
+  // candidate_id and actor_id below are this table's ORIGINAL columns, typed int —
+  // left over from before the codebase moved to UUID ids — and every real writer
+  // (verified: the employee-edit-dialog direct-assignment path) has since moved to
+  // actor_user_id/action_type/change_summary, leaving the int columns NULL. This
+  // call was still writing the abandoned pair, so every lock ever attempted through
+  // it failed on "Incorrect integer value" for a UUID — verified live, the exact
+  // error a real attempt raised — which the salary_register row it belongs to
+  // already carries the candidate/employee link, so no candidate_id is needed here.
   await db.execute(
-    `INSERT INTO salary_register_audit_log (id, candidate_id, salary_register_id, actor_id, action, payload_json)
-     VALUES (UUID(), ?, (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1), ?, 'LOCK', ?)`,
-    [candidateId, candidateId, actorId, JSON.stringify({ gross, salaryEffective })],
+    `INSERT INTO salary_register_audit_log (id, salary_register_id, actor_user_id, action_type, change_summary)
+     VALUES (UUID(), (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1), ?, 'LOCK', ?)`,
+    [candidateId, actorId, JSON.stringify({ gross, salaryEffective })],
   );
   return getJoiningControlRoomCandidate(candidateId);
 }
@@ -800,12 +885,106 @@ export async function approveSalaryProposal(candidateId: string, input: JsonReco
   return getJoiningControlRoomCandidate(candidateId);
 }
 
+/**
+ * Copy the candidate's own onboarding bank submission into the store payroll's
+ * NEFT export actually reads.
+ *
+ * The gap this closes: candidate_onboarding_bank_detail is where the candidate's
+ * real account number lives — verified by penny drop during onboarding — but
+ * nothing in this codebase has ever copied it into employee_bank_detail, the
+ * table bank-payment-readiness.service.ts and the NEFT export query. Verified
+ * live: 0 writers of employee_bank_detail read from
+ * candidate_onboarding_bank_detail anywhere. So a joiner's bank account existed,
+ * verified, the whole time — and payroll could not pay them from it unless HR
+ * separately keyed it in from a spreadheet, which is the exact gap MAS63438 was
+ * found in earlier the same day this was written.
+ *
+ * Ciphertext copied directly, never decrypted here: both columns are encrypted
+ * with the same fieldEncryption.js key (penny-drop.service.ts and this table both
+ * call encryptField()/store into an *_enc column), so the copy is readable by
+ * every existing consumer without this process ever holding the plaintext. This
+ * machine's dev key would make a value *encrypted here* unreadable in production
+ * (see the bank-sheet-load precedent) — copying ciphertext sidesteps that
+ * entirely because nothing here re-encrypts anything.
+ *
+ * Never overwrites an existing active primary row — same rule as the earlier
+ * bank-sheet load: an employee who already has bank details keeps them, this
+ * only fills a genuinely empty record. Requires the onboarding submission to be
+ * 'verified' — an unverified account is not a payment destination, only a claim.
+ */
+export async function syncBankDetailFromOnboarding(
+  employeeId: string,
+  candidateId: string,
+  actorId: string,
+): Promise<{ synced: boolean; reason?: string }> {
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
+    [employeeId],
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return { synced: false, reason: "Employee already has an active primary bank record" };
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT bank_name, account_holder_name, account_no_encrypted, ifsc_code, account_type, verification_status
+       FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const submission = (rows as RowDataPacket[])[0];
+  if (!submission) return { synced: false, reason: "No bank details submitted during onboarding" };
+  if (String(submission.verification_status ?? "").toLowerCase() !== "verified") {
+    return { synced: false, reason: `Onboarding bank submission is "${submission.verification_status ?? "pending"}", not verified` };
+  }
+  if (!submission.account_no_encrypted || !submission.ifsc_code) {
+    return { synced: false, reason: "Onboarding bank submission has no usable account number or IFSC" };
+  }
+
+  await db.execute(
+    `INSERT INTO employee_bank_detail
+       (employee_id, is_primary, account_seq, bank_name, account_holder_name,
+        account_number_enc, ifsc_code, account_type, verified, active_status)
+     VALUES (?, 1, 1, ?, ?, ?, ?, ?, 0, 1)`,
+    [
+      employeeId,
+      submission.bank_name ?? null,
+      submission.account_holder_name ?? null,
+      submission.account_no_encrypted,
+      String(submission.ifsc_code).toUpperCase(),
+      submission.account_type || "Savings",
+    ],
+  );
+  await db.execute(
+    `INSERT INTO employee_bank_detail_backfill_log
+       (employee_id, employee_code, account_before, account_after, ifsc_before, ifsc_after, source, corroborated_by_payment, phase, written_at)
+     SELECT id, employee_code, NULL, 'synced-from-onboarding', NULL, ?, 'joining_control_room_onboarding_sync', 0, 'onboarding-sync', NOW()
+       FROM employees WHERE id = ?`,
+    [String(submission.ifsc_code).toUpperCase(), employeeId],
+  ).catch((error: unknown) => {
+    // The bank record itself is already written; a missing audit row must not
+    // undo that. Logged so the gap in the log is visible, not silent.
+    console.warn(`[joining-control-room] bank-sync audit log failed for ${employeeId}:`, error);
+  });
+  return { synced: true };
+}
+
 export async function generateEmployeeCode(candidateId: string, actorId: string) {
   const readiness = await validateReadiness(candidateId);
   if (readiness.blockers.length) {
     throw Object.assign(new Error(`Employee code blocked: ${readiness.blockers.join("; ")}`), { statusCode: 409, blockers: readiness.blockers });
   }
   const result = await convertCandidateToEmployee(candidateId, actorId);
+  // Best-effort, same reasoning as the salary-register auto-lock just above: the
+  // employee now exists, so their onboarding bank submission — already verified —
+  // can be copied into the store payroll actually pays from, without HR having to
+  // separately re-key it from a spreadsheet. A missing/unverified submission is
+  // not an error here; it is reported accurately by employeeInScope/readiness
+  // elsewhere, and the manual "Sync bank details" action covers a candidate whose
+  // onboarding was completed or verified after this ran.
+  if (result.employee_id) {
+    await syncBankDetailFromOnboarding(result.employee_id, candidateId, actorId).catch((error: unknown) => {
+      console.warn(`[joining-control-room] bank auto-sync skipped for ${candidateId}:`, error);
+    });
+  }
   await validateReadiness(candidateId);
   return result;
 }

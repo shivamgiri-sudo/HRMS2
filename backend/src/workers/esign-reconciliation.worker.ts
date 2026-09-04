@@ -20,8 +20,21 @@ import { db } from "../db/mysql.js";
 import { env } from "../config/env.js";
 import { syncEsignStatus } from "../modules/integrations/luckpay/luckpay-status.service.js";
 
-/** How long to wait before the Nth attempt. The last value repeats. */
-const BACKOFF_MINUTES = [2, 10, 30, 120, 360, 1440];
+/**
+ * How long to wait before the Nth attempt. The last value repeats.
+ *
+ * The tail used to be 1440 (24 hours) — cheap on provider calls, but it means a
+ * transaction that has been pending for a few hours does not get asked again until
+ * the following day. Verified live: MAS63438's joining-kit signature completed on
+ * Luckpay's side hours before the system's next scheduled check, so the tracker
+ * kept reporting "0 of 9 signed" for a signature that had already happened — the
+ * same class of loss this worker exists to prevent (see the file header), just
+ * bounded to a day instead of forever. Capped at 60 rather than shortening the
+ * whole ladder: the early steps (2–360 minutes) already chase a transaction hard
+ * while it is plausibly still in progress, and this only shortens the wait once it
+ * has already been pending long enough to reach the tail.
+ */
+const BACKOFF_MINUTES = [2, 10, 30, 60, 60, 60];
 
 const TICK_MS = 5 * 60 * 1000;
 const BATCH_SIZE = 25;
