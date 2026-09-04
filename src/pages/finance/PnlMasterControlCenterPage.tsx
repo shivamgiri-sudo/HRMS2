@@ -1185,7 +1185,6 @@ export default function PnlMasterControlCenterPage() {
                             <Field label="Recognition date"><Input className="rounded-xl" type="date" value={revenueComponentForm.recognitionDate ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, recognitionDate: event.target.value }))} /></Field>
                           </div>
                           <Field label="Invoice reference"><Input className="rounded-xl" value={revenueComponentForm.invoiceReference ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, invoiceReference: event.target.value }))} /></Field>
-                          </div>
                         </div>
                       }
                     />
