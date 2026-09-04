@@ -3,13 +3,71 @@
 -- but were never included in any prior migration, causing runtime errors on freeze operations.
 
 -- Add missing columns to salary_prep_run
-ALTER TABLE salary_prep_run
-  ADD COLUMN IF NOT EXISTS attendance_snapshot_locked TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS compliance_checked         TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS compliance_checked_at      DATETIME   NULL,
-  ADD COLUMN IF NOT EXISTS compliance_issues_count    INT        NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS branch_id                  CHAR(36)   NULL,
-  ADD COLUMN IF NOT EXISTS process_id                 CHAR(36)   NULL;
+SET @mcol_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'attendance_snapshot_locked'
+);
+SET @msql_1 = IF(@mcol_1 = 0,
+  'ALTER TABLE salary_prep_run ADD COLUMN attendance_snapshot_locked TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT "attendance_snapshot_locked already exists" AS message');
+PREPARE mstmt_1 FROM @msql_1;
+EXECUTE mstmt_1;
+DEALLOCATE PREPARE mstmt_1;
+
+SET @mcol_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'compliance_checked'
+);
+SET @msql_2 = IF(@mcol_2 = 0,
+  'ALTER TABLE salary_prep_run ADD COLUMN compliance_checked         TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT "compliance_checked already exists" AS message');
+PREPARE mstmt_2 FROM @msql_2;
+EXECUTE mstmt_2;
+DEALLOCATE PREPARE mstmt_2;
+
+SET @mcol_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'compliance_checked_at'
+);
+SET @msql_3 = IF(@mcol_3 = 0,
+  'ALTER TABLE salary_prep_run ADD COLUMN compliance_checked_at      DATETIME   NULL',
+  'SELECT "compliance_checked_at already exists" AS message');
+PREPARE mstmt_3 FROM @msql_3;
+EXECUTE mstmt_3;
+DEALLOCATE PREPARE mstmt_3;
+
+SET @mcol_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'compliance_issues_count'
+);
+SET @msql_4 = IF(@mcol_4 = 0,
+  'ALTER TABLE salary_prep_run ADD COLUMN compliance_issues_count    INT        NOT NULL DEFAULT 0',
+  'SELECT "compliance_issues_count already exists" AS message');
+PREPARE mstmt_4 FROM @msql_4;
+EXECUTE mstmt_4;
+DEALLOCATE PREPARE mstmt_4;
+
+SET @mcol_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'branch_id'
+);
+SET @msql_5 = IF(@mcol_5 = 0,
+  'ALTER TABLE salary_prep_run ADD COLUMN branch_id                  CHAR(36)   NULL',
+  'SELECT "branch_id already exists" AS message');
+PREPARE mstmt_5 FROM @msql_5;
+EXECUTE mstmt_5;
+DEALLOCATE PREPARE mstmt_5;
+
+SET @mcol_6 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run' AND COLUMN_NAME = 'process_id'
+);
+SET @msql_6 = IF(@mcol_6 = 0,
+  'ALTER TABLE salary_prep_run ADD COLUMN process_id                 CHAR(36)   NULL',
+  'SELECT "process_id already exists" AS message');
+PREPARE mstmt_6 FROM @msql_6;
+EXECUTE mstmt_6;
+DEALLOCATE PREPARE mstmt_6;
 
 -- Create the payroll calculation audit table referenced by freezeAttendance() and payrollCompliance.service.ts
 -- Column names match exact INSERT statements in:

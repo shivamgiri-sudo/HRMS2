@@ -13,7 +13,35 @@ CREATE TABLE IF NOT EXISTS statutory_config_history (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Add verified_by, verified_at, review_note to form12bb detail if not exists
-ALTER TABLE tax_declaration_form12bb_detail
-  ADD COLUMN IF NOT EXISTS verified_by   CHAR(36) NULL,
-  ADD COLUMN IF NOT EXISTS verified_at   DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS review_note   TEXT     NULL;
+SET @mcol_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tax_declaration_form12bb_detail' AND COLUMN_NAME = 'verified_by'
+);
+SET @msql_1 = IF(@mcol_1 = 0,
+  'ALTER TABLE tax_declaration_form12bb_detail ADD COLUMN verified_by   CHAR(36) NULL',
+  'SELECT "verified_by already exists" AS message');
+PREPARE mstmt_1 FROM @msql_1;
+EXECUTE mstmt_1;
+DEALLOCATE PREPARE mstmt_1;
+
+SET @mcol_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tax_declaration_form12bb_detail' AND COLUMN_NAME = 'verified_at'
+);
+SET @msql_2 = IF(@mcol_2 = 0,
+  'ALTER TABLE tax_declaration_form12bb_detail ADD COLUMN verified_at   DATETIME NULL',
+  'SELECT "verified_at already exists" AS message');
+PREPARE mstmt_2 FROM @msql_2;
+EXECUTE mstmt_2;
+DEALLOCATE PREPARE mstmt_2;
+
+SET @mcol_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tax_declaration_form12bb_detail' AND COLUMN_NAME = 'review_note'
+);
+SET @msql_3 = IF(@mcol_3 = 0,
+  'ALTER TABLE tax_declaration_form12bb_detail ADD COLUMN review_note   TEXT     NULL',
+  'SELECT "review_note already exists" AS message');
+PREPARE mstmt_3 FROM @msql_3;
+EXECUTE mstmt_3;
+DEALLOCATE PREPARE mstmt_3;

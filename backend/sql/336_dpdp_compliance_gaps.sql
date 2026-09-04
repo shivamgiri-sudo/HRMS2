@@ -5,21 +5,67 @@
 
 -- ─── 1. ats_candidate — minor/guardian consent flags ─────────────────────────
 
-ALTER TABLE ats_candidate
-  ADD COLUMN IF NOT EXISTS is_minor TINYINT(1) NOT NULL DEFAULT 0
-    COMMENT 'Set to 1 when candidate DOB indicates age < 18 at time of onboarding',
-  ADD COLUMN IF NOT EXISTS guardian_consent_obtained TINYINT(1) NOT NULL DEFAULT 0
-    COMMENT 'Set to 1 when guardian has confirmed consent for minor candidate';
+SET @mcol_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'is_minor'
+);
+SET @msql_1 = IF(@mcol_1 = 0,
+  'ALTER TABLE ats_candidate ADD COLUMN is_minor TINYINT(1) NOT NULL DEFAULT 0
+    COMMENT ''Set to 1 when candidate DOB indicates age < 18 at time of onboarding''',
+  'SELECT "is_minor already exists" AS message');
+PREPARE mstmt_1 FROM @msql_1;
+EXECUTE mstmt_1;
+DEALLOCATE PREPARE mstmt_1;
+
+SET @mcol_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'guardian_consent_obtained'
+);
+SET @msql_2 = IF(@mcol_2 = 0,
+  'ALTER TABLE ats_candidate ADD COLUMN guardian_consent_obtained TINYINT(1) NOT NULL DEFAULT 0
+    COMMENT ''Set to 1 when guardian has confirmed consent for minor candidate''',
+  'SELECT "guardian_consent_obtained already exists" AS message');
+PREPARE mstmt_2 FROM @msql_2;
+EXECUTE mstmt_2;
+DEALLOCATE PREPARE mstmt_2;
 
 -- ─── 2. ats_candidate — masked PII columns (ADDITIVE; raw columns not nulled here) ───
 
-ALTER TABLE ats_candidate
-  ADD COLUMN IF NOT EXISTS aadhar_number_masked VARCHAR(20) DEFAULT NULL
-    COMMENT 'XXXX-XXXX-LAST4 masked Aadhaar for display/audit',
-  ADD COLUMN IF NOT EXISTS pan_number_masked VARCHAR(20) DEFAULT NULL
-    COMMENT 'XXXxxxxLAST2 masked PAN for display/audit',
-  ADD COLUMN IF NOT EXISTS bank_account_no_masked VARCHAR(20) DEFAULT NULL
-    COMMENT 'XXXXXXlast4 masked bank account for display/audit';
+SET @mcol_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'aadhar_number_masked'
+);
+SET @msql_3 = IF(@mcol_3 = 0,
+  'ALTER TABLE ats_candidate ADD COLUMN aadhar_number_masked VARCHAR(20) DEFAULT NULL
+    COMMENT ''XXXX-XXXX-LAST4 masked Aadhaar for display/audit''',
+  'SELECT "aadhar_number_masked already exists" AS message');
+PREPARE mstmt_3 FROM @msql_3;
+EXECUTE mstmt_3;
+DEALLOCATE PREPARE mstmt_3;
+
+SET @mcol_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'pan_number_masked'
+);
+SET @msql_4 = IF(@mcol_4 = 0,
+  'ALTER TABLE ats_candidate ADD COLUMN pan_number_masked VARCHAR(20) DEFAULT NULL
+    COMMENT ''XXXxxxxLAST2 masked PAN for display/audit''',
+  'SELECT "pan_number_masked already exists" AS message');
+PREPARE mstmt_4 FROM @msql_4;
+EXECUTE mstmt_4;
+DEALLOCATE PREPARE mstmt_4;
+
+SET @mcol_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = 'bank_account_no_masked'
+);
+SET @msql_5 = IF(@mcol_5 = 0,
+  'ALTER TABLE ats_candidate ADD COLUMN bank_account_no_masked VARCHAR(20) DEFAULT NULL
+    COMMENT ''XXXXXXlast4 masked bank account for display/audit''',
+  'SELECT "bank_account_no_masked already exists" AS message');
+PREPARE mstmt_5 FROM @msql_5;
+EXECUTE mstmt_5;
+DEALLOCATE PREPARE mstmt_5;
 
 -- Backfill masked columns from existing raw values where present
 UPDATE ats_candidate
@@ -42,13 +88,41 @@ UPDATE ats_candidate
 
 -- ─── 3. data_breach_log — SLA alert timestamp columns ───────────────────────
 
-ALTER TABLE data_breach_log
-  ADD COLUMN IF NOT EXISTS alert_sent_at_1h  DATETIME DEFAULT NULL
-    COMMENT 'Timestamp when 1-hour SLA alert email was dispatched',
-  ADD COLUMN IF NOT EXISTS alert_sent_at_48h DATETIME DEFAULT NULL
-    COMMENT 'Timestamp when 48-hour escalation email was dispatched',
-  ADD COLUMN IF NOT EXISTS alert_sent_at_71h DATETIME DEFAULT NULL
-    COMMENT 'Timestamp when 71-hour critical alert email was dispatched';
+SET @mcol_6 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'data_breach_log' AND COLUMN_NAME = 'alert_sent_at_1h'
+);
+SET @msql_6 = IF(@mcol_6 = 0,
+  'ALTER TABLE data_breach_log ADD COLUMN alert_sent_at_1h  DATETIME DEFAULT NULL
+    COMMENT ''Timestamp when 1-hour SLA alert email was dispatched''',
+  'SELECT "alert_sent_at_1h already exists" AS message');
+PREPARE mstmt_6 FROM @msql_6;
+EXECUTE mstmt_6;
+DEALLOCATE PREPARE mstmt_6;
+
+SET @mcol_7 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'data_breach_log' AND COLUMN_NAME = 'alert_sent_at_48h'
+);
+SET @msql_7 = IF(@mcol_7 = 0,
+  'ALTER TABLE data_breach_log ADD COLUMN alert_sent_at_48h DATETIME DEFAULT NULL
+    COMMENT ''Timestamp when 48-hour escalation email was dispatched''',
+  'SELECT "alert_sent_at_48h already exists" AS message');
+PREPARE mstmt_7 FROM @msql_7;
+EXECUTE mstmt_7;
+DEALLOCATE PREPARE mstmt_7;
+
+SET @mcol_8 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'data_breach_log' AND COLUMN_NAME = 'alert_sent_at_71h'
+);
+SET @msql_8 = IF(@mcol_8 = 0,
+  'ALTER TABLE data_breach_log ADD COLUMN alert_sent_at_71h DATETIME DEFAULT NULL
+    COMMENT ''Timestamp when 71-hour critical alert email was dispatched''',
+  'SELECT "alert_sent_at_71h already exists" AS message');
+PREPARE mstmt_8 FROM @msql_8;
+EXECUTE mstmt_8;
+DEALLOCATE PREPARE mstmt_8;
 
 -- ─── 4. dpdp_nominee_registry ────────────────────────────────────────────────
 

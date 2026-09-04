@@ -62,8 +62,26 @@ ALTER TABLE attendance_regularization
   ADD COLUMN IF NOT EXISTS escalated_by VARCHAR(36) NULL;
 
 -- Index for dispute_type filtering
-CREATE INDEX IF NOT EXISTS idx_ar_dispute_type ON attendance_regularization(dispute_type);
-CREATE INDEX IF NOT EXISTS idx_ar_payroll_impact ON attendance_regularization(payroll_impact);
+SET @midx_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND INDEX_NAME = 'idx_ar_dispute_type'
+);
+SET @midxsql_1 = IF(@midx_1 = 0,
+  'CREATE INDEX idx_ar_dispute_type ON attendance_regularization(dispute_type)',
+  'SELECT "idx_ar_dispute_type already exists" AS message');
+PREPARE midxstmt_1 FROM @midxsql_1;
+EXECUTE midxstmt_1;
+DEALLOCATE PREPARE midxstmt_1;
+SET @midx_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_regularization' AND INDEX_NAME = 'idx_ar_payroll_impact'
+);
+SET @midxsql_2 = IF(@midx_2 = 0,
+  'CREATE INDEX idx_ar_payroll_impact ON attendance_regularization(payroll_impact)',
+  'SELECT "idx_ar_payroll_impact already exists" AS message');
+PREPARE midxstmt_2 FROM @midxsql_2;
+EXECUTE midxstmt_2;
+DEALLOCATE PREPARE midxstmt_2;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 2. Extend attendance_daily_record
@@ -85,7 +103,16 @@ ALTER TABLE attendance_daily_record
     COMMENT 'When the status was last changed';
 
 -- Index for audit queries on changed records
-CREATE INDEX IF NOT EXISTS idx_adr_status_changed ON attendance_daily_record(status_changed_at);
+SET @midx_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_daily_record' AND INDEX_NAME = 'idx_adr_status_changed'
+);
+SET @midxsql_3 = IF(@midx_3 = 0,
+  'CREATE INDEX idx_adr_status_changed ON attendance_daily_record(status_changed_at)',
+  'SELECT "idx_adr_status_changed already exists" AS message');
+PREPARE midxstmt_3 FROM @midxsql_3;
+EXECUTE midxstmt_3;
+DEALLOCATE PREPARE midxstmt_3;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 3. Extend sensitive_action_log
@@ -111,8 +138,26 @@ ALTER TABLE sensitive_action_log
     COMMENT 'Reason provided by actor for sensitive/override actions';
 
 -- Index for employee-centric audit queries
-CREATE INDEX IF NOT EXISTS idx_sal_employee ON sensitive_action_log(employee_id);
-CREATE INDEX IF NOT EXISTS idx_sal_actor_role ON sensitive_action_log(actor_role);
+SET @midx_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sensitive_action_log' AND INDEX_NAME = 'idx_sal_employee'
+);
+SET @midxsql_4 = IF(@midx_4 = 0,
+  'CREATE INDEX idx_sal_employee ON sensitive_action_log(employee_id)',
+  'SELECT "idx_sal_employee already exists" AS message');
+PREPARE midxstmt_4 FROM @midxsql_4;
+EXECUTE midxstmt_4;
+DEALLOCATE PREPARE midxstmt_4;
+SET @midx_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sensitive_action_log' AND INDEX_NAME = 'idx_sal_actor_role'
+);
+SET @midxsql_5 = IF(@midx_5 = 0,
+  'CREATE INDEX idx_sal_actor_role ON sensitive_action_log(actor_role)',
+  'SELECT "idx_sal_actor_role already exists" AS message');
+PREPARE midxstmt_5 FROM @midxsql_5;
+EXECUTE midxstmt_5;
+DEALLOCATE PREPARE midxstmt_5;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- ROLLBACK
