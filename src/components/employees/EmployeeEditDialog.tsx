@@ -174,6 +174,11 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   });
   const [selectedSalaryStructureId, setSelectedSalaryStructureId] = useState("");
   const [salaryVisible, setSalaryVisible] = useState(false);
+  // True only when the user explicitly edits a salary field. Pre-populating the
+  // form from the existing assignment must NOT trigger a re-post on save — that
+  // would fire an invalid-uuid error for employees whose structure_id is null
+  // (legacy rows) or whose salary the user did not intend to change.
+  const [salaryTouched, setSalaryTouched] = useState(false);
 
   // Fetch salary structure for this employee
   const { data: salaryContext, isLoading: isLoadingSalary } = useQuery({
@@ -211,7 +216,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   const [managerSearchQuery, setManagerSearchQuery] = useState("");
   const eligibilityRef = useRef<EmployeeLeaveEligibilityHandle>(null);
 
-  // Update salary data when structure is loaded
+  // Update salary data when structure is loaded. Reset salaryTouched so a
+  // plain cost-centre / department change does not re-post salary by accident.
   useEffect(() => {
     if (salaryStructure) {
       const monthlyCtc = Number(salaryStructure.ctc_annual ?? 0) / 12;
@@ -241,6 +247,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         effective_from: new Date().toISOString().split("T")[0],
       });
     }
+    setSalaryTouched(false);
   }, [salaryStructure, salaryStructures]);
 
   // Fetch full employee details when dialog opens
@@ -524,8 +531,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
       // Update employee details and department manager status
       await updateMutation.mutateAsync({ data: formData, isDeptManager: isDepartmentManager });
       
-      // Update salary structure if basic salary is provided
-      if (salaryData.basic_salary) {
+      // Only re-post salary when the user actually edited a salary field.
+      // Pre-populated values from the existing assignment must not re-fire.
+      if (salaryTouched && salaryData.basic_salary) {
         await salaryMutation.mutateAsync(salaryData);
       }
 
@@ -1153,7 +1161,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                     <div className="flex items-end justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
                       <div className="flex-1 space-y-2">
                         <Label>Salary Structure *</Label>
-                        <Select value={selectedSalaryStructureId} onValueChange={setSelectedSalaryStructureId}>
+                        <Select value={selectedSalaryStructureId} onValueChange={(v) => { setSelectedSalaryStructureId(v); setSalaryTouched(true); }}>
                           <SelectTrigger><SelectValue placeholder="Select salary structure" /></SelectTrigger>
                           <SelectContent>
                             {salaryStructures.map((structure: any) => (
@@ -1177,7 +1185,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                             id="basic_salary"
                             type="number"
                             value={salaryData.basic_salary}
-                            onChange={(e) => setSalaryData({ ...salaryData, basic_salary: e.target.value })}
+                            onChange={(e) => { setSalaryData({ ...salaryData, basic_salary: e.target.value }); setSalaryTouched(true); }}
                             className="pl-9"
                             placeholder="0"
                           />
@@ -1189,7 +1197,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                           id="effective_from"
                           type="date"
                           value={salaryData.effective_from}
-                          onChange={(e) => setSalaryData({ ...salaryData, effective_from: e.target.value })}
+                          onChange={(e) => { setSalaryData({ ...salaryData, effective_from: e.target.value }); setSalaryTouched(true); }}
                         />
                       </div>
                     </div>
@@ -1205,7 +1213,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                               id="hra"
                               type="number"
                               value={salaryData.hra}
-                              onChange={(e) => setSalaryData({ ...salaryData, hra: e.target.value })}
+                              onChange={(e) => { setSalaryData({ ...salaryData, hra: e.target.value }); setSalaryTouched(true); }}
                               className="pl-9"
                               placeholder="0"
                             />
@@ -1219,7 +1227,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                               id="transport_allowance"
                               type="number"
                               value={salaryData.transport_allowance}
-                              onChange={(e) => setSalaryData({ ...salaryData, transport_allowance: e.target.value })}
+                              onChange={(e) => { setSalaryData({ ...salaryData, transport_allowance: e.target.value }); setSalaryTouched(true); }}
                               className="pl-9"
                               placeholder="0"
                             />
@@ -1233,7 +1241,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                               id="medical_allowance"
                               type="number"
                               value={salaryData.medical_allowance}
-                              onChange={(e) => setSalaryData({ ...salaryData, medical_allowance: e.target.value })}
+                              onChange={(e) => { setSalaryData({ ...salaryData, medical_allowance: e.target.value }); setSalaryTouched(true); }}
                               className="pl-9"
                               placeholder="0"
                             />
@@ -1247,7 +1255,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                               id="other_allowances"
                               type="number"
                               value={salaryData.other_allowances}
-                              onChange={(e) => setSalaryData({ ...salaryData, other_allowances: e.target.value })}
+                              onChange={(e) => { setSalaryData({ ...salaryData, other_allowances: e.target.value }); setSalaryTouched(true); }}
                               className="pl-9"
                               placeholder="0"
                             />
@@ -1267,7 +1275,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                               id="tax_deduction"
                               type="number"
                               value={salaryData.tax_deduction}
-                              onChange={(e) => setSalaryData({ ...salaryData, tax_deduction: e.target.value })}
+                              onChange={(e) => { setSalaryData({ ...salaryData, tax_deduction: e.target.value }); setSalaryTouched(true); }}
                               className="pl-9"
                               placeholder="0"
                             />
@@ -1281,7 +1289,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                               id="other_deductions"
                               type="number"
                               value={salaryData.other_deductions}
-                              onChange={(e) => setSalaryData({ ...salaryData, other_deductions: e.target.value })}
+                              onChange={(e) => { setSalaryData({ ...salaryData, other_deductions: e.target.value }); setSalaryTouched(true); }}
                               className="pl-9"
                               placeholder="0"
                             />
