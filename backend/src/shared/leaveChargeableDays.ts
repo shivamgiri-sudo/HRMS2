@@ -23,6 +23,23 @@ import { enumerateDates } from "./attendanceSnapshot.js";
  * payrollCalculate.service.ts's calculateWeekoffEligibility(). Do not use
  * this function to answer that question, and do not use that function to
  * answer this one — they must stay architecturally separate per policy.
+ *
+ * PAST-DATE OVERRIDE (user decision, 2026-09-05): roster/holiday is checked
+ * first because most leave is applied in ADVANCE, before any attendance
+ * exists to look at — there is nothing else available at that point. But for
+ * a date already in the past, real attendance exists and is the ground
+ * truth: if the roster says Week Off / a calendar says holiday, yet the
+ * employee's actual attendance for that exact date is 'absent' or
+ * 'missing_punch' (a genuine unaccounted gap, not an excused day), the day
+ * IS reclassified back to "chargeable" so a backdated leave entry can cover
+ * it. A date whose attendance already says 'week_off'/'holiday'/'present'/
+ * 'half_day'/'leave_approved'/'week_off_worked' is left exactly as the
+ * roster/holiday check found it — those are accounted-for outcomes, not
+ * gaps, and 'unreconciled' is deliberately left alone too: it is still
+ * pending resolution, so treating it as a gap could reserve balance against
+ * a day the reconciliation engine later turns into something else entirely.
+ * Never applies to a future date: there is no attendance to disagree with
+ * the roster yet, so the roster's own classification stands unchanged.
  */
 export type LeaveDayClassification = "chargeable" | "week_off" | "holiday";
 
@@ -104,6 +121,30 @@ export async function classifyLeaveDays(
     // Holiday takes priority if a date is somehow both — matches
     // attendance-engine's own override order (holiday checked before week-off).
     if (result.get(d) !== "holiday") result.set(d, "week_off");
+  }
+
+  // Past-date override — see the PAST-DATE OVERRIDE note on this function.
+  // Only worth a query when there is at least one week_off/holiday date to
+  // possibly override. "Past" is decided by the DB's own CURDATE(), not a
+  // JS Date computed in this process — this repo has been bitten before by
+  // a host-timezone Date read as UTC and shifting the day by one.
+  const nonChargeableDates = Array.from(result.entries())
+    .filter(([, v]) => v !== "chargeable")
+    .map(([d]) => d);
+  if (nonChargeableDates.length > 0) {
+    const [attendanceRows] = await db.execute<RowDataPacket[]>(
+      `SELECT record_date, attendance_status
+         FROM attendance_daily_record
+        WHERE employee_id = ?
+          AND record_date IN (${nonChargeableDates.map(() => "?").join(",")})
+          AND record_date < CURDATE()
+          AND attendance_status IN ('absent', 'missing_punch')`,
+      [employeeId, ...nonChargeableDates]
+    );
+    for (const row of attendanceRows as RowDataPacket[]) {
+      const d = String((row as any).record_date).slice(0, 10);
+      result.set(d, "chargeable");
+    }
   }
 
   return result;
