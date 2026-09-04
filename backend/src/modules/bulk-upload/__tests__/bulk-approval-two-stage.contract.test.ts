@@ -97,6 +97,10 @@ vi.mock("../bulk-approval.service.js", () => ({
   },
   getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
   claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+  // Verifies apply*Batch's applied count against the real record — a no-op stub here
+  // since these fixtures never diverge from what applyIncentiveBatch/applyDeductionBatch
+  // report. Present only so the route's named import resolves under vi.mock.
+  verifyRowsActuallyApplied: vi.fn().mockResolvedValue({ checked: 0, confirmed: 0, mismatched: 0 }),
 }));
 
 const { applyIncentiveBatch, rejectIncentiveBatch, applyDeductionBatch } = vi.hoisted(() => ({

@@ -20,6 +20,7 @@ import { db } from "../../db/mysql.js";
 import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { emailService } from "../communication/email.service.js";
+import { withBulkLockRetry } from "./lock-retry.js";
 
 /** Upload types that must not apply until a branch head approves them. */
 export const APPROVAL_GATED_TYPES = new Set([
@@ -340,27 +341,54 @@ export function resolveSingleBranch(
   return { branchId: [...branches][0] };
 }
 
-/** Record which domain row a spreadsheet line produced, both directions traceable. */
+/**
+ * Record which domain row a spreadsheet line produced, both directions traceable.
+ *
+ * Retries transient lock contention on upload_batch_row itself — a busy batch writes
+ * this row on every single line, so it is exactly as likely to collide as the
+ * bookkeeping in {@link lockEntity}. This call sits in the SUCCESS path of the
+ * per-row loop in every import*Batch function, with no catch of its own around it:
+ * if it threw, a row whose domain record had already been created (submitRegularization
+ * / submitRequest already committed) would escape the loop uncaught, abort the whole
+ * concurrency group, and leave every row after it — and every row in a sibling group
+ * still in flight — stuck at row_status='pending' forever, indistinguishable from a row
+ * that was never looked at. That is the exact shape of BATCH-1788438594771's 17 silently
+ * lost rows and BATCH-1788166312651's 11. See also reconcileStuckRows below, which is
+ * the second line of defence for whatever this retry still cannot save.
+ */
 export async function linkRowToEntity(
   rowId: string,
   entityType: string,
   entityId: string,
 ): Promise<void> {
-  await db.execute(
-    `UPDATE upload_batch_row
-        SET created_entity_type = ?, created_entity_id = ?, row_status = 'imported'
-      WHERE id = ?`,
-    [entityType, entityId, rowId],
+  await withBulkLockRetry(() =>
+    db.execute(
+      `UPDATE upload_batch_row
+          SET created_entity_type = ?, created_entity_id = ?, row_status = 'imported'
+        WHERE id = ?`,
+      [entityType, entityId, rowId],
+    ),
   );
 }
 
-/** Mark a staged row as failed, keeping the reason on the row itself. */
+/**
+ * Mark a staged row as failed, keeping the reason on the row itself.
+ *
+ * Retried the same way as {@link linkRowToEntity} and for the same reason: this is
+ * called FROM a catch block, so if it throws too, the original error is lost and the
+ * row is abandoned mid-batch with no trace of either failure. It still does not swallow
+ * on exhaustion — if it truly cannot write after retrying, the row is left exactly where
+ * it was (still 'pending'/'valid'), and reconcileStuckRows closes that gap once the batch
+ * finishes rather than pretending here that the write succeeded.
+ */
 export async function markRowFailed(rowId: string, message: string): Promise<void> {
-  await db.execute(
-    `UPDATE upload_batch_row
-        SET row_status = 'error', error_messages = ?
-      WHERE id = ?`,
-    [JSON.stringify([message.slice(0, 500)]), rowId],
+  await withBulkLockRetry(() =>
+    db.execute(
+      `UPDATE upload_batch_row
+          SET row_status = 'error', error_messages = ?
+        WHERE id = ?`,
+      [JSON.stringify([message.slice(0, 500)]), rowId],
+    ),
   );
 }
 
@@ -371,6 +399,25 @@ export async function markRowFailed(rowId: string, message: string): Promise<voi
  * backend (verified 2026-08-21) — the only removal path is the discard module, which
  * soft-sets status='discarded' and reverses the balance. So this registry plus the
  * guard in discard.service.ts is a complete lock, not a partial one.
+ *
+ * NEVER THROWS. This used to be a bare INSERT called right after the real domain
+ * write (reviewRegularization / reviewRequest / the incentive & deduction status
+ * UPDATEs) — those already committed and corrected attendance/leave/pay before this
+ * ran. Live evidence this was reporting real successes as failures: batch
+ * BATCH-1788272069769 rows 13 and 55 both show attendance_regularization approved
+ * AND attendance_daily_record actually corrected, yet the row is recorded 'error'
+ * with "Lock wait timeout exceeded" — because THIS insert, not the correction, hit
+ * the lock contention (bulk_upload_locked_entity is written by every row of every
+ * concurrent batch). For deduction the effect was worse: lockEntity used to run
+ * INSIDE the same withBulkLockRetry closure as the status UPDATE, so a failure here
+ * re-ran the (idempotency-guarded) UPDATE on retry, which then failed with the
+ * unrelated "no longer pending approval" and buried the real error entirely.
+ *
+ * The lock's job is to stop a SECOND edit of an already-applied row — a missing
+ * lock row is a much smaller, and later auditable, risk than telling a branch head
+ * their correction failed when it did not. So this retries the transient lock
+ * conflicts exactly like the domain call does, and if it still cannot write after
+ * that, it logs loudly and returns rather than failing the row.
  */
 export async function lockEntity(params: {
   entityType: string;
@@ -381,17 +428,27 @@ export async function lockEntity(params: {
   lockedBy: string;
   reason?: string;
 }): Promise<void> {
-  await db.execute(
-    `INSERT INTO bulk_upload_locked_entity
-       (id, entity_type, entity_id, upload_batch_id, upload_batch_no, employee_id, locked_by, lock_reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE locked_at = locked_at`,
-    [
-      randomUUID(), params.entityType, params.entityId, params.batchId,
-      params.batchNo, params.employeeId, params.lockedBy,
-      params.reason ?? "Created by an approved bulk upload",
-    ],
-  );
+  try {
+    await withBulkLockRetry(() =>
+      db.execute(
+        `INSERT INTO bulk_upload_locked_entity
+           (id, entity_type, entity_id, upload_batch_id, upload_batch_no, employee_id, locked_by, lock_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE locked_at = locked_at`,
+        [
+          randomUUID(), params.entityType, params.entityId, params.batchId,
+          params.batchNo, params.employeeId, params.lockedBy,
+          params.reason ?? "Created by an approved bulk upload",
+        ],
+      ),
+    );
+  } catch (err) {
+    console.error(
+      `[bulk-upload] lockEntity failed for ${params.entityType} ${params.entityId} ` +
+        `(batch ${params.batchNo ?? params.batchId}) — the underlying record was still ` +
+        `updated; only the re-edit lock is missing. Reason: ${(err as Error)?.message ?? String(err)}`,
+    );
+  }
 }
 
 /**
@@ -413,6 +470,14 @@ export async function lockEntity(params: {
  */
 const LOCK_INSERT_CHUNK = 500;
 
+/**
+ * NEVER THROWS, same rationale as {@link lockEntity}. `applyIncentiveBatch` calls
+ * this AFTER every incentive_upload_batch row has already been flipped to
+ * 'approved' — a failure here used to reject the whole function and lose the
+ * `applied` count for every incentive in the batch, even though the money-moving
+ * status change had already committed. One chunk failing is now logged and
+ * skipped rather than discarding every chunk's already-applied result.
+ */
 export async function lockEntities(
   entries: readonly {
     entityType: string;
@@ -436,13 +501,23 @@ export async function lockEntities(
         e.reason ?? "Created by an approved bulk upload",
       );
     }
-    await db.query(
-      `INSERT INTO bulk_upload_locked_entity
-         (id, entity_type, entity_id, upload_batch_id, upload_batch_no, employee_id, locked_by, lock_reason)
-       VALUES ${slice.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
-       ON DUPLICATE KEY UPDATE locked_at = locked_at`,
-      values,
-    );
+    try {
+      await withBulkLockRetry(() =>
+        db.query(
+          `INSERT INTO bulk_upload_locked_entity
+             (id, entity_type, entity_id, upload_batch_id, upload_batch_no, employee_id, locked_by, lock_reason)
+           VALUES ${slice.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
+           ON DUPLICATE KEY UPDATE locked_at = locked_at`,
+          values,
+        ),
+      );
+    } catch (err) {
+      console.error(
+        `[bulk-upload] lockEntities chunk failed (${slice.length} rows, entityType ` +
+          `${slice[0]?.entityType}) — the underlying records were still updated; only the ` +
+          `re-edit lock is missing for this chunk. Reason: ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
   }
 }
 
@@ -590,6 +665,222 @@ export async function assertCanApprove(
   }
 }
 
+export interface ReconcileResult {
+  totalRows: number;
+  importedRows: number;
+  errorRows: number;
+  discardedRows: number;
+  /** Rows THIS call had to force-resolve because they were never reached. */
+  recoveredRows: number;
+}
+
+/**
+ * Second line of defence for the staging phase. No row may ever be left invisible.
+ *
+ * importRegularizationBatch / importLeaveBatch / etc. process every row through a
+ * per-employee concurrency group and are supposed to always call either
+ * linkRowToEntity (success) or markRowFailed (failure) — but a batch is only as
+ * reliable as its slowest write, and every write above this now retries, not
+ * guarantees. If a row is STILL sitting at 'pending'/'valid' by the time the batch
+ * is declared decided, that row was silently dropped: nothing was created for it and
+ * no one was told. Two live batches did exactly this — BATCH-1788166312651 (11/11
+ * rows, labelled "Approved") and BATCH-1788438594771 (17 of 614 rows, invisible
+ * inside a batch that otherwise looked like a clean "Imported").
+ *
+ * Called at the end of markPendingApproval, before the batch's own imported_rows /
+ * error_rows are written — so the counts on the batch are always the TRUE count of
+ * what upload_batch_row actually holds, not just what the caller's own in-memory
+ * tally happened to observe before something crashed.
+ */
+export async function reconcileStuckRows(batchId: string): Promise<ReconcileResult> {
+  const [strayResult] = await db.execute<ResultSetHeader>(
+    `UPDATE upload_batch_row
+        SET row_status = 'error',
+            error_messages = ?
+      WHERE upload_batch_id = ?
+        AND row_status NOT IN ('imported', 'error', 'discarded')`,
+    [
+      JSON.stringify([
+        "This row never reached a final outcome — the batch finished processing without " +
+          "it. Nothing was created or changed for it. Re-upload this row to try again.",
+      ]),
+      batchId,
+    ],
+  );
+  const recoveredRows = strayResult.affectedRows;
+  if (recoveredRows > 0) {
+    console.error(
+      `[bulk-upload] reconcileStuckRows recovered ${recoveredRows} orphaned row(s) on batch ${batchId} ` +
+        `that were never resolved during import.`,
+    );
+  }
+
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total,
+            SUM(row_status = 'imported')  AS imported,
+            SUM(row_status = 'error')     AS error_count,
+            SUM(row_status = 'discarded') AS discarded
+       FROM upload_batch_row
+      WHERE upload_batch_id = ?`,
+    [batchId],
+  );
+  const c = (countRows as RowDataPacket[])[0] ?? {};
+  return {
+    totalRows: Number(c.total ?? 0),
+    importedRows: Number(c.imported ?? 0),
+    errorRows: Number(c.error_count ?? 0),
+    discardedRows: Number(c.discarded ?? 0),
+    recoveredRows,
+  };
+}
+
+/**
+ * The target table + the status value that means "this row's correction is really
+ * in effect", one entry per approval-gated entity type.
+ */
+const APPLIED_CHECK: Record<string, { sql: string; appliedValues: string[] }> = {
+  attendance_regularization: {
+    sql: `SELECT id, status FROM attendance_regularization WHERE id IN (%IDS%)`,
+    appliedValues: ["approved"],
+  },
+  leave_request: {
+    sql: `SELECT id, status FROM leave_request WHERE id IN (%IDS%)`,
+    appliedValues: ["approved"],
+  },
+  employee_deduction_entries: {
+    sql: `SELECT id, status FROM employee_deduction_entries WHERE id IN (%IDS%)`,
+    appliedValues: ["active"],
+  },
+  incentive_upload_line: {
+    sql: `SELECT iul.id AS id, iub.status AS status
+            FROM incentive_upload_line iul
+            JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
+           WHERE iul.id IN (%IDS%)`,
+    appliedValues: ["approved"],
+  },
+};
+
+export interface VerifyResult {
+  checked: number;
+  confirmed: number;
+  /** Rows this call had to flip from 'imported' to 'error' because the record they
+   *  point at does not actually show the applied status. */
+  mismatched: number;
+}
+
+/**
+ * Second line of defence for the APPLY phase. row_status alone cannot prove a
+ * correction actually landed: on success, apply*Batch never touches
+ * upload_batch_row at all (it was already 'imported' from staging), so a row whose
+ * concurrency group crashed mid-apply is INDISTINGUISHABLE, by row_status, from one
+ * that genuinely succeeded. The only honest answer is to go and look at the record
+ * the row actually points to.
+ *
+ * Call this immediately after apply*Batch returns, before the outcome is reported —
+ * so "Imported" on screen means what it says, not "row_status says imported."
+ * Every row it flips is subtracted from the caller's own applied/failed tally.
+ */
+export async function verifyRowsActuallyApplied(
+  batchId: string,
+  entityType: string,
+): Promise<VerifyResult> {
+  const cfg = APPLIED_CHECK[entityType];
+  if (!cfg) return { checked: 0, confirmed: 0, mismatched: 0 };
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, created_entity_id
+       FROM upload_batch_row
+      WHERE upload_batch_id = ? AND created_entity_type = ? AND row_status = 'imported'
+        AND created_entity_id IS NOT NULL`,
+    [batchId, entityType],
+  );
+  const rowsArr = rows as RowDataPacket[];
+  if (rowsArr.length === 0) return { checked: 0, confirmed: 0, mismatched: 0 };
+
+  const ids = rowsArr.map((r) => String(r.created_entity_id));
+  const placeholders = ids.map(() => "?").join(",");
+  const [statusRows] = await db.execute<RowDataPacket[]>(
+    cfg.sql.replace("%IDS%", placeholders),
+    ids,
+  );
+  const statusMap = new Map<string, string>();
+  for (const s of statusRows as RowDataPacket[]) statusMap.set(String(s.id), String(s.status));
+
+  let confirmed = 0;
+  let mismatched = 0;
+  for (const r of rowsArr) {
+    const status = statusMap.get(String(r.created_entity_id));
+    if (status && cfg.appliedValues.includes(status)) {
+      confirmed++;
+      continue;
+    }
+    mismatched++;
+    await markRowFailed(
+      String(r.id),
+      `This row's record was created but the batch finished without it actually being ` +
+        `approved (current status: ${status ?? "record not found"}). The correction was ` +
+        `NOT applied — re-run approval for this row.`,
+    );
+  }
+  if (mismatched > 0) {
+    console.error(
+      `[bulk-upload] verifyRowsActuallyApplied caught ${mismatched} row(s) on batch ${batchId} ` +
+        `(${entityType}) marked 'imported' whose underlying record was never actually applied.`,
+    );
+  }
+  return { checked: rowsArr.length, confirmed, mismatched };
+}
+
+/**
+ * The "View Rows" data, with the ground truth attached to each row instead of just
+ * upload_batch_row's own (sometimes wrong) row_status — this is what lets a user see
+ * which entries are actually recorded in the database rather than trusting a status
+ * word. `entity_created` is a plain existence check; `entity_status` is the live
+ * value read from the real table right now (attendance_regularization.status,
+ * leave_request.status, the incentive batch's status, the deduction entry's status) —
+ * 'pending' legitimately means "created, not yet approved", not a fault.
+ */
+export interface RowWithLiveStatus extends RowDataPacket {
+  entity_created: boolean;
+  entity_status: string | null;
+}
+
+export async function loadRowsWithLiveStatus(batchId: string): Promise<RowWithLiveStatus[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? ORDER BY row_no ASC",
+    [batchId],
+  );
+  const rowsArr = rows as RowWithLiveStatus[];
+
+  const byType = new Map<string, string[]>();
+  for (const r of rowsArr) {
+    if (r.created_entity_id && r.created_entity_type) {
+      const key = String(r.created_entity_type);
+      if (!byType.has(key)) byType.set(key, []);
+      byType.get(key)!.push(String(r.created_entity_id));
+    }
+  }
+
+  const statusByEntity = new Map<string, string>();
+  for (const [entityType, ids] of byType) {
+    const cfg = APPLIED_CHECK[entityType];
+    if (!cfg || ids.length === 0) continue;
+    const placeholders = ids.map(() => "?").join(",");
+    const [statusRows] = await db.execute<RowDataPacket[]>(
+      cfg.sql.replace("%IDS%", placeholders),
+      ids,
+    );
+    for (const s of statusRows as RowDataPacket[]) statusByEntity.set(String(s.id), String(s.status));
+  }
+
+  for (const r of rowsArr) {
+    const entityId = r.created_entity_id ? String(r.created_entity_id) : null;
+    r.entity_created = Boolean(entityId);
+    r.entity_status = entityId ? statusByEntity.get(entityId) ?? null : null;
+  }
+  return rowsArr;
+}
+
 /**
  * Move a batch into the branch-head queue after its rows have been staged.
  *
@@ -610,7 +901,17 @@ export async function markPendingApproval(
   staged: number,
   failed: number,
 ): Promise<void> {
-  if (staged <= 0) {
+  // Recompute from upload_batch_row itself rather than trusting the caller's own
+  // staged/failed tally — that tally is accumulated in-memory as each concurrency
+  // group finishes, and a group that crashed partway (see reconcileStuckRows' own
+  // comment) never contributes to it at all, so it can silently undercount. Any row
+  // still unresolved at this point is force-closed here, before the batch is ever
+  // shown to a branch head as ready for decision.
+  const reconciled = await reconcileStuckRows(batchId);
+  const trueStaged = reconciled.importedRows;
+  const trueFailed = reconciled.errorRows;
+
+  if (trueStaged <= 0) {
     await db.execute<ResultSetHeader>(
       `UPDATE upload_batch
           SET batch_status = 'validation_failed',
@@ -620,7 +921,7 @@ export async function markPendingApproval(
               error_rows = ?,
               updated_at = NOW()
         WHERE id = ?`,
-      [branchId, failed, batchId],
+      [branchId, trueFailed, batchId],
     );
     return;
   }
@@ -635,8 +936,16 @@ export async function markPendingApproval(
             error_rows = ?,
             updated_at = NOW()
       WHERE id = ?`,
-    [branchId, staged, failed, batchId],
+    [branchId, trueStaged, trueFailed, batchId],
   );
+
+  // staged/failed are kept as parameters (not removed) so callers' own return
+  // values (ImportOutcome, shown to the uploader immediately after upload) still
+  // reflect what THAT request itself did — only the persisted batch row uses the
+  // reconciled truth. A mismatch between the two now means "something was silently
+  // dropped and has been auto-recovered", which is exactly what recoveredRows is for.
+  void staged;
+  void failed;
 }
 
 export async function markDecided(
@@ -645,7 +954,21 @@ export async function markDecided(
   userId: string,
   remarks: string | null,
   summary: string,
+  // Optional: lets the caller's real applied/failed counts pick an honest label
+  // instead of blindly writing 'imported' for a decided batch. Without this,
+  // BATCH-1788264204600 (217/217 rows errored during apply) still displayed as
+  // "Imported" — technically true of the DECISION, misleading about the OUTCOME.
+  counts?: { applied: number; failed: number },
 ): Promise<void> {
+  const batchStatus =
+    status === "rejected"
+      ? "rejected"
+      : counts && counts.applied === 0 && counts.failed > 0
+        ? "failed"
+        : counts && counts.failed > 0
+          ? "imported_with_errors"
+          : "imported";
+
   await db.execute(
     `UPDATE upload_batch
         SET batch_status = ?,
@@ -656,10 +979,7 @@ export async function markDecided(
             error_summary = ?,
             updated_at = NOW()
       WHERE id = ?`,
-    [
-      status === "rejected" ? "rejected" : "imported",
-      status, userId, remarks, summary.slice(0, 1000), batchId,
-    ],
+    [batchStatus, status, userId, remarks, summary.slice(0, 1000), batchId],
   );
 }
 

@@ -7,6 +7,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -162,12 +163,31 @@ router.get("/batches/filter-options", requireRole("admin", "hr", "super_admin", 
   res.json({ success: true, data: { types, statuses, uploaders } });
 }));
 
+/**
+ * Each row now carries the ground truth alongside its own row_status:
+ * `entity_created` — does a real record exist for this row at all — and
+ * `entity_status` — that record's CURRENT status, read live from the table it
+ * actually lives in (attendance_regularization / leave_request / the incentive or
+ * deduction record). row_status is upload_batch_row's own bookkeeping and, before
+ * this, was the only thing shown — see loadRowsWithLiveStatus's own comment for why
+ * that alone was not trustworthy.
+ */
 router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? ORDER BY row_no ASC",
-    [req.params.id]
-  );
+  const rows = await loadRowsWithLiveStatus(req.params.id);
   res.json({ success: true, data: rows });
+}));
+
+/**
+ * On-demand healing for a batch stuck with rows that never reached a final outcome
+ * (row_status still 'pending'/'valid' after the batch itself is already decided) —
+ * the exact failure mode reconcileStuckRows exists to close off going forward. This
+ * lets an admin repair a batch from BEFORE that fix shipped without needing direct
+ * SQL access. It only ever force-resolves rows that are already stuck; it never
+ * touches a row that has a real outcome.
+ */
+router.post("/batches/:id/reconcile", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const result = await reconcileStuckRows(req.params.id);
+  res.json({ success: true, data: result });
 }));
 
 router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {

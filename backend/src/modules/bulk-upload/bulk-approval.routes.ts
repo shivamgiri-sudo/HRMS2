@@ -14,7 +14,7 @@ import {
   STAGE_RULES, BulkUploadError,
   getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
   claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction,
-  sendPartialApplyEmail, resolveStage, stageOutcome,
+  sendPartialApplyEmail, resolveStage, stageOutcome, verifyRowsActuallyApplied,
   type ApprovalStage, type BulkApprovalStatus,
 } from "./bulk-approval.service.js";
 import {
@@ -31,6 +31,18 @@ import { applyDeductionBatch, rejectDeductionBatch } from "./deduction-bulk.serv
 import {
   startBatchJob, getBatchJob, readBatchProgress, type BatchJobKind,
 } from "./batch-job.js";
+
+/**
+ * upload_type_code -> the created_entity_type its rows point at, so an approval can
+ * ask verifyRowsActuallyApplied "did this row's record actually end up approved" —
+ * see that function's own comment for why row_status cannot answer that on its own.
+ */
+const ENTITY_TYPE_BY_UPLOAD_TYPE: Record<string, string> = {
+  ATTENDANCE_REGULARIZATION_BULK: "attendance_regularization",
+  LEAVE_APPLICATION_BULK: "leave_request",
+  INCENTIVE_BULK: "incentive_upload_line",
+  DEDUCTION_BULK: "employee_deduction_entries",
+};
 
 export const bulkApprovalRouter = Router();
 bulkApprovalRouter.use(requireAuth);
@@ -328,6 +340,28 @@ async function performDecision(
       default:
         throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
     }
+
+    // Do not trust apply*Batch's own applied/failed tally at face value: on success
+    // it never writes upload_batch_row at all (see verifyRowsActuallyApplied's own
+    // comment), so a row whose concurrency group crashed mid-apply would otherwise be
+    // reported "applied" with nothing actually changed. Re-check every row this call
+    // believes it applied against the real record before telling anyone it worked.
+    const entityType = ENTITY_TYPE_BY_UPLOAD_TYPE[batch.upload_type_code];
+    if (entityType) {
+      const verified = await verifyRowsActuallyApplied(batch.id, entityType);
+      if (verified.mismatched > 0) {
+        outcome = {
+          ...outcome,
+          applied: Math.max(0, outcome.applied - verified.mismatched),
+          failed: outcome.failed + verified.mismatched,
+          errors: [
+            ...outcome.errors,
+            `${verified.mismatched} row(s) were recreated but never actually finished ` +
+              `approval and have been marked failed — see View Rows for which.`,
+          ],
+        };
+      }
+    }
   } else {
     switch (batch.upload_type_code) {
       case "ATTENDANCE_REGULARIZATION_BULK":
@@ -370,7 +404,9 @@ async function performDecision(
       );
     }
   } else {
-    await markDecided(batch.id, finalStatus, userId, remarks || null, summary);
+    await markDecided(batch.id, finalStatus, userId, remarks || null, summary, {
+      applied: outcome.applied, failed: outcome.failed,
+    });
     // Record the final stage too, so "who released the money" survives.
     await markStageDecided({
       batchId: batch.id,

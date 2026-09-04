@@ -94,6 +94,9 @@ vi.mock("../bulk-approval.service.js", () => ({
   },
   getBatch, assertCanApprove, markDecided, markStageDecided, markStageRejected,
   claimForDecision, releaseClaim, releaseStuckClaim, auditBatchAction, sendPartialApplyEmail,
+  // Present only so the route's named import resolves under vi.mock — see the same
+  // note in bulk-approval-two-stage.contract.test.ts.
+  verifyRowsActuallyApplied: vi.fn().mockResolvedValue({ checked: 0, confirmed: 0, mismatched: 0 }),
 }));
 
 // Collaborators the two-stage chain added. None of them may influence the decision path,

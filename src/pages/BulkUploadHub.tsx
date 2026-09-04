@@ -85,6 +85,11 @@ type UploadBatchRow = {
   target_record_id: string | null;
   created_at: string;
   updated_at: string;
+  // Ground truth, read live from the actual target table (attendance_regularization /
+  // leave_request / the incentive or deduction record) — not just this row's own
+  // bookkeeping status. See backend/.../bulk-approval.service.ts loadRowsWithLiveStatus.
+  entity_created?: boolean;
+  entity_status?: string | null;
 };
 
 type CsvRow = Record<string, string>;
@@ -1260,6 +1265,34 @@ export default function BulkUploadHub() {
     }
   }
 
+  /**
+   * Heals a batch left with rows that never reached a final outcome — the
+   * "row_status still pending after the batch is already decided" bug (see
+   * reconcileStuckRows on the backend). Force-resolves only rows that are already
+   * stuck; never touches a row with a real outcome. Safe to run on any batch, even
+   * one this bug never touched — it will simply report 0 recovered.
+   */
+  async function reconcileBatch(batch: UploadBatch) {
+    setMessage(null);
+    setErrorMessage(null);
+    try {
+      const res = await hrmsApi.post<{
+        success: boolean;
+        data?: { recoveredRows: number; totalRows: number; importedRows: number; errorRows: number };
+      }>(`/api/bulk-upload/batches/${batch.id}/reconcile`, {});
+      const r = res.data;
+      setMessage(
+        r && r.recoveredRows > 0
+          ? `Recovered ${r.recoveredRows} stuck row(s) on ${batch.upload_batch_no}. ` +
+            `Now: ${r.importedRows} imported / ${r.errorRows} error out of ${r.totalRows} total.`
+          : `${batch.upload_batch_no} had no stuck rows — nothing to recover.`,
+      );
+      await loadData();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to reconcile batch");
+    }
+  }
+
   useEffect(() => {
     loadData();
     loadFilterOptions();
@@ -2250,6 +2283,22 @@ export default function BulkUploadHub() {
                                   {activeImportBatchId === batch.id ? "Importing..." : "Import to HRMS"}
                                 </button>
                               )}
+
+                              {/* Visible only when the row counts don't add up to the
+                                  total, or the batch is sitting in the legacy 'approved'
+                                  state — both mean this batch has rows that never
+                                  reached a final outcome. See reconcileBatch above. */}
+                              {(batch.batch_status === "approved" ||
+                                batch.imported_rows + batch.error_rows < batch.total_rows) && (
+                                <button
+                                  onClick={() => reconcileBatch(batch)}
+                                  disabled={isProcessing}
+                                  title="Force-resolve any rows still stuck without a final outcome"
+                                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                                >
+                                  Reconcile
+                                </button>
+                              )}
                             </div>
                           </Td>
                         </tr>
@@ -2627,6 +2676,7 @@ function BatchRowsDialog({
                 <thead className="sticky top-0 bg-slate-50">
                   <tr>
                     <Th>#</Th>
+                    <Th>DB Status</Th>
                     {dataKeys.map((k) => <Th key={k}>{k}</Th>)}
                     {activeTab === "failed" && (
                       <Th><span className="text-rose-600">Errors</span></Th>
@@ -2645,6 +2695,9 @@ function BatchRowsDialog({
                     >
                       <Td>
                         <span className="font-mono text-slate-500">{row.row_no}</span>
+                      </Td>
+                      <Td>
+                        <DbStatusBadge row={row} />
                       </Td>
                       {dataKeys.map((k) => (
                         <Td key={k}>
@@ -2775,6 +2828,57 @@ function Td({ children, className }: { children: React.ReactNode; className?: st
   return <td className={`whitespace-nowrap px-4 py-3 text-slate-600 ${className ?? ""}`}>{children}</td>;
 }
 
+/**
+ * The honest per-row answer to "is this entry actually recorded in the database".
+ * Reads entity_created / entity_status straight from the live target table (see
+ * backend loadRowsWithLiveStatus) — never from this row's own row_status, which can
+ * say "imported" for a row whose approval never actually landed (that gap is what
+ * verifyRowsActuallyApplied on the backend now catches, but this badge is the
+ * belt-and-suspenders view: it shows the ground truth directly, not a status word).
+ */
+const APPLIED_ENTITY_STATUSES = new Set(["approved", "active"]);
+const PENDING_ENTITY_STATUSES = new Set(["pending", "pending_approval", "pending_branch_head"]);
+
+function DbStatusBadge({ row }: { row: UploadBatchRow }) {
+  if (row.entity_created === undefined) {
+    return <span className="text-slate-300">—</span>;
+  }
+  if (!row.entity_created) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+        ✕ Not recorded
+      </span>
+    );
+  }
+  const status = row.entity_status;
+  if (status && APPLIED_ENTITY_STATUSES.has(status)) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+        ✓ Applied ({status})
+      </span>
+    );
+  }
+  if (status && PENDING_ENTITY_STATUSES.has(status)) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+        ● Awaiting approval
+      </span>
+    );
+  }
+  if (status === "rejected" || status === "discarded") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+        {status === "rejected" ? "Rejected" : "Discarded"}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500" title="Record exists but its status could not be classified">
+      Created ({status ?? "unknown"})
+    </span>
+  );
+}
+
 function StatusBadge({
   status,
   small = false,
@@ -2798,17 +2902,30 @@ function StatusBadge({
     failed: "failed",
     cancelled: "cancelled",
     pending: "pending",
+    pending_approval: "pending",
+    approving: "in_progress",
+    rejected: "failed",
+    partially_applied: "warning",
     valid: "success",
     error: "failed",
     skipped: "cancelled",
     active: "success",
     inactive: "cancelled",
+    // NOT a normal terminal value — see reconcileStuckRows / lockEntity comments in
+    // backend/.../bulk-approval.service.ts. A batch can only ever land here from data
+    // written before that fix, where rows were left unresolved. Flagged as a warning,
+    // not success, so it reads as "needs a look" rather than "done".
+    approved: "warning",
   };
+
+  // 'approved' alone reads as a clean success — override the label so a batch stuck
+  // in this legacy state doesn't look identical to a normal completed one.
+  const displayLabel = status === "approved" ? "Approved — Needs Reconcile" : label;
 
   return (
     <SmartHRStatusBadge
       status={normalizeStatus(statusMap[status] || status)}
-      label={label}
+      label={displayLabel}
       className={small ? "text-[11px] px-2 py-0.5" : ""}
     />
   );

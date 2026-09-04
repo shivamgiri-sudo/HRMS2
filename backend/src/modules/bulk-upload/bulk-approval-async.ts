@@ -12,7 +12,7 @@ import type { RowDataPacket } from "mysql2";
 import {
   getBatch, markDecided, releaseClaim, auditBatchAction,
   BulkUploadError, type BatchRecord,
-  APPROVAL_GATED_TYPES,
+  APPROVAL_GATED_TYPES, verifyRowsActuallyApplied,
 } from "./bulk-approval.service.js";
 import { applyRegularizationBatch, rejectRegularizationBatch } from "./attendance-regularization-bulk.service.js";
 import { applyLeaveBatch, rejectLeaveBatch } from "./leave-application-bulk.service.js";
@@ -33,6 +33,18 @@ export interface ApprovalJob {
     final_status: string;
   };
 }
+
+/** Same mapping as bulk-approval.routes.ts — kept local since this file must not
+ *  import from the route layer. See verifyRowsActuallyApplied's own comment for why
+ *  this check exists at all: on success apply*Batch never writes upload_batch_row,
+ *  so a large batch's crashed concurrency group is invisible without it — and this
+ *  async path is precisely the one large batches (600+ rows) go through. */
+const ENTITY_TYPE_BY_UPLOAD_TYPE: Record<string, string> = {
+  ATTENDANCE_REGULARIZATION_BULK: "attendance_regularization",
+  LEAVE_APPLICATION_BULK: "leave_request",
+  INCENTIVE_BULK: "incentive_upload_line",
+  DEDUCTION_BULK: "employee_deduction_entries",
+};
 
 const jobMap = new Map<string, ApprovalJob>();
 
@@ -85,6 +97,23 @@ async function runApprovalAsync(job: ApprovalJob, batch: BatchRecord): Promise<v
         default:
           throw new BulkUploadError(`No apply handler for ${batch.upload_type_code}`, 501);
       }
+
+      const entityType = ENTITY_TYPE_BY_UPLOAD_TYPE[batch.upload_type_code];
+      if (entityType) {
+        const verified = await verifyRowsActuallyApplied(batch.id, entityType);
+        if (verified.mismatched > 0) {
+          outcome = {
+            ...outcome,
+            applied: Math.max(0, outcome.applied - verified.mismatched),
+            failed: outcome.failed + verified.mismatched,
+            errors: [
+              ...outcome.errors,
+              `${verified.mismatched} row(s) were recreated but never actually finished ` +
+                `approval and have been marked failed — see View Rows for which.`,
+            ],
+          };
+        }
+      }
     } else {
       switch (batch.upload_type_code) {
         case "ATTENDANCE_REGULARIZATION_BULK":
@@ -108,7 +137,9 @@ async function runApprovalAsync(job: ApprovalJob, batch: BatchRecord): Promise<v
         : `${outcome.applied} row(s) applied, ${outcome.failed} failed.` +
           (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
 
-    await markDecided(batch.id, finalStatus, job.user_id, job.remarks ?? null, summary);
+    await markDecided(batch.id, finalStatus, job.user_id, job.remarks ?? null, summary, {
+      applied: outcome.applied, failed: outcome.failed,
+    });
     await auditBatchAction({
       userId: job.user_id,
       actionType: job.decision === "approve" ? "BULK_UPLOAD_APPROVED" : "BULK_UPLOAD_REJECTED",
