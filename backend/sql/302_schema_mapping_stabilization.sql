@@ -6,7 +6,7 @@ DELIMITER $$
 CREATE PROCEDURE mig302()
 BEGIN
   -- candidate_workflow_state table for status machine
-  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='candidate_workflow_state') THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='candidate_workflow_state') THEN
     CREATE TABLE candidate_workflow_state (
       id VARCHAR(36) PRIMARY KEY,
       candidate_id VARCHAR(36) NOT NULL,
@@ -21,7 +21,7 @@ BEGIN
   END IF;
 
   -- candidate_status_audit_log
-  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='candidate_status_audit_log') THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='candidate_status_audit_log') THEN
     CREATE TABLE candidate_status_audit_log (
       id VARCHAR(36) PRIMARY KEY,
       candidate_id VARCHAR(36) NOT NULL,
@@ -35,7 +35,7 @@ BEGIN
   END IF;
 
   -- jclr_entries table
-  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='jclr_entries') THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='jclr_entries') THEN
     CREATE TABLE jclr_entries (
       id VARCHAR(36) PRIMARY KEY,
       candidate_id VARCHAR(36) NOT NULL UNIQUE,
@@ -69,7 +69,7 @@ BEGIN
   END IF;
 
   -- salary_component_assignments
-  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='salary_component_assignments') THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='salary_component_assignments') THEN
     CREATE TABLE salary_component_assignments (
       id VARCHAR(36) PRIMARY KEY,
       candidate_id VARCHAR(36),
@@ -98,7 +98,7 @@ BEGIN
   END IF;
 
   -- employee_code_generation_log (safe add — migration 138 may have created it already)
-  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_code_generation_log') THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_code_generation_log') THEN
     CREATE TABLE employee_code_generation_log (
       id VARCHAR(36) PRIMARY KEY,
       candidate_id VARCHAR(36) NOT NULL,
@@ -115,14 +115,14 @@ BEGIN
   END IF;
 
   -- ats_payroll_hr_validation extra status columns if missing
-  IF EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_payroll_hr_validation') THEN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_payroll_hr_validation' AND COLUMN_NAME='jclr_status') THEN
+  IF EXISTS (SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_payroll_hr_validation') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_payroll_hr_validation' AND COLUMN_NAME='jclr_status') THEN
       ALTER TABLE ats_payroll_hr_validation ADD COLUMN jclr_status VARCHAR(30) DEFAULT 'pending';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_payroll_hr_validation' AND COLUMN_NAME='salary_component_status') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_payroll_hr_validation' AND COLUMN_NAME='salary_component_status') THEN
       ALTER TABLE ats_payroll_hr_validation ADD COLUMN salary_component_status VARCHAR(30) DEFAULT 'pending';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_payroll_hr_validation' AND COLUMN_NAME='employee_code_status') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_payroll_hr_validation' AND COLUMN_NAME='employee_code_status') THEN
       ALTER TABLE ats_payroll_hr_validation ADD COLUMN employee_code_status VARCHAR(30) DEFAULT 'pending';
     END IF;
   END IF;

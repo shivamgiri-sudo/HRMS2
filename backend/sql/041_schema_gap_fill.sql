@@ -30,7 +30,7 @@ USE mas_hrms;
 -- 1a. cost_centre_id
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='cost_centre_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='cost_centre_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN cost_centre_id CHAR(36) NULL AFTER department_id, ADD INDEX idx_emp_cc (cost_centre_id), ADD CONSTRAINT fk_emp_cost_centre FOREIGN KEY (cost_centre_id) REFERENCES cost_centre_master(id) ON DELETE SET NULL',
@@ -41,7 +41,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- 1b. grade_id
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='grade_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='grade_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN grade_id CHAR(36) NULL AFTER designation_id, ADD CONSTRAINT fk_emp_grade FOREIGN KEY (grade_id) REFERENCES grade_band_master(id) ON DELETE SET NULL',
@@ -52,7 +52,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- 1c. employee_category (contract/permanent/intern/temporary/consultant)
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='employee_category'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='employee_category'
 );
 SET @sql = IF(@col = 0,
   "ALTER TABLE employees ADD COLUMN employee_category ENUM('permanent','contract','intern','temporary','consultant') NOT NULL DEFAULT 'permanent' AFTER employment_type",
@@ -63,7 +63,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- 1d. marital_status
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='marital_status'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='marital_status'
 );
 SET @sql = IF(@col = 0,
   "ALTER TABLE employees ADD COLUMN marital_status ENUM('single','married','divorced','widowed') NULL AFTER gender",
@@ -74,7 +74,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- 1e. pan_number (India income tax — mandatory for payroll >₹2.5L/yr)
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='pan_number'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='pan_number'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN pan_number VARCHAR(10) NULL AFTER mobile, ADD COLUMN pan_verified_on DATE NULL AFTER pan_number',
@@ -85,7 +85,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- 1f. aadhaar_last4 (last 4 digits only — PII masking per DPDP)
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='aadhaar_last4'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='aadhaar_last4'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN aadhaar_last4 CHAR(4) NULL AFTER pan_verified_on, ADD COLUMN aadhaar_verified_on DATE NULL AFTER aadhaar_last4',
@@ -96,7 +96,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- 1g. location_id (for multi-location employees — links to location_master created in 021b)
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='location_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='location_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN location_id CHAR(36) NULL AFTER branch_id, ADD INDEX idx_emp_location (location_id)',
@@ -110,7 +110,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 --     so existing rows don't break. Apps should enforce proper manager assignment.
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='manager_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='manager_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN manager_id CHAR(36) NULL AFTER reporting_manager_id, ADD INDEX idx_emp_manager (manager_id), ADD CONSTRAINT fk_emp_manager FOREIGN KEY (manager_id) REFERENCES employees(id) ON DELETE SET NULL',
@@ -126,7 +126,7 @@ WHERE manager_id IS NULL AND reporting_manager_id IS NOT NULL;
 -- 1i. lob_id (Line of Business — often needed for billing/analytics)
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employees' AND COLUMN_NAME='lob_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employees' AND COLUMN_NAME='lob_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employees ADD COLUMN lob_id CHAR(36) NULL AFTER process_id, ADD INDEX idx_emp_lob (lob_id), ADD CONSTRAINT fk_emp_lob FOREIGN KEY (lob_id) REFERENCES lob_master(id) ON DELETE SET NULL',
@@ -140,7 +140,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='department_master' AND COLUMN_NAME='parent_department_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='department_master' AND COLUMN_NAME='parent_department_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE department_master ADD COLUMN parent_department_id CHAR(36) NULL AFTER branch_id, ADD COLUMN dept_head_employee_id CHAR(36) NULL AFTER parent_department_id, ADD CONSTRAINT fk_dept_parent FOREIGN KEY (parent_department_id) REFERENCES department_master(id) ON DELETE SET NULL',
@@ -155,7 +155,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- Drop the UNIQUE constraint (employee_id should not be unique here)
 SET @idx = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_emergency_contact'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_emergency_contact'
   AND CONSTRAINT_TYPE='UNIQUE' AND CONSTRAINT_NAME='employee_id'
 );
 -- MySQL unique constraint via UNIQUE KEY inline is named after the column
@@ -168,7 +168,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- Add sequence + is_primary flag
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_emergency_contact' AND COLUMN_NAME='contact_seq'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_emergency_contact' AND COLUMN_NAME='contact_seq'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employee_emergency_contact ADD COLUMN contact_seq TINYINT NOT NULL DEFAULT 1 AFTER employee_id, ADD COLUMN is_primary TINYINT(1) NOT NULL DEFAULT 0 AFTER contact_seq, ADD UNIQUE KEY uq_emp_emergency_seq (employee_id, contact_seq), ADD INDEX idx_eec_emp (employee_id)',
@@ -183,7 +183,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- Drop UNIQUE on employee_id
 SET @idx = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_bank_detail'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_bank_detail'
   AND CONSTRAINT_TYPE='UNIQUE' AND CONSTRAINT_NAME='employee_id'
 );
 SET @sql = IF(@idx > 0,
@@ -195,7 +195,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- Add is_primary + account_seq
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_bank_detail' AND COLUMN_NAME='is_primary'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_bank_detail' AND COLUMN_NAME='is_primary'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE employee_bank_detail ADD COLUMN is_primary TINYINT(1) NOT NULL DEFAULT 1 AFTER employee_id, ADD COLUMN account_seq TINYINT NOT NULL DEFAULT 1 AFTER is_primary, ADD COLUMN active_status TINYINT(1) NOT NULL DEFAULT 1, ADD UNIQUE KEY uq_bank_seq (employee_id, account_seq), ADD INDEX idx_bank_emp (employee_id)',
@@ -209,7 +209,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_documents' AND COLUMN_NAME='doc_category'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_documents' AND COLUMN_NAME='doc_category'
 );
 SET @sql = IF(@col = 0,
   "ALTER TABLE employee_documents ADD COLUMN doc_category ENUM('identity','address_proof','education','experience','pan','aadhaar','passport','visa','driving_license','medical','contract','offer_letter','bank','tax','statutory','other') NOT NULL DEFAULT 'other' AFTER doc_type",
@@ -433,7 +433,7 @@ CREATE TABLE IF NOT EXISTS employee_contract (
 
 SET @col = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='cost_centre_master' AND COLUMN_NAME='parent_cost_centre_id'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='cost_centre_master' AND COLUMN_NAME='parent_cost_centre_id'
 );
 SET @sql = IF(@col = 0,
   'ALTER TABLE cost_centre_master ADD COLUMN parent_cost_centre_id CHAR(36) NULL AFTER cost_centre_name, ADD COLUMN cost_centre_head_id CHAR(36) NULL AFTER parent_cost_centre_id, ADD COLUMN budget_annual DECIMAL(16,2) NULL, ADD CONSTRAINT fk_cc_parent FOREIGN KEY (parent_cost_centre_id) REFERENCES cost_centre_master(id) ON DELETE SET NULL',
@@ -449,12 +449,12 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 SET @fk = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_uan'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_uan'
   AND REFERENCED_TABLE_NAME='employees' AND COLUMN_NAME='employee_id'
 );
 SET @sql = IF(@fk = 0 AND (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_uan' AND COLUMN_NAME='employee_id') > 0,
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_uan' AND COLUMN_NAME='employee_id') > 0,
   'ALTER TABLE employee_uan ADD CONSTRAINT fk_uan_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE',
   'SELECT 1'
 );

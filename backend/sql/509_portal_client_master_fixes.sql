@@ -9,7 +9,7 @@ USE mas_hrms;
 
 SET @col_check = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='client_master' AND COLUMN_NAME='logo_url'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='client_master' AND COLUMN_NAME='logo_url'
 );
 SET @sql_cm = IF(@col_check = 0,
   'ALTER TABLE client_master
@@ -45,7 +45,7 @@ DEALLOCATE PREPARE stmt_cm;
 -- ── 2. Enrich process_master with client-facing SLA/escalation fields ────────
 SET @col_pm = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='process_master' AND COLUMN_NAME='sla_response_hours'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='process_master' AND COLUMN_NAME='sla_response_hours'
 );
 SET @sql_pm = IF(@col_pm = 0,
   'ALTER TABLE process_master
@@ -66,7 +66,7 @@ DEALLOCATE PREPARE stmt_pm;
 -- ── 3. Enrich client_user with fields expected by enhanced-portal-user.service ─
 SET @col_cu = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='client_user' AND COLUMN_NAME='phone'
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='client_user' AND COLUMN_NAME='phone'
 );
 SET @sql_cu = IF(@col_cu = 0,
   'ALTER TABLE client_user

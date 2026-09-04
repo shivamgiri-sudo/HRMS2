@@ -11,7 +11,7 @@ WHERE leave_code = 'ML' AND max_days_per_year = 90;
 
 -- 2. Add missing columns to maternity_benefit_record
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-  WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='maternity_benefit_record' AND COLUMN_NAME='record_type');
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='maternity_benefit_record' AND COLUMN_NAME='record_type');
 SET @sql = IF(@col = 0,
   "ALTER TABLE maternity_benefit_record
      ADD COLUMN record_type ENUM('delivery','adoption','miscarriage','surrogacy')

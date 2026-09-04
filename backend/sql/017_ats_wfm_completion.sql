@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS manpower_requisition (
 -- Link candidate to requisition (optional; preserves existing ATS flows)
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='requisition_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='requisition_id') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN requisition_id CHAR(36) NULL, ADD COLUMN bgv_status VARCHAR(50) NULL DEFAULT ''pending'', ADD COLUMN offer_status VARCHAR(50) NULL, ADD COLUMN duplicate_of CHAR(36) NULL',
   'SELECT 1'
 );
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS attrition_record (
 -- is_provisional = 1 flags records not yet linked to an exit_request (provisional analytics only).
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='attrition_record' AND COLUMN_NAME='exit_request_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='attrition_record' AND COLUMN_NAME='exit_request_id') = 0,
   'ALTER TABLE attrition_record ADD COLUMN exit_request_id CHAR(36) NULL, ADD COLUMN is_provisional TINYINT(1) NOT NULL DEFAULT 1',
   'SELECT 1'
 );

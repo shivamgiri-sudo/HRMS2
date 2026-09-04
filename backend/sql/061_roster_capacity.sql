@@ -76,7 +76,7 @@ SET @alter_sql = (
   SELECT IF(
     NOT EXISTS(
       SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = 'mas_hrms'
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'week_off_preference'
       AND COLUMN_NAME = 'submission_order'
     ),
@@ -92,7 +92,7 @@ SET @alter_sql = (
   SELECT IF(
     NOT EXISTS(
       SELECT 1 FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = 'mas_hrms'
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'week_off_preference'
       AND COLUMN_NAME = 'auto_approved'
     ),
@@ -108,7 +108,7 @@ SET @alter_sql = (
   SELECT IF(
     NOT EXISTS(
       SELECT 1 FROM information_schema.STATISTICS
-      WHERE TABLE_SCHEMA = 'mas_hrms'
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'week_off_preference'
       AND INDEX_NAME = 'idx_submission_order'
     ),

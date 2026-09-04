@@ -1,7 +1,7 @@
 USE mas_hrms;
 
 -- Add call_centre_code scoping to letter_template
-SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='letter_template' AND COLUMN_NAME='call_centre_code');
+SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='letter_template' AND COLUMN_NAME='call_centre_code');
 SET @sql = IF(@col = 0,
   "ALTER TABLE letter_template ADD COLUMN call_centre_code VARCHAR(30) NULL COMMENT 'NULL = applies to all CC; specific value = CC-specific override', ADD COLUMN approval_required TINYINT(1) NOT NULL DEFAULT 0, ADD INDEX idx_lt_cc_code (call_centre_code)",
   'SELECT 1');

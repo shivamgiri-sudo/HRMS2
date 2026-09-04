@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS employee_lifecycle_event (
 
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='employee_documents' AND COLUMN_NAME='expiry_date') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='employee_documents' AND COLUMN_NAME='expiry_date') = 0,
   'ALTER TABLE employee_documents ADD COLUMN expiry_date DATE NULL, ADD COLUMN verified_by CHAR(36) NULL, ADD COLUMN verification_date DATETIME NULL, ADD COLUMN verification_remarks VARCHAR(500) NULL',
   'SELECT 1'
 );

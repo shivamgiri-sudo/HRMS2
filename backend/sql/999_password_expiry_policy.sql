@@ -14,7 +14,7 @@ USE mas_hrms;
 -- Check if column exists first, then add
 SET @col_exists = (SELECT COUNT(*)
                    FROM INFORMATION_SCHEMA.COLUMNS
-                   WHERE TABLE_SCHEMA = 'mas_hrms'
+                   WHERE TABLE_SCHEMA = DATABASE()
                    AND TABLE_NAME = 'auth_user'
                    AND COLUMN_NAME = 'password_changed_at');
 
@@ -35,7 +35,7 @@ UPDATE auth_user
 -- Add index for efficient password expiry queries
 SET @idx_exists = (SELECT COUNT(*)
                    FROM INFORMATION_SCHEMA.STATISTICS
-                   WHERE TABLE_SCHEMA = 'mas_hrms'
+                   WHERE TABLE_SCHEMA = DATABASE()
                    AND TABLE_NAME = 'auth_user'
                    AND INDEX_NAME = 'idx_password_changed_at');
 

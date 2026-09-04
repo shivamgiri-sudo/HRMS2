@@ -168,7 +168,7 @@ ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP;
 -- Verification Queries (commented out - use for manual testing)
 -- ============================================================================
 -- SELECT COUNT(*) AS table_count FROM information_schema.TABLES
--- WHERE TABLE_SCHEMA = 'mas_hrms'
+-- WHERE TABLE_SCHEMA = DATABASE()
 -- AND TABLE_NAME IN ('performance_feedback_cycle', 'performance_feedback_request',
 --                     'competency_master', 'performance_feedback_response',
 --                     'performance_feedback_report', 'development_plan', 'development_plan_goal');

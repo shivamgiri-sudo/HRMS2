@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS grade_band_master (
 -- Link designation_master to grade_band (additive column, safe to add)
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='designation_master' AND COLUMN_NAME='grade_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='designation_master' AND COLUMN_NAME='grade_id') = 0,
   'ALTER TABLE designation_master ADD COLUMN grade_id CHAR(36) NULL, ADD CONSTRAINT fk_desig_grade FOREIGN KEY (grade_id) REFERENCES grade_band_master(id) ON DELETE SET NULL',
   'SELECT 1'
 );

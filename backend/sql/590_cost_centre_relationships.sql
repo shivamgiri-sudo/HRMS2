@@ -8,7 +8,7 @@ USE mas_hrms;
 -- ── 1. Add client_id column to cost_centre_master ────────────────────────────
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'client_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'client_id') = 0,
   'ALTER TABLE cost_centre_master ADD COLUMN client_id CHAR(36) NULL AFTER department_id',
   'SELECT 1'
 );
@@ -17,7 +17,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- ── 2. Add lob_id column to cost_centre_master ───────────────────────────────
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'lob_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'lob_id') = 0,
   'ALTER TABLE cost_centre_master ADD COLUMN lob_id CHAR(36) NULL AFTER client_id',
   'SELECT 1'
 );
@@ -26,7 +26,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- ── 3. Add process_id column to cost_centre_master ───────────────────────────
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'process_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND COLUMN_NAME = 'process_id') = 0,
   'ALTER TABLE cost_centre_master ADD COLUMN process_id CHAR(36) NULL AFTER lob_id',
   'SELECT 1'
 );
@@ -65,7 +65,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- ── 5. Add indexes for performance ───────────────────────────────────────────
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-   WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME = 'cost_centre_master' AND INDEX_NAME = 'idx_cc_client') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND INDEX_NAME = 'idx_cc_client') = 0,
   'CREATE INDEX idx_cc_client ON cost_centre_master(client_id)',
   'SELECT 1'
 );
@@ -73,7 +73,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-   WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME = 'cost_centre_master' AND INDEX_NAME = 'idx_cc_lob') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND INDEX_NAME = 'idx_cc_lob') = 0,
   'CREATE INDEX idx_cc_lob ON cost_centre_master(lob_id)',
   'SELECT 1'
 );
@@ -81,7 +81,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
-   WHERE TABLE_SCHEMA = 'mas_hrms' AND TABLE_NAME = 'cost_centre_master' AND INDEX_NAME = 'idx_cc_process') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master' AND INDEX_NAME = 'idx_cc_process') = 0,
   'CREATE INDEX idx_cc_process ON cost_centre_master(process_id)',
   'SELECT 1'
 );

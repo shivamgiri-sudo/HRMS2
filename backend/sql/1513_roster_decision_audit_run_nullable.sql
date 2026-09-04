@@ -31,7 +31,7 @@ USE mas_hrms;
 
 SET @needs_change := (
   SELECT COUNT(*) FROM information_schema.COLUMNS
-   WHERE TABLE_SCHEMA = 'mas_hrms'
+   WHERE TABLE_SCHEMA = DATABASE()
      AND TABLE_NAME = 'roster_decision_audit'
      AND COLUMN_NAME = 'run_id'
      AND IS_NULLABLE = 'NO'

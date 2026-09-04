@@ -4,42 +4,42 @@ USE mas_hrms;
 
 -- ── 1. Add columns to ats_candidate (with IF NOT EXISTS check) ──────────────
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='branch_display_name') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='branch_display_name') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN branch_display_name VARCHAR(255) NULL AFTER applied_for_branch',
   'SELECT ''branch_display_name already exists'' AS migration_note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='preferred_recruiter_id') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='preferred_recruiter_id') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN preferred_recruiter_id CHAR(36) NULL COMMENT ''Recruiter selected by candidate''',
   'SELECT ''preferred_recruiter_id already exists'' AS migration_note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='assigned_recruiter_id') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='assigned_recruiter_id') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN assigned_recruiter_id CHAR(36) NULL COMMENT ''Actual assigned recruiter''',
   'SELECT ''assigned_recruiter_id already exists'' AS migration_note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='assignment_reason') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='assignment_reason') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN assignment_reason VARCHAR(255) NULL COMMENT ''Reason for assignment/reassignment''',
   'SELECT ''assignment_reason already exists'' AS migration_note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='photo_url') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='photo_url') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN photo_url VARCHAR(512) NULL COMMENT ''Candidate photo URL''',
   'SELECT ''photo_url already exists'' AS migration_note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='resume_parsed_json') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_candidate' AND COLUMN_NAME='resume_parsed_json') = 0,
   'ALTER TABLE ats_candidate ADD COLUMN resume_parsed_json JSON NULL COMMENT ''Parsed resume data''',
   'SELECT ''resume_parsed_json already exists'' AS migration_note'
 );

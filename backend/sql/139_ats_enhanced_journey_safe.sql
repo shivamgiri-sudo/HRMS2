@@ -4,56 +4,56 @@ USE mas_hrms;
 
 -- ── 1. Add columns to ats_queue_token (safe checks) ───────────────────────────
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='token_number') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='token_number') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN token_number VARCHAR(50) NULL COMMENT ''Human-readable token number''',
   'SELECT ''token_number already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='branch_name') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='branch_name') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN branch_name VARCHAR(255) NULL COMMENT ''Branch for this queue entry''',
   'SELECT ''branch_name already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='queue_status') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='queue_status') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN queue_status ENUM(''waiting'',''called'',''in_interview'',''completed'',''no_show'') NULL DEFAULT ''waiting'' COMMENT ''Current queue status''',
   'SELECT ''queue_status already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='recruiter_id') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='recruiter_id') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN recruiter_id CHAR(36) NULL COMMENT ''Assigned recruiter''',
   'SELECT ''recruiter_id already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='estimated_wait_time') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='estimated_wait_time') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN estimated_wait_time INT NULL COMMENT ''Estimated wait time in minutes''',
   'SELECT ''estimated_wait_time already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='called_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='called_at') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN called_at DATETIME NULL COMMENT ''When candidate was called''',
   'SELECT ''called_at already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_started_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_started_at') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN interview_started_at DATETIME NULL COMMENT ''Interview start time''',
   'SELECT ''interview_started_at already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_completed_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_completed_at') = 0,
   'ALTER TABLE ats_queue_token ADD COLUMN interview_completed_at DATETIME NULL COMMENT ''Interview completion time''',
   'SELECT ''interview_completed_at already exists'' AS note'
 );
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS ats_interview_result (
 );
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_interview_result' AND COLUMN_NAME='interviewed_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_interview_result' AND COLUMN_NAME='interviewed_at') = 0,
   'ALTER TABLE ats_interview_result ADD COLUMN interviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP',
   'SELECT ''interviewed_at already exists'' AS note'
 );
@@ -286,21 +286,21 @@ CREATE TABLE IF NOT EXISTS cost_centre_master (
 
 -- ── 8. Add indexes for performance ────────────────────────────────────────────
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_branch_status') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_branch_status') = 0,
   'CREATE INDEX idx_queue_branch_status ON ats_queue_token(branch_name, queue_status)',
   'SELECT ''idx_queue_branch_status already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_created_at') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_created_at') = 0,
   'CREATE INDEX idx_queue_created_at ON ats_queue_token(created_at)',
   'SELECT ''idx_queue_created_at already exists'' AS note'
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
   'CREATE INDEX idx_interview_date ON ats_interview_result(interviewed_at)',
   'SELECT ''idx_interview_date already exists'' AS note'
 );

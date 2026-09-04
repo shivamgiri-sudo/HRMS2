@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS client_master (
 -- Link processes to clients (add column only if missing)
 SET @sql = IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-   WHERE TABLE_SCHEMA='mas_hrms' AND TABLE_NAME='process_master' AND COLUMN_NAME='client_id') = 0,
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='process_master' AND COLUMN_NAME='client_id') = 0,
   'ALTER TABLE process_master ADD COLUMN client_id CHAR(36) NULL, ADD CONSTRAINT fk_process_client FOREIGN KEY (client_id) REFERENCES client_master(id) ON DELETE SET NULL',
   'SELECT 1'
 );
