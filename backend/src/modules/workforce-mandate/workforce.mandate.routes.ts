@@ -165,38 +165,41 @@ router.get(
 
     // Mandated headcount is an Ops-Executive seat count (role_group='all', hc_type='production'),
     // not "everyone on the process" — Team Leaders/QA/Managers/Trainers hold their own separate
-    // headcount and were never part of what a client is billed a mandated seat count for. Every
-    // live count below is therefore scoped to (a) the processes actually carrying an active
-    // mandate in view, and (b) designation_name = 'EXECUTIVE' — confirmed against live data as
-    // the designation actually used across every mandated process (888/940 on-mandate active
-    // staff), so this is not a guess at the boundary, it is the boundary already in use.
+    // headcount and were never part of what a client is billed a mandated seat count for.
+    // PRODUCTION_SEAT_DESIGNATIONS is the set of designations that fill one of those seats —
+    // 'EXECUTIVE' plus 'DATA-ANALYST' (user ruling 2026-09-04: a client billed for production
+    // seats staffed by data analysts instead of call-handling executives still has those seats
+    // filled; GS1's mandate is entirely Data-Analyst-staffed and was reading as 0 active / 100%
+    // gap under an Executive-only filter). Every live count below is scoped to (a) the processes
+    // actually carrying an active mandate in view, and (b) this designation set.
+    const PRODUCTION_SEAT_DESIGNATIONS = ["EXECUTIVE", "DATA-ANALYST"];
     const processIds = Array.from(new Set(mandates.map((m: any) => String(m.process_id))));
 
     const zeroRow = [{ cnt: 0 }];
     const [activeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM employees e
        JOIN designation_master d ON d.id = e.designation_id
-       WHERE e.active_status = 1 AND d.designation_name = 'EXECUTIVE' AND e.process_id IN (?)
+       WHERE e.active_status = 1 AND d.designation_name IN (?) AND e.process_id IN (?)
        ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [processIds, branchId] : [processIds]
+      branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
     );
     const [onNoticeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM exit_request er
        JOIN employees e ON er.employee_id = e.id
        JOIN designation_master d ON d.id = e.designation_id
        WHERE er.status IN ('accepted','notice_serving')
-         AND d.designation_name = 'EXECUTIVE' AND e.process_id IN (?)
+         AND d.designation_name IN (?) AND e.process_id IN (?)
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [processIds, branchId] : [processIds]
+      branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
     );
     const [longLeaveRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM leave_request lr
        JOIN employees e ON lr.employee_id = e.id
        JOIN designation_master d ON d.id = e.designation_id
        WHERE lr.status = 'approved' AND lr.to_date >= CURDATE() AND lr.total_days >= 5
-         AND d.designation_name = 'EXECUTIVE' AND e.process_id IN (?)
+         AND d.designation_name IN (?) AND e.process_id IN (?)
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [processIds, branchId] : [processIds]
+      branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
     );
     // Candidates in the ATS pipeline for the processes actually in view — not the whole
     // ats_candidate table, which spans every process, every branch, for the platform's entire

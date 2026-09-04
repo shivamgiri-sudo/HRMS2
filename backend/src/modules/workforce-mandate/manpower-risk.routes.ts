@@ -49,6 +49,13 @@ manpowerRiskRouter.get(
     const branchFilterSql = branchId ? "AND wm.branch_id = ?" : "";
     const branchFilterParams = branchId ? [branchId] : [];
 
+    // Designations that fill a mandated production seat — 'EXECUTIVE' plus 'DATA-ANALYST'
+    // (user ruling 2026-09-04: a client billed for production seats staffed by data analysts
+    // instead of call-handling executives still has those seats filled; GS1's mandate is
+    // entirely Data-Analyst-staffed and read as 0 active / 100% gap under an Executive-only
+    // filter). Team Leaders/QA/Managers/Trainers still don't count.
+    const PRODUCTION_SEAT_DESIGNATIONS = ["EXECUTIVE", "DATA-ANALYST"];
+
     // Mandate: latest active record per process+branch
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT
@@ -68,31 +75,30 @@ manpowerRiskRouter.get(
          -- Available active headcount. active_status = 1 ALONE remains the canonical
          -- employment-status definition (ruling 2026-08-07, guarded by
          -- attendance-canon.contract.test.ts) — that ruling is about not narrowing on
-         -- employment_status, and is untouched here. designation_name = 'EXECUTIVE' is a
-         -- separate, orthogonal filter: mandated_hc is an Ops-Executive seat count, not a count
-         -- of everyone on the process, so a Team Leader/QA/Manager/Trainer must not be counted
-         -- as filling one of those seats. Confirmed against live data as the designation actually
-         -- in use across every mandated process (888/940 on-mandate active staff carry it).
+         -- employment_status, and is untouched here. designation_name IN PRODUCTION_SEAT_
+         -- DESIGNATIONS is a separate, orthogonal filter: mandated_hc is a production-seat
+         -- count, not a count of everyone on the process, so a Team Leader/QA/Manager/Trainer
+         -- must not be counted as filling one of those seats.
          COUNT(DISTINCT CASE
-           WHEN e.active_status = 1 AND d.designation_name = 'EXECUTIVE'
+           WHEN e.active_status = 1 AND d.designation_name IN (?)
            THEN e.id
          END) AS active_hc,
 
-         -- In-notice count — same Executive scoping as active_hc above.
+         -- In-notice count — same production-seat scoping as active_hc above.
          COUNT(DISTINCT CASE
            WHEN e.active_status = 1
             AND er.status IN ('accepted', 'notice_serving')
-            AND d.designation_name = 'EXECUTIVE'
+            AND d.designation_name IN (?)
            THEN e.id
          END) AS in_notice_count,
 
-         -- Attrition exits in last 3 months — scoped to the same Executive population the rate
-         -- is being measured against, so a Team Leader leaving doesn't count as attrition
-         -- against an Executive seat count.
+         -- Attrition exits in last 3 months — scoped to the same population the rate is being
+         -- measured against, so a Team Leader leaving doesn't count as attrition against a
+         -- production seat count.
          COUNT(DISTINCT CASE
            WHEN er.status IN ('exited', 'exit_confirmed')
             AND er.updated_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-            AND d.designation_name = 'EXECUTIVE'
+            AND d.designation_name IN (?)
            THEN er.id
          END) AS exits_3m
 
@@ -113,7 +119,10 @@ manpowerRiskRouter.get(
          wm.branch_id, b.branch_name,
          wm.role_group, wm.mandated_hc, wm.buffer_pct, wm.alert_threshold_pct
        ORDER BY p.process_name, b.branch_name`,
-      [...scoped.params, ...branchFilterParams]
+      [
+        PRODUCTION_SEAT_DESIGNATIONS, PRODUCTION_SEAT_DESIGNATIONS, PRODUCTION_SEAT_DESIGNATIONS,
+        ...scoped.params, ...branchFilterParams,
+      ]
     );
 
     const data = (rows as RowDataPacket[]).map((r) => {
