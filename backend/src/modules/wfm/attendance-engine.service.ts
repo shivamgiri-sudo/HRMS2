@@ -1,5 +1,6 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
 import { randomUUID } from 'crypto';
+import { halfDayAttendanceTarget, halfDayLwpValue } from "../../shared/halfDayLeave.js";
 import { db } from '../../db/mysql.js';
 import { EMPLOYMENT_END_DATE_SELECT } from '../payroll/employment-end-date.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
@@ -456,15 +457,27 @@ export const attendanceEngineService = {
     costCentreId?: string | null,
     designationId?: string | null,
     employmentEndDate?: string | null
-  ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean } | null> {
+  ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean; isHalfDayLeave?: boolean } | null> {
     // 1. Approved leave
+    //
+    // total_days matters. A WHOLE-day leave replaces the day outright ('leave_approved', paid
+    // 1.0). A HALF day does not: it adds half a day to whatever was actually worked, so the day
+    // must still be graded from punches and then transitioned (see halfDayAttendanceTarget).
+    // Returning 'leave_approved' for a half day — which is what this did before — silently paid
+    // it as a full day AND blanked the biometric/dialler minutes proving half of it was worked,
+    // undoing the half day on every re-grade.
     const [leaveRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM leave_request
+      `SELECT id, total_days FROM leave_request
        WHERE employee_id = ? AND status = 'approved'
-         AND ? BETWEEN from_date AND to_date LIMIT 1`,
+         AND ? BETWEEN from_date AND to_date
+       ORDER BY total_days ASC LIMIT 1`,
       [employeeId, date]
     );
-    if ((leaveRows as RowDataPacket[]).length > 0) return { status: 'leave_approved' };
+    const leaveRow = (leaveRows as RowDataPacket[])[0];
+    if (leaveRow) {
+      const isHalfDayLeave = Number((leaveRow as { total_days: number }).total_days) === 0.5;
+      return { status: 'leave_approved', isHalfDayLeave };
+    }
 
     // 2. Holiday (branch-aware) + cost centre/designation scope + G7 DOJ exclusion
     const dojExclusionEnabled = await getFeatureFlagBool('doj_holiday_exclusion_enabled', true);
@@ -1020,7 +1033,11 @@ export const attendanceEngineService = {
       employeeId, date, branchId, dateOfJoining, costCentreId, designationId, employmentEndDate
     );
 
-    if (override) {
+    // A half-day leave deliberately does NOT take the override path: that path returns a
+    // fixed status with null minutes, which would both overpay the day and erase the evidence
+    // of the half that was worked. It falls through to the normal grading below, and the
+    // transition is applied to the graded result at the end of this function.
+    if (override && !override.isHalfDayLeave) {
       // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked.
       //
       // Night-shift cross-midnight guard: a night-shift worker whose roster is e.g. 22:00–07:00
@@ -1337,6 +1354,21 @@ export const attendanceEngineService = {
     // Late arrival
     const lateResult = await this.calculateLateArrival(employeeId, date, rule);
 
+    // An approved HALF day adds half a day to what the punches earned. Derived from
+    // classification.status — the freshly graded value — never from what is stored, which is what
+    // makes a re-grade idempotent: running the engine twice lands on the same status instead of
+    // bumping the day again. A null target means the day was already worth a full day's pay, so
+    // there is nothing to add and the graded status stands.
+    let finalStatus: AttendanceStatus = classification.status;
+    let finalLwp = classification.lwpValue;
+    if (override?.isHalfDayLeave) {
+      const bumped = halfDayAttendanceTarget(classification.status);
+      if (bumped) {
+        finalStatus = bumped as AttendanceStatus;
+        finalLwp = halfDayLwpValue(bumped);
+      }
+    }
+
     return {
       employeeId, date, processId, branchId,
       source: rule.attendance_source,
@@ -1346,8 +1378,8 @@ export const attendanceEngineService = {
       diallerMinutes,
       biometricMinutes: biometricMinutes > 0 ? biometricMinutes : null,
       rawMinutes,
-      status: classification.status,
-      lwpValue: classification.lwpValue,
+      status: finalStatus,
+      lwpValue: finalLwp,
       lateMark: lateResult.lateMark,
       lateByMinutes: lateResult.lateByMinutes,
       ruleConfigId: rule.id === 'fallback' ? null : rule.id,
