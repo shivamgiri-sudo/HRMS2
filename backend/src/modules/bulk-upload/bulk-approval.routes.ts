@@ -175,15 +175,26 @@ bulkApprovalRouter.get("/approvals/batches/:id/preview", h(async (req, res) => {
     // Resolve employee codes → names so the approver sees who they are deciding for.
     // normalized_data keys vary by upload type; try the common variants.
     const EMP_CODE_KEYS = ["emp_code", "employee_code", "EmpCode", "employeeCode"];
+    // normalized_data is what the upload UI writes, but a row staged through the API
+    // carries raw_data alone — and reading only normalized_data left the approver
+    // looking at a column of dashes where the names should be. loadStagedRows()
+    // already falls back the same way.
+    function rowEmpCode(row: RowDataPacket): string | null {
+      const source = row.normalized_data ?? row.raw_data;
+      const nd: Record<string, unknown> =
+        (typeof source === "string"
+          ? (JSON.parse(source) as Record<string, unknown>)
+          : (source as Record<string, unknown>)) ?? {};
+      for (const key of EMP_CODE_KEYS) {
+        if (nd[key]) return String(nd[key]).trim();
+      }
+      return null;
+    }
+
     const codeSet = new Set<string>();
     for (const row of rows) {
-      const nd: Record<string, unknown> =
-        typeof row.normalized_data === "string"
-          ? (JSON.parse(row.normalized_data) as Record<string, unknown>)
-          : (row.normalized_data as Record<string, unknown>) ?? {};
-      for (const key of EMP_CODE_KEYS) {
-        if (nd[key]) { codeSet.add(String(nd[key])); break; }
-      }
+      const code = rowEmpCode(row);
+      if (code) codeSet.add(code);
     }
 
     const nameMap = new Map<string, string>();
@@ -199,14 +210,7 @@ bulkApprovalRouter.get("/approvals/batches/:id/preview", h(async (req, res) => {
     }
 
     const enriched = rows.map((row) => {
-      const nd: Record<string, unknown> =
-        typeof row.normalized_data === "string"
-          ? (JSON.parse(row.normalized_data) as Record<string, unknown>)
-          : (row.normalized_data as Record<string, unknown>) ?? {};
-      let empCode: string | null = null;
-      for (const key of EMP_CODE_KEYS) {
-        if (nd[key]) { empCode = String(nd[key]); break; }
-      }
+      const empCode = rowEmpCode(row);
       return {
         ...row,
         employee_name: empCode ? (nameMap.get(empCode) ?? null) : null,
