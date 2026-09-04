@@ -34,7 +34,33 @@ ALTER TABLE ats_candidate ADD COLUMN emergency_contact_mobile VARCHAR(20);
 ALTER TABLE ats_candidate ADD COLUMN profile_submitted_at DATETIME;
 
 -- 2. ALTER auth_user — force password change flag
-ALTER TABLE auth_user ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0;
+--
+-- Guarded, because 050_auth_mysql.sql already CREATEs auth_user with this exact
+-- column. Replaying the manifest against a fresh database therefore ran 050, then
+-- died here on "Duplicate column name 'must_change_password'" — 56 files in, with
+-- 1,600-odd still to go. Production has never been affected (it applied these long
+-- ago and skips both), which is precisely why it went unnoticed: the only thing it
+-- breaks is building a NEW database, i.e. a test copy, a fresh environment, or a
+-- restore — the moments you least want to discover it.
+--
+-- Same PREPARE/INFORMATION_SCHEMA idiom this very file already uses for
+-- uq_onb_token below, and dozens of other migrations use for the same reason:
+-- MySQL 8 has no ADD COLUMN IF NOT EXISTS.
+SET @col_exists = (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'auth_user'
+    AND COLUMN_NAME = 'must_change_password'
+);
+SET @sql = IF(
+  @col_exists = 0,
+  'ALTER TABLE auth_user ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT "Column must_change_password already exists" AS message'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- 3. ALTER ats_onboarding_bridge — token + approval tracking
 ALTER TABLE ats_onboarding_bridge ADD COLUMN onboarding_token VARCHAR(100);
