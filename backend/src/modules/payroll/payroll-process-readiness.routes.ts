@@ -50,15 +50,13 @@ function resolveMonth(raw: unknown): string {
 // user_assignment_scope rows actually cover; super_admin always bypasses
 // (built into hasScopedAccess) and admin bypasses via allowAdminBypass.
 //
-// requireScopeForNonAdmin: false is deliberate, not a weaker default — a
-// caller with ZERO rows in user_assignment_scope keeps today's unrestricted
-// behaviour (this is non-regressive: nobody who currently has access loses
-// it) while a caller who DOES have real scope data is, for the first time,
-// actually restricted to it. Verified live 2026-08-13 before writing this:
-// branch_head/payroll_branch/wfm/process_manager users mostly do have real
-// branch/process assignment rows (process_manager: 21 of 22 users), so this
-// closes the gap for the population it was found on without a data backfill
-// that would mean fabricating who's assigned where.
+// Scoping was switched on here in a deliberately non-regressive way: a caller
+// with ZERO user_assignment_scope rows kept unrestricted behaviour, so nobody
+// lost access before the scope data existed (measured 2026-08-13, when
+// process_manager stood at 21 of 22 users covered). That was a migration step,
+// not the destination — leaving it open means a user created without a scope
+// row silently receives the whole company. Coverage is complete now, checked
+// again on 2026-09-04, so the bypass is closed. See SCOPE_OPTIONS below.
 // ---------------------------------------------------------------------------
 
 function branchScopeTarget(req: AuthenticatedRequest) {
@@ -69,7 +67,16 @@ function branchProcessScopeTarget(req: AuthenticatedRequest) {
   return { branchId: req.params.branchId, processId: req.params.processId };
 }
 
-const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: false };
+/*
+ * A caller with no assignment scope row gets no branches, not every branch.
+ *
+ * This read `false` as a deliberate migration step — scoping was switched on without locking out
+ * users whose scope rows did not exist yet. Those rows exist now: verified against production on
+ * 2026-09-04, every holder of branch_head, payroll_branch, payroll_hr, wfm, payroll_head or payroll
+ * has at least one active row filed under one of those role keys. Leaving the bypass open past that
+ * point means a user created without a scope row silently receives the whole company.
+ */
+const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: true };
 
 // ---------------------------------------------------------------------------
 // Org-wide governance readiness — see the identical helper's comment in
@@ -346,7 +353,7 @@ payrollProcessReadinessRouter.get(
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm", "process_manager"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -629,7 +636,7 @@ payrollProcessReadinessRouter.get(
     "payroll", "wfm", "process_manager"
   ),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchProcessScopeTarget,
     SCOPE_OPTIONS
   ),

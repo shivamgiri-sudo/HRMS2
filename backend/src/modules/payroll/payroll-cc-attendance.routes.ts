@@ -23,10 +23,11 @@
  */
 
 import { Router } from "express";
-import type { Response } from "express";
+import type { NextFunction, Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
+import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import {
   payrollCcAttendanceService,
   CcAttendanceError,
@@ -54,10 +55,32 @@ function branchScopeTarget(req: AuthenticatedRequest) {
   return { branchId: req.params.branchId };
 }
 
-/** Same non-regressive scope options the sibling readiness routes use — see their comment. */
-const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: false };
+/*
+ * Same scope options the sibling readiness routes use — see their comment there.
+ *
+ * requireScopeForNonAdmin is true: a role holder with no assignment scope row gets nothing, not
+ * everything. It read `false`, which meant a Branch Head created without a scope row could finalize
+ * and approve attendance for every branch in the company. Verified on production 2026-09-04 that
+ * every current holder of these roles has a matching scope row, so tightening it locks nobody out.
+ */
+const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: true };
 
-/** Roles that may READ this screen — the same set the parent readiness page admits. */
+/*
+ * Roles that may READ this screen — the same set the parent readiness page admits.
+ *
+ * Note the split between this list and the scope lists on each read route. requireRole decides who
+ * may call at all; requireScopedRole decides which branches they see, and hasScopedAccess() refuses
+ * outright any caller holding none of the roles IT was given. So a role named here but absent from
+ * a route's scope list is admitted and then refused — which is what happened to payroll_head: it
+ * was missing from every read scope list, leaving the HO Payroll Head able to approve a branch's
+ * attendance (ho-approve is deliberately unscoped) while unable to read the grid being approved.
+ * Only their scope rows filed under a listed role_key count, so payroll_head and payroll are both
+ * listed now, matching payroll-branch-readiness.routes.ts.
+ *
+ * hr and finance remain read-only members of this list with no scope entry, so they are refused in
+ * practice. That is pre-existing and unchanged here; it is called out so the next reader does not
+ * mistake their presence below for working access.
+ */
 const READ_ROLES = [
   "branch_head", "payroll_branch", "payroll_hr", "payroll_head",
   "super_admin", "admin", "payroll", "wfm", "hr", "finance", "process_manager",
@@ -163,7 +186,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -183,7 +206,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -203,7 +226,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -229,7 +252,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -261,7 +284,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -415,10 +438,58 @@ payrollCcAttendanceRouter.post(
 // Send back — either approver, before HO approval
 // ---------------------------------------------------------------------------
 
+/*
+ * Send-back is the one branch-addressed route in this file that carried no scope guard, so a Branch
+ * Head could send back a cost centre belonging to any branch — reopening another branch's finalized
+ * attendance and resetting its stage. Every sibling route here is scoped; this one was missed.
+ *
+ * It cannot simply take requireScopedRole, because two different authorities share the route.
+ * hasScopedAccess() returns false for a caller holding none of the roles it was given, so a single
+ * list would either scope the Payroll Head to one branch (breaking HO send-back, which must reach
+ * every branch exactly as ho-approve does) or leave the Branch Head unscoped again. The stage says
+ * which authority is acting, so the guard branches on it: HO callers pass through as they do on
+ * ho-approve, branch callers are held to their own branch.
+ */
+async function scopeSendBackToBranch(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const userId = req.authUser?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "Unauthorized" });
+      return;
+    }
+    // An HO send-back is the Payroll Head's org-wide authority, unscoped by design.
+    if (req.body?.stage === "ho" && (await hasAnyRole(userId, ...HO_APPROVER_ROLES))) {
+      next();
+      return;
+    }
+    const ok = await hasScopedAccess(
+      userId,
+      ["branch_head", "payroll_head", "payroll_branch", "payroll_hr", "wfm"],
+      branchScopeTarget(req),
+      SCOPE_OPTIONS,
+    );
+    if (!ok) {
+      res.status(403).json({
+        success: false,
+        message: "Forbidden: this record is outside your assigned branch/process/team scope",
+      });
+      return;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 payrollCcAttendanceRouter.post(
   "/:branchId/:costCentreId/send-back",
   requireAuth,
   requireRole("branch_head", "payroll_head", "super_admin"),
+  scopeSendBackToBranch,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const costCentreId = assertCostCentreId(res, req.params.costCentreId);

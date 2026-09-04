@@ -14,6 +14,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { readinessViewFor } from "./readinessViewScope";
 import {
   Lock,
   CheckCircle2,
@@ -1621,21 +1622,12 @@ export default function PayrollReadinessDashboard() {
   const { user } = useAuth();
   const qc = useQueryClient();
 
-  const isHORole =
-    roleKeys.includes("payroll_head") ||
-    roleKeys.includes("super_admin") ||
-    roleKeys.includes("payroll") ||
-    roleKeys.includes("admin") ||
-    roleKeys.includes("hr");
-
-  // Branch-side roles get their own branch's readiness instead of the HO roll-up.
-  // Every one of these role keys is already allowed on the branch/process
-  // readiness endpoints server-side, and requireScopedRole pins each request to
-  // the caller's own assignment scope, so this only re-opens a surface the API
-  // was always willing to serve them.
-  const isBranchSideRole =
-    !isHORole &&
-    roleKeys.some((r) => ["wfm", "branch_head", "payroll_branch", "process_manager"].includes(r));
+  // Which of the two readiness views this user gets. See readinessViewScope.ts — the rule is a pure
+  // function of roles, and choosing wrong renders a component whose data request is refused, so the
+  // page says "No branches found" when it means "not your view".
+  const readinessView = readinessViewFor(roleKeys);
+  const isHORole = readinessView === "ho";
+  const isBranchSideRole = readinessView === "own-branch";
 
   const canExport = roleKeys.includes("payroll_head") || roleKeys.includes("super_admin") || roleKeys.includes("admin");
 

@@ -38,11 +38,12 @@ function resolveMonth(raw: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Row-level scope — see payroll-process-readiness.routes.ts's identical comment
-// for the full rationale (requireScopeForNonAdmin: false is deliberately
-// non-regressive: a caller with zero user_assignment_scope rows keeps today's
-// unrestricted behaviour; a caller who has real scope data is, for the first
-// time, actually restricted to it).
+// Row-level scope.
+//
+// This was introduced non-regressively: a caller with zero user_assignment_scope rows kept their
+// previous unrestricted behaviour, so that turning scoping on could not lock anyone out before the
+// scope data existed. That was a migration step, and the migration is over — every holder of these
+// roles now has a scope row, so the bypass has been closed. See SCOPE_OPTIONS below.
 // ---------------------------------------------------------------------------
 
 function branchScopeTarget(req: AuthenticatedRequest) {
@@ -53,7 +54,21 @@ function branchProcessScopeTarget(req: AuthenticatedRequest) {
   return { branchId: req.params.branchId, processId: req.params.processId };
 }
 
-const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: false };
+/*
+ * Scope options for every branch-addressed route below.
+ *
+ * requireScopeForNonAdmin was `false`, which made hasScopedAccess() return TRUE for a role holder
+ * with no assignment scope row at all — so a Branch Head created without a scope row silently got
+ * every branch in the company rather than none. Missing configuration must fail closed: the whole
+ * point of this middleware is that a branch user sees one branch.
+ *
+ * Verified before flipping, against production on 2026-09-04: every user holding branch_head,
+ * payroll_branch, payroll_hr, wfm, payroll_head or payroll has at least one active scope row filed
+ * under one of those role keys, so nobody loses access today. super_admin and admin still bypass.
+ *
+ * If someone is locked out later, the fix is to give them a scope row — not to reopen this.
+ */
+const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: true };
 
 // ---------------------------------------------------------------------------
 // Org-wide governance readiness (payroll-governance.service.ts) — the
@@ -262,7 +277,7 @@ payrollBranchReadinessRouter.get(
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -300,7 +315,7 @@ payrollBranchReadinessRouter.post(
   "/:branchId/checklist",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
-  requireScopedRole(["branch_head", "payroll_branch", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(["branch_head", "payroll_branch", "payroll_hr", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
@@ -482,7 +497,7 @@ payrollBranchReadinessRouter.post(
   "/:branchId/request-freeze",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
-  requireScopedRole(["branch_head", "payroll_branch", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(["branch_head", "payroll_branch", "payroll_hr", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId } = req.params;
@@ -523,7 +538,7 @@ payrollBranchReadinessRouter.get(
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -566,7 +581,7 @@ payrollBranchReadinessRouter.post(
   "/:branchId/:processId/checklist",
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
-  requireScopedRole(["branch_head", "payroll_branch", "wfm"], branchProcessScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(["branch_head", "payroll_branch", "payroll_hr", "wfm"], branchProcessScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { branchId, processId } = req.params;
@@ -619,7 +634,7 @@ payrollBranchReadinessRouter.post(
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm", "super_admin", "payroll_head", "payroll"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "wfm", "payroll_head", "payroll"],
+    ["branch_head", "payroll_branch", "payroll_hr", "wfm", "payroll_head", "payroll"],
     branchProcessScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -670,7 +685,7 @@ payrollBranchReadinessRouter.get(
   requireAuth,
   requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),

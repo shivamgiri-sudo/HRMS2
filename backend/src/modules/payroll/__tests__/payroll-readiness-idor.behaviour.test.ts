@@ -15,10 +15,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * below the guard, so an out-of-scope request reaching the service layer at all
  * — not just the response code — is what fails the test.
  *
- * Also proves the deliberately non-regressive design: requireScopeForNonAdmin:
- * false means a caller with zero user_assignment_scope rows is NOT newly locked
- * out (that would be a regression, not a fix) — only a caller who has real,
- * non-matching scope data is refused.
+ * Also pins the zero-scope-row rule. That rule was inverted on 2026-09-04: it was
+ * requireScopeForNonAdmin: false while scope rows were still being populated, and is now true, so
+ * a caller with no scope row is refused instead of admitted everywhere. See the describe block at
+ * the foot of this file for why, and for what was verified before flipping it.
  */
 
 const AUTH_USER = "33333333-3333-3333-3333-333333333333";
@@ -133,24 +133,52 @@ describe("an in-scope caller is still served", () => {
   });
 });
 
-describe("a caller with zero scope rows is not newly locked out", () => {
-  it("stays non-regressive: no user_assignment_scope rows at all still passes", async () => {
-    // hasScopedAccess itself resolves this via requireScopeForNonAdmin: false —
-    // mocking the outcome directly here (true) is what the option is documented to
-    // produce for a zero-row caller, proving the route's own options object is what
-    // was actually passed to the middleware rather than trusting the default.
+describe("a caller with zero scope rows gets no branches, not every branch", () => {
+  /*
+   * THIS RULE WAS DELIBERATELY REVERSED on 2026-09-04, and the reversal is the point of the test.
+   *
+   * Scoping was introduced here non-regressively: requireScopeForNonAdmin was false, so a caller
+   * with zero user_assignment_scope rows kept unrestricted access. That was correct at the time —
+   * the scope rows did not exist yet, and locking people out while backfilling them would have been
+   * a regression rather than a fix. It was a migration step.
+   *
+   * The migration finished. Checked against production on 2026-09-04: every holder of branch_head,
+   * payroll_branch, payroll_hr, wfm, payroll_head or payroll has at least one active scope row filed
+   * under one of those role keys, so closing the bypass locked nobody out. Left open, it meant the
+   * next Branch Head created without a scope row would silently receive every branch in the company
+   * — missing configuration granting more access than complete configuration, which is the wrong
+   * way round for a guard whose entire job is to confine a branch user to one branch.
+   *
+   * If someone is refused here later, the fix is to give them a scope row, not to reopen this.
+   */
+  it("passes requireScopeForNonAdmin: true, so a zero-row caller fails closed", async () => {
+    // hasScopedAccess is mocked, so what this proves is the options object the ROUTE hands the
+    // middleware — which is the thing that decides the zero-row outcome. The decision itself lives
+    // in hasScopedAccess and is covered by its own tests.
     hasScopedAccess.mockResolvedValue(true);
 
     const res = await request(buildApp()).get(`/api/payroll/process-readiness/branch/${BRANCH_A}`);
 
     expect(res.status).not.toBe(403);
-    // Confirms requireScopedRole was invoked with allowAdminBypass/requireScopeForNonAdmin
-    // wired through, not just any truthy options object.
     expect(hasScopedAccess).toHaveBeenCalledWith(
       AUTH_USER,
       expect.arrayContaining(["branch_head"]),
       expect.objectContaining({ branchId: BRANCH_A }),
-      expect.objectContaining({ allowAdminBypass: true, requireScopeForNonAdmin: false })
+      expect.objectContaining({ allowAdminBypass: true, requireScopeForNonAdmin: true })
     );
+  });
+
+  it("scopes Branch Payroll HR rather than admitting and then refusing it", async () => {
+    /*
+     * payroll_hr was admitted by requireRole on this route family and named in none of the scope
+     * lists. hasScopedAccess refuses a caller holding none of the roles IT was given, before it ever
+     * reads a scope row — so the role that actually does this work got a 403 whose message blamed
+     * branch scope. Asserted on the call the route makes, so the two lists cannot drift apart again.
+     */
+    hasScopedAccess.mockResolvedValue(true);
+    await request(buildApp()).get(`/api/payroll/process-readiness/branch/${BRANCH_A}`);
+
+    const [, roles] = hasScopedAccess.mock.calls.at(-1)!;
+    expect(roles).toContain("payroll_hr");
   });
 });

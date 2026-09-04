@@ -230,7 +230,16 @@ export default function BranchCostCentreAttendance() {
   const [selectedCc, setSelectedCc] = useState<CostCentreRow | null>(null);
 
   const roles = roleKeys ?? [];
-  const isHo = roles.some((r) => ["payroll_head", "super_admin", "admin", "payroll", "finance", "hr"].includes(r));
+  /*
+   * "HO" here decides whether the branch picker offers every branch or only the caller's own.
+   *
+   * finance and hr were in this list but appear in none of the API's scope lists, so they were
+   * offered every branch and refused on all of them. Worse, every production Branch Head also holds
+   * hr, so a branch user was shown the whole company's branch list. Kept to the roles that really do
+   * reach any branch: super_admin and admin bypass scope outright, payroll_head and payroll carry
+   * org-wide scope rows.
+   */
+  const isHo = roles.some((r) => ["payroll_head", "super_admin", "admin", "payroll"].includes(r));
   const canFinalize = roles.some((r) => ["payroll_hr", "wfm", "payroll_branch", "super_admin"].includes(r));
   const canBranchApprove = roles.some((r) => ["branch_head", "super_admin"].includes(r));
   const canHoApprove = roles.some((r) => ["payroll_head", "super_admin"].includes(r));
