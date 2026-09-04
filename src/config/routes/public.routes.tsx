@@ -16,6 +16,7 @@ const Security       = lazy(() => import("@/pages/Security"));
 
 const PublicEmployeeVerify = lazy(() => import("@/pages/PublicEmployeeVerify").then(m => ({ default: m.PublicEmployeeVerify })));
 const PublicPayslipVerify  = lazy(() => import("@/pages/PublicEmployeeVerify").then(m => ({ default: m.PublicPayslipVerify })));
+const PublicGatePassVerify = lazy(() => import("@/pages/PublicGatePassVerify"));
 
 const CandidateOnboardingPage     = lazy(() => import("@/pages/CandidateOnboardingPage"));
 const CandidateOnboardingFullPage = lazy(() => import("@/pages/CandidateOnboardingFullPage"));
@@ -79,6 +80,8 @@ export const publicRouteElements = (
       <Route path="/verify/payslip/:employeeCode/:monthYear" element={<PublicPayslipVerify />} />
       {/* The QR printed on every appointment letter points here. */}
       <Route path="/verify/appointment/:token"              element={<PublicAppointmentLetterVerify />} />
+      {/* The QR on every printed gate pass points here — no login required. */}
+      <Route path="/verify/gp"                              element={<PublicGatePassVerify />} />
 
       {/* Candidate registration — CANONICAL: /interview-registration */}
       <Route path="/interview-registration" element={<NativeATSCandidateRegistration />} />

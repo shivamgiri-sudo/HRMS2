@@ -198,34 +198,39 @@ function PrintablePass({
   const totalQty = pass.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
 
   return (
-    <div className="border border-slate-300 rounded-none">
-      <div className="flex items-start justify-between gap-4 px-6 py-5 border-b-[3px] border-rose-600">
+    <div className="border-2 border-slate-800 rounded-none bg-white" style={{ fontFamily: "'Segoe UI', Arial, sans-serif" }}>
+      {/* ── Top accent bar ── */}
+      <div className="h-2 bg-rose-600" />
+
+      {/* ── Header: logo + address | status + pass no + QR ── */}
+      <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b-2 border-slate-800">
         <div className="flex items-center gap-3">
-          <img src="/mcn-logo.png" alt="Mas Callnet India Pvt Ltd" className="h-10" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <img src="/mcn-logo.png" alt="Mas Callnet India Pvt Ltd" className="h-12 print:[print-color-adjust:exact]"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
           <div>
-            <div className="text-lg font-extrabold text-slate-900">Mas Callnet India Pvt Ltd</div>
+            <div className="text-xl font-extrabold text-slate-900 tracking-tight">Mas Callnet India Pvt Ltd</div>
             {pass.letterhead && (
-              <div className="text-xs text-slate-500 whitespace-pre-line max-w-sm">{fmtAddress(pass.letterhead)}</div>
+              <div className="text-[11px] text-slate-600 whitespace-pre-line leading-snug max-w-xs mt-0.5">
+                {fmtAddress(pass.letterhead)}
+              </div>
             )}
           </div>
         </div>
-        <div className="text-right">
-          <div className="inline-block text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-0.5 mb-1.5">
+        <div className="text-right flex flex-col items-end gap-1.5">
+          <span className="inline-block text-[11px] font-extrabold uppercase tracking-wide bg-emerald-600 text-white rounded px-3 py-1 print:[print-color-adjust:exact]">
             {statusLabel(pass.status)}
-          </div>
-          <div className="font-mono text-sm font-semibold">{pass.pass_number}</div>
-          {/* Gate QR sits directly under the number it resolves to, so a guard
-              whose scan fails has the manual fallback in the same glance.
-              print:[print-color-adjust:exact] stops the browser's "economy"
-              print path from lightening the modules into an unreadable symbol. */}
+          </span>
+          <div className="font-mono text-base font-extrabold text-slate-900 tracking-widest">{pass.pass_number}</div>
           {qrDataUrl && (
-            <div className="mt-2 flex flex-col items-end">
-              <img
-                src={qrDataUrl}
-                alt={`Scan to verify gate pass ${pass.pass_number ?? ""} at security`}
-                className="h-[112px] w-[112px] print:[print-color-adjust:exact]"
-              />
-              <div className="mt-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400">
+            <div className="flex flex-col items-end mt-1">
+              <div className="border-2 border-slate-800 p-1 bg-white inline-block print:[print-color-adjust:exact]">
+                <img
+                  src={qrDataUrl}
+                  alt={`Scan to verify gate pass ${pass.pass_number ?? ""} at security`}
+                  className="h-[104px] w-[104px] block print:[print-color-adjust:exact]"
+                />
+              </div>
+              <div className="mt-1 text-[8px] font-extrabold uppercase tracking-widest text-slate-600">
                 Scan at gate
               </div>
             </div>
@@ -233,85 +238,106 @@ function PrintablePass({
         </div>
       </div>
 
-      <div className="flex items-center justify-between px-6 py-3 bg-slate-50 border-b border-slate-200">
-        <div className="text-xs font-bold uppercase tracking-widest text-slate-700">Asset / Material Exit Gate Pass</div>
-        <div className="flex gap-2 text-[10px] font-bold uppercase">
-          <span className="px-2.5 py-1 rounded-full border border-slate-300 text-slate-500">
-            {pass.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}
-          </span>
+      {/* ── Document type strip ── */}
+      <div className="flex items-center justify-between px-6 py-2.5 bg-slate-800 print:[print-color-adjust:exact]">
+        <div className="text-[11px] font-extrabold uppercase tracking-widest text-white">
+          Asset / Material Exit Gate Pass
+        </div>
+        <span className="text-[10px] font-extrabold uppercase tracking-wider border border-white text-white px-2.5 py-0.5 rounded">
+          {pass.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}
+        </span>
+      </div>
+
+      {/* ── Movement details ── */}
+      <div className="mx-6 my-4 border-2 border-slate-300 rounded">
+        <div className="grid grid-cols-2 divide-x-2 divide-slate-300">
+          <Field label="From" value={pass.letterhead?.branch_name ?? "—"} />
+          <Field label="Department" value={pass.request_department} />
+        </div>
+        <div className="grid grid-cols-2 border-t-2 border-slate-300 divide-x-2 divide-slate-300">
+          <Field label="To" value={pass.destination_name || pass.destination_type} />
+          <Field label="Requestor" value={pass.letterhead?.requestor_name ?? "—"} />
+        </div>
+        <div className="border-t-2 border-slate-300">
+          <Field label="Purpose" value={pass.purpose_details} />
         </div>
       </div>
 
-      <div className="px-6 py-4 grid grid-cols-2 border border-slate-200 rounded-lg m-6">
-        <Field label="From" value={pass.letterhead?.branch_name ?? "—"} />
-        <Field label="Department" value={pass.request_department} />
-        <Field label="To" value={pass.destination_name || pass.destination_type} />
-        <Field label="Requestor" value={pass.letterhead?.requestor_name ?? "—"} />
-        <Field label="Purpose" value={pass.purpose_details} span2 />
-      </div>
-
-      <div className="px-6">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-rose-600 mb-2">Description of Materials</div>
-        <table className="w-full text-xs border-collapse">
+      {/* ── Materials table ── */}
+      <div className="px-6 pb-4">
+        <div className="text-[10px] font-extrabold uppercase tracking-widest text-rose-700 mb-2 print:[print-color-adjust:exact]">
+          Description of Materials
+        </div>
+        <table className="w-full text-[11px] border-collapse border border-slate-800">
           <thead>
-            <tr className="text-[10px] uppercase text-slate-400 border-b-2 border-slate-300">
-              <th className="text-left py-1.5">Item</th>
-              <th className="text-left py-1.5">Asset ID</th>
-              <th className="text-left py-1.5">Serial No.</th>
-              <th className="text-left py-1.5">Make/Model</th>
-              <th className="text-right py-1.5">Qty</th>
+            <tr className="bg-slate-800 text-white print:[print-color-adjust:exact]">
+              <th className="text-left px-2 py-1.5 font-bold uppercase text-[9px] tracking-wider border-r border-slate-600">Item</th>
+              <th className="text-left px-2 py-1.5 font-bold uppercase text-[9px] tracking-wider border-r border-slate-600">Asset ID</th>
+              <th className="text-left px-2 py-1.5 font-bold uppercase text-[9px] tracking-wider border-r border-slate-600">Serial No.</th>
+              <th className="text-left px-2 py-1.5 font-bold uppercase text-[9px] tracking-wider border-r border-slate-600">Make / Model</th>
+              <th className="text-right px-2 py-1.5 font-bold uppercase text-[9px] tracking-wider">Qty</th>
             </tr>
           </thead>
           <tbody>
-            {pass.items.map((it) => (
-              <tr key={it.id} className="border-b border-slate-100">
-                <td className="py-1.5">{it.item_name}</td>
-                <td className="py-1.5 font-mono text-blue-700">{it.asset_id || "—"}</td>
-                <td className="py-1.5 font-mono">{it.serial_number || "—"}</td>
-                <td className="py-1.5">{it.make_model || "—"}</td>
-                <td className="py-1.5 text-right font-mono">{it.quantity}</td>
+            {pass.items.map((it, idx) => (
+              <tr key={it.id} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                <td className="px-2 py-1.5 font-semibold text-slate-900 border-r border-slate-300">{it.item_name}</td>
+                <td className="px-2 py-1.5 font-mono text-blue-800 font-bold border-r border-slate-300">{it.asset_id || "—"}</td>
+                <td className="px-2 py-1.5 font-mono text-slate-700 border-r border-slate-300">{it.serial_number || "—"}</td>
+                <td className="px-2 py-1.5 text-slate-700 border-r border-slate-300">{it.make_model || "—"}</td>
+                <td className="px-2 py-1.5 text-right font-mono font-bold text-slate-900">{it.quantity}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            <tr className="font-bold">
-              <td colSpan={4} className="pt-2">Total Items</td>
-              <td className="pt-2 text-right text-rose-600">{totalQty}</td>
+            <tr className="border-t-2 border-slate-800 bg-slate-100 print:[print-color-adjust:exact]">
+              <td colSpan={4} className="px-2 py-1.5 font-extrabold text-slate-800 text-[11px]">Total Items</td>
+              <td className="px-2 py-1.5 text-right font-extrabold text-rose-700 text-[13px]">{totalQty}</td>
             </tr>
           </tfoot>
         </table>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 px-6 py-6">
+      {/* ── Approval signatures ── */}
+      <div className="mx-6 mb-4 grid grid-cols-3 border-2 border-slate-800 divide-x-2 divide-slate-800">
         <ApprovalCard role="Branch Head" name={branchHead?.approver_name} date={branchHead?.decided_at} />
         <ApprovalCard role="Admin" name={admin?.approver_name} date={admin?.decided_at} />
-        <ApprovalCard role="Carrier" name={pass.carrier_name} date={null} />
+        <ApprovalCard role="Carrier / Bearer" name={pass.carrier_name} date={null} />
       </div>
 
-      <div className="px-6 pb-6 text-[10px] text-slate-400 border-t border-slate-200 pt-3">
+      {/* ── Footer disclaimer ── */}
+      <div className="px-6 pb-4 text-[9px] text-slate-500 leading-relaxed border-t border-slate-300 pt-2.5">
         Valid only with the approvals recorded above. Security must verify this pass at the gate — scan the QR, or
-        enter <span className="font-mono">{pass.pass_number}</span> on the Gate Pass Verification screen. This pass is
-        single-use: once an exit is recorded against it, a further scan reads as already used.
+        enter <span className="font-mono font-bold text-slate-700">{pass.pass_number}</span> on the Gate Pass
+        Verification screen. This pass is single-use: once an exit is recorded against it, a further scan reads as
+        already used.
       </div>
+
+      {/* ── Bottom accent bar ── */}
+      <div className="h-1.5 bg-slate-800 print:[print-color-adjust:exact]" />
     </div>
   );
 }
 
-function Field({ label, value, span2 }: { label: string; value: string; span2?: boolean }) {
+function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div className={`py-1.5 ${span2 ? "col-span-2" : ""}`}>
-      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{label}</div>
-      <div className="text-sm">{value}</div>
+    <div className="px-3 py-2">
+      <div className="text-[8px] font-extrabold uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="text-[12px] font-semibold text-slate-900 mt-0.5">{value}</div>
     </div>
   );
 }
 
 function ApprovalCard({ role, name, date }: { role: string; name?: string | null; date?: string | null }) {
   return (
-    <div className="border border-slate-200 rounded-lg p-3">
-      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{role}</div>
-      <div className="text-sm font-semibold mt-1">{name || "—"}</div>
-      {date && <div className="text-[10px] text-slate-400 mt-0.5">{new Date(date).toLocaleString()}</div>}
+    <div className="px-3 py-3 min-h-[72px]">
+      <div className="text-[8px] font-extrabold uppercase tracking-widest text-slate-500">{role}</div>
+      <div className="text-[12px] font-extrabold mt-1.5 text-slate-900">{name || "—"}</div>
+      {date && (
+        <div className="text-[9px] text-slate-500 mt-0.5">
+          {new Date(date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+        </div>
+      )}
     </div>
   );
 }
