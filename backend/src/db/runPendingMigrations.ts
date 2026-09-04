@@ -46,6 +46,54 @@ const TRANSIENT_MIGRATION_ERRNOS = new Set([1205, 1213]);
 const MIGRATION_MAX_ATTEMPTS = 3;
 const MIGRATION_RETRY_BASE_MS = 3000;
 
+/**
+ * How long a migration statement waits for a lock before giving up.
+ *
+ * MySQL's defaults are wrong for a boot path in both directions. `lock_wait_timeout`
+ * — the metadata lock a DDL needs — defaults to 31,536,000 seconds, a full year: a
+ * single long-running SELECT against `employees` can park an ALTER indefinitely and
+ * the server never finishes starting. `innodb_lock_wait_timeout` defaults to 50s,
+ * and on this box two failed attempts plus backoff cost ~103 seconds of every boot
+ * (51 such retries in the current log), which is most of the 502 window users see
+ * during a deploy.
+ *
+ * The retry loop above is the recovery mechanism and it is already correct; it just
+ * never got a chance to run promptly. Failing fast here makes an attempt cheap, so
+ * three of them cost less than one did before, and a lock that is genuinely stuck
+ * still fails the boot rather than hanging it — which is what the runner's own
+ * comment about the 2026-08-17 outage asks for.
+ */
+const MIGRATION_LOCK_WAIT_SECONDS = (() => {
+  const raw = Number(process.env.MIGRATION_LOCK_WAIT_SECONDS ?? 15);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 600 ? Math.floor(raw) : 15;
+})();
+
+/**
+ * Open a connection for migration work with both lock timeouts bounded.
+ *
+ * Every migration connection goes through here — the advisory-lock connection, the
+ * per-file DDL connections and the ledger writes — so none of them can inherit the
+ * server's year-long metadata-lock default.
+ */
+async function openMigrationConnection(config: mysql.ConnectionOptions): Promise<mysql.Connection> {
+  const conn = await mysql.createConnection(config);
+  try {
+    // Interpolated rather than bound: SET does not accept placeholders for these,
+    // and the value is a validated integer from the constant above.
+    await conn.query(
+      `SET SESSION lock_wait_timeout = ${MIGRATION_LOCK_WAIT_SECONDS}, ` +
+      `SESSION innodb_lock_wait_timeout = ${MIGRATION_LOCK_WAIT_SECONDS}`,
+    );
+  } catch (err) {
+    // A server that refuses the SET is not a reason to refuse the boot — carry on
+    // with the defaults, which is exactly the behaviour before this existed.
+    console.warn(
+      `[migration] could not set lock timeouts (${(err as Error).message}); using server defaults`,
+    );
+  }
+  return conn;
+}
+
 /** Exported so the retry policy can be tested against real driver error shapes, not by grepping. */
 export function isTransientMigrationError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -1437,7 +1485,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
     // Ensure schema_migrations tracking table exists with governance columns
     let schemaMigrationsCapabilities: SchemaMigrationsCapabilities;
     {
-      const conn = await mysql.createConnection(connConfig);
+      const conn = await openMigrationConnection(connConfig);
       try {
         await conn.query(`
           CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1474,7 +1522,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
     }
 
     // GOVERNANCE: Acquire advisory lock before running any migrations
-    lockConn = await mysql.createConnection(connConfig);
+    lockConn = await openMigrationConnection(connConfig);
     const lockAcquired = await acquireMigrationLock(lockConn);
     if (!lockAcquired) {
       throw new Error(
@@ -1486,7 +1534,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
     // Read the set of already-applied migrations with checksums
     const appliedMap = new Map<string, string | null>(); // filename -> checksum
     {
-      const conn = await mysql.createConnection(connConfig);
+      const conn = await openMigrationConnection(connConfig);
       try {
         const [rows] = await conn.query<RowDataPacket[]>(
           buildSchemaMigrationsAppliedRowsQuery(schemaMigrationsCapabilities!)
@@ -1552,7 +1600,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
 
       // Each file gets its own dedicated connection for session-variable isolation
       const startTime = new Date();
-      const conn = await mysql.createConnection(connConfig);
+      const conn = await openMigrationConnection(connConfig);
       try {
         await runFileOnConnection(conn, filePath);
 
@@ -1608,7 +1656,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
           const durationMs = endTime.getTime() - startTime.getTime();
           const message = error instanceof Error ? error.message : String(error);
           // Record failed migration attempt
-          const conn2 = await mysql.createConnection(connConfig);
+          const conn2 = await openMigrationConnection(connConfig);
           try {
             await conn2.query(
               buildSchemaMigrationsInsertStatement(schemaMigrationsCapabilities!, { success: false }),
