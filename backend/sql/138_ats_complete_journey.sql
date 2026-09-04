@@ -114,38 +114,281 @@ CREATE TABLE IF NOT EXISTS ats_candidate_portal_login (
 
 -- ── 6. Enhance candidate_onboarding_profile ───────────────────────────────────
 -- NOTE: Migration runner handles "Duplicate column" errors as idempotent
-ALTER TABLE candidate_onboarding_profile ADD COLUMN full_name_aadhaar VARCHAR(255) NULL COMMENT 'Name as per Aadhaar';
-ALTER TABLE candidate_onboarding_profile ADD COLUMN father_name VARCHAR(255) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN mother_name VARCHAR(255) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN date_of_birth DATE NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN gender ENUM('male','female','other') NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN marital_status ENUM('single','married','divorced','widowed') NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN blood_group VARCHAR(10) NULL;
+SET @col_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'full_name_aadhaar'
+);
+SET @sql_1 = IF(@col_1 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN full_name_aadhaar VARCHAR(255) NULL COMMENT ''Name as per Aadhaar''',
+  'SELECT "full_name_aadhaar already exists" AS message');
+PREPARE stmt_1 FROM @sql_1;
+EXECUTE stmt_1;
+DEALLOCATE PREPARE stmt_1;
+SET @col_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'father_name'
+);
+SET @sql_2 = IF(@col_2 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN father_name VARCHAR(255) NULL',
+  'SELECT "father_name already exists" AS message');
+PREPARE stmt_2 FROM @sql_2;
+EXECUTE stmt_2;
+DEALLOCATE PREPARE stmt_2;
+SET @col_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'mother_name'
+);
+SET @sql_3 = IF(@col_3 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN mother_name VARCHAR(255) NULL',
+  'SELECT "mother_name already exists" AS message');
+PREPARE stmt_3 FROM @sql_3;
+EXECUTE stmt_3;
+DEALLOCATE PREPARE stmt_3;
+SET @col_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'date_of_birth'
+);
+SET @sql_4 = IF(@col_4 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN date_of_birth DATE NULL',
+  'SELECT "date_of_birth already exists" AS message');
+PREPARE stmt_4 FROM @sql_4;
+EXECUTE stmt_4;
+DEALLOCATE PREPARE stmt_4;
+SET @col_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'gender'
+);
+SET @sql_5 = IF(@col_5 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN gender ENUM(''male'',''female'',''other'') NULL',
+  'SELECT "gender already exists" AS message');
+PREPARE stmt_5 FROM @sql_5;
+EXECUTE stmt_5;
+DEALLOCATE PREPARE stmt_5;
+SET @col_6 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'marital_status'
+);
+SET @sql_6 = IF(@col_6 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN marital_status ENUM(''single'',''married'',''divorced'',''widowed'') NULL',
+  'SELECT "marital_status already exists" AS message');
+PREPARE stmt_6 FROM @sql_6;
+EXECUTE stmt_6;
+DEALLOCATE PREPARE stmt_6;
+SET @col_7 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'blood_group'
+);
+SET @sql_7 = IF(@col_7 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN blood_group VARCHAR(10) NULL',
+  'SELECT "blood_group already exists" AS message');
+PREPARE stmt_7 FROM @sql_7;
+EXECUTE stmt_7;
+DEALLOCATE PREPARE stmt_7;
 ALTER TABLE candidate_onboarding_profile ADD COLUMN alternate_mobile VARCHAR(20) NULL;
 ALTER TABLE candidate_onboarding_profile ADD COLUMN current_address TEXT NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN permanent_address TEXT NULL;
+SET @col_8 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'permanent_address'
+);
+SET @sql_8 = IF(@col_8 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN permanent_address TEXT NULL',
+  'SELECT "permanent_address already exists" AS message');
+PREPARE stmt_8 FROM @sql_8;
+EXECUTE stmt_8;
+DEALLOCATE PREPARE stmt_8;
 ALTER TABLE candidate_onboarding_profile ADD COLUMN city VARCHAR(100) NULL;
 ALTER TABLE candidate_onboarding_profile ADD COLUMN state VARCHAR(100) NULL;
 ALTER TABLE candidate_onboarding_profile ADD COLUMN pin_code VARCHAR(10) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN voter_id VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN driving_license VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN passport_number VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN uan_number VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN esic_number VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_name VARCHAR(255) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_relation VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_number VARCHAR(20) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_address TEXT NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_name VARCHAR(255) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_relation VARCHAR(50) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_dob DATE NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_contact VARCHAR(20) NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN declaration_accepted TINYINT(1) DEFAULT 0;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN bgv_consent TINYINT(1) DEFAULT 0;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN doc_verification_consent TINYINT(1) DEFAULT 0;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN policy_acknowledgement TINYINT(1) DEFAULT 0;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN draft_saved_at DATETIME NULL;
-ALTER TABLE candidate_onboarding_profile ADD COLUMN submitted_at DATETIME NULL;
+SET @col_9 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'voter_id'
+);
+SET @sql_9 = IF(@col_9 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN voter_id VARCHAR(50) NULL',
+  'SELECT "voter_id already exists" AS message');
+PREPARE stmt_9 FROM @sql_9;
+EXECUTE stmt_9;
+DEALLOCATE PREPARE stmt_9;
+SET @col_10 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'driving_license'
+);
+SET @sql_10 = IF(@col_10 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN driving_license VARCHAR(50) NULL',
+  'SELECT "driving_license already exists" AS message');
+PREPARE stmt_10 FROM @sql_10;
+EXECUTE stmt_10;
+DEALLOCATE PREPARE stmt_10;
+SET @col_11 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'passport_number'
+);
+SET @sql_11 = IF(@col_11 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN passport_number VARCHAR(50) NULL',
+  'SELECT "passport_number already exists" AS message');
+PREPARE stmt_11 FROM @sql_11;
+EXECUTE stmt_11;
+DEALLOCATE PREPARE stmt_11;
+SET @col_12 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'uan_number'
+);
+SET @sql_12 = IF(@col_12 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN uan_number VARCHAR(50) NULL',
+  'SELECT "uan_number already exists" AS message');
+PREPARE stmt_12 FROM @sql_12;
+EXECUTE stmt_12;
+DEALLOCATE PREPARE stmt_12;
+SET @col_13 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'esic_number'
+);
+SET @sql_13 = IF(@col_13 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN esic_number VARCHAR(50) NULL',
+  'SELECT "esic_number already exists" AS message');
+PREPARE stmt_13 FROM @sql_13;
+EXECUTE stmt_13;
+DEALLOCATE PREPARE stmt_13;
+SET @col_14 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'emergency_contact_name'
+);
+SET @sql_14 = IF(@col_14 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_name VARCHAR(255) NULL',
+  'SELECT "emergency_contact_name already exists" AS message');
+PREPARE stmt_14 FROM @sql_14;
+EXECUTE stmt_14;
+DEALLOCATE PREPARE stmt_14;
+SET @col_15 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'emergency_contact_relation'
+);
+SET @sql_15 = IF(@col_15 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_relation VARCHAR(50) NULL',
+  'SELECT "emergency_contact_relation already exists" AS message');
+PREPARE stmt_15 FROM @sql_15;
+EXECUTE stmt_15;
+DEALLOCATE PREPARE stmt_15;
+SET @col_16 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'emergency_contact_number'
+);
+SET @sql_16 = IF(@col_16 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_number VARCHAR(20) NULL',
+  'SELECT "emergency_contact_number already exists" AS message');
+PREPARE stmt_16 FROM @sql_16;
+EXECUTE stmt_16;
+DEALLOCATE PREPARE stmt_16;
+SET @col_17 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'emergency_contact_address'
+);
+SET @sql_17 = IF(@col_17 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN emergency_contact_address TEXT NULL',
+  'SELECT "emergency_contact_address already exists" AS message');
+PREPARE stmt_17 FROM @sql_17;
+EXECUTE stmt_17;
+DEALLOCATE PREPARE stmt_17;
+SET @col_18 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'nominee_name'
+);
+SET @sql_18 = IF(@col_18 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_name VARCHAR(255) NULL',
+  'SELECT "nominee_name already exists" AS message');
+PREPARE stmt_18 FROM @sql_18;
+EXECUTE stmt_18;
+DEALLOCATE PREPARE stmt_18;
+SET @col_19 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'nominee_relation'
+);
+SET @sql_19 = IF(@col_19 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_relation VARCHAR(50) NULL',
+  'SELECT "nominee_relation already exists" AS message');
+PREPARE stmt_19 FROM @sql_19;
+EXECUTE stmt_19;
+DEALLOCATE PREPARE stmt_19;
+SET @col_20 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'nominee_dob'
+);
+SET @sql_20 = IF(@col_20 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_dob DATE NULL',
+  'SELECT "nominee_dob already exists" AS message');
+PREPARE stmt_20 FROM @sql_20;
+EXECUTE stmt_20;
+DEALLOCATE PREPARE stmt_20;
+SET @col_21 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'nominee_contact'
+);
+SET @sql_21 = IF(@col_21 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN nominee_contact VARCHAR(20) NULL',
+  'SELECT "nominee_contact already exists" AS message');
+PREPARE stmt_21 FROM @sql_21;
+EXECUTE stmt_21;
+DEALLOCATE PREPARE stmt_21;
+SET @col_22 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'declaration_accepted'
+);
+SET @sql_22 = IF(@col_22 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN declaration_accepted TINYINT(1) DEFAULT 0',
+  'SELECT "declaration_accepted already exists" AS message');
+PREPARE stmt_22 FROM @sql_22;
+EXECUTE stmt_22;
+DEALLOCATE PREPARE stmt_22;
+SET @col_23 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'bgv_consent'
+);
+SET @sql_23 = IF(@col_23 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN bgv_consent TINYINT(1) DEFAULT 0',
+  'SELECT "bgv_consent already exists" AS message');
+PREPARE stmt_23 FROM @sql_23;
+EXECUTE stmt_23;
+DEALLOCATE PREPARE stmt_23;
+SET @col_24 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'doc_verification_consent'
+);
+SET @sql_24 = IF(@col_24 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN doc_verification_consent TINYINT(1) DEFAULT 0',
+  'SELECT "doc_verification_consent already exists" AS message');
+PREPARE stmt_24 FROM @sql_24;
+EXECUTE stmt_24;
+DEALLOCATE PREPARE stmt_24;
+SET @col_25 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'policy_acknowledgement'
+);
+SET @sql_25 = IF(@col_25 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN policy_acknowledgement TINYINT(1) DEFAULT 0',
+  'SELECT "policy_acknowledgement already exists" AS message');
+PREPARE stmt_25 FROM @sql_25;
+EXECUTE stmt_25;
+DEALLOCATE PREPARE stmt_25;
+SET @col_26 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'draft_saved_at'
+);
+SET @sql_26 = IF(@col_26 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN draft_saved_at DATETIME NULL',
+  'SELECT "draft_saved_at already exists" AS message');
+PREPARE stmt_26 FROM @sql_26;
+EXECUTE stmt_26;
+DEALLOCATE PREPARE stmt_26;
+SET @col_27 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'submitted_at'
+);
+SET @sql_27 = IF(@col_27 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN submitted_at DATETIME NULL',
+  'SELECT "submitted_at already exists" AS message');
+PREPARE stmt_27 FROM @sql_27;
+EXECUTE stmt_27;
+DEALLOCATE PREPARE stmt_27;
 
 -- ── 7. Create bgv_initiation table ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS ats_bgv_initiation (

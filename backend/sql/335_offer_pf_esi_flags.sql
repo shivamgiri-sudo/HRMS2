@@ -14,10 +14,38 @@ ALTER TABLE ats_employment_offer
 -- Step 2: Form 11 / PF declaration columns on the candidate profile
 -- Note: previous_pf_member, eps_member, international_worker already exist (migration 289).
 -- These columns record the candidate's online consent act.
-ALTER TABLE candidate_onboarding_profile
-  ADD COLUMN pf_opt_out_elected TINYINT(1) NOT NULL DEFAULT 0
-    COMMENT 'Candidate elected to opt out of PF on Form 11 online step (1 = yes)',
-  ADD COLUMN pf_opt_out_consent_text TEXT NULL
-    COMMENT 'Full Form 11 declaration text shown to candidate at time of consent',
-  ADD COLUMN pf_opt_out_consented_at DATETIME NULL
-    COMMENT 'UTC timestamp when candidate clicked consent on Form 11 step';
+SET @col_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'pf_opt_out_elected'
+);
+SET @sql_1 = IF(@col_1 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN pf_opt_out_elected TINYINT(1) NOT NULL DEFAULT 0
+    COMMENT ''Candidate elected to opt out of PF on Form 11 online step (1 = yes)''',
+  'SELECT "pf_opt_out_elected already exists" AS message');
+PREPARE stmt_1 FROM @sql_1;
+EXECUTE stmt_1;
+DEALLOCATE PREPARE stmt_1;
+
+SET @col_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'pf_opt_out_consent_text'
+);
+SET @sql_2 = IF(@col_2 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN pf_opt_out_consent_text TEXT NULL
+    COMMENT ''Full Form 11 declaration text shown to candidate at time of consent''',
+  'SELECT "pf_opt_out_consent_text already exists" AS message');
+PREPARE stmt_2 FROM @sql_2;
+EXECUTE stmt_2;
+DEALLOCATE PREPARE stmt_2;
+
+SET @col_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'candidate_onboarding_profile' AND COLUMN_NAME = 'pf_opt_out_consented_at'
+);
+SET @sql_3 = IF(@col_3 = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN pf_opt_out_consented_at DATETIME NULL
+    COMMENT ''UTC timestamp when candidate clicked consent on Form 11 step''',
+  'SELECT "pf_opt_out_consented_at already exists" AS message');
+PREPARE stmt_3 FROM @sql_3;
+EXECUTE stmt_3;
+DEALLOCATE PREPARE stmt_3;

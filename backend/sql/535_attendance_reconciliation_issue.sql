@@ -31,8 +31,16 @@ CREATE TABLE IF NOT EXISTS attendance_reconciliation_issue (
   KEY idx_att_recon_issue_type (issue_type, issue_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-ALTER TABLE attendance_reconciliation_issue
-  ADD COLUMN issue_key VARCHAR(255) NULL AFTER id;
+SET @col_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_reconciliation_issue' AND COLUMN_NAME = 'issue_key'
+);
+SET @sql_1 = IF(@col_1 = 0,
+  'ALTER TABLE attendance_reconciliation_issue ADD COLUMN issue_key VARCHAR(255) NULL AFTER id',
+  'SELECT "issue_key already exists" AS message');
+PREPARE stmt_1 FROM @sql_1;
+EXECUTE stmt_1;
+DEALLOCATE PREPARE stmt_1;
 
 UPDATE attendance_reconciliation_issue
    SET issue_key = CONCAT_WS('__',

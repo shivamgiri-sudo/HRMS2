@@ -126,10 +126,46 @@ CREATE TABLE IF NOT EXISTS employee_code_sequence (
   UNIQUE KEY unique_sequence (company_prefix, is_offrole)
 );
 
-ALTER TABLE employee_code_sequence ADD COLUMN is_offrole BOOLEAN DEFAULT FALSE;
-ALTER TABLE employee_code_sequence ADD COLUMN current_sequence INT NOT NULL DEFAULT 0;
-ALTER TABLE employee_code_sequence ADD COLUMN last_generated_code VARCHAR(50) NULL;
-ALTER TABLE employee_code_sequence ADD COLUMN last_generated_at DATETIME NULL;
+SET @col_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'is_offrole'
+);
+SET @sql_1 = IF(@col_1 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN is_offrole BOOLEAN DEFAULT FALSE',
+  'SELECT "is_offrole already exists" AS message');
+PREPARE stmt_1 FROM @sql_1;
+EXECUTE stmt_1;
+DEALLOCATE PREPARE stmt_1;
+SET @col_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'current_sequence'
+);
+SET @sql_2 = IF(@col_2 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN current_sequence INT NOT NULL DEFAULT 0',
+  'SELECT "current_sequence already exists" AS message');
+PREPARE stmt_2 FROM @sql_2;
+EXECUTE stmt_2;
+DEALLOCATE PREPARE stmt_2;
+SET @col_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'last_generated_code'
+);
+SET @sql_3 = IF(@col_3 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN last_generated_code VARCHAR(50) NULL',
+  'SELECT "last_generated_code already exists" AS message');
+PREPARE stmt_3 FROM @sql_3;
+EXECUTE stmt_3;
+DEALLOCATE PREPARE stmt_3;
+SET @col_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'last_generated_at'
+);
+SET @sql_4 = IF(@col_4 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN last_generated_at DATETIME NULL',
+  'SELECT "last_generated_at already exists" AS message');
+PREPARE stmt_4 FROM @sql_4;
+EXECUTE stmt_4;
+DEALLOCATE PREPARE stmt_4;
 
 -- Initialize sequences
 INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
@@ -156,9 +192,36 @@ CREATE TABLE IF NOT EXISTS module_access_control (
   UNIQUE KEY unique_access (module_name, employee_code)
 );
 
-ALTER TABLE module_access_control ADD COLUMN employee_code VARCHAR(50) NULL;
-ALTER TABLE module_access_control ADD COLUMN has_access BOOLEAN DEFAULT TRUE;
-ALTER TABLE module_access_control ADD COLUMN remarks TEXT NULL;
+SET @col_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND COLUMN_NAME = 'employee_code'
+);
+SET @sql_5 = IF(@col_5 = 0,
+  'ALTER TABLE module_access_control ADD COLUMN employee_code VARCHAR(50) NULL',
+  'SELECT "employee_code already exists" AS message');
+PREPARE stmt_5 FROM @sql_5;
+EXECUTE stmt_5;
+DEALLOCATE PREPARE stmt_5;
+SET @col_6 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND COLUMN_NAME = 'has_access'
+);
+SET @sql_6 = IF(@col_6 = 0,
+  'ALTER TABLE module_access_control ADD COLUMN has_access BOOLEAN DEFAULT TRUE',
+  'SELECT "has_access already exists" AS message');
+PREPARE stmt_6 FROM @sql_6;
+EXECUTE stmt_6;
+DEALLOCATE PREPARE stmt_6;
+SET @col_7 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND COLUMN_NAME = 'remarks'
+);
+SET @sql_7 = IF(@col_7 = 0,
+  'ALTER TABLE module_access_control ADD COLUMN remarks TEXT NULL',
+  'SELECT "remarks already exists" AS message');
+PREPARE stmt_7 FROM @sql_7;
+EXECUTE stmt_7;
+DEALLOCATE PREPARE stmt_7;
 ALTER TABLE module_access_control ADD UNIQUE KEY unique_access (module_name, employee_code);
 
 -- Grant super admin access to MAS47814
