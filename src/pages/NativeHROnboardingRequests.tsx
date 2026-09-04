@@ -2826,11 +2826,27 @@ export default function NativeHROnboardingRequests() {
                 ) : (
                 /* PDF / other — use iframe with blocking overlay */
                 <div className={`relative h-full w-full transition-all duration-300 ${previewBlurred ? 'blur-xl' : ''}`}>
+                  {/*
+                    * No sandbox attribute, deliberately.
+                    *
+                    * It read `sandbox="allow-scripts allow-same-origin"`, which is the pair
+                    * Chrome itself warns about — "an iframe which has both allow-scripts and
+                    * allow-same-origin for its sandbox attribute can escape its sandboxing" —
+                    * so it granted no isolation while still marking the frame as sandboxed.
+                    * Edge's built-in PDF viewer refuses to run in a sandboxed frame and
+                    * replaces the document with its own "blocked by Microsoft Edge" page,
+                    * reported live on 2026-09-04 once the CSP frame-src fix let the frame load
+                    * at all.
+                    *
+                    * The framed content is a blob this page created from a response it just
+                    * fetched and authenticated — same origin, not third-party content — so the
+                    * attribute was protecting against nothing that isn't already ours. The
+                    * watermark and right-click overlay below are unaffected.
+                    */}
                   <iframe
                     src={documentPreviewUrl ?? undefined}
                     title={documentPreview.title}
                     className="h-full w-full border-0"
-                    sandbox="allow-scripts allow-same-origin"
                     style={{ transform: `scale(${previewZoom})`, transformOrigin: 'top left', width: `${100 / previewZoom}%`, height: `${100 / previewZoom}%` }}
                   />
                   {/* Identity watermark + right-click blocker overlay */}

@@ -60,6 +60,16 @@ describe("onboarding document preview — CSP framing refusal", () => {
     expect(SOURCE).toContain("This browser blocked the inline PDF preview");
   });
 
+  it("does not sandbox the PDF frame, which stops Edge rendering it", () => {
+    // Edge's built-in PDF viewer refuses to run inside a sandboxed frame and substitutes its
+    // own "blocked by Microsoft Edge" page. The attribute was `allow-scripts allow-same-origin`
+    // — the combination Chrome warns "can escape its sandboxing" — so it isolated nothing
+    // while still costing the viewer. The framed blob is this page's own authenticated
+    // response, not third-party content.
+    const frame = SOURCE.slice(SOURCE.indexOf("<iframe"), SOURCE.indexOf("<iframe") + 600);
+    expect(frame).not.toContain("sandbox=");
+  });
+
   it("keeps the inline iframe as the default path", () => {
     // The fallback is conditional. If the CSP is fixed the event never fires, the flag stays
     // false, and the watermarked in-page viewer is what renders — no code change needed.
