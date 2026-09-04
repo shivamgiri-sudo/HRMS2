@@ -273,7 +273,22 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
       res.status(404).json({ error: 'EXECUTOR_NOT_FOUND', message: 'This report is not yet available.' });
       return;
     }
-    throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    const isDeadlock = /deadlock|lock wait timeout/i.test(msg);
+    if (isDeadlock) {
+      res.status(503).json({
+        error: 'REPORT_TEMPORARILY_UNAVAILABLE',
+        message: 'Report generation failed due to a temporary database conflict. Please wait a few seconds and try again.',
+      });
+      return;
+    }
+    // Surface the real error message in the response instead of masking it,
+    // so the frontend can show something actionable.
+    res.status(500).json({
+      error: 'REPORT_GENERATION_FAILED',
+      message: 'Report generation failed. Please try again or request the report by email.',
+    });
+    return;
   }
 
   if (result.rows.length > EXPORT_ROW_CAP) {
