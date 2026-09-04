@@ -4,6 +4,11 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
+import {
+  assertCostCentresFree,
+  insertRunScope,
+  resolveCostCentreScope,
+} from "./payroll-run-scope.service.js";
 import { leaveService } from "../leave/leave.service.js";
 import { validateTransition, canEdit, type RunStatus } from "./payroll-lifecycle.js";
 import { notifyPayrollRunStatus, notifyPayslipsReady } from "./payroll.notifications.js";

@@ -552,6 +552,8 @@ interface EmployeeRow {
   date_of_birth: string | null;
   process_id: string | null;
   branch_id: string | null;
+  /** Stamped onto salary_prep_line so a later transfer cannot rewrite a closed month's register. */
+  cost_centre_id: string | null;
   pan_number: string | null;
 }
 
