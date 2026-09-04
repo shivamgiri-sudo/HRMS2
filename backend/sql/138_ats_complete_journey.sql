@@ -585,7 +585,16 @@ ALTER TABLE ats_candidate ADD COLUMN candidate_status VARCHAR(50) NULL;
 ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_branch (applied_for_branch);
 ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_status (candidate_status);
 ALTER TABLE ats_candidate ADD INDEX idx_ats_candidate_created (created_at);
-ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (queue_status);
+SET @idxchk_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_queue_token' AND INDEX_NAME = 'idx_ats_queue_status'
+);
+SET @idxsql_1 = IF(@idxchk_1 = 0,
+  'ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_status (queue_status)',
+  'SELECT "idx_ats_queue_status already exists" AS message');
+PREPARE stmt_idx_1 FROM @idxsql_1;
+EXECUTE stmt_idx_1;
+DEALLOCATE PREPARE stmt_idx_1;
 ALTER TABLE ats_queue_token ADD INDEX idx_ats_queue_branch (branch_name);
 
 -- ── 18. Super admin employee access ───────────────────────────────────────────

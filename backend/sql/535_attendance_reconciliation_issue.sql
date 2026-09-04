@@ -55,5 +55,14 @@ UPDATE attendance_reconciliation_issue
 ALTER TABLE attendance_reconciliation_issue
   MODIFY issue_key VARCHAR(255) NOT NULL;
 
-ALTER TABLE attendance_reconciliation_issue
-  ADD UNIQUE KEY uq_att_recon_issue_key (issue_key);
+SET @idxchk_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_reconciliation_issue' AND INDEX_NAME = 'uq_att_recon_issue_key'
+);
+SET @idxsql_1 = IF(@idxchk_1 = 0,
+  'ALTER TABLE attendance_reconciliation_issue
+  ADD UNIQUE KEY uq_att_recon_issue_key (issue_key)',
+  'SELECT "uq_att_recon_issue_key already exists" AS message');
+PREPARE stmt_idx_1 FROM @idxsql_1;
+EXECUTE stmt_idx_1;
+DEALLOCATE PREPARE stmt_idx_1;

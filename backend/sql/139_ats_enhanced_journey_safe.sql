@@ -222,7 +222,16 @@ SET @sql_7 = IF(@col_7 = 0,
 PREPARE stmt_7 FROM @sql_7;
 EXECUTE stmt_7;
 DEALLOCATE PREPARE stmt_7;
-ALTER TABLE module_access_control ADD UNIQUE KEY unique_access (module_name, employee_code);
+SET @idxchk_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND INDEX_NAME = 'unique_access'
+);
+SET @idxsql_1 = IF(@idxchk_1 = 0,
+  'ALTER TABLE module_access_control ADD UNIQUE KEY unique_access (module_name, employee_code)',
+  'SELECT "unique_access already exists" AS message');
+PREPARE stmt_idx_1 FROM @idxsql_1;
+EXECUTE stmt_idx_1;
+DEALLOCATE PREPARE stmt_idx_1;
 
 -- Grant super admin access to MAS47814
 INSERT INTO module_access_control (
