@@ -92,6 +92,25 @@ const CELEBRATION_SELECT = `
     LEFT JOIN process_master pm     ON pm.id  = e.process_id
     LEFT JOIN employees mgr         ON mgr.id = e.reporting_manager_id`;
 
+// Same shape as CELEBRATION_SELECT but with years_completed added to the
+// column list (not appended after the FROM/JOIN clauses, which produced
+// invalid SQL — see queryTodayAnniversaries).
+const CELEBRATION_SELECT_WITH_TENURE = `
+  SELECT e.id, e.full_name, e.official_email, e.email,
+         e.avatar_url, e.branch_id, e.date_of_joining,
+         e.gender, e.blood_group, e.band, e.employee_code,
+         COALESCE(bm.display_name, bm.branch_name) AS branch_display,
+         dm.designation_name,
+         NULL AS dept_name,
+         pm.process_name,
+         mgr.full_name AS manager_name,
+         TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_completed
+    FROM employees e
+    LEFT JOIN branch_master bm      ON bm.id  = e.branch_id
+    LEFT JOIN designation_master dm ON dm.id  = e.designation_id
+    LEFT JOIN process_master pm     ON pm.id  = e.process_id
+    LEFT JOIN employees mgr         ON mgr.id = e.reporting_manager_id`;
+
 export async function queryTodayBirthdays(): Promise<CelebrationEmployee[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `${CELEBRATION_SELECT}
@@ -105,8 +124,7 @@ export async function queryTodayBirthdays(): Promise<CelebrationEmployee[]> {
 
 export async function queryTodayAnniversaries(): Promise<CelebrationEmployee[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `${CELEBRATION_SELECT},
-            TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_completed
+    `${CELEBRATION_SELECT_WITH_TENURE}
       WHERE e.active_status = 1
         AND e.date_of_joining IS NOT NULL
         AND MONTH(e.date_of_joining) = MONTH(CURDATE())
