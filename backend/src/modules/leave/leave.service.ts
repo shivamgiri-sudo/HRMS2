@@ -165,6 +165,74 @@ async function writeHolidayScope(
   }
 }
 
+/**
+ * Leave types a half day may be drawn from. Owner decision 2026-09-04: the half-day bucket
+ * is CL+ML only — the same pair leave-policy.service.ts already pools and the same pair
+ * checkMonthlyCapExceeded already caps together.
+ */
+export const HALF_DAY_LEAVE_CODES = new Set(["CL", "ML"]);
+
+/**
+ * What an approved HALF day does to that date's attendance, and therefore to pay.
+ *
+ * payrollCalculate.service.ts scores attendance for paid_base as present 1.0, late 1.0,
+ * half_day 0.5, leave_approved 1.0, everything else 0. The target status IS the payroll
+ * outcome, so there is no separate payroll change to make.
+ *
+ *   absent (pays 0)        -> half_day  : now pays 0.5
+ *   missing_punch (pays 0) -> half_day  : now pays 0.5   (owner decision b)
+ *   unreconciled (pays 0)  -> half_day  : now pays 0.5   (same family: unpaid, unresolved)
+ *   no row at all          -> half_day  : now pays 0.5   (nothing recorded = nothing paid)
+ *   half_day (pays 0.5)    -> present   : now pays 1.0   (owner decision a — half worked plus
+ *                                          half leave is a whole paid day, and 'present'
+ *                                          keeps attendance reporting honest instead of
+ *                                          booking the WHOLE day as leave the way
+ *                                          'leave_approved' would)
+ *
+ * A day already worth a full day's pay is REFUSED rather than transitioned (owner decision
+ * c): there is no half left to take, and quietly leaving it at 1.0 would spend half a day of
+ * CL/ML balance for nothing.
+ *
+ * holiday and week_off never reach here — classifyLeaveDays excludes them from
+ * chargeableDates, so no attendance row is written for them at all.
+ */
+export const HALF_DAY_ATTENDANCE_TRANSITION: Record<string, string> = {
+  absent: "half_day",
+  missing_punch: "half_day",
+  unreconciled: "half_day",
+  half_day: "present",
+};
+
+/**
+ * Statuses already carrying a full day's pay, so a half day has nothing to add.
+ *
+ * Exactly the statuses payrollCalculate's paid_base scores at 1.0, and nothing else — if a
+ * status is listed here it MUST already pay a full day, or we would be refusing leave on a day
+ * the employee is not actually being paid for. 'week_off_worked' deliberately does NOT appear:
+ * paid_base scores it 0, and a week-off date cannot reach this code anyway because
+ * chargeableDates() returns only dates classified 'chargeable', never 'week_off' or 'holiday'.
+ */
+export const HALF_DAY_ALREADY_FULL = new Set(["present", "late", "leave_approved"]);
+
+/**
+ * Target attendance status for a half day landing on `existing`, or null when the day must be
+ * refused. `existing` is null/empty when no attendance row exists for that date yet.
+ */
+export function halfDayAttendanceTarget(existing: string | null | undefined): string | null {
+  const current = (existing ?? "").trim();
+  if (!current) return "half_day";
+  if (HALF_DAY_ALREADY_FULL.has(current)) return null;
+  return HALF_DAY_ATTENDANCE_TRANSITION[current] ?? "half_day";
+}
+
+/** The refusal message, in one place so submit-time and approval-time agree word for word. */
+export function halfDayRefusalMessage(date: string, existing: string): string {
+  return (
+    `${date} is already a full paid day (${existing.replace(/_/g, " ")}), so a half day cannot be ` +
+    `applied to it. Correct that day's attendance first if this is wrong.`
+  );
+}
+
 export const leaveService = {
   async listLeaveTypes(employeeId?: string): Promise<LeaveType[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -207,6 +275,7 @@ export const leaveService = {
     return (rows as LeaveType[])[0];
   },
 
+
   async submitRequest(input: LeaveRequestInput, actorUserId?: string): Promise<LeaveRequest> {
     const id = randomUUID();
 
@@ -214,18 +283,17 @@ export const leaveService = {
     // Enabled 2026-09-04 on the owner's explicit decision, replacing the blanket
     // reject added by the 2026-08-13 audit.
     //
-    // WHAT IS AND IS NOT COVERED, because that audit's warning still stands:
-    // attendance has no partial-day status, so payroll PAYS THE FULL DAY while the
-    // balance is charged 0.5. That asymmetry is accepted deliberately — it is what
-    // the 811 half-day requests already on this database have always done (806 of
-    // them approved, 2018-01 to 2026-02), so this restores the behaviour the
-    // business ran on rather than inventing a new one. Charging payroll half a day
-    // needs a half-day attendance status first, and that is a separate change to
-    // payroll arithmetic requiring its own sign-off.
+    // Payroll now charges a half day as half a day. The earlier note here — that
+    // attendance had no partial-day status, so payroll must pay the full day — was
+    // simply wrong: 'half_day' is a valid attendance_status (5,785 days in August 2026
+    // alone) and payrollCalculate's paid_base already scores it 0.5, against
+    // present/late/leave_approved at 1.0. So charging half a day needs NO payroll
+    // arithmetic change at all, only that approval writes the RIGHT status — which is
+    // what HALF_DAY_ATTENDANCE_TRANSITION below decides.
     //
-    // Deliberately narrow: exactly 0.5, and only on a SINGLE date. A fraction
-    // spread over a range has no meaning here — nothing records WHICH day is the
-    // half — and arbitrary fractions (0.25, 1.5) have no policy behind them, so
+    // Deliberately narrow: exactly 0.5, on a SINGLE date, and only from the CL/ML pool.
+    // A fraction spread over a range has no meaning here — nothing records WHICH day
+    // is the half — and arbitrary fractions (0.25, 1.5) have no policy behind them, so
     // both are still refused.
     const isHalfDay = input.totalDays === 0.5;
     if (!Number.isInteger(input.totalDays) && !isHalfDay) {
@@ -249,6 +317,35 @@ export const leaveService = {
       [input.leaveTypeId]
     );
     const leaveCode = (ltCodeRows as Array<{ leave_code: string }>)[0]?.leave_code ?? null;
+
+    // Half day: CL/ML only, and never onto a day that is already fully paid.
+    // Both checks live here rather than only at approval so a bulk-upload row fails as a ROW
+    // error with a readable reason, instead of being accepted and then dying in the approver's
+    // queue. Approval re-checks the attendance one, since attendance can be reclassified
+    // between submission and approval.
+    if (isHalfDay) {
+      if (!leaveCode || !HALF_DAY_LEAVE_CODES.has(leaveCode)) {
+        throw Object.assign(
+          new Error(
+            `Half-day leave is only available on ${[...HALF_DAY_LEAVE_CODES].join(" and ")} ` +
+            `(got ${leaveCode ?? "an unknown leave type"}). Apply a full day, or use CL/ML.`,
+          ),
+          { statusCode: 400 },
+        );
+      }
+      const [existingAdr] = await db.execute<RowDataPacket[]>(
+        `SELECT attendance_status FROM attendance_daily_record
+          WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+        [input.employeeId, input.fromDate],
+      );
+      const currentStatus = String((existingAdr as RowDataPacket[])[0]?.attendance_status ?? "");
+      if (currentStatus && halfDayAttendanceTarget(currentStatus) === null) {
+        throw Object.assign(
+          new Error(halfDayRefusalMessage(input.fromDate, currentStatus)),
+          { statusCode: 400 },
+        );
+      }
+    }
 
     // ── Gender eligibility (MTRL = female only; PL/PTRL = male only) ───────
     // Mirrors GET /api/leave/eligibility/:employeeId (leave.routes.ts).
@@ -776,10 +873,46 @@ export const leaveService = {
         const attendanceStatus = isPaidType ? "leave_approved" : "absent";
         const lwpValue = isPaidType ? 0 : 1;
         const changeReason = isPaidType ? null : "Approved LWP";
+
+        // A HALF day does not overwrite the day wholesale — it adds half a day to whatever is
+        // already recorded, and the resulting status IS the pay outcome (payroll scores
+        // half_day 0.5, present 1.0). See halfDayAttendanceTarget. Read fresh here rather than
+        // trusting submit-time state: attendance can be reclassified in between, and this is
+        // the write that decides what the employee is actually paid.
+        const isHalfDayApproval = Number(request.total_days) === 0.5 && isPaidType;
+        const halfDayTargets = new Map<string, string>();
+        if (isHalfDayApproval && chargeable.length) {
+          // No generic: `conn` here is the untyped transaction handle every other conn.execute
+          // in this file uses, and TS refuses type arguments on it. The cast below carries it.
+          const [adrNow] = await conn.execute(
+            `SELECT record_date, attendance_status FROM attendance_daily_record
+              WHERE employee_id = ? AND record_date IN (${chargeable.map(() => "?").join(", ")})`,
+            [request.employee_id, ...chargeable],
+          );
+          const byDate = new Map<string, string>();
+          for (const r of adrNow as RowDataPacket[]) {
+            byDate.set(String(r.record_date).slice(0, 10), String(r.attendance_status ?? ""));
+          }
+          for (const d of chargeable) {
+            const existing = byDate.get(String(d).slice(0, 10)) ?? null;
+            const target = halfDayAttendanceTarget(existing);
+            if (target === null) {
+              throw Object.assign(
+                new Error(halfDayRefusalMessage(String(d), existing ?? "")),
+                { statusCode: 400 },
+              );
+            }
+            halfDayTargets.set(String(d), target);
+          }
+        }
+
         const valuesSql = chargeable.map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')").join(", ");
         const valuesParams: unknown[] = [];
         for (const d of chargeable) {
-          valuesParams.push(request.employee_id, d, attendanceStatus, lwpValue, changeReason);
+          const statusForDay = isHalfDayApproval
+            ? (halfDayTargets.get(String(d)) ?? attendanceStatus)
+            : attendanceStatus;
+          valuesParams.push(request.employee_id, d, statusForDay, lwpValue, changeReason);
         }
         await conn.execute(
           `INSERT INTO attendance_daily_record

@@ -11,6 +11,9 @@ export interface LeaveType {
   description: string | null;
   days_per_year: number;
   is_paid: boolean | null;
+  /** leave_code (CL, ML, EL...). Needed because half-day is CL/ML only — the name
+   *  is a display string and cannot be matched on. */
+  code: string | null;
 }
 
 export function useLeaveTypes() {
@@ -24,6 +27,7 @@ export function useLeaveTypes() {
         description: t.description ?? null,
         days_per_year: t.max_days_per_year ?? t.days_per_year ?? 0,
         is_paid: t.paid_leave != null ? Boolean(t.paid_leave) : (t.is_paid ?? null),
+        code: t.leave_code ?? t.code ?? null,
       }));
     },
   });
@@ -41,6 +45,7 @@ export function useSubmitLeaveRequest() {
       startDate,
       endDate,
       reason,
+      isHalfDay,
     }: {
       employeeId: string;
       leaveTypeId: string;
@@ -48,6 +53,8 @@ export function useSubmitLeaveRequest() {
       startDate: Date;
       endDate: Date;
       reason: string;
+      /** Half day (0.5). CL/ML only and a single date — the server enforces both. */
+      isHalfDay?: boolean;
     }) => {
       // Fetch company holidays for the date range to calculate business days
       const year = startDate.getFullYear();
@@ -83,7 +90,9 @@ export function useSubmitLeaveRequest() {
         leaveTypeId,
         fromDate,
         toDate,
-        totalDays: daysCount,
+        // A half day is half of ONE day, never half of the estimated range. The server
+        // re-derives and enforces this; sending the estimate here would just be wrong.
+        totalDays: isHalfDay ? 0.5 : daysCount,
         reason: reason.trim() || null,
         latitude: geo.latitude,
         longitude: geo.longitude,

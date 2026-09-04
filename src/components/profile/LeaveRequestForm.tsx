@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CalendarIcon, Send, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInDays, subDays, startOfDay, eachDayOfInterval, parseISO, isSameDay } from "date-fns";
@@ -29,6 +30,7 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
   const [leaveTypeId, setLeaveTypeId] = useState<string>("");
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
+  const [isHalfDay, setIsHalfDay] = useState(false);
   const [reason, setReason] = useState("");
 
   const { data: allLeaveTypes, isLoading: isLoadingTypes } = useLeaveTypes();
@@ -74,6 +76,9 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
         is_paid: false,
         days_per_year: 0,
         description: "Unlimited",
+        // Unpaid Leave is not CL/ML, so it can never offer half-day. Stated explicitly
+        // rather than left undefined so the half-day gate reads a real value.
+        code: null,
       });
     }
     return allocated;
@@ -131,6 +136,26 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
     return startDate < today;
   }, [startDate]);
 
+  // Half day is CL/ML only and a single date. Both rules are enforced server-side in
+  // leave.service.ts (HALF_DAY_LEAVE_CODES and the from/to equality check) — mirrored here
+  // only so the option is hidden rather than offered and then rejected. Matched on
+  // leave_code, never the display name, which is editable master data.
+  const HALF_DAY_CODES = ["CL", "ML"];
+  const halfDayAvailable = useMemo(() => {
+    const selected = leaveTypes?.find((t) => t.id === leaveTypeId);
+    const code = (selected?.code ?? "").toUpperCase();
+    const singleDate = !!startDate && !!endDate && isSameDay(startDate, endDate);
+    return HALF_DAY_CODES.includes(code) && singleDate;
+  }, [leaveTypes, leaveTypeId, startDate, endDate]);
+
+  // Never let a stale tick survive a change that makes half-day invalid — otherwise picking
+  // a range or switching to EL would submit 0.5 for a request the server will refuse.
+  useEffect(() => {
+    if (!halfDayAvailable && isHalfDay) setIsHalfDay(false);
+  }, [halfDayAvailable, isHalfDay]);
+
+  const effectiveDays = halfDayAvailable && isHalfDay ? 0.5 : daysCount;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -144,6 +169,7 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
       leaveTypeName: selectedLeaveType?.name || "Leave",
       startDate,
       endDate,
+      isHalfDay: halfDayAvailable && isHalfDay,
       reason,
     });
 
@@ -155,8 +181,8 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
   };
 
   const selectedBalance = leaveTypeId && !isUnpaid ? leaveBalances[leaveTypeId] : null;
-  const exceedsBalance = !!selectedBalance && daysCount > 0 && (selectedBalance.remaining - daysCount) < 0;
-  const isValid = leaveTypeId && startDate && endDate && daysCount > 0 && reason.trim().length >= 10 && !exceedsBalance;
+  const exceedsBalance = !!selectedBalance && effectiveDays > 0 && (selectedBalance.remaining - effectiveDays) < 0;
+  const isValid = leaveTypeId && startDate && endDate && effectiveDays > 0 && reason.trim().length >= 10 && !exceedsBalance;
 
   return (
     <Card>
@@ -266,8 +292,8 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
               {daysCount > 0 && (
                 <div className="flex items-center justify-between mt-1 pt-1 border-t">
                   <span className="text-muted-foreground">After this request</span>
-                  <span className={cn("font-semibold", (selectedBalance.remaining - daysCount) < 0 ? "text-destructive" : "text-primary")}>
-                    {selectedBalance.remaining - daysCount} days
+                  <span className={cn("font-semibold", (selectedBalance.remaining - effectiveDays) < 0 ? "text-destructive" : "text-primary")}>
+                    {selectedBalance.remaining - effectiveDays} days
                   </span>
                 </div>
               )}
@@ -346,9 +372,29 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
             </div>
           </div>
 
-          {daysCount > 0 && (
+          {halfDayAvailable && (
+            <div className="flex items-start gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+              <Checkbox
+                id="half-day-leave"
+                checked={isHalfDay}
+                onCheckedChange={(v) => setIsHalfDay(v === true)}
+                className="mt-0.5"
+              />
+              <div className="text-xs">
+                <Label htmlFor="half-day-leave" className="cursor-pointer font-medium text-indigo-900">
+                  Apply as a half day (0.5)
+                </Label>
+                <p className="mt-0.5 text-indigo-800">
+                  Charges half a day of CL/ML and pays half a day. If that date is already marked
+                  half day, it becomes a full paid day instead.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {effectiveDays > 0 && (
             <p className="text-sm text-muted-foreground">
-              Duration: <span className="font-medium text-foreground">{daysCount} day{daysCount !== 1 ? "s" : ""}</span>
+              Duration: <span className="font-medium text-foreground">{effectiveDays} day{effectiveDays !== 1 ? "s" : ""}</span>
             </p>
           )}
 

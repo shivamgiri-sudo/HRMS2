@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format, subDays } from "date-fns";
 import { CalendarIcon, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLeaveTypes } from "@/hooks/useLeaveRequests";
 import { estimateLeaveDays, useRaiseLeaveOnBehalf } from "@/hooks/useLeaveOnBehalf";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 
 /**
  * Raise leave for a direct report. Deliberately does not show a leave-balance figure —
@@ -38,6 +39,7 @@ export function RaiseLeaveOnBehalfDialog({
   const [endDate, setEndDate] = useState<Date>();
   const [reason, setReason] = useState("");
   const [days, setDays] = useState(0);
+  const [isHalfDay, setIsHalfDay] = useState(false);
   const [estimating, setEstimating] = useState(false);
 
   async function pickRange(start?: Date, end?: Date) {
@@ -55,11 +57,31 @@ export function RaiseLeaveOnBehalfDialog({
     }
   }
 
+  // Half day is CL/ML only and a single date; leave.service.ts enforces both server-side.
+  // Mirrored here so the option is hidden rather than offered and then rejected. Matched on
+  // leave_code, never the display name, which is editable master data.
+  const HALF_DAY_CODES = ["CL", "ML"];
+  const halfDayAvailable = (() => {
+    const selected = (leaveTypes ?? []).find((t) => t.id === leaveTypeId);
+    const code = (selected?.code ?? "").toUpperCase();
+    return HALF_DAY_CODES.includes(code) && !!startDate && !!endDate &&
+      startDate.toDateString() === endDate.toDateString();
+  })();
+
+  // A stale tick must never survive a change that makes half-day invalid, or this would send
+  // 0.5 for a request the server refuses.
+  useEffect(() => {
+    if (!halfDayAvailable && isHalfDay) setIsHalfDay(false);
+  }, [halfDayAvailable, isHalfDay]);
+
+  const effectiveDays = halfDayAvailable && isHalfDay ? 0.5 : days;
+
   function reset() {
     setLeaveTypeId(""); setStartDate(undefined); setEndDate(undefined); setReason(""); setDays(0);
+    setIsHalfDay(false);
   }
 
-  const isValid = leaveTypeId && startDate && endDate && days > 0 && reason.trim().length >= 10;
+  const isValid = leaveTypeId && startDate && endDate && effectiveDays > 0 && reason.trim().length >= 10;
 
   async function submit() {
     if (!isValid || !startDate || !endDate) return;
@@ -67,7 +89,7 @@ export function RaiseLeaveOnBehalfDialog({
     try {
       await raise.mutateAsync({
         employeeId, leaveTypeId, fromDate: fmt(startDate), toDate: fmt(endDate),
-        totalDays: days, reason: reason.trim(),
+        totalDays: effectiveDays, reason: reason.trim(),
       });
       toast({
         title: "Sent for their consent",
@@ -158,11 +180,31 @@ export function RaiseLeaveOnBehalfDialog({
             </div>
           </div>
 
+          {halfDayAvailable && (
+            <div className="flex items-start gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2">
+              <Checkbox
+                id="half-day-on-behalf"
+                checked={isHalfDay}
+                onCheckedChange={(v) => setIsHalfDay(v === true)}
+                className="mt-0.5"
+              />
+              <div className="text-xs">
+                <Label htmlFor="half-day-on-behalf" className="cursor-pointer font-medium text-indigo-900">
+                  Apply as a half day (0.5)
+                </Label>
+                <p className="mt-0.5 text-indigo-800">
+                  Charges half a day of CL/ML and pays half a day. If that date is already marked
+                  half day, it becomes a full paid day instead.
+                </p>
+              </div>
+            </div>
+          )}
+
           {startDate && endDate && (
             <p className="text-sm text-muted-foreground">
               {estimating ? "Estimating…" : (
-                days > 0
-                  ? <>Duration: <span className="font-medium text-foreground">{days} day{days !== 1 ? "s" : ""}</span></>
+                effectiveDays > 0
+                  ? <>Duration: <span className="font-medium text-foreground">{effectiveDays} day{effectiveDays !== 1 ? "s" : ""}</span></>
                   : "Selected range has no working days — pick a different range."
               )}
             </p>

@@ -1,0 +1,13 @@
+{
+  // Scoped typecheck for the half-day leave work (employee form, on-behalf dialog, hook).
+  // The root tsconfig declares "files": [] so `npm run typecheck` compiles nothing, and
+  // tsconfig.app.json reports a few hundred pre-existing errors that bury anything new.
+  //   npx tsc -p tsconfig.halfday-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/profile/LeaveRequestForm.tsx",
+    "src/components/attendance/month-grid/RaiseLeaveOnBehalfDialog.tsx",
+    "src/hooks/useLeaveRequests.ts",
+    "src/vite-env.d.ts"
+  ]
+}
