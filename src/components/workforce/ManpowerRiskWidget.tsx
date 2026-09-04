@@ -50,13 +50,17 @@ const RISK_STYLES: Record<string, { badge: string; row: string; bar: string }> =
  * Props:
  *   compact — show only critical+high rows, no full table (for dashboard cards)
  *   maxRows — cap visible rows (default 10)
+ *   branchId — restrict to one branch (e.g. the Capacity Dashboard's branch selector);
+ *              omitted/undefined shows every branch the caller's RBAC scope allows
  */
 export function ManpowerRiskWidget({
   compact = false,
   maxRows = 10,
+  branchId,
 }: {
   compact?: boolean;
   maxRows?: number;
+  branchId?: string;
 }) {
   const [data, setData] = useState<CostCenterRisk[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -64,9 +68,13 @@ export function ManpowerRiskWidget({
   const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
+    setShowAll(false);
+    const params = new URLSearchParams();
+    if (branchId) params.set("branchId", branchId);
     hrmsApi
       .get<{ success: boolean; data: CostCenterRisk[]; summary: Summary }>(
-        "/api/manpower-risk/cost-center"
+        `/api/manpower-risk/cost-center?${params}`
       )
       .then((res) => {
         setData(res.data ?? []);
@@ -74,7 +82,7 @@ export function ManpowerRiskWidget({
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [branchId]);
 
   const visible = compact
     ? data.filter((d) => d.risk_level === "critical" || d.risk_level === "high")

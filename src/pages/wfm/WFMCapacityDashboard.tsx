@@ -561,13 +561,17 @@ export default function WFMCapacityDashboard() {
    * `critical` stays 0 deliberately. The API buckets a process as HIGH / MEDIUM / LOW from its
    * mandated headcount and has no CRITICAL tier, so inventing a threshold to populate that
    * tile would be manufacturing a severity the data does not express.
+   *
+   * byPriority sums each bucket's own requiredHc (headcount), not a count of processes — the
+   * badge above these tiles shows a headcount total, and a "5"/"6" reading as "5 processes" next
+   * to it looked like a broken number when both were rendered as bare integers with no unit.
    */
   const demand: HiringDemand = (() => {
     const rows = capacityData?.hiringByProcess ?? [];
     const byPriority = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const r of rows) {
       const key = String(r.priority ?? "LOW").toLowerCase() as keyof typeof byPriority;
-      if (key in byPriority) byPriority[key] += 1;
+      if (key in byPriority) byPriority[key] += Number(r.requiredHc ?? 0);
     }
     return {
       total: Number(capacity.overall.hiringDemand ?? 0),
@@ -732,7 +736,9 @@ export default function WFMCapacityDashboard() {
                     Per cost centre, from the manpower-risk feed — the capacity summary above is
                     org-wide and carries no per-process active headcount.
                   </p>
-                  <ManpowerRiskWidget maxRows={10} />
+                  {/* Same branch selection as the rest of this page — this table used to always
+                      show every branch's cost centres regardless of what was picked above. */}
+                  <ManpowerRiskWidget maxRows={10} branchId={branchFilter !== ALL ? branchFilter : undefined} />
                 </div>
               ) : (
                 capacity.byProcess.map((process) => (
@@ -759,24 +765,43 @@ export default function WFMCapacityDashboard() {
                   </Badge>
                 </div>
               </div>
-              <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 rounded-xl bg-red-50 text-center">
-                  <p className="text-2xl font-bold text-red-600">{demand.byPriority.critical}</p>
-                  <p className="text-xs text-red-700 font-medium">Critical</p>
+              {demand.byProcess.length === 0 ? (
+                /*
+                 * No client mandate is configured for this scope (e.g. a branch like Head
+                 * Office that carries no client process) — the zeros below aren't a data
+                 * problem, there is nothing to hire against here. Say that, rather than
+                 * rendering four silent zeroes that read as a broken panel.
+                 */
+                <div className="p-8 text-center">
+                  <UserPlus className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+                  <p className="text-sm font-semibold text-slate-500">
+                    No client mandate configured for this scope.
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Hiring demand is derived from workforce mandates — pick a different branch,
+                    or add a mandate for this one.
+                  </p>
                 </div>
-                <div className="p-3 rounded-xl bg-amber-50 text-center">
-                  <p className="text-2xl font-bold text-amber-600">{demand.byPriority.high}</p>
-                  <p className="text-xs text-amber-700 font-medium">High</p>
+              ) : (
+                <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-xl bg-red-50 text-center">
+                    <p className="text-2xl font-bold text-red-600">{demand.byPriority.critical}</p>
+                    <p className="text-xs text-red-700 font-medium">Critical HC</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-amber-50 text-center">
+                    <p className="text-2xl font-bold text-amber-600">{demand.byPriority.high}</p>
+                    <p className="text-xs text-amber-700 font-medium">High HC</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-blue-50 text-center">
+                    <p className="text-2xl font-bold text-blue-600">{demand.byPriority.medium}</p>
+                    <p className="text-xs text-blue-700 font-medium">Medium HC</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 text-center">
+                    <p className="text-2xl font-bold text-slate-600">{demand.byPriority.low}</p>
+                    <p className="text-xs text-slate-700 font-medium">Low HC</p>
+                  </div>
                 </div>
-                <div className="p-3 rounded-xl bg-blue-50 text-center">
-                  <p className="text-2xl font-bold text-blue-600">{demand.byPriority.medium}</p>
-                  <p className="text-xs text-blue-700 font-medium">Medium</p>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 text-center">
-                  <p className="text-2xl font-bold text-slate-600">{demand.byPriority.low}</p>
-                  <p className="text-xs text-slate-700 font-medium">Low</p>
-                </div>
-              </div>
+              )}
             </GlassCard>
 
             {/* Trend Chart */}

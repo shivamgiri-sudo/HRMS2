@@ -42,6 +42,13 @@ manpowerRiskRouter.get(
       { allowAdminBypass: true, allowCeoAllRead: true },
     );
 
+    // Optional branch filter passed by the caller (e.g. the Capacity Dashboard's branch
+    // selector). This is on top of, not instead of, the RBAC scope above — a caller who is only
+    // scoped to their own branches still can't reach past them by passing a different branchId.
+    const { branchId } = req.query as { branchId?: string };
+    const branchFilterSql = branchId ? "AND wm.branch_id = ?" : "";
+    const branchFilterParams = branchId ? [branchId] : [];
+
     // Mandate: latest active record per process+branch
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT
@@ -58,26 +65,34 @@ manpowerRiskRouter.get(
          -- hc-gap-alert.cron.ts which reads the real column.
          COALESCE(wm.alert_threshold_pct, 20) AS alert_threshold_pct,
 
-         -- Available active headcount. active_status = 1 ALONE — the canonical definition
-         -- (ruling 2026-08-07, guarded by attendance-canon.contract.test.ts). Narrowing by
-         -- employment_status as well reports a different organisation size from employee-master,
-         -- the payroll register and the Total Employees tile, and drops anyone on probation,
-         -- notice or suspension. People serving notice are reported separately below rather than
-         -- deducted here. Deliberately NOT date_of_joining-gated: a future-dated joiner is a
-         -- filled seat as far as a hiring decision goes.
-         COUNT(DISTINCT CASE WHEN e.active_status = 1 THEN e.id END) AS active_hc,
+         -- Available active headcount. active_status = 1 ALONE remains the canonical
+         -- employment-status definition (ruling 2026-08-07, guarded by
+         -- attendance-canon.contract.test.ts) — that ruling is about not narrowing on
+         -- employment_status, and is untouched here. designation_name = 'EXECUTIVE' is a
+         -- separate, orthogonal filter: mandated_hc is an Ops-Executive seat count, not a count
+         -- of everyone on the process, so a Team Leader/QA/Manager/Trainer must not be counted
+         -- as filling one of those seats. Confirmed against live data as the designation actually
+         -- in use across every mandated process (888/940 on-mandate active staff carry it).
+         COUNT(DISTINCT CASE
+           WHEN e.active_status = 1 AND d.designation_name = 'EXECUTIVE'
+           THEN e.id
+         END) AS active_hc,
 
-         -- In-notice count
+         -- In-notice count — same Executive scoping as active_hc above.
          COUNT(DISTINCT CASE
            WHEN e.active_status = 1
             AND er.status IN ('accepted', 'notice_serving')
+            AND d.designation_name = 'EXECUTIVE'
            THEN e.id
          END) AS in_notice_count,
 
-         -- Attrition exits in last 3 months
+         -- Attrition exits in last 3 months — scoped to the same Executive population the rate
+         -- is being measured against, so a Team Leader leaving doesn't count as attrition
+         -- against an Executive seat count.
          COUNT(DISTINCT CASE
            WHEN er.status IN ('exited', 'exit_confirmed')
             AND er.updated_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            AND d.designation_name = 'EXECUTIVE'
            THEN er.id
          END) AS exits_3m
 
@@ -87,16 +102,18 @@ manpowerRiskRouter.get(
        LEFT JOIN employees e
               ON e.process_id = wm.process_id
              AND e.branch_id  = wm.branch_id
+       LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN exit_request er ON er.employee_id = e.id
        WHERE wm.active_status = 1
          AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
          AND (${scoped.sql})
+         ${branchFilterSql}
        GROUP BY
          wm.id, wm.process_id, p.process_name,
          wm.branch_id, b.branch_name,
          wm.role_group, wm.mandated_hc, wm.buffer_pct, wm.alert_threshold_pct
        ORDER BY p.process_name, b.branch_name`,
-      scoped.params
+      [...scoped.params, ...branchFilterParams]
     );
 
     const data = (rows as RowDataPacket[]).map((r) => {
@@ -106,8 +123,18 @@ manpowerRiskRouter.get(
       const exits3m = Number(r.exits_3m);
       const effectiveHc = active - inNotice;
       const gap = mandated - effectiveHc;
-      // attrition rate = exits in 3m / avg headcount * 4 (annualised) * 100
-      const attritionRate = active > 0 ? Math.round((exits3m / 3 / active) * 12 * 100) : 0;
+      // Attrition rate = exits in 3m / avg headcount over the period * 4 (annualised) * 100.
+      // Dividing by `active` (today's, already-post-attrition headcount) instead of the average
+      // headcount over the window overstates the rate on any process that shrank during it —
+      // a real case (Bluevine Technologies: 19 exits in 3 months, 67 left) produced 113%, an
+      // annualised rate a reader correctly reads as impossible. `active + exits3m` approximates
+      // the headcount at the start of the window (no hire-date data is available here to do
+      // better), so the average of start and end is `active + exits3m / 2` — the same case now
+      // reads 99%, still high, but no longer a number that looks like a data bug.
+      const avgHcForAttrition = active + exits3m / 2;
+      const attritionRate = avgHcForAttrition > 0
+        ? Math.round((exits3m / 3 / avgHcForAttrition) * 12 * 100)
+        : 0;
 
       // Risk: critical if gap >= 20% of mandate, high if gap >= 10%, medium if gap > 0
       const gapPct = mandated > 0 ? (gap / mandated) * 100 : 0;

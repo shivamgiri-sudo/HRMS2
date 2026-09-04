@@ -163,28 +163,49 @@ router.get(
 
     const { db } = await import("../../db/mysql.js");
 
-    // Aggregate live HC counts
-    const [activeRows] = await db.execute<any[]>(
-      `SELECT COUNT(*) AS cnt FROM employees WHERE active_status = 1 ${branchId ? 'AND branch_id = ?' : ''}`,
-      branchId ? [branchId] : []
+    // Mandated headcount is an Ops-Executive seat count (role_group='all', hc_type='production'),
+    // not "everyone on the process" — Team Leaders/QA/Managers/Trainers hold their own separate
+    // headcount and were never part of what a client is billed a mandated seat count for. Every
+    // live count below is therefore scoped to (a) the processes actually carrying an active
+    // mandate in view, and (b) designation_name = 'EXECUTIVE' — confirmed against live data as
+    // the designation actually used across every mandated process (888/940 on-mandate active
+    // staff), so this is not a guess at the boundary, it is the boundary already in use.
+    const processIds = Array.from(new Set(mandates.map((m: any) => String(m.process_id))));
+
+    const zeroRow = [{ cnt: 0 }];
+    const [activeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
+      `SELECT COUNT(*) AS cnt FROM employees e
+       JOIN designation_master d ON d.id = e.designation_id
+       WHERE e.active_status = 1 AND d.designation_name = 'EXECUTIVE' AND e.process_id IN (?)
+       ${branchId ? 'AND e.branch_id = ?' : ''}`,
+      branchId ? [processIds, branchId] : [processIds]
     );
-    const [onNoticeRows] = await db.execute<any[]>(
+    const [onNoticeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM exit_request er
        JOIN employees e ON er.employee_id = e.id
-       WHERE er.status IN ('accepted','notice_serving') ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [branchId] : []
+       JOIN designation_master d ON d.id = e.designation_id
+       WHERE er.status IN ('accepted','notice_serving')
+         AND d.designation_name = 'EXECUTIVE' AND e.process_id IN (?)
+         ${branchId ? 'AND e.branch_id = ?' : ''}`,
+      branchId ? [processIds, branchId] : [processIds]
     );
-    const [longLeaveRows] = await db.execute<any[]>(
+    const [longLeaveRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM leave_request lr
        JOIN employees e ON lr.employee_id = e.id
+       JOIN designation_master d ON d.id = e.designation_id
        WHERE lr.status = 'approved' AND lr.to_date >= CURDATE() AND lr.total_days >= 5
-       ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [branchId] : []
+         AND d.designation_name = 'EXECUTIVE' AND e.process_id IN (?)
+         ${branchId ? 'AND e.branch_id = ?' : ''}`,
+      branchId ? [processIds, branchId] : [processIds]
     );
-    const [inTrainingRows] = await db.execute<any[]>(
+    // Candidates in the ATS pipeline for the processes actually in view — not the whole
+    // ats_candidate table, which spans every process, every branch, for the platform's entire
+    // history (34,905 rows) and floored Available Production HC to 0 on every single load.
+    const [inTrainingRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM ats_candidate
-       WHERE current_stage IN ('Applied','Screened','Selected','Onboarding')`,
-      []
+       WHERE current_stage IN ('Applied','Screened','Selected','Onboarding')
+         AND applied_for_process IN (?)`,
+      [processIds]
     );
 
     const activeHc = Number(activeRows[0]?.cnt ?? 0);
