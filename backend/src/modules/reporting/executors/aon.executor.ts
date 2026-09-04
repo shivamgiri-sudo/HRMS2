@@ -181,7 +181,7 @@ const POSSIBLE_TENURE = "e.date_of_exit >= e.date_of_joining";
 // aon-bucket-headcount  (aggregate — no row-level cursor)
 // ---------------------------------------------------------------------------
 /**
- * Active headcount per branch x cost centre x process x AON bucket, as of today.
+ * Active headcount per branch x cost centre x process x designation x AON bucket, as of today.
  *
  * pct_of_group is the bucket's share of its own branch/cost-centre/process group, not of
  * the whole company — the question this report answers is "how new is THIS cost centre",
@@ -204,9 +204,11 @@ export async function aonBucketHeadcount(
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')     AS process_name,
+           COALESCE(d.designation_name, 'UNASSIGNED') AS designation_name,
            b.id  AS branch_id,
            cc.id AS cost_centre_id,
            p.id  AS process_id,
+           d.id  AS designation_id,
            ${aonBucketSql("CURDATE()")} AS aon_bucket,
            COUNT(*) AS headcount,
            ROUND(
@@ -222,9 +224,10 @@ export async function aonBucketHeadcount(
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN process_master p      ON p.id  = e.process_id
+      LEFT JOIN designation_master d  ON d.id  = e.designation_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
-              b.id, cc.id, p.id,
+              d.designation_name, b.id, cc.id, p.id, d.id,
               ${aonBucketSql("CURDATE()")}, ${aonBucketOrderSql("CURDATE()")}
      ORDER BY b.branch_name, cc.cost_centre_code, p.process_name,
               ${aonBucketOrderSql("CURDATE()")}`;
@@ -348,6 +351,14 @@ export async function aonBucketAttrition(
    * to what the report can use — two passes total (`at_risk_start`, `at_risk_end`), not one
    * per exit_groups row and not one per org-wide combination either.
    *
+   * ── designation_id added to the group key, 2026-09-04 ───────────────────────────
+   * Extends the SAME bounded pattern with a fourth key. Because distinct_groups is derived
+   * FROM exit_groups (not from a cross join against the org's full designation list),
+   * adding designation_id only multiplies its row count by the distinct designations that
+   * ACTUALLY appear among people who exited, not by the org's full branch x process x
+   * cost-centre x designation space — the failure mode two paragraphs up. See the live
+   * timing measured after this change in the executor's own commit/PR notes.
+   *
    * ── Hand-verified against live mas_hrms 2026-08-25 (both passes) ────────────────
    * Branch NOIDA-2, process Onfido, cost centre 0339a406-..., bucket 0-30, June 2026:
    * a direct COUNT(*) against `employees` for this exact (branch, process, cost_centre)
@@ -359,7 +370,7 @@ export async function aonBucketAttrition(
   const atRiskCte = `
     at_risk AS (
       SELECT ${AON_REFERENCE_JOIN_DATE_SQL} AS join_date, e.date_of_exit,
-             e.branch_id, e.process_id, e.cost_centre_id
+             e.branch_id, e.process_id, e.cost_centre_id, e.designation_id
         FROM employees e
        WHERE ${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL
          AND (e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})
@@ -404,6 +415,8 @@ export async function aonBucketAttrition(
              COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
              e.process_id,
              COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+             e.designation_id,
+             COALESCE(d.designation_name, 'UNASSIGNED')  AS designation_name,
              ${bucket} AS aon_bucket,
              ${bucketOrder} AS bucket_order,
              COUNT(*) AS exits,
@@ -424,11 +437,13 @@ export async function aonBucketAttrition(
         LEFT JOIN branch_master b       ON b.id  = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         LEFT JOIN process_master p      ON p.id  = e.process_id
+        LEFT JOIN designation_master d  ON d.id  = e.designation_id
         LEFT JOIN ctc_by_employee ctc   ON ctc.employee_id = e.id
        WHERE ${clauses.join(" AND ")}
        GROUP BY DATE_FORMAT(e.date_of_exit, '%Y-%m'), e.branch_id, b.branch_name,
                 e.cost_centre_id, cc.cost_centre_code, cc.cost_centre_name,
-                e.process_id, p.process_name, ${bucket}, ${bucketOrder}
+                e.process_id, p.process_name, e.designation_id, d.designation_name,
+                ${bucket}, ${bucketOrder}
     ),
     -- Only the (month, branch, process, cost_centre) combinations that ACTUALLY appear in
     -- exit_groups -- bounded by exit_groups' own row count (545 measured live for the
@@ -442,38 +457,41 @@ export async function aonBucketAttrition(
     -- (this table) keeps the same "single set-based pass" principle while bounding the
     -- output to what exit_groups can actually use.
     distinct_groups AS (
-      SELECT DISTINCT month, branch_id, process_id, cost_centre_id FROM exit_groups
+      SELECT DISTINCT month, branch_id, process_id, cost_centre_id, designation_id FROM exit_groups
     ),
     -- One pass over at_risk joined to distinct_groups, grouped down to
     -- (month, branch, process, cost_centre, bucket) -- NOT one correlated COUNT(*) per
     -- exit_groups row, and not a blind cross-join against every org combination either.
     -- Two of these total (start, end).
     at_risk_start AS (
-      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
+      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, dg.designation_id,
              ${atRiskBucketAtStart} AS aon_bucket,
              COUNT(*) AS at_risk_count
         FROM at_risk ar
         JOIN distinct_groups dg
           ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
-         AND (ar.cost_centre_id <=> dg.cost_centre_id)
+         AND (ar.cost_centre_id <=> dg.cost_centre_id) AND (ar.designation_id <=> dg.designation_id)
        WHERE ar.join_date <= ${periodStart}
          AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodStart})
-       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtStart}
+       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, dg.designation_id,
+                ${atRiskBucketAtStart}
     ),
     at_risk_end AS (
-      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
+      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, dg.designation_id,
              ${atRiskBucketAtEnd} AS aon_bucket,
              COUNT(*) AS at_risk_count
         FROM at_risk ar
         JOIN distinct_groups dg
           ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
-         AND (ar.cost_centre_id <=> dg.cost_centre_id)
+         AND (ar.cost_centre_id <=> dg.cost_centre_id) AND (ar.designation_id <=> dg.designation_id)
        WHERE ar.join_date <= ${periodEnd}
          AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodEnd})
-       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtEnd}
+       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, dg.designation_id,
+                ${atRiskBucketAtEnd}
     )
     SELECT g.month, g.branch_name, g.cost_centre_code, g.cost_centre_name, g.process_name,
-           g.branch_id, g.cost_centre_id, g.process_id,
+           g.designation_name,
+           g.branch_id, g.cost_centre_id, g.process_id, g.designation_id,
            g.aon_bucket, g.exits, g.avg_tenure_days, g.min_tenure_days, g.max_tenure_days,
            -- Share of the month's exits that fell in this bucket, within this group.
            -- A plain window over g.exits now (exit_groups already did the aggregating),
@@ -502,10 +520,12 @@ export async function aonBucketAttrition(
       FROM exit_groups g
       LEFT JOIN at_risk_start s ON s.month = g.month
         AND (s.branch_id <=> g.branch_id) AND (s.process_id <=> g.process_id)
-        AND (s.cost_centre_id <=> g.cost_centre_id) AND s.aon_bucket = g.aon_bucket
+        AND (s.cost_centre_id <=> g.cost_centre_id) AND (s.designation_id <=> g.designation_id)
+        AND s.aon_bucket = g.aon_bucket
       LEFT JOIN at_risk_end en ON en.month = g.month
         AND (en.branch_id <=> g.branch_id) AND (en.process_id <=> g.process_id)
-        AND (en.cost_centre_id <=> g.cost_centre_id) AND en.aon_bucket = g.aon_bucket
+        AND (en.cost_centre_id <=> g.cost_centre_id) AND (en.designation_id <=> g.designation_id)
+        AND en.aon_bucket = g.aon_bucket
      ORDER BY g.month DESC, g.branch_name, g.cost_centre_code, g.process_name, g.bucket_order`;
 
   try {
@@ -702,9 +722,11 @@ export async function aonBucketShrinkage(
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+           COALESCE(d.designation_name, 'UNASSIGNED')  AS designation_name,
            b.id  AS branch_id,
            cc.id AS cost_centre_id,
            p.id  AS process_id,
+           d.id  AS designation_id,
            ${bucket} AS aon_bucket,
            COUNT(*)                                        AS emp_days,
            COUNT(DISTINCT adr.employee_id)                 AS employees_with_attendance,
@@ -743,10 +765,11 @@ export async function aonBucketShrinkage(
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN process_master p      ON p.id  = e.process_id
+      LEFT JOIN designation_master d  ON d.id  = e.designation_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY DATE_FORMAT(adr.record_date, '%Y-%m'),
               b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
-              b.id, cc.id, p.id,
+              d.designation_name, b.id, cc.id, p.id, d.id,
               ${bucket}, ${bucketOrder}
      ORDER BY month DESC, b.branch_name, cc.cost_centre_code, p.process_name, ${bucketOrder}`;
 

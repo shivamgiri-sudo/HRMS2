@@ -22,6 +22,8 @@ interface EmployeeListPanelProps {
    * Branch. Optional and omitted -> no branch narrowing, same as before this fix.
    */
   branchId?: string;
+  /** Same reconciliation fix as `branchId` above, for the page-level "Designation" filter. */
+  designationId?: string;
 }
 
 export interface EmployeeRow {
@@ -101,12 +103,19 @@ export function buildEmployeeListFilterParams(
   from: string,
   to: string,
   branchId?: string,
+  designationId?: string,
 ): Record<string, string> {
-  // Page-level branchId is a default, applied FIRST so a chip's own `branch` dimension (from
-  // drilling directly on a branch row/column) always wins -- chipsToFilterParams is spread
-  // last on purpose. See EmployeeListPanelProps.branchId for why this exists (IMPORTANT-4,
-  // final whole-branch review).
-  return { metric, from, to, ...(branchId ? { branchId } : {}), ...chipsToFilterParams(chips) };
+  // Page-level branchId/designationId are defaults, applied FIRST so a chip's own `branch` /
+  // `designation` dimension (from drilling directly on that row/column) always wins --
+  // chipsToFilterParams is spread last on purpose. See EmployeeListPanelProps.branchId for
+  // why this exists (IMPORTANT-4, final whole-branch review); designationId follows the same
+  // reasoning for the Designation filter.
+  return {
+    metric, from, to,
+    ...(branchId ? { branchId } : {}),
+    ...(designationId ? { designationId } : {}),
+    ...chipsToFilterParams(chips),
+  };
 }
 
 /**
@@ -125,12 +134,12 @@ export async function fetchAonDrilldownEmployees(
   return res.data ?? [];
 }
 
-export function EmployeeListPanel({ open, metric, from, to, branchId }: EmployeeListPanelProps) {
+export function EmployeeListPanel({ open, metric, from, to, branchId, designationId }: EmployeeListPanelProps) {
   const { chips, showEmployeeList, closeEmployeeList, selectEmployee, popToChip } = useDrillDown();
   const queryClient = useQueryClient();
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
 
-  const filterParams = buildEmployeeListFilterParams(chips, metric, from, to, branchId);
+  const filterParams = buildEmployeeListFilterParams(chips, metric, from, to, branchId, designationId);
 
   // retry: false + a bounded staleTime, matching the sibling useReport hook in
   // AonAnalyticsView.tsx (aon-bucket-shrinkage) -- a dead/slow query here shouldn't retry three

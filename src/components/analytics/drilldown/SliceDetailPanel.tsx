@@ -23,6 +23,7 @@ export function chipsToFilterParams(chips: { dimension: string; value: string }[
     else if (chip.dimension === "branch") params.branchId = chip.value;
     else if (chip.dimension === "aonBucket") params.aonBucket = chip.value;
     else if (chip.dimension === "department") params.departmentId = chip.value;
+    else if (chip.dimension === "designation") params.designationId = chip.value;
     else if (chip.dimension === "managerId") params.managerId = chip.value;
     else if (chip.dimension === "cohortMonth") params.cohortMonth = chip.value;
   }

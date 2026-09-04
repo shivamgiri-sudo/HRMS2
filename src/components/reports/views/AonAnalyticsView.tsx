@@ -87,6 +87,7 @@ const GROUP_BY = [
   { value: "branch_name", label: "Branch" },
   { value: "cost_centre_name", label: "Cost Centre" },
   { value: "process_name", label: "Process" },
+  { value: "designation_name", label: "Designation" },
 ] as const;
 type GroupBy = (typeof GROUP_BY)[number]["value"];
 
@@ -97,6 +98,7 @@ const GROUP_BY_ID_FIELD: Record<GroupBy, string> = {
   branch_name: "branch_id",
   cost_centre_name: "cost_centre_id",
   process_name: "process_id",
+  designation_name: "designation_id",
 };
 
 type Row = Record<string, unknown>;
@@ -222,7 +224,11 @@ function DrillCell({
   value, max, metric, groupBy, groupKey, groupId, bucket,
 }: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; groupId: string; bucket: Bucket }) {
   const { pushChip, openEmployeeList } = useDrillDown();
-  const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
+  const dimension =
+    groupBy === "cost_centre_name" ? "costCentre"
+    : groupBy === "process_name" ? "process"
+    : groupBy === "designation_name" ? "designation"
+    : "branch";
 
   return (
     <button
@@ -338,7 +344,11 @@ function AnomalyJumpHandler({
   children: (onJumpTo: (a: AnomalyEntry) => void) => React.ReactNode;
 }) {
   const { pushChip, openEmployeeList } = useDrillDown();
-  const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
+  const dimension =
+    groupBy === "cost_centre_name" ? "costCentre"
+    : groupBy === "process_name" ? "process"
+    : groupBy === "designation_name" ? "designation"
+    : "branch";
   const onJumpTo = (a: AnomalyEntry) => {
     pushChip({ dimension, value: a.groupId, label: a.groupKey });
     pushChip({ dimension: "aonBucket", value: a.bucket, label: `${a.bucket}d` });
@@ -347,11 +357,11 @@ function AnomalyJumpHandler({
   return <>{children(onJumpTo)}</>;
 }
 
-function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
+function Overview({ from, to, branchId, designationId, headlineRate }: { from: string; to: string; branchId: string; designationId: string; headlineRate: ReturnType<typeof useReport> }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
 
-  const base = branchId ? { branchId } : {};
+  const base = { ...(branchId ? { branchId } : {}), ...(designationId ? { designationId } : {}) };
   const hc = useReport("aon-bucket-headcount", base);
   const at = useReport("aon-bucket-attrition", { ...base, from, to });
   /*
@@ -789,7 +799,7 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
         </ChartCard>
       )}
 
-      <EmployeeListPanel open metric={metric === "headcount" ? "headcount" : metric === "exits" ? "exits" : "shrinkage"} from={from} to={to} branchId={branchId} />
+      <EmployeeListPanel open metric={metric === "headcount" ? "headcount" : metric === "exits" ? "exits" : "shrinkage"} from={from} to={to} branchId={branchId} designationId={designationId} />
       <EmployeeDetailDrawer />
     </div>
     </DrillDownProvider>
@@ -798,8 +808,10 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
 
 /* ── Cohort survival ───────────────────────────────────────────────────────── */
 
-function CohortSurvival({ from, to, branchId }: { from: string; to: string; branchId: string }) {
-  const q = useReport("aon-cohort-survival", { from, to, ...(branchId ? { branchId } : {}) });
+function CohortSurvival({ from, to, branchId, designationId }: { from: string; to: string; branchId: string; designationId: string }) {
+  const q = useReport("aon-cohort-survival", {
+    from, to, ...(branchId ? { branchId } : {}), ...(designationId ? { designationId } : {}),
+  });
 
   /**
    * Cohorts are rolled up across branch and cost centre here. Survival must be
@@ -926,7 +938,7 @@ function CohortSurvival({ from, to, branchId }: { from: string; to: string; bran
         </div>
       </ChartCard>
 
-      <EmployeeListPanel open metric="headcount" from={from} to={to} branchId={branchId} />
+      <EmployeeListPanel open metric="headcount" from={from} to={to} branchId={branchId} designationId={designationId} />
       <EmployeeDetailDrawer />
     </div>
     </DrillDownProvider>
@@ -994,12 +1006,12 @@ function DeepDiveDrillResetOnChange({ dimension }: { dimension: string }) {
  * One row of the "Exits by AON bucket" table, made clickable ONLY when this value carries a
  * real FK id (`v.dimensionId`, from Task 3's `dimension_id` column). The five proxy dimensions
  * (source/gender/age_band/ctc_band/exit_type_proxy) always have `dimensionId === null` by
- * construction -- there is no stable id to filter by -- and `designation` is deliberately left
- * out of `dimensionToFilterField` below (no `designationId` filter field exists in the executor
- * layer this round), so both correctly stay non-interactive rather than silently filtering on a
- * display-name string, which is exactly the bug Plan 1's whole-branch review found and fixed for
- * the Overview heatmap (see `DrillCell` above): the chip's VALUE must be the real FK id, and
- * `v.value` (the display name) is used only for the chip's LABEL.
+ * construction -- there is no stable id to filter by -- so they correctly stay non-interactive
+ * rather than silently filtering on a display-name string, which is exactly the bug Plan 1's
+ * whole-branch review found and fixed for the Overview heatmap (see `DrillCell` above): the
+ * chip's VALUE must be the real FK id, and `v.value` (the display name) is used only for the
+ * chip's LABEL. `designation` is clickable: designationId now exists end-to-end in the executor
+ * layer (`ExecFilters`, `appendFilterConditions`, `report-suite.routes.ts`), added 2026-09-04.
  */
 function DeepDiveRow({
   v, buckets, dimension, avgEarlyQuitRate,
@@ -1014,9 +1026,10 @@ function DeepDiveRow({
   const dimensionToFilterField: Record<string, string> = {
     branch: "branch", cost_centre: "costCentre", process: "process",
     department: "department", reporting_manager: "managerId",
-    // designation intentionally omitted: no designationId filter field exists yet in
-    // ExecFilters/appendFilterConditions/report-suite.routes.ts's execFilters whitelist, so a
-    // designation row stays non-interactive rather than half-wiring a click that does nothing.
+    // designationId now exists end-to-end (ExecFilters, appendFilterConditions,
+    // report-suite.routes.ts's execFilters, and SliceDetailPanel's chipsToFilterParams),
+    // so a designation row is clickable like every other dimension here.
+    designation: "designation",
   };
   const field = dimensionToFilterField[dimension];
   const clickable = v.dimensionId != null && v.dimensionId !== "" && !!field;
@@ -1051,9 +1064,11 @@ function DeepDiveRow({
   );
 }
 
-function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: string }) {
+function DeepDive({ from, to, branchId, designationId }: { from: string; to: string; branchId: string; designationId: string }) {
   const [dimension, setDimension] = useState<string>("source");
-  const q = useReport("attrition-deep-dive", { from, to, dimension, ...(branchId ? { branchId } : {}) });
+  const q = useReport("attrition-deep-dive", {
+    from, to, dimension, ...(branchId ? { branchId } : {}), ...(designationId ? { designationId } : {}),
+  });
 
   /* early_quit_rate is constant across a value's four bucket rows by construction, so it
      is read from the first row rather than recomputed. Ranked by deviation from the average
@@ -1188,7 +1203,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
         </div>
       </ChartCard>
 
-      <EmployeeListPanel open metric="exits" from={from} to={to} branchId={branchId} />
+      <EmployeeListPanel open metric="exits" from={from} to={to} branchId={branchId} designationId={designationId} />
       <EmployeeDetailDrawer />
     </div>
     </DrillDownProvider>
@@ -1209,13 +1224,20 @@ export default function AonAnalyticsView() {
   const [from, setFrom] = useState(isoLocal(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())));
   const [to, setTo] = useState(isoLocal(today));
   const [branchId, setBranchId] = useState("");
+  const [designationId, setDesignationId] = useState("");
 
   const branches = useQuery({
     queryKey: ["org-branches-aon"],
     queryFn: () => hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches"),
   });
+  const designations = useQuery({
+    queryKey: ["org-designations-aon"],
+    queryFn: () => hrmsApi.get<{ data: { id: string; designation_name: string }[] }>("/api/org/designations"),
+  });
 
-  const headline = useReport("aon-overall-attrition-rate", branchId ? { branchId, from, to } : { from, to });
+  const headline = useReport("aon-overall-attrition-rate", {
+    from, to, ...(branchId ? { branchId } : {}), ...(designationId ? { designationId } : {}),
+  });
 
   return (
     <div className="space-y-4 p-6">
@@ -1243,6 +1265,14 @@ export default function AonAnalyticsView() {
             ))}
           </select>
         </Field>
+        <Field label="Designation">
+          <select className={inputCls} value={designationId} onChange={e => setDesignationId(e.target.value)}>
+            <option value="">All designations</option>
+            {(designations.data?.data ?? []).map(d => (
+              <option key={d.id} value={d.id}>{d.designation_name}</option>
+            ))}
+          </select>
+        </Field>
         <div className="ml-auto flex gap-1 rounded-lg bg-slate-50 p-1">
           <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>Overview</TabButton>
           <TabButton active={tab === "cohort"} onClick={() => setTab("cohort")}>Cohort Survival</TabButton>
@@ -1250,9 +1280,9 @@ export default function AonAnalyticsView() {
         </div>
       </div>
 
-      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} headlineRate={headline} />}
-      {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} />}
-      {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} />}
+      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} designationId={designationId} headlineRate={headline} />}
+      {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} designationId={designationId} />}
+      {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} designationId={designationId} />}
     </div>
   );
 }

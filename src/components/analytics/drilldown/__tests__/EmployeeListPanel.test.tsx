@@ -145,6 +145,48 @@ describe("EmployeeListPanel — data fetch", () => {
     );
     expect(params.branchId).toBeUndefined();
   });
+
+  // Same reconciliation fix as branchId (IMPORTANT-4) applied to the page-level
+  // Designation filter, added 2026-09-04.
+  it("includes the page-level designationId when no chip overrides it", () => {
+    const params = buildEmployeeListFilterParams(
+      [{ dimension: "cohortMonth", value: "2026-03" }],
+      "headcount",
+      "2026-01-01",
+      "2026-08-25",
+      undefined,
+      "desig-page-1",
+    );
+    expect(params).toEqual(
+      expect.objectContaining({ designationId: "desig-page-1", cohortMonth: "2026-03" }),
+    );
+  });
+
+  it("a `designation` dimension chip overrides the page-level designationId", () => {
+    const params = buildEmployeeListFilterParams(
+      [{ dimension: "designation", value: "desig-clicked-2" }],
+      "exits",
+      "2026-01-01",
+      "2026-08-25",
+      undefined,
+      "desig-page-1",
+    );
+    expect(params.designationId).toBe("desig-clicked-2");
+  });
+
+  it("branchId and designationId compose independently", () => {
+    const params = buildEmployeeListFilterParams(
+      [{ dimension: "aonBucket", value: "31-60" }],
+      "headcount",
+      "2026-01-01",
+      "2026-08-25",
+      "branch-page-1",
+      "desig-page-1",
+    );
+    expect(params).toEqual(
+      expect.objectContaining({ branchId: "branch-page-1", designationId: "desig-page-1", aonBucket: "31-60" }),
+    );
+  });
 });
 
 // Regression tests for IMPORTANT-3 of the final whole-branch review: a cohort-month drill can

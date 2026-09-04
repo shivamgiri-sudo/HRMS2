@@ -17,6 +17,7 @@ export interface ExecFilters {
   processId?: string;
   departmentId?: string;
   costCentreId?: string;
+  designationId?: string;
   managerId?: string;
   employeeCode?: string;
   from?: string;
@@ -319,6 +320,10 @@ export function appendFilterConditions(
   if (filters.costCentreId) {
     clauses.push(`${alias}.cost_centre_id = ?`);
     params.push(String(filters.costCentreId));
+  }
+  if (filters.designationId) {
+    clauses.push(`${alias}.designation_id = ?`);
+    params.push(String(filters.designationId));
   }
   if (filters.managerId) {
     clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`);
