@@ -210,15 +210,36 @@ export const leaveService = {
   async submitRequest(input: LeaveRequestInput, actorUserId?: string): Promise<LeaveRequest> {
     const id = randomUUID();
 
-    // Half-day leave is not supported anywhere in this system: no schema field,
-    // no UI. leaveRequestSchema's `min(0.5)` technically accepts a fraction, but
-    // if one ever reached here it would deduct correctly from the balance while
-    // attendance/payroll paid the day in full (no partial-day attendance status
-    // exists). Reject non-integer totalDays here as a safety patch until/unless
-    // half-day leave is deliberately built end-to-end. (2026-08-13 audit)
-    if (!Number.isInteger(input.totalDays)) {
-      throw new Error(
-        "Half-day leave is not supported. totalDays must be a whole number."
+    // ── Half-day leave ──────────────────────────────────────────────────────
+    // Enabled 2026-09-04 on the owner's explicit decision, replacing the blanket
+    // reject added by the 2026-08-13 audit.
+    //
+    // WHAT IS AND IS NOT COVERED, because that audit's warning still stands:
+    // attendance has no partial-day status, so payroll PAYS THE FULL DAY while the
+    // balance is charged 0.5. That asymmetry is accepted deliberately — it is what
+    // the 811 half-day requests already on this database have always done (806 of
+    // them approved, 2018-01 to 2026-02), so this restores the behaviour the
+    // business ran on rather than inventing a new one. Charging payroll half a day
+    // needs a half-day attendance status first, and that is a separate change to
+    // payroll arithmetic requiring its own sign-off.
+    //
+    // Deliberately narrow: exactly 0.5, and only on a SINGLE date. A fraction
+    // spread over a range has no meaning here — nothing records WHICH day is the
+    // half — and arbitrary fractions (0.25, 1.5) have no policy behind them, so
+    // both are still refused.
+    const isHalfDay = input.totalDays === 0.5;
+    if (!Number.isInteger(input.totalDays) && !isHalfDay) {
+      throw Object.assign(
+        new Error(`A leave request must be whole days, or exactly 0.5 for a half day (got ${input.totalDays}).`),
+        { statusCode: 400 },
+      );
+    }
+    if (isHalfDay && input.fromDate !== input.toDate) {
+      // 400, not 500: this is the caller's input being wrong, and a bulk upload row that
+      // hits it should read as a row error rather than a server fault.
+      throw Object.assign(
+        new Error("A half day must be a single date — set from_date and to_date to the same day."),
+        { statusCode: 400 },
       );
     }
 
@@ -273,6 +294,10 @@ export const leaveService = {
       input.employeeId, submitScope, input.fromDate, input.toDate
     );
     const chargeableCount = chargeableDates(submitClassification).length;
+    // What actually gets stored. A half day is half of ONE chargeable day; every other
+    // request stores the authoritative chargeable count (#18). Declared here so the INSERT
+    // and the audit row can never record different numbers.
+    const storedDays = isHalfDay ? 0.5 : chargeableCount;
     if (chargeableCount === 0) {
       throw new Error(
         `Every date in ${input.fromDate} – ${input.toDate} is a Week Off or company holiday for this employee — there are no working days to charge leave against.`
@@ -369,12 +394,15 @@ export const leaveService = {
         }
 
         // total_days stores the authoritative chargeable count (#18), not the
-        // client-submitted input.totalDays.
+        // client-submitted input.totalDays — except for a half day, which is by
+        // definition half of one chargeable day. chargeableCount still does the
+        // proving: the zero-chargeable guard above has already refused a half day
+        // booked onto a week off or a holiday.
         await lockConn.execute(
           `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
-           chargeableCount, input.reason ?? null, initialStatus]
+           storedDays, input.reason ?? null, initialStatus]
         );
       } finally {
         await lockConn.query("SELECT RELEASE_LOCK(?)", [lockName]).catch(() => {});
@@ -396,7 +424,7 @@ export const leaveService = {
       employee_id: input.employeeId,
       new_value_json: {
         status: initialStatus, leave_type_id: input.leaveTypeId, leave_code: leaveCode,
-        from_date: input.fromDate, to_date: input.toDate, total_days: chargeableCount,
+        from_date: input.fromDate, to_date: input.toDate, total_days: storedDays,
       },
     }).catch(() => {});
 
