@@ -14,8 +14,14 @@ export const lmsSyncService = {
     await logSyncStart('learner_progress', auditId);
 
     let synced = 0, failed = 0;
+      /*
+       * Acquired outside the try so it can be released in the finally below. It used to be taken
+       * inside, with the release as the last statement of the happy path — so any throw between
+       * the two (and the per-trainee loop below catches its own errors, but the queries around it
+       * do not) left the connection checked out for the life of the process.
+       */
+    const lms = await getLmsConnection();
     try {
-      const lms = await getLmsConnection();
 
       // Get unique trainees from trainee_master (has HRMS employee_id mapped)
       //
@@ -123,12 +129,13 @@ export const lmsSyncService = {
         }
       }
 
-      await lms.release();
       await logSyncComplete('learner_progress', auditId, synced, failed);
       return { synced, failed };
     } catch (e) {
       await logSyncError('learner_progress', auditId, String(e));
       throw e;
+    } finally {
+      lms.release();
     }
   },
 
@@ -137,8 +144,14 @@ export const lmsSyncService = {
     await logSyncStart('assessment_scores', auditId);
 
     let synced = 0;
+      /*
+       * Acquired outside the try so it can be released in the finally below. It used to be taken
+       * inside, with the release as the last statement of the happy path — so any throw between
+       * the two (and the per-trainee loop below catches its own errors, but the queries around it
+       * do not) left the connection checked out for the life of the process.
+       */
+    const lms = await getLmsConnection();
     try {
-      const lms = await getLmsConnection();
 
       const [attempts] = await lms.execute<RowDataPacket[]>(`
         SELECT aa.*, am.assessment_name, tm.employee_id as hrms_employee_code, tm.batch_no
@@ -182,12 +195,13 @@ export const lmsSyncService = {
         synced++;
       }
 
-      await lms.release();
       await logSyncComplete('assessment_scores', auditId, synced, 0);
       return { synced };
     } catch (e) {
       await logSyncError('assessment_scores', auditId, String(e));
       throw e;
+    } finally {
+      lms.release();
     }
   }
 };

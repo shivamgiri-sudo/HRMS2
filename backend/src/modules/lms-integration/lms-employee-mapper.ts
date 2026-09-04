@@ -38,13 +38,24 @@ export const lmsEmployeeMapper = {
     };
 
     try {
-      // Get trainee data from LMS
+      /*
+       * Released in a finally, and with release() rather than end().
+       *
+       * This previously called `await lms.end()` on the success path only, so any throw from the
+       * SELECT left the connection checked out for the life of the process. end() is also the
+       * wrong verb for a pooled connection: release() is what returns it to the pool, which is
+       * the whole point of pooling it.
+       */
+      let traineeRows: RowDataPacket[];
       const lms = await getLmsConnection();
-      const [traineeRows] = await lms.execute<RowDataPacket[]>(
-        `SELECT employee_id, lms_id, trainee_name, email, mobile FROM trainee_master WHERE lms_id = ? LIMIT 1`,
-        [lmsId]
-      );
-      await lms.end();
+      try {
+        [traineeRows] = await lms.execute<RowDataPacket[]>(
+          `SELECT employee_id, lms_id, trainee_name, email, mobile FROM trainee_master WHERE lms_id = ? LIMIT 1`,
+          [lmsId]
+        );
+      } finally {
+        lms.release();
+      }
 
       if (!traineeRows.length) {
         return {

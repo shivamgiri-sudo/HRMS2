@@ -81,12 +81,19 @@ async function getServerPool(config: AprServerConfig): Promise<mysql.Pool> {
   const key = `${config.host}:${config.port}:${config.database}`;
   let pool = serverPools.get(key);
   if (pool) {
+    // Liveness probe: check a connection out and hand it straight back. The release lives in a
+    // finally so this obeys the same rule as every other worker — see
+    // workerConnectionRelease.contract.test.ts. Releasing on the happy path alone worked here,
+    // because nothing between the two lines can throw, but it left the guard permanently red,
+    // and a red guard is one nobody reads when the next worker really does leak.
+    let conn: mysql.PoolConnection | undefined;
     try {
-      const conn = await pool.getConnection();
-      conn.release();
+      conn = await pool.getConnection();
       return pool;
     } catch {
       serverPools.delete(key);
+    } finally {
+      conn?.release();
     }
   }
   pool = mysql.createPool({
