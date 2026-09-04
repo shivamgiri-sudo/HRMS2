@@ -123,6 +123,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   // so `user?.role` was always undefined and the Salary Start Date field below
   // was hidden from everyone, including super admins.
   const canSetSalaryStartDate = useHasRole("super_admin", "admin", "hr");
+  // Branch and cost centre changes affect payroll allocation — restricted to Payroll Head.
+  const canChangeBranchCC = useHasRole("super_admin", "payroll_head");
   const queryClient = useQueryClient();
   // Deactivating from this form now needs a stated reason, and the API refuses
   // the save without one. Kept out of EditFormData because it is not a field on
@@ -435,10 +437,12 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         bloodGroup: isKnownBloodGroup(data.blood_group) ? data.blood_group : null,
         designationId: data.designation_id || null,
         departmentId: data.department_id || null,
-        branchId: data.branch_id || null,
+        ...(canChangeBranchCC ? {
+          branchId: data.branch_id || null,
+          costCentreId: data.cost_centre_id || null,
+          transferEffectiveMonth: data.transfer_effective_month || null,
+        } : {}),
         processId: data.process_id || null,
-        costCentreId: data.cost_centre_id || null,
-        transferEffectiveMonth: data.transfer_effective_month || null,
         reportingManagerId: data.manager_id || null,
         dateOfJoining: data.hire_date,
         salaryStartDate: data.salary_start_date || null,
@@ -829,9 +833,15 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="branch">Branch</Label>
+                    <Label htmlFor="branch">
+                      Branch
+                      {!canChangeBranchCC && (
+                        <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head only)</span>
+                      )}
+                    </Label>
                     <Select
                       value={formData.branch_id}
+                      disabled={!canChangeBranchCC}
                       onValueChange={(value) => setFormData({ ...formData, branch_id: value, cost_centre_id: "" })}
                     >
                       <SelectTrigger>
@@ -867,9 +877,15 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="cost_centre">Cost Centre</Label>
+                  <Label htmlFor="cost_centre">
+                    Cost Centre
+                    {!canChangeBranchCC && (
+                      <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head only)</span>
+                    )}
+                  </Label>
                   <Select
                     value={formData.cost_centre_id}
+                    disabled={!canChangeBranchCC}
                     onValueChange={(value) => setFormData({ ...formData, cost_centre_id: value })}
                   >
                     <SelectTrigger>
@@ -886,8 +902,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                   </Select>
                 </div>
 
-                {/* Effective month — shown only when branch or cost centre is being changed */}
-                {(formData.branch_id !== originalBranchId || formData.cost_centre_id !== originalCostCentreId) && (
+                {/* Effective month — shown only when payroll_head/super_admin changes branch or cost centre */}
+                {canChangeBranchCC && (formData.branch_id !== originalBranchId || formData.cost_centre_id !== originalCostCentreId) && (
                   <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
                     <Label htmlFor="transfer_effective_month" className="text-sm font-semibold text-amber-800">
                       Payroll Effective Month <span className="text-rose-600">*</span>

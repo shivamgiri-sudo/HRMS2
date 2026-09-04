@@ -1535,7 +1535,7 @@ router.get("/:id", requireRole("super_admin", "admin", "hr", "manager", "branch_
   return c.getEmployee(req, res);
 }));
 router.patch("/:id",
-  requireRole("super_admin", "admin", "hr"),
+  requireRole("super_admin", "admin", "hr", "payroll_head"),
   requireScopedRole(["hr"], async (req) => {
     // Resolve employee's branch/process from DB
     const [rows] = await db.execute(
@@ -1549,6 +1549,21 @@ router.patch("/:id",
       departmentId: emp?.department_id
     };
   }),
+  // Branch / cost-centre changes affect payroll allocation: only payroll_head or super_admin
+  // may include those fields. admin/hr can still update all other profile fields.
+  (req: any, res: any, next: any) => {
+    const body = req.body ?? {};
+    if (body.branchId !== undefined || body.costCentreId !== undefined) {
+      const actorRoles: string[] = req.authUser?.roles?.length
+        ? req.authUser.roles
+        : req.authUser?.role ? [req.authUser.role] : [];
+      const canTransfer = actorRoles.some((r: string) => r === "super_admin" || r === "payroll_head");
+      if (!canTransfer) {
+        return res.status(403).json({ error: "Only Payroll Head can change an employee's branch or cost centre." });
+      }
+    }
+    next();
+  },
   h(c.updateEmployee)
 );
 // Despite the verb this deactivates rather than deletes: it clears active_status
