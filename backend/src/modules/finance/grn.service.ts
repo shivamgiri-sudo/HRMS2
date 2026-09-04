@@ -1439,6 +1439,26 @@ export const grnService = {
       if (filters.subHead) contextAllocationParams.push(filters.subHead);
     }
 
+    // The SELECT list has to be built with the join, not independently of it. Referencing
+    // ctx_alloc.* while contextAllocationJoin was empty made EVERY list call without a
+    // costCentreId fail with "Unknown column 'ctx_alloc.amount_with_tax' in 'field list'" — a
+    // 400 that emptied the History tab, the approval queue and every other consumer of this
+    // endpoint, while the cost-centre drill-down that does pass the filter kept working, which
+    // is why it read as "the page shows nothing" rather than "one filter is broken".
+    // The no-filter branch emits typed NULLs so the response shape is identical either way and
+    // the frontend's "prefer context_* when non-NULL" logic needs no special case.
+    const contextAllocationSelect = filters.costCentreId
+      ? `ctx_alloc.amount_with_tax AS context_amount_with_tax,
+              ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount,
+              ctx_alloc.reserved_pnl_cost_amount AS context_reserved_pnl_cost_amount,
+              ctx_alloc.consumed_pnl_cost_amount AS context_consumed_pnl_cost_amount,
+              ctx_alloc.pending_pnl_cost_amount AS context_pending_pnl_cost_amount`
+      : `NULL AS context_amount_with_tax,
+              NULL AS context_pnl_cost_amount,
+              NULL AS context_reserved_pnl_cost_amount,
+              NULL AS context_consumed_pnl_cost_amount,
+              NULL AS context_pending_pnl_cost_amount`;
+
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (filters.branchScope) {
@@ -1646,14 +1666,10 @@ export const grnService = {
               -- rows in the allocation table at all, and the header amount already IS its whole
               -- spend). The frontend prefers these over amount_with_tax/pnl_cost_amount whenever
               -- they are non-NULL.
-              ctx_alloc.amount_with_tax AS context_amount_with_tax,
-              ctx_alloc.pnl_cost_amount AS context_pnl_cost_amount,
-              -- How much of that share actually sits in each of the budget row's two figures.
-              -- 'pending' is the allocation still at lifecycle_status='draft' (GRN not past Branch
-              -- Head yet): real money in flight that neither Reserved nor Consumed contains.
-              ctx_alloc.reserved_pnl_cost_amount AS context_reserved_pnl_cost_amount,
-              ctx_alloc.consumed_pnl_cost_amount AS context_consumed_pnl_cost_amount,
-              ctx_alloc.pending_pnl_cost_amount AS context_pending_pnl_cost_amount
+              -- How much of that share sits in each of the budget row's two figures. 'pending' is
+              -- the allocation still at lifecycle_status='draft' (GRN not past Branch Head yet):
+              -- real money in flight that neither Reserved nor Consumed contains.
+              ${contextAllocationSelect}
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
