@@ -7,6 +7,9 @@ import multer from "multer";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
+import { resolveCostCentreScope } from "./payroll-run-scope.service.js";
+import { getMonthCoverage } from "./payroll-run-coverage.service.js";
+import { MonthOutputError, resolveOutputRunIds, runIdPlaceholders } from "./payroll-month-outputs.service.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
 import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, hasScopedAccess, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
@@ -676,16 +679,47 @@ router.get("/lines/:lineId/attendance", requireRole("admin", "hr", "super_admin"
 
   return res.json({ success: true, data: summary });
 }));
+/*
+ * payroll_head added: it owns the payroll run in practice — the HO stage of the cost-centre
+ * attendance chain ends with it, and the readiness page's HO override is its call — yet it was
+ * absent from this list, so the one role responsible for running payroll could not create a run.
+ *
+ * The scope target now resolves the branches from the SELECTED COST CENTRES rather than from
+ * req.body.branch_id. That field is never sent by this API (the contract is costCentreIds, or
+ * branchFilter for a legacy company run), so the resolver returned undefined and the row-scope
+ * check saw no branch at all — it could not confine anybody. Resolving server-side also means a
+ * caller cannot name one branch while selecting another's cost centres.
+ */
 router.post("/runs",
   payrollRunLimiter,
-  requireRole("admin", "super_admin", "finance", "payroll"),
-  requireScopedRole(["finance", "payroll"], async (req) => ({
-    branchId: req.body.branch_id,
-    processId: req.body.process_id,
-    departmentId: req.body.department_id
-  })),
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireScopedRole(["finance", "payroll", "payroll_head"], async (req) => {
+    const ids: string[] = Array.isArray(req.body?.costCentreIds) ? req.body.costCentreIds : [];
+    if (!ids.length) return { branchId: null };
+    const rows = await resolveCostCentreScope(ids);
+    return { branchId: rows[0]?.branchId ?? null };
+  }),
   h(c.createRun)
 );
+/*
+ * Month coverage — which cost centres are paid, in a run, or not started, and which employees no
+ * run covers at all.
+ *
+ * Registered BEFORE /runs/:id deliberately. Express matches in order, so with the parameterised
+ * route first "coverage" would be captured as a run id and this would 404 through a lookup for a
+ * run that does not exist.
+ */
+router.get("/runs/coverage",
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const month = String(req.query.month ?? "").trim();
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+    }
+    return res.json({ success: true, data: await getMonthCoverage(month) });
+  }),
+);
+
 router.get("/runs/:id", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getRun));
 router.get("/runs/:id/readiness", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
   const data = await payrollGovernanceService.readiness(req.params.id);
@@ -764,7 +798,7 @@ router.get("/runs/:id/branch-breakdown", requireRole("admin", "hr", "super_admin
   return res.json({ success: true, data: rows ?? [] });
 }));
 
-router.post("/runs/:id/calculate", payrollRunLimiter, requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
+router.post("/runs/:id/calculate", payrollRunLimiter, requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"), async (req: any, res: any, next: any) => {
   try {
     await assertRunEditable(req.params.id);
     const actorId = req.authUser?.id ?? "system";
@@ -1099,7 +1133,6 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
     `SELECT spl.id, spl.run_id, spl.employee_id, spl.employee_code,
             spl.gross_salary, spl.total_deductions, spl.net_salary,
             spl.basic, spl.hra, spl.special_allowance,
-            spl.incentive_total, spl.other_deductions,
             spl.pf_employee, spl.esic_employee, spl.professional_tax, spl.tds,
             spl.lwp_deduction, spl.advance_recovery,
             spl.pf_employer, spl.esic_employer,
@@ -2511,9 +2544,20 @@ router.get(
   })
 );
 
-// GET /api/payroll/runs/:id/neft-export — generate NEFT disbursement CSV
-router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const runId = req.params.id;
+/*
+ * NEFT payment file, for one run or for a whole month.
+ *
+ * One handler, two URLs, because a month split into several runs must still produce ONE bank file.
+ * Every gate below is applied to every run in the scope: a file mixing approved and unapproved runs
+ * would move money nobody signed off, and the offending run would be invisible in a CSV that looked
+ * complete.
+ */
+const neftExportHandler = h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runIds: neftRunIds } = await resolveOutputRunIds({
+    runId: req.params.id,
+    month: req.params.month,
+  });
+  const runId = neftRunIds[0];
 
   // Bank file — deny a branch-scoped caller rather than row-filter. See
   // hasOrgWideScope in shared/scopeAccess.ts for why a partial payment file is
@@ -2523,20 +2567,36 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
   }
 
+  /*
+   * One payment file per month, however many runs the month was split into — a bank does not want
+   * six files, and reconciling six against one salary register is where money goes missing.
+   *
+   * EVERY run in the scope must pass EVERY gate. A month file assembled from a mix of approved and
+   * unapproved runs would move money nobody signed off, and the offending run would be invisible in
+   * a CSV that looked complete. Failures therefore name the runs, so the refusal is actionable.
+   */
   const [runRows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
-    [runId]
+    `SELECT * FROM salary_prep_run WHERE id IN (${runIdPlaceholders(neftRunIds)})`,
+    neftRunIds
   );
-  const run = (runRows as RowDataPacket[])[0];
-  if (!run) return res.status(404).json({ error: "Run not found" });
+  const runs = runRows as RowDataPacket[];
+  if (runs.length !== neftRunIds.length) return res.status(404).json({ error: "Run not found" });
+  const run = runs[0];
+
   // isRunClosed (locked/disbursed/finalized, case-insensitive) rather than a literal
   // ["locked","disbursed"] list — that literal previously blocked NEFT export for every
   // FINALIZED production run (see run-status.ts).
-  if (!isRunClosed(run.status)) {
-    return res.status(400).json({ error: "Run must be locked, finalized, or disbursed to generate NEFT export" });
+  const notClosed = runs.filter((r) => !isRunClosed(r.status));
+  if (notClosed.length) {
+    return res.status(400).json({
+      error: "Run must be locked, finalized, or disbursed to generate NEFT export",
+      runs: notClosed.map((r) => ({ run_id: r.id, status: r.status })),
+    });
   }
-  if (run.validation_status && run.validation_status !== 'validated') {
-    return res.status(403).json({ success: false, message: "Payroll must be validated before generating NEFT export. Current status: " + run.validation_status });
+  const notValidated = runs.filter((r) => r.validation_status && r.validation_status !== 'validated');
+  if (notValidated.length) {
+    return res.status(403).json({ success: false, message: "Payroll must be validated before generating NEFT export. Current status: " + notValidated[0].validation_status,
+      runs: notValidated.map((r) => ({ run_id: r.id, validation_status: r.validation_status })) });
   }
 
   // FINANCE SIGN-OFF (payment gate requirement E).
@@ -2549,13 +2609,15 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   //
   // Deliberately checked as a distinct 409 rather than folded into the run-state check above:
   // "not signed off" is a workflow state a human resolves, not a malformed request.
-  if (!run.finance_approved_by) {
+  const unsigned = runs.filter((r) => !r.finance_approved_by);
+  if (unsigned.length) {
     return res.status(409).json({
       success: false,
       code: "FINANCE_SIGNOFF_MISSING",
       message:
         "Finance sign-off is required before a payment file can be generated. " +
-        "This run has no finance_approved_by. Record the sign-off, then export.",
+        `${unsigned.length} run(s) in this scope have no finance_approved_by. Record the sign-off, then export.`,
+      runs: unsigned.map((r) => ({ run_id: r.id, run_month: r.run_month })),
     });
   }
 
@@ -2575,10 +2637,10 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
             ON ebd.employee_id = spl.employee_id
            AND ebd.active_status = 1
            AND ebd.is_primary = 1
-     WHERE spl.run_id = ? AND spl.net_salary > 0
+     WHERE spl.run_id IN (${runIdPlaceholders(neftRunIds)}) AND spl.net_salary > 0
        AND LOWER(COALESCE(spl.status, '')) NOT IN ('excluded', 'blocked')
      ORDER BY e.employee_code`,
-    [runId]
+    neftRunIds
   );
 
   /** RBI IFSC: 4 letters, a literal zero, then 6 alphanumerics. A failing value cannot be routed. */
@@ -2804,7 +2866,10 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(csv);
-}));
+});
+
+router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"), neftExportHandler);
+router.get("/month/:month/neft-export", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"), neftExportHandler);
 
 // ─── Payroll Validation / Rejection (Head Payroll) ───────────────────────────
 
@@ -2857,17 +2922,20 @@ router.patch("/runs/:id/reject-validation", requireAuth, h(async (req: Authentic
 // ─── ECR / ESIC Challan ───────────────────────────────────────────────────────
 
 // GET /api/payroll/runs/:id/ecr — ECR-format data for a run
-router.get("/runs/:id/ecr", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const runId = req.params.id;
-
-  // Verify run exists
-  const [runRows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
-    [runId]
-  );
-  if (!(runRows as RowDataPacket[]).length) {
-    return res.status(404).json({ success: false, message: "Run not found" });
-  }
+/*
+ * PF ECR, for one run or for a whole month.
+ *
+ * One handler, two URLs. A month can now be paid in several runs, one per group of cost centres,
+ * but PF is filed once — so /month/:month/ecr aggregates every run in the month while
+ * /runs/:id/ecr keeps its existing single-run behaviour. Sharing the handler is deliberate: two
+ * copies of this query could drift into computing the EPS split differently, and that discrepancy
+ * would be found by EPFO rather than by us.
+ */
+const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runIds, month, scope } = await resolveOutputRunIds({
+    runId: req.params.id,
+    month: req.params.month,
+  });
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -2880,26 +2948,29 @@ router.get("/runs/:id/ecr", requireRole("admin", "super_admin", "finance", "payr
      FROM salary_prep_line spl
      JOIN employees e        ON e.id  = spl.employee_id
      LEFT JOIN employee_uan eu ON eu.employee_id = spl.employee_id
-     WHERE spl.run_id = ? AND spl.status != 'cancelled'
+     WHERE spl.run_id IN (${runIdPlaceholders(runIds)}) AND spl.status != 'cancelled'
      ORDER BY e.employee_code`,
-    [runId]
+    runIds
   );
 
-  return res.json({ success: true, run_id: runId, data: rows });
-}));
+  return res.json({ success: true, scope, month, run_ids: runIds, run_id: runIds[0], data: rows });
+});
 
-// GET /api/payroll/runs/:id/esic-challan — ESIC challan data for a run
-router.get("/runs/:id/esic-challan", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const runId = req.params.id;
+router.get("/runs/:id/ecr", requireRole("admin", "super_admin", "finance", "payroll"), ecrHandler);
+router.get("/month/:month/ecr", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"), ecrHandler);
 
-  const [runRows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
-    [runId]
-  );
-  const run = (runRows as Array<{ id: string; run_month: string }>)[0];
-  if (!run) {
-    return res.status(404).json({ success: false, message: "Run not found" });
-  }
+/*
+ * ESIC challan, for one run or a whole month. Same one-handler-two-URLs shape as the ECR above:
+ * ESI is paid once per month however many runs the month was split into, and a second copy of this
+ * aggregation could drift from the first.
+ */
+const esicChallanHandler = h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runIds, month } = await resolveOutputRunIds({
+    runId: req.params.id,
+    month: req.params.month,
+  });
+  const runId = runIds[0];
+  const run = { run_month: month };
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -2910,9 +2981,9 @@ router.get("/runs/:id/esic-challan", requireRole("admin", "super_admin", "financ
        spl.esic_employer                          AS employer_contribution
      FROM salary_prep_line spl
      JOIN employees e ON e.id = spl.employee_id
-     WHERE spl.run_id = ? AND spl.status != 'cancelled'
+     WHERE spl.run_id IN (${runIdPlaceholders(runIds)}) AND spl.status != 'cancelled'
      ORDER BY e.employee_code`,
-    [runId]
+    runIds
   );
 
   const lines = rows as Array<{
@@ -2936,12 +3007,16 @@ router.get("/runs/:id/esic-challan", requireRole("admin", "super_admin", "financ
   return res.json({
     success: true,
     run_id: runId,
+    run_ids: runIds,
     period: run.run_month,
     employee_count: lines.length,
     ...totals,
     data: lines,
   });
-}));
+});
+
+router.get("/runs/:id/esic-challan", requireRole("admin", "super_admin", "finance", "payroll"), esicChallanHandler);
+router.get("/month/:month/esic-challan", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"), esicChallanHandler);
 
 // ─── Payroll Dashboard Endpoints ──────────────────────────────────────
 

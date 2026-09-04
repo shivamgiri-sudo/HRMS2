@@ -40,11 +40,17 @@ function slice(startMarker: string, endMarker: string): string {
   return CODE.slice(start, end > start ? end : start + 12000);
 }
 
-const HANDLER = slice('router.get("/runs/:id/neft-export"', 'router.patch("/runs/:id/validate"');
+// Same handler, two URLs (per-run and per-month) — the body is in the const.
+const HANDLER = slice('const neftExportHandler', 'router.get("/runs/:id/neft-export"');
 
 describe("payment gate E — Finance sign-off is required before a payment file", () => {
   it("refuses a run with no finance_approved_by", () => {
-    expect(HANDLER).toContain("run.finance_approved_by");
+    /*
+     * Applied to every run in scope, not just one. A month file assembled from a mix of approved
+     * and unapproved runs would move money nobody signed off, and the offending run would be
+     * invisible in a CSV that looked complete — so the list form is the stronger assertion.
+     */
+    expect(HANDLER).toContain("runs.filter((r) => !r.finance_approved_by)");
     expect(HANDLER).toContain("FINANCE_SIGNOFF_MISSING");
   });
 

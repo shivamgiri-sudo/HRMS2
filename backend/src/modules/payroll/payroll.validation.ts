@@ -70,6 +70,16 @@ export const assignSalarySchema = z.object({
 
 export const createRunSchema = z.object({
   runMonth: z.string().regex(MONTH_REGEX, "runMonth must be YYYY-MM"),
+  /*
+   * Supplying cost centres makes the run scoped: it pays exactly those cost centres, and may span
+   * branches. Omitting them keeps the legacy company-wide behaviour, which is what all 104 existing
+   * runs are.
+   *
+   * `.min(1)` matters — an empty array must not be accepted as "scoped with no cost centres",
+   * because that would fall through to an unfiltered population, i.e. the whole company from a
+   * screen that said it was paying none of it.
+   */
+  costCentreIds: z.array(z.string().trim().min(1)).min(1).optional(),
   branchFilter: z.string().trim().nullable().optional(),
   processFilter: z.string().trim().nullable().optional(),
 });

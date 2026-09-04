@@ -20,8 +20,22 @@ const SCOPE_ACCESS = readFileSync(resolve(process.cwd(), "src/shared/scopeAccess
 function handlerAt(source: string, path: string, len = 900): string {
   const idx = source.indexOf(`"${path}"`);
   expect(idx, `route ${path} not found`).toBeGreaterThan(-1);
-  return source.slice(idx, idx + len);
+  return resolveDelegatedHandler(source, source.slice(idx, idx + len), len);
 }
+
+/**
+ * A route may delegate to a named handler so ONE implementation serves several URLs — the payment
+ * file is registered at both /runs/:id/neft-export and /month/:month/neft-export, because a month
+ * split into several runs must still produce a single bank file. Follow the reference to the real
+ * body so these assertions keep inspecting the code that runs, not the registration line.
+ */
+function resolveDelegatedHandler(source: string, slice: string, len: number): string {
+  const delegated = slice.match(/,\s*(\w+Handler)\s*\)\s*;/);
+  if (!delegated) return slice;
+  const defIdx = source.indexOf(`const ${delegated[1]} =`);
+  return defIdx > -1 ? source.slice(defIdx, defIdx + Math.max(len, 6000)) : slice;
+}
+
 
 describe("hasOrgWideScope is a real org-wide check, not a role check", () => {
   it("is exported from shared/scopeAccess.ts", () => {

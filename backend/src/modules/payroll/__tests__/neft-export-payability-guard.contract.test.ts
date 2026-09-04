@@ -24,7 +24,10 @@ const CANONICAL = readFileSync(
   "utf8",
 );
 const block = (() => {
-  const at = CANONICAL.indexOf('"/runs/:id/neft-export"');
+    // The payment file is now registered at both /runs/:id/neft-export and
+    // /month/:month/neft-export against one handler, because a month split into several runs
+    // must still produce a single bank file. Locate the handler itself, not the registration.
+  const at = CANONICAL.indexOf('const neftExportHandler');
   return CANONICAL.slice(at, CANONICAL.indexOf("router.", at + 50));
 })();
 

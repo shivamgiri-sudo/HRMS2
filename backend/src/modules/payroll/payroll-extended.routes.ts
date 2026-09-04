@@ -326,7 +326,11 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
     `SELECT
         e.employee_code                                    AS EmpCode,
         CONCAT_WS(' ', e.first_name, e.last_name)         AS EmpName,
-        COALESCE(ccm.cost_centre_code, '')                 AS CostCenter,
+        -- The cost centre this line was PAID under, from the stamp written at calculation, with
+        -- the employee's current posting only as a fallback for the 104 legacy runs whose lines
+        -- predate the stamp. Reading e.cost_centre_id directly would let a transfer rewrite a
+        -- closed month's register, and make a cost centre that was paid appear unpaid.
+        COALESCE(stamped_cc.cost_centre_code, ccm.cost_centre_code, '') AS CostCenter,
         COALESCE(dm.dept_name, '')                         AS Department,
         COALESCE(desm.designation_name, '')                AS Designation,
         COALESCE(e.profile_type, '')                       AS Profile,
@@ -444,6 +448,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
       JOIN salary_prep_run r ON r.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
       LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+      LEFT JOIN cost_centre_master stamped_cc ON stamped_cc.id = spl.cost_centre_id
       LEFT JOIN department_master dm ON dm.id = e.department_id
       LEFT JOIN designation_master desm ON desm.id = e.designation_id
       LEFT JOIN branch_master bm ON bm.id = e.branch_id

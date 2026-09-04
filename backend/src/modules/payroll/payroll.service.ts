@@ -369,7 +369,7 @@ export const payrollService = {
     // transactional pattern used elsewhere in this file (see
     // createSalaryAssignment above) — not `db.execute`, which draws a fresh
     // connection from the pool per call and would silently defeat the lock.
-    const lockKey = `payroll_run_create:${input.runMonth}:${input.branchFilter ?? ""}:${input.processFilter ?? ""}`;
+    const lockKey = `payroll_run_create:${input.runMonth}:${input.branchFilter ?? ""}:${input.processFilter ?? ""}:${[...(input.costCentreIds ?? [])].sort().join(",")}`;
     const id = randomUUID();
     const conn = await (db as any).getConnection();
     try {
@@ -381,15 +381,36 @@ export const payrollService = {
 
       await conn.beginTransaction();
       try {
-        const [dup] = await conn.execute(
-          `SELECT id FROM salary_prep_run
-            WHERE run_month = ?
-              AND (branch_filter <=> ?)
-              AND (process_filter <=> ?)
-            LIMIT 1`,
-          [input.runMonth, input.branchFilter ?? null, input.processFilter ?? null]
-        );
-        if ((dup as RowDataPacket[]).length > 0) throw new Error("Payroll run already exists for this month");
+        /*
+         * Validate the selection before anything is written. resolveCostCentreScope refuses an
+         * empty list and resolves each cost centre's branch server-side, so the scope rows every
+         * later query trusts cannot disagree with the cost centre master.
+         */
+        const scopeRows = input.costCentreIds?.length
+          ? await resolveCostCentreScope(input.costCentreIds)
+          : [];
+        const isScoped = scopeRows.length > 0;
+
+        if (isScoped) {
+          // Readable refusal naming the clashing run. The UNIQUE key on
+          // (run_month, cost_centre_id) is what actually guarantees one run per cost centre; this
+          // runs on the same connection and inside the same lock so the check and the insert
+          // cannot be split across two pooled connections.
+          await assertCostCentresFree(conn, input.runMonth, scopeRows.map((r) => r.costCentreId));
+        } else {
+          // Company runs stay one-per-month. Scoped runs deliberately do not: a month is expected
+          // to hold several, one per group of cost centres.
+          const [dup] = await conn.execute(
+            `SELECT id FROM salary_prep_run
+              WHERE run_month = ?
+                AND (branch_filter <=> ?)
+                AND (process_filter <=> ?)
+                AND scope_kind = 'company'
+              LIMIT 1`,
+            [input.runMonth, input.branchFilter ?? null, input.processFilter ?? null]
+          );
+          if ((dup as RowDataPacket[]).length > 0) throw new Error("Payroll run already exists for this month");
+        }
 
         // Compute payroll window close date: last day of run_month + 30 calendar days
         const [runYear, runMo] = input.runMonth.split('-').map(Number);
@@ -398,10 +419,15 @@ export const payrollService = {
         const windowCloseDate = lastDayOfRunMonth.toISOString().slice(0, 10);
 
         await conn.execute(
-          `INSERT INTO salary_prep_run (id, run_month, branch_filter, process_filter, window_close_date, created_by)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null, windowCloseDate, userId]
+          `INSERT INTO salary_prep_run
+             (id, run_month, branch_filter, process_filter, window_close_date, created_by, scope_kind)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null,
+           windowCloseDate, userId, isScoped ? "scoped" : "company"]
         );
+        // Same transaction as the run itself: a run that exists without its scope would select an
+        // unfiltered population, which is every employee in the company.
+        if (isScoped) await insertRunScope(conn, id, input.runMonth, scopeRows);
         await conn.commit();
       } catch (err) {
         await conn.rollback();

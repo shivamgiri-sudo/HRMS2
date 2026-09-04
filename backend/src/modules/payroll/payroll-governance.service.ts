@@ -76,7 +76,11 @@ async function runHasPrepLines(runId: string) {
   return Number((rows[0] as any)?.count ?? 0) > 0;
 }
 
-function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
+// Exported for test. This function decides which employees a run's blockers are checked against,
+// and the calculator builds the same population separately — the two drifting apart is a silent
+// defect (blockers cleared for one set of people, a different set paid), so it is asserted directly
+// rather than only through the endpoints that call it. See scoped-run-population.test.ts.
+export function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
   const clauses = [
     "e.active_status = 1",
     "LOWER(COALESCE(e.employment_status, 'active')) = 'active'",
@@ -87,15 +91,36 @@ function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
   const range = monthRange(run.run_month);
   params.push(range.end, range.start);
 
-  if (run.branch_id) { clauses.push("e.branch_id = ?"); params.push(run.branch_id); }
-  if (run.process_id) { clauses.push("e.process_id = ?"); params.push(run.process_id); }
-  if (run.branch_filter) {
-    clauses.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
-    params.push(run.branch_filter);
-  }
-  if (run.process_filter) {
-    clauses.push("e.process_id IN (SELECT id FROM process_master WHERE process_name = ?)");
-    params.push(run.process_filter);
+  /*
+   * A scoped run is defined by the cost centres in salary_prep_run_scope, matched by ID.
+   *
+   * Deliberately not by name. branch_name is not unique in branch_master — HYDERABAD, JAIPUR,
+   * JAIPUR IDC, KARNAL, MEERUT and MOHALI each name two rows, and several process_name values
+   * collide too — so the legacy name-based filters below can silently widen a run to a second
+   * branch's employees. They are kept only for the 104 historical company runs, which must keep
+   * selecting exactly the population they always did.
+   *
+   * This clause is duplicated verbatim in payrollCalculate.service.ts. The two must stay in step:
+   * this one decides whether the run may proceed, that one decides who is paid, and if they select
+   * different populations a blocker can be cleared for one set of people while a different set is
+   * paid. scoped-run-population.test.ts asserts both carry it.
+   */
+  if (String(run.scope_kind ?? "company") === "scoped") {
+    clauses.push(
+      "e.cost_centre_id IN (SELECT cost_centre_id FROM salary_prep_run_scope WHERE run_id = ?)",
+    );
+    params.push(run.id);
+  } else {
+    if (run.branch_id) { clauses.push("e.branch_id = ?"); params.push(run.branch_id); }
+    if (run.process_id) { clauses.push("e.process_id = ?"); params.push(run.process_id); }
+    if (run.branch_filter) {
+      clauses.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
+      params.push(run.branch_filter);
+    }
+    if (run.process_filter) {
+      clauses.push("e.process_id IN (SELECT id FROM process_master WHERE process_name = ?)");
+      params.push(run.process_filter);
+    }
   }
   if (restrictToRunLines) {
     clauses.push("EXISTS (SELECT 1 FROM salary_prep_line spl_scope WHERE spl_scope.run_id = ? AND spl_scope.employee_id = e.id)");

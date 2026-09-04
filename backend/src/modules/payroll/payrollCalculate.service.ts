@@ -743,13 +743,30 @@ export async function calculatePayrollRunScoped(
   empConds.push(employmentWindowPredicate());
   empParams.push(run.run_month, run.run_month);
 
-  if (run.process_filter) {
-    empConds.push("(pm.process_name = ? OR e.process_id IN (SELECT id FROM process_master WHERE process_name = ?))");
-    empParams.push(run.process_filter, run.process_filter);
-  }
-  if (run.branch_filter) {
-    empConds.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
-    empParams.push(run.branch_filter);
+  /*
+   * Scoped runs select by cost-centre ID, from salary_prep_run_scope — the identical clause
+   * runEmployeeScopeSql() applies in payroll-governance.service.ts.
+   *
+   * These two must stay in step. That one decides whether the run may proceed; this one decides who
+   * gets paid. If they select different populations, a blocker can be cleared against one set of
+   * people while a different set is paid, and nothing reports the discrepancy.
+   *
+   * The name-based filters below remain for the 104 legacy company runs only. They cannot be used
+   * for scoped runs: branch_name is not unique in branch_master (HYDERABAD, JAIPUR, JAIPUR IDC,
+   * KARNAL, MEERUT and MOHALI each name two rows), so a name filter can pay a second branch.
+   */
+  if (String((run as { scope_kind?: string }).scope_kind ?? "company") === "scoped") {
+    empConds.push("e.cost_centre_id IN (SELECT cost_centre_id FROM salary_prep_run_scope WHERE run_id = ?)");
+    empParams.push(run.id);
+  } else {
+    if (run.process_filter) {
+      empConds.push("(pm.process_name = ? OR e.process_id IN (SELECT id FROM process_master WHERE process_name = ?))");
+      empParams.push(run.process_filter, run.process_filter);
+    }
+    if (run.branch_filter) {
+      empConds.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
+      empParams.push(run.branch_filter);
+    }
   }
   if (isTargetedRun) {
     empConds.push(`e.id IN (${scopedEmployeeIds.map(() => "?").join(",")})`);
@@ -801,7 +818,10 @@ export async function calculatePayrollRunScoped(
             spl_existing.id AS prep_line_id,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
-            e.process_id, e.branch_id,
+            -- cost_centre_id is stamped onto the payroll line below. employees.cost_centre_id is
+            -- current-state only, so reading it at report time lets a later transfer rewrite a
+            -- closed month; captured here, at calculation, it records where the person was paid.
+            e.process_id, e.branch_id, e.cost_centre_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
             -- Formatted in SQL, never handed to JS as a DATE: mysql2 returns a DATE as a
             -- host-timezone JS Date, and on a leaver bound a one-day shift is the difference
@@ -1741,6 +1761,8 @@ export async function calculatePayrollRunScoped(
     const prepLineId = emp.prep_line_id || randomUUID();
     batchPrepLines.push([
       prepLineId, runId, emp.employee_id, emp.employee_code,
+      // Where this person was paid, frozen at calculation — see the column list below.
+      emp.branch_id ?? null, emp.cost_centre_id ?? null,
       att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
       calc.gross_salary, grossMonthly, totalDedFinal, netPayFinal,
       calc.basic, calc.hra, calc.special_allowance,
@@ -1880,10 +1902,19 @@ export async function calculatePayrollRunScoped(
       );
     }
 
-    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?, ?, ?)').join(',');
+    // 37 placeholders, then the literal status, then 4 more — one per column below, in order.
+    // Two were added after employee_code for the branch/cost-centre stamp; the count here and the
+    // column list and the row push in batchPrepLines.push() must move together or every value
+    // shifts one column left and lands in the wrong field.
+    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?, ?, ?)').join(',');
     await conn.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
+          -- Where this person was paid. employees.cost_centre_id is current-state only (the
+          -- effective-dated employee_cost_centre_allocation table holds 0 rows), so a register
+          -- that derives it from the employee changes retroactively when somebody transfers and a
+          -- paid cost centre can later read as unpaid. Frozen here instead.
+          branch_id, cost_centre_id,
           working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
           gross_salary, gross_before_lwp, total_deductions, net_salary,
           basic, hra, special_allowance,
@@ -1901,6 +1932,10 @@ export async function calculatePayrollRunScoped(
           gratuity)
        VALUES ${placeholders}
        ON DUPLICATE KEY UPDATE
+         -- Refreshed on recalculation: if somebody's cost centre was corrected and the run is
+         -- recomputed, the line must record where they are actually paid this time, not the
+         -- posting captured on the first pass.
+         branch_id = VALUES(branch_id), cost_centre_id = VALUES(cost_centre_id),
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          leave_days = VALUES(leave_days), lwp_days = VALUES(lwp_days),
          late_marks = VALUES(late_marks), dialer_hours = VALUES(dialer_hours),

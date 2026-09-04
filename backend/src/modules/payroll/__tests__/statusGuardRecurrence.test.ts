@@ -78,12 +78,30 @@ function handlerSource(source: string, path: string): string {
   const start = source.indexOf(`"${path}"`);
   expect(start, `route ${path} not found`).toBeGreaterThan(-1);
   const next = source.indexOf("\nrouter.", start);
-  return source.slice(start, next === -1 ? source.length : next);
+  const slice = source.slice(start, next === -1 ? source.length : next);
+  /*
+   * A route may delegate to a named handler so ONE implementation serves several URLs — the payment
+   * file is registered at both /runs/:id/neft-export and /month/:month/neft-export, because a month
+   * paid in several runs must still produce a single bank file. Follow the reference, so this keeps
+   * inspecting the code that runs rather than the registration line.
+   */
+  const delegated = slice.match(/,\s*(\w+Handler)\s*\)\s*;/);
+  if (delegated) {
+    const defIdx = source.indexOf(`const ${delegated[1]} =`);
+    if (defIdx > -1) {
+      const end = source.indexOf("\nrouter.", defIdx);
+      return source.slice(defIdx, end === -1 ? source.length : end);
+    }
+  }
+  return slice;
 }
 
 describe("NEFT export is reachable for finalized runs (two implementations)", () => {
   it("payroll.routes.ts NEFT export uses isRunClosed", () => {
-    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(/isRunClosed\(run\.status\)/);
+    // isRunClosed is still the check; it is now applied to every run in scope, because one handler
+    // serves both /runs/:id/neft-export and /month/:month/neft-export and a month paid in several
+    // runs must still produce a single bank file.
+    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(/isRunClosed\(r\.status\)/);
   });
 
   it("payroll-extended.routes.ts NEFT export uses isRunClosed", () => {
