@@ -45,12 +45,12 @@ SET @mcol_2 = (
 );
 SET @msql_2 = IF(@mcol_2 = 0,
   'ALTER TABLE process_master ADD COLUMN workload_config JSON NULL
-    COMMENT ''For blended processes: {"sub_types":["inbound_voice","chat"]}',
+    COMMENT ''For blended processes: {"sub_types":["inbound_voice","chat"]}; for outbound: {"campaign_target_type":"sales"}''
+  AFTER workload_type',
   'SELECT "workload_config already exists" AS message');
 PREPARE mstmt_2 FROM @msql_2;
 EXECUTE mstmt_2;
-DEALLOCATE PREPARE mstmt_2; for outbound: {"campaign_target_type":"sales"}'
-  AFTER workload_type;
+DEALLOCATE PREPARE mstmt_2;
 
 SET @midx_1 = (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
