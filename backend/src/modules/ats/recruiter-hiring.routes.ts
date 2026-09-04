@@ -13,7 +13,10 @@ import {
   getCallingDashboard,
   getHiringDashboard,
   getHiringActivityAnalytics,
+  type FollowupScope,
+  type FollowupWindow,
   importHiringActivityRows,
+  listFollowups,
   listHiringActivity,
   mapSheetRow,
   parseRecruiterSheet,
@@ -84,7 +87,12 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const { role, id: userId } = getRequester(req);
   const privileged = ["admin", "hr", "super_admin", "branch_head"].includes(role);
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, created_by, recruiter_id, branch_name FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
+    // candidate_name is not used for the access decision — set-followup and
+    // log-followup-call read it off this row to title the inbox reminder. Without
+    // it every reminder read "Follow-up: Candidate", so the recruiter could not
+    // tell from their inbox who they were supposed to ring.
+    `SELECT id, created_by, recruiter_id, branch_name, candidate_name
+       FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [id]
   );
   const row = rows[0];
@@ -203,6 +211,43 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/analytics", async (req: Au
     return res.json({ success: true, data });
   } catch (error: unknown) {
     console.error("[Analytics] Error:", error);
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
+// ── The follow-up call queue ──────────────────────────────────────────────────
+// Registered BEFORE /:id for the same reason the analytics route above is:
+// "followups" would otherwise be matched as an activity id.
+//
+// This answers "which follow-up calls do I owe today?" — overdue first, then
+// today. It is NOT the analytics `followupDue` list, which looks only forward
+// (CURDATE()..+7d) and so hides every call you are already late for.
+recruiterHiringRouter.get("/recruiter/hiring-activity/followups", async (req: AuthenticatedRequest, res) => {
+  try {
+    const rawScope = String(req.query.scope ?? "mine");
+    const rawWindow = String(req.query.window ?? "due");
+    const role = req.authUser?.role ?? "";
+
+    // A plain recruiter asking for the team view is quietly narrowed to their own
+    // rows rather than refused — the list is informational, and a 403 on a toggle
+    // the UI offered would read as a broken page. listFollowups reports back the
+    // scope it actually applied so the UI can say so.
+    const scope: FollowupScope = rawScope === "team" ? "team" : "mine";
+    const window: FollowupWindow =
+      rawWindow === "week" ? "week" : rawWindow === "all" ? "all" : "due";
+
+    const result = await listFollowups({
+      userId: req.authUser!.id,
+      role,
+      scope,
+      window,
+      page: Number(req.query.page ?? 1),
+      limit: Number(req.query.limit ?? 50),
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (error: unknown) {
+    console.error("[Followups] Error:", error);
     return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
   }
 });

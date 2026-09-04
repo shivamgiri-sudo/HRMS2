@@ -47,6 +47,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonCard } from "@/components/ui/skeletons";
 import { SessionContextPanel } from "@/components/ats/SessionContextPanel";
 import { BulkCallingUpload } from "@/components/ats/BulkCallingUpload";
+import { FollowupQueue } from "@/components/ats/FollowupQueue";
 import {
   loadSessionContext,
   saveSessionContext,
@@ -176,6 +177,8 @@ type FormState = {
   recruiter_remarks: string;
   recruiter_rejection_reason: string;
   walkin_date: string;
+  followup_date: string;
+  followup_note: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -193,6 +196,8 @@ const EMPTY_FORM: FormState = {
   recruiter_remarks: "",
   recruiter_rejection_reason: "",
   walkin_date: "",
+  followup_date: "",
+  followup_note: "",
 };
 
 const CHART_COLORS = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#14b8a6", "#f97316"];
@@ -204,6 +209,8 @@ const ENTRY_FIELD_ORDER: Array<keyof FormState> = [
   "wp_group",
   "recruiter_remarks",
   "recruiter_rejection_reason",
+  "followup_date",
+  "followup_note",
 ];
 
 function digitsOnly(value: string) {
@@ -401,7 +408,9 @@ export default function NativeATSHiringEntry() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
-  const [activeTab, setActiveTab] = useState<"entry" | "bulk" | "progress" | "analytics">("entry");
+  const [showFollowupFields, setShowFollowupFields] = useState(false);
+  const [followupDueCount, setFollowupDueCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<"entry" | "bulk" | "progress" | "analytics" | "followups">("entry");
 
   // Analytics tab state
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
@@ -475,19 +484,27 @@ export default function NativeATSHiringEntry() {
     fieldRefs.current[key]?.focus();
   }, []);
 
-  const moveToNextField = useCallback((key: keyof FormState) => {
-    const idx = ENTRY_FIELD_ORDER.indexOf(key);
-    const next = ENTRY_FIELD_ORDER[idx + 1];
-    if (next) fieldRefs.current[next]?.focus();
+  // Walk forward to the next field that is actually on screen. Several entry
+  // fields are conditional (the rejection reason, the walk-in date, and now the
+  // follow-up pair), and an unrendered field leaves a null ref — the old
+  // "focus the next index" landed on that null and the Enter chain died there.
+  const focusNextMounted = useCallback((key: keyof FormState) => {
+    const start = ENTRY_FIELD_ORDER.indexOf(key);
+    for (let i = start + 1; i < ENTRY_FIELD_ORDER.length; i += 1) {
+      const node = fieldRefs.current[ENTRY_FIELD_ORDER[i]];
+      if (node) { node.focus(); return; }
+    }
   }, []);
 
+  const moveToNextField = useCallback((key: keyof FormState) => {
+    focusNextMounted(key);
+  }, [focusNextMounted]);
+
   const handleKeyAdvance = useCallback((key: keyof FormState) => (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || key === "recruiter_rejection_reason") return;
+    if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    const idx = ENTRY_FIELD_ORDER.indexOf(key);
-    const next = ENTRY_FIELD_ORDER[idx + 1];
-    if (next) fieldRefs.current[next]?.focus();
-  }, []);
+    focusNextMounted(key);
+  }, [focusNextMounted]);
 
   const updateForm = useCallback((key: keyof FormState, value: string) => {
     setForm((prev) => ({ ...prev, [key]: key === "mobile" ? digitsOnly(value) : value }));
@@ -499,6 +516,7 @@ export default function NativeATSHiringEntry() {
       candidate_name: "", mobile: "", candidate_email: "", gender: "",
       education_qualification: "", experience_level: "", candidate_location: "",
       recruiter_remarks: "", recruiter_rejection_reason: "", walkin_date: "",
+      followup_date: "", followup_note: "",
     }));
     setValidationErrors([]);
     safeTimeout(() => fieldRefs.current["candidate_name"]?.focus(), 0);
@@ -706,6 +724,10 @@ export default function NativeATSHiringEntry() {
         e.preventDefault();
         setShowOptionalFields((prev) => !prev);
       }
+      if (e.altKey && (e.key === "f" || e.key === "F") && sessionLocked) {
+        e.preventDefault();
+        setShowFollowupFields((prev) => !prev);
+      }
     };
     window.addEventListener("keydown", handleGlobalKeyboard);
     return () => window.removeEventListener("keydown", handleGlobalKeyboard);
@@ -800,6 +822,13 @@ export default function NativeATSHiringEntry() {
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       errors.push("Enter a valid email address or leave it blank.");
     }
+    // A note with no date cannot become a reminder — it would be silently dropped.
+    if (normalizeText(form.followup_note) && !normalizeText(form.followup_date)) {
+      errors.push("Pick a follow-up date, or clear the follow-up note.");
+    }
+    if (normalizeText(form.followup_date) && form.followup_date < todayIso) {
+      errors.push("The follow-up date cannot be in the past.");
+    }
     return errors;
   };
 
@@ -840,22 +869,43 @@ export default function NativeATSHiringEntry() {
       const action = res.data?.action ?? "saved";
       const savedRow = res.data?.row;
 
-      // If "If Interested" outcome with walk-in date, create followup reminder
-      if (isInterestedOutcome && form.walkin_date && savedRow?.id) {
+      // What the recruiter typed wins; the walk-in auto-reminder only fills a
+      // vacuum. Both used to post here and whichever ran last took the date.
+      const followup = normalizeText(form.followup_date)
+        ? {
+            date: normalizeText(form.followup_date),
+            reason: normalizeText(form.followup_note) || "Follow-up call",
+          }
+        : (isInterestedOutcome && form.walkin_date)
+          ? {
+              date: form.walkin_date,
+              reason: `Walk-in scheduled for ${form.walkin_date}`,
+            }
+          : null;
+
+      let followupFailed = false;
+      if (followup && savedRow?.id) {
         try {
           await hrmsApi.post(`/api/ats/recruiter/hiring-activity/${savedRow.id}/set-followup`, {
-            followup_date: form.walkin_date,
-            followup_reason: `Walk-in scheduled for ${form.walkin_date}`,
+            followup_date: followup.date,
+            followup_reason: followup.reason,
           });
+          setFollowupDueCount((n) => n + (followup.date <= todayIso ? 1 : 0));
         } catch (followupError) {
+          // The entry itself saved, so this must not throw — but it must not be
+          // silent either. This used to be console.error only, which meant a
+          // follow-up the recruiter deliberately set could vanish without a word.
           console.error("[Followup Creation] Error:", followupError);
-          // Don't fail the main save if followup fails
+          followupFailed = true;
+          toast.error("Entry saved, but the follow-up could not be set. Set it from the Follow-ups tab.");
         }
       }
 
       setSuccessMsg(
-        action === "followup" ? "Follow-up call logged (not counted as unique attempt)."
+        followupFailed ? "Entry saved — but the follow-up reminder failed."
+        : action === "followup" ? "Follow-up call logged (not counted as unique attempt)."
         : action === "updated" ? "Existing entry updated for this candidate."
+        : followup ? `Entry saved. Follow-up set for ${followup.date}.`
         : "Entry saved successfully."
       );
       clearCandidateFields();
@@ -1051,6 +1101,21 @@ export default function NativeATSHiringEntry() {
           </button>
           <button
             type="button"
+            onClick={() => switchTab("followups")}
+            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+              activeTab === "followups"
+                ? "border-amber-600 text-amber-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            <Bell className="h-3.5 w-3.5" />
+            Follow-ups
+            {followupDueCount > 0 && (
+              <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-black text-rose-700">{followupDueCount}</span>
+            )}
+          </button>
+          <button
+            type="button"
             onClick={() => { switchTab("analytics"); if (!analyticsLoadedRef.current) void loadAnalytics(); }}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 transition-colors ${
               activeTab === "analytics"
@@ -1096,7 +1161,9 @@ export default function NativeATSHiringEntry() {
             {/* Horizontal entry row */}
             <div
               className="grid gap-3 items-end"
-              style={{ gridTemplateColumns: isRejectionRequired ? "2fr 1.4fr 1.2fr 1.4fr 2fr auto" : "2fr 1.4fr 1.2fr 1.8fr auto" }}
+              style={{
+                gridTemplateColumns: `${isRejectionRequired ? "2fr 1.4fr 1.2fr 1.4fr 2fr" : "2fr 1.4fr 1.2fr 1.8fr"}${showFollowupFields ? " 1.2fr 1.6fr" : ""} auto`,
+              }}
             >
               {/* Candidate Name */}
               <div className="space-y-1.5">
@@ -1206,6 +1273,37 @@ export default function NativeATSHiringEntry() {
                 </div>
               )}
 
+              {/* Follow-up marking, revealed by the toggle below or Alt+F. Kept
+                  out of the default row because most entries need no follow-up
+                  and this is a keyboard-driven, high-volume screen. */}
+              {showFollowupFields && (
+                <>
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-600">Follow-up On</div>
+                    <input
+                      type="date"
+                      ref={assignFieldRef("followup_date") as any}
+                      value={form.followup_date}
+                      onChange={(e) => updateForm("followup_date", e.target.value)}
+                      onKeyDown={handleKeyAdvance("followup_date")}
+                      className="h-12 w-full rounded-xl border-2 border-amber-300 bg-white px-3 text-sm outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                      min={todayIso}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-600">Follow-up Note</div>
+                    <input
+                      ref={assignFieldRef("followup_note") as any}
+                      value={form.followup_note}
+                      onChange={(e) => updateForm("followup_note", e.target.value)}
+                      onKeyDown={handleKeyAdvance("followup_note")}
+                      placeholder="e.g. call after 5pm"
+                      className="h-12 w-full rounded-xl border-2 border-amber-200 bg-white px-3 text-sm outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                    />
+                  </div>
+                </>
+              )}
+
               {/* Save button */}
               <div className="space-y-1.5">
                 <div className="text-[10px] text-transparent select-none">save</div>
@@ -1236,6 +1334,21 @@ export default function NativeATSHiringEntry() {
                 {showOptionalFields ? "Hide" : "Add"} Optional Details
                 <span className="text-slate-400">(Email, Gender, Education, Experience, Location)</span>
                 <kbd className="rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px]">Ctrl+D</kbd>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowFollowupFields(!showFollowupFields)}
+                disabled={!sessionLocked}
+                className={`ml-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  showFollowupFields
+                    ? "border-amber-300 bg-amber-50 text-amber-700"
+                    : "border-dashed border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <Bell className="h-3 w-3" />
+                {showFollowupFields ? "Hide" : "Mark"} Follow-up
+                <kbd className="rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px]">Alt+F</kbd>
               </button>
 
               {showOptionalFields && sessionLocked && (
@@ -2095,6 +2208,18 @@ export default function NativeATSHiringEntry() {
         )}
 
         {/* ── TAB 2: My Entries & Progress (full-width table) ── */}
+        {/* ── TAB: Follow-ups ──
+            Self-fetching on purpose. The older "Follow-ups Due (Next 7 Days)"
+            panel further down reads the `analytics` state, which only loads when
+            someone opens Branch Analytics — so it shows nothing to a recruiter
+            who never goes there. This tab must work on its own. */}
+        {activeTab === "followups" && (
+          <FollowupQueue
+            canSeeTeam={["branch_head", "hr", "admin", "super_admin"].some((r) => roleKeys.includes(r))}
+            onCountsChange={setFollowupDueCount}
+          />
+        )}
+
         {activeTab === "progress" && (
           <>
           {/* ── Follow-ups Due alert panel ── */}

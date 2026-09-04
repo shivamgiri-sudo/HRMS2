@@ -2271,6 +2271,187 @@ export async function readImportBatch(batchId: string) {
   };
 }
 
+/**
+ * The follow-up call queue — "who do I have to ring today?"
+ *
+ * WHY THIS IS NOT THE ANALYTICS `followupDue` LIST
+ *
+ * That one is `followup_date BETWEEN CURDATE() AND +7 DAY` (see the followupClauses
+ * block above), so a follow-up whose date has passed silently disappears on the day
+ * after it was due — verified live 2026-09-04, where one candidate sat 42 days
+ * overdue and appeared nowhere in the UI. A call queue that hides the calls you are
+ * late for is worse than none, so this one is `followup_date <= CURDATE()`: overdue
+ * first, then today.
+ *
+ * `followup_date IS NOT NULL` is load-bearing, not defensive. persistActivity()
+ * sets `followup_required = 1` on a duplicate re-entry (the `update_existing`
+ * branch) WITHOUT a date, and Rapid Entry always posts that mode. No such row
+ * exists yet (census 2026-09-04: 0 of 48,129), but the first one would otherwise
+ * enter the queue as a call that can never be made or cleared.
+ *
+ * Every date comparison is server-side. `CURDATE()` on this server is IST
+ * (verified: NOW() 11:51 against UTC 06:21), and a JS-computed "today" from the
+ * browser would shift the queue by a day for anyone in another timezone.
+ */
+export type FollowupScope = "mine" | "team";
+export type FollowupWindow = "due" | "week" | "all";
+
+/**
+ * Row scope for the follow-up queue.
+ *
+ * Deliberately NOT buildScopeWhereClause: that helper compares branch UUIDs from
+ * user_assignment_scope, while this table stores branch_name as free text — live it
+ * holds 21,310 NULLs, a handful of raw UUIDs and names like 'NOIDA-2'. The
+ * LOWER(TRIM()) + branch_code arm below is the shape the analytics follow-up query
+ * already uses, and the `created_by OR recruiter_id` fallback is what keeps a row
+ * with a NULL branch reachable by the person who created it.
+ */
+export async function buildFollowupScopeSql(
+  userId: string,
+  role: string | undefined,
+  scope: FollowupScope,
+): Promise<{ sql: string; params: unknown[]; appliedScope: FollowupScope; branchResolved: boolean }> {
+  const orgWide = ["admin", "hr", "super_admin"].includes(role ?? "");
+
+  // "mine" means mine for everybody, including an admin who asked for it.
+  if (scope === "mine") {
+    return {
+      sql: "(arha.created_by = ? OR arha.recruiter_id = ?)",
+      params: [userId, userId],
+      appliedScope: "mine",
+      branchResolved: false,
+    };
+  }
+
+  // team + org-wide role: no branch restriction at all, matching listHiringActivity.
+  if (orgWide) {
+    return { sql: "1=1", params: [], appliedScope: "team", branchResolved: true };
+  }
+
+  const branch = await getActorBranch(userId);
+  if (!branch) {
+    // Fail closed to the user's own rows rather than opening the branch up. The
+    // caller reports appliedScope back so the UI can say why the toggle did nothing.
+    return {
+      sql: "(arha.created_by = ? OR arha.recruiter_id = ?)",
+      params: [userId, userId],
+      appliedScope: "mine",
+      branchResolved: false,
+    };
+  }
+
+  return {
+    sql: `(
+      LOWER(TRIM(COALESCE(arha.branch_name, ''))) = LOWER(TRIM(?))
+      OR LOWER(TRIM(COALESCE(arha.location_name, ''))) = LOWER(TRIM(?))
+      OR EXISTS (
+        SELECT 1
+          FROM branch_master bm_fu
+         WHERE LOWER(TRIM(COALESCE(bm_fu.branch_name, ''))) = LOWER(TRIM(?))
+           AND (
+             LOWER(TRIM(COALESCE(arha.branch_name, ''))) IN (
+               LOWER(TRIM(COALESCE(bm_fu.branch_name, ''))),
+               LOWER(TRIM(COALESCE(bm_fu.branch_code, '')))
+             )
+             OR LOWER(TRIM(COALESCE(arha.location_name, ''))) IN (
+               LOWER(TRIM(COALESCE(bm_fu.branch_name, ''))),
+               LOWER(TRIM(COALESCE(bm_fu.branch_code, '')))
+             )
+           )
+      )
+      OR arha.created_by = ?
+      OR arha.recruiter_id = ?
+    )`,
+    params: [branch, branch, branch, userId, userId],
+    appliedScope: "team",
+    branchResolved: true,
+  };
+}
+
+export async function listFollowups(opts: {
+  userId: string;
+  role?: string;
+  scope: FollowupScope;
+  window: FollowupWindow;
+  page: number;
+  limit: number;
+}) {
+  const { userId, role, scope, window } = opts;
+  const page = Math.max(1, Math.floor(opts.page) || 1);
+  const limit = Math.min(200, Math.max(1, Math.floor(opts.limit) || 50));
+  const offset = (page - 1) * limit;
+
+  const scoped = await buildFollowupScopeSql(userId, role, scope);
+
+  const base = [
+    "arha.followup_required = 1",
+    "arha.followup_date IS NOT NULL",
+    scoped.sql,
+  ];
+  if (window === "due") base.push("arha.followup_date <= CURDATE()");
+  else if (window === "week") base.push("arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)");
+  const where = base.join(" AND ");
+
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(SUM(arha.followup_date <  CURDATE()), 0) AS overdue,
+       COALESCE(SUM(arha.followup_date =  CURDATE()), 0) AS today,
+       COALESCE(SUM(arha.followup_date >  CURDATE()
+                AND arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)), 0) AS upcoming7,
+       COUNT(*) AS total
+     FROM ats_recruiter_hiring_activity arha
+     WHERE arha.followup_required = 1
+       AND arha.followup_date IS NOT NULL
+       AND ${scoped.sql}`,
+    scoped.params,
+  );
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT arha.id,
+            arha.candidate_name,
+            arha.mobile,
+            arha.process_name,
+            arha.position_name,
+            arha.branch_name,
+            arha.recruiter_name_snapshot,
+            arha.recruiter_remarks,
+            DATE_FORMAT(arha.activity_date, '%Y-%m-%d')   AS activity_date,
+            DATE_FORMAT(arha.followup_date, '%Y-%m-%d')   AS followup_date,
+            arha.followup_reason,
+            DATEDIFF(CURDATE(), arha.followup_date)       AS days_overdue,
+            arha.followup_call_outcome                    AS last_call_outcome,
+            DATE_FORMAT(arha.followup_call_date, '%Y-%m-%d') AS last_call_date,
+            (SELECT COUNT(*) FROM ats_recruiter_hiring_activity a2
+              WHERE a2.followup_of_activity_id = arha.id)  AS attempts
+       FROM ats_recruiter_hiring_activity arha
+      WHERE ${where}
+      ORDER BY arha.followup_date ASC, arha.created_at ASC
+      LIMIT ${limit} OFFSET ${offset}`,
+    [...scoped.params, ...scoped.params],
+  );
+
+  const [todayRow] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS server_today`,
+  );
+
+  const c = (countRows as RowDataPacket[])[0] ?? {};
+  return {
+    serverToday: String((todayRow as RowDataPacket[])[0]?.server_today ?? ""),
+    scope: scoped.appliedScope,
+    scopeRequested: scope,
+    branchResolved: scoped.branchResolved,
+    counts: {
+      overdue: Number(c.overdue ?? 0),
+      today: Number(c.today ?? 0),
+      upcoming7: Number(c.upcoming7 ?? 0),
+      total: Number(c.total ?? 0),
+    },
+    data: rows as RowDataPacket[],
+    page,
+    limit,
+  };
+}
+
 export const __test__ = {
   canonical,
   pick,
