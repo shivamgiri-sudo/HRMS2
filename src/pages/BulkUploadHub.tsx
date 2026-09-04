@@ -58,6 +58,11 @@ type UploadBatch = {
   imported_rows: number;
   batch_status: string;
   uploaded_by: string | null;
+  /** Server-resolved display name for whoever raised the upload: employee full name, falling
+   *  back to the login email. auth_user carries no name, so this cannot be derived client-side. */
+  uploaded_by_name?: string | null;
+  uploaded_by_code?: string | null;
+  branch_name?: string | null;
   validated_by: string | null;
   imported_by: string | null;
   uploaded_at: string;
@@ -986,8 +991,28 @@ function TdsUploadTab() {
   const [runs, setRuns] = useState<any[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const tdsFileRef = useRef<HTMLInputElement | null>(null);
+
+  async function handleDownloadTemplate() {
+    if (!selectedRunId) return;
+    setDownloading(true);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/payroll/runs/${selectedRunId}/tds-upload-template`);
+      const run = runs.find((r) => String(r.id) === String(selectedRunId));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tds_upload_${run?.run_month ?? selectedRunId}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setMsg({ text: "Failed to download template", ok: false });
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   useEffect(() => {
     hrmsApi.get<any>("/api/payroll/runs?limit=24")
@@ -1056,12 +1081,13 @@ function TdsUploadTab() {
 
       {selectedRunId && (
         <div className="flex flex-wrap gap-3 items-center">
-          <a
-            href={`/api/payroll/runs/${selectedRunId}/tds-upload-template`}
-            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 inline-flex items-center gap-1.5"
+          <button
+            onClick={handleDownloadTemplate}
+            disabled={downloading}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-50"
           >
-            ↓ Download Template
-          </a>
+            ↓ {downloading ? "Downloading…" : "Download Template"}
+          </button>
           <label className={`h-9 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-xs font-medium text-slate-600 inline-flex items-center gap-1.5 cursor-pointer hover:border-[#073f78] hover:bg-blue-50 hover:text-[#073f78] ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
             ↑ {uploading ? "Uploading…" : "Upload CSV"}
             <input ref={tdsFileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleTdsUpload} />
@@ -1151,6 +1177,39 @@ export default function BulkUploadHub() {
     };
   }, [templates, batches]);
 
+  /*
+   * History filters. Held here rather than filtering the loaded array so the scope and the filter
+   * are applied by the same query: a client-side filter over a server-scoped list would look
+   * identical while quietly paging past rows the user is entitled to.
+   */
+  const [historyFilters, setHistoryFilters] = useState({
+    uploadType: "", status: "", uploadedBy: "", from: "", to: "", search: "",
+  });
+  const [filterOptions, setFilterOptions] = useState<{
+    types: Array<{ value: string; n: number }>;
+    statuses: Array<{ value: string; n: number }>;
+    uploaders: Array<{ value: string; label: string; n: number }>;
+  }>({ types: [], statuses: [], uploaders: [] });
+
+  /** Only non-empty filters are sent, so an untouched control never narrows the result. */
+  function historyQueryString() {
+    const p = new URLSearchParams();
+    Object.entries(historyFilters).forEach(([k, v]) => { if (v) p.set(k, v); });
+    const qs = p.toString();
+    return qs ? `?${qs}` : "";
+  }
+
+  async function loadFilterOptions() {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: typeof filterOptions }>(
+        "/api/bulk-upload/batches/filter-options",
+      );
+      if (res?.data) setFilterOptions(res.data);
+    } catch {
+      /* options are a convenience; the list still loads unfiltered without them */
+    }
+  }
+
   async function loadData() {
     setIsLoading(true);
     setErrorMessage(null);
@@ -1158,7 +1217,7 @@ export default function BulkUploadHub() {
     try {
       const [templatesResult, batchesResult] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: UploadTemplate[] }>("/api/bulk-upload/templates").catch(() => ({ success: true, data: [] as UploadTemplate[] })),
-        hrmsApi.get<{ success: boolean; data: UploadBatch[] }>("/api/bulk-upload/batches").catch(() => ({ success: true, data: [] as UploadBatch[] })),
+        hrmsApi.get<{ success: boolean; data: UploadBatch[] }>(`/api/bulk-upload/batches${historyQueryString()}`).catch(() => ({ success: true, data: [] as UploadBatch[] })),
       ]);
 
       // EMAIL_TEMPLATE_IMPORT is active in upload_template_master, so /templates returns it
@@ -1203,6 +1262,7 @@ export default function BulkUploadHub() {
 
   useEffect(() => {
     loadData();
+    loadFilterOptions();
 
     // Reconnect to any import that was running when the user navigated away.
     // Without this, closing and reopening the page during a large import leaves
@@ -2015,10 +2075,95 @@ export default function BulkUploadHub() {
                   Upload Batch History
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Track uploaded files, validation status, staged rows and import
-                  status.
+                  Your uploads, plus any your role's branch scope covers. Other users' uploads are
+                  not shown.
                 </p>
               </div>
+            </div>
+
+            {/* Closed sets are dropdowns built from what this user can actually see, per the
+                Form Input Rule; the options come from the server so they can never hint at
+                another branch's uploads. */}
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <select
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.uploadType}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, uploadType: e.target.value }))}
+              >
+                <option value="">All upload types</option>
+                {filterOptions.types.map((t) => (
+                  <option key={t.value} value={t.value}>{t.value} ({t.n})</option>
+                ))}
+              </select>
+
+              <select
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.status}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, status: e.target.value }))}
+              >
+                <option value="">All statuses</option>
+                {filterOptions.statuses.map((t) => (
+                  <option key={t.value} value={t.value}>{t.value} ({t.n})</option>
+                ))}
+              </select>
+
+              {/* Only offered when more than one uploader is visible — for a user who can see
+                  only their own uploads this control would have exactly one option. */}
+              {filterOptions.uploaders.length > 1 && (
+                <select
+                  className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                  value={historyFilters.uploadedBy}
+                  onChange={(e) => setHistoryFilters((f) => ({ ...f, uploadedBy: e.target.value }))}
+                >
+                  <option value="">All uploaders</option>
+                  {filterOptions.uploaders.map((u) => (
+                    <option key={u.value} value={u.value}>{u.label} ({u.n})</option>
+                  ))}
+                </select>
+              )}
+
+              <input
+                type="date"
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.from}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, from: e.target.value }))}
+                title="Uploaded on or after"
+              />
+              <input
+                type="date"
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.to}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, to: e.target.value }))}
+                title="Uploaded on or before"
+              />
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="Search batch no or file name"
+                className="h-9 flex-1 min-w-[220px] rounded-xl border border-slate-200 bg-white px-3 text-sm"
+                value={historyFilters.search}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, search: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") loadData(); }}
+              />
+              <button
+                type="button"
+                onClick={() => loadData()}
+                className="h-9 cursor-pointer rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition-colors duration-200 hover:bg-slate-800"
+              >
+                Apply
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setHistoryFilters({ uploadType: "", status: "", uploadedBy: "", from: "", to: "", search: "" });
+                  setTimeout(() => loadData(), 0);
+                }}
+                className="h-9 cursor-pointer rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition-colors duration-200 hover:bg-slate-50"
+              >
+                Clear
+              </button>
             </div>
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
@@ -2040,6 +2185,7 @@ export default function BulkUploadHub() {
                         <Th>File</Th>
                         <Th>Rows</Th>
                         <Th>Status</Th>
+                        <Th>Raised by</Th>
                         <Th>Uploaded</Th>
                         <Th className="sticky right-0 bg-slate-50 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]">Actions</Th>
                       </tr>
@@ -2074,6 +2220,16 @@ export default function BulkUploadHub() {
                           </Td>
                           <Td>
                             <StatusBadge status={batch.batch_status} />
+                          </Td>
+                          <Td>
+                            <div className="font-medium text-slate-800">
+                              {batch.uploaded_by_name || "-"}
+                            </div>
+                            {(batch.uploaded_by_code || batch.branch_name) && (
+                              <div className="mt-0.5 text-xs text-slate-400">
+                                {[batch.uploaded_by_code, batch.branch_name].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
                           </Td>
                           <Td>{formatDateTime(batch.uploaded_at)}</Td>
                           <Td className="sticky right-0 bg-white shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] group-hover:bg-slate-50">

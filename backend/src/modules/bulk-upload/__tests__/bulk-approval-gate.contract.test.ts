@@ -152,8 +152,15 @@ describe("the immutability lock", () => {
     );
     // Two preview blockers plus two in-transaction guards.
     expect(src.match(/assertNotBulkLocked\(/g)?.length).toBe(3); // 1 definition + 2 call sites
-    expect(src).toContain('assertNotBulkLocked("leave_request", id)');
-    expect(src).toContain('assertNotBulkLocked("attendance_regularization", id)');
+    /*
+     * Matched on the call prefix, not the full argument list. These pinned the two-arg form and
+     * broke when the guard gained a third argument (viaBatchId, so a discard can tell which batch
+     * it arrived through) — a stricter guard failing its own test for being stricter. What the
+     * test is here to protect is that both entities are guarded inside the transaction, which the
+     * prefix plus the call count above establishes.
+     */
+    expect(src).toContain('assertNotBulkLocked("leave_request", id');
+    expect(src).toContain('assertNotBulkLocked("attendance_regularization", id');
   });
 
   it("the lock fails open only when the table does not exist yet", () => {

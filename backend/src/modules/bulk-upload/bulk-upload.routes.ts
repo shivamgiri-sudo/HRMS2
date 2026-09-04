@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -41,11 +42,124 @@ router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_a
   }
 }));
 
-router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+/**
+ * Upload Batch History.
+ *
+ * WHAT THIS USED TO DO. `SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50` — no scope
+ * of any kind. Every role on the guard above saw every other user's uploads, from every branch,
+ * including the original file name and row counts of work that was none of their business.
+ *
+ * WHAT IT DOES NOW. A caller always sees their own uploads, plus whatever their assignment scope
+ * entitles them to, and nothing else:
+ *
+ *   own            uploaded_by = me. Unconditional — you can always find the file you uploaded.
+ *   scope          buildScopeWhereClause(), the same helper this module's approval service already
+ *                  uses. super_admin resolves to 1=1; a branch-scoped user gets their branch; a
+ *                  user with no assignment scope gets 1=0 and is left with their own uploads only.
+ *
+ * EFFECTIVE BRANCH. upload_batch.branch_id is populated on only 32 of 65 live rows, so scoping on
+ * that column alone would hide two thirds of the history from a branch head — including uploads
+ * genuinely belonging to their branch. The uploader's own branch is used as the fallback, which
+ * resolves for all 65, so branch scope means what a reader expects rather than what happens to
+ * have been stamped.
+ *
+ * WHO RAISED IT. auth_user carries no name (email only), so the display name comes from the
+ * employee record joined on user_id — populated for all 65 rows — falling back to the login email.
+ */
+router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const scope = await buildScopeWhereClause(
+    userId,
+    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
+    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+    { allowAdminBypass: true },
+  );
+
+  const where: string[] = [`(ub.uploaded_by = ? OR (${scope.sql}))`];
+  const params: unknown[] = [userId, ...scope.params];
+
+  // Filters. Each is optional and additive; an absent filter never narrows the result.
+  const uploadType = String(req.query.uploadType ?? "").trim();
+  if (uploadType) { where.push("ub.upload_type_code = ?"); params.push(uploadType); }
+
+  const status = String(req.query.status ?? "").trim();
+  if (status) { where.push("ub.batch_status = ?"); params.push(status); }
+
+  const uploadedBy = String(req.query.uploadedBy ?? "").trim();
+  if (uploadedBy) { where.push("ub.uploaded_by = ?"); params.push(uploadedBy); }
+
+  // Dates are compared on the date part so an inclusive "to" does not silently drop same-day rows.
+  const from = String(req.query.from ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { where.push("DATE(ub.created_at) >= ?"); params.push(from); }
+  const to = String(req.query.to ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { where.push("DATE(ub.created_at) <= ?"); params.push(to); }
+
+  const search = String(req.query.search ?? "").trim();
+  if (search) {
+    where.push("(ub.upload_batch_no LIKE ? OR ub.original_file_name LIKE ?)");
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50) || 50));
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50"
+    `SELECT ub.*,
+            COALESCE(NULLIF(TRIM(uploader_emp.full_name), ''), uploader_user.email, ub.uploaded_by)
+              AS uploaded_by_name,
+            uploader_emp.employee_code AS uploaded_by_code,
+            COALESCE(ub.branch_id, uploader_emp.branch_id) AS effective_branch_id,
+            bm.branch_name AS branch_name
+       FROM upload_batch ub
+       LEFT JOIN employees  uploader_emp  ON uploader_emp.user_id = ub.uploaded_by
+       LEFT JOIN auth_user  uploader_user ON uploader_user.id     = ub.uploaded_by
+       LEFT JOIN branch_master bm ON bm.id = COALESCE(ub.branch_id, uploader_emp.branch_id)
+      WHERE ${where.join(" AND ")}
+      ORDER BY ub.created_at DESC
+      LIMIT ${limit}`,
+    params,
   );
   res.json({ success: true, data: rows });
+}));
+
+/**
+ * The filter dropdown options, built from what this caller can actually see.
+ *
+ * Deliberately not a hardcoded list: CLAUDE.md's Form Input Rule requires option lists to come
+ * from the real observed domain, and a type the user has never uploaded is noise in their filter.
+ * Scoped identically to the list above, so the options can never hint at the existence of another
+ * branch's uploads.
+ */
+router.get("/batches/filter-options", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const scope = await buildScopeWhereClause(
+    userId,
+    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
+    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+    { allowAdminBypass: true },
+  );
+  const visible = `(ub.uploaded_by = ? OR (${scope.sql}))`;
+  const params = [userId, ...scope.params];
+
+  const [types] = await db.execute<RowDataPacket[]>(
+    `SELECT ub.upload_type_code AS value, COUNT(*) AS n
+       FROM upload_batch ub
+       LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
+      WHERE ${visible} GROUP BY ub.upload_type_code ORDER BY n DESC`, params);
+  const [statuses] = await db.execute<RowDataPacket[]>(
+    `SELECT ub.batch_status AS value, COUNT(*) AS n
+       FROM upload_batch ub
+       LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
+      WHERE ${visible} GROUP BY ub.batch_status ORDER BY n DESC`, params);
+  const [uploaders] = await db.execute<RowDataPacket[]>(
+    `SELECT ub.uploaded_by AS value,
+            COALESCE(NULLIF(TRIM(uploader_emp.full_name), ''), uploader_user.email, ub.uploaded_by) AS label,
+            COUNT(*) AS n
+       FROM upload_batch ub
+       LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
+       LEFT JOIN auth_user uploader_user ON uploader_user.id    = ub.uploaded_by
+      WHERE ${visible} GROUP BY ub.uploaded_by, label ORDER BY n DESC`, params);
+
+  res.json({ success: true, data: { types, statuses, uploaders } });
 }));
 
 router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
