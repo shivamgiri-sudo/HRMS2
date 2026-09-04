@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Four fixes from the same live incident (MAS63438, NISHU VERMA, 2026-09-04),
+ * Six fixes from the same live incident (MAS63438, NISHU VERMA, 2026-09-04),
  * each pinned against the file it lives in.
  *
  * 1. Manual e-sign recheck. The background poller can leave a genuinely
@@ -20,6 +20,13 @@ import { describe, expect, it } from 'vitest';
  * 4. A verified onboarding bank submission is copied into employee_bank_detail —
  *    the table payroll's NEFT export reads — both automatically at employee
  *    creation and via a manual action for employees created before this existed.
+ * 5. A candidate's onboarding-portal DPDP consent is carried into
+ *    dpdp_consent_register for the candidate_onboarding purpose only — never
+ *    expanded into the other three purposes the register tracks separately.
+ * 6. The Statutory tab's declaration-status suggestion defaults to "verified"
+ *    when the candidate already accepted the declaration at onboarding, instead
+ *    of always suggesting "pending" — still just a pre-save suggestion HR must
+ *    confirm with Save.
  */
 const service = readFileSync(
   resolve(process.cwd(), 'src/modules/ats/joining-control-room.service.ts'),
@@ -122,5 +129,38 @@ describe('bank details reach the store payroll pays from', () => {
     expect(service).toContain('await syncBankDetailFromOnboarding(result.employee_id, candidateId, actorId)');
     expect(routes).toContain('/candidates/:candidateId/bank-detail/sync');
     expect(page).toContain('bank-detail/sync');
+  });
+});
+
+describe('DPDP consent carries over from onboarding, narrowly', () => {
+  it('only ever grants the candidate_onboarding purpose, never the other three', () => {
+    const fn = service.slice(service.indexOf('export async function syncDpdpConsentFromOnboarding'));
+    const body = fn.slice(0, fn.indexOf('\nexport async function generateEmployeeCode'));
+    expect(body).toContain("purpose_code: \"candidate_onboarding\"");
+    expect(body).not.toContain('bgv_verification');
+    expect(body).not.toContain('payroll_processing');
+    expect(body).not.toContain('document_review');
+  });
+
+  it('never re-grants a purpose that already has a row', () => {
+    const fn = service.slice(service.indexOf('export async function syncDpdpConsentFromOnboarding'));
+    const body = fn.slice(0, fn.indexOf('\nexport async function generateEmployeeCode'));
+    expect(body).toContain("SELECT 1 FROM dpdp_consent_register WHERE candidate_id = ? AND purpose_code = 'candidate_onboarding'");
+    expect(body.indexOf('existing')).toBeLessThan(body.indexOf('upsertDpdpConsent('));
+  });
+
+  it('runs automatically at employee creation and is exposed as a manual action', () => {
+    expect(service).toContain('await syncDpdpConsentFromOnboarding(candidateId, actorId)');
+    expect(routes).toContain('/candidates/:candidateId/dpdp-consent/sync');
+    expect(page).toContain('dpdp-consent/sync');
+  });
+});
+
+describe('statutory declaration suggestion defaults to verified when the candidate self-certified', () => {
+  it('only applies before any row is saved, and never overrides a saved decision', () => {
+    const fn = page.slice(page.indexOf('function seedStatutoryForm'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('firstFilled(row.declaration_status)');
+    expect(body).toContain('!row.id && Number(p.statutory_declaration_accepted)');
   });
 });

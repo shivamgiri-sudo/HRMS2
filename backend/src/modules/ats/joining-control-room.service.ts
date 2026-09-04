@@ -967,6 +967,61 @@ export async function syncBankDetailFromOnboarding(
   return { synced: true };
 }
 
+/**
+ * Carry the candidate's own onboarding consent into dpdp_consent_register,
+ * instead of leaving the tab asking them to grant it again for something they
+ * already agreed to on the portal.
+ *
+ * Narrow on purpose: candidate_onboarding_profile.dpdp_consent is a single
+ * checkbox captured once, during onboarding, for the onboarding process itself
+ * — it is not evidence of consent for the other three purposes this register
+ * tracks separately (bgv_verification, payroll_processing, document_review),
+ * each of which is its own downstream use of the same data. DPDP's purpose-
+ * limitation principle means consent for one purpose cannot silently be
+ * expanded into consent for another, so this only ever grants
+ * 'candidate_onboarding' — the one purpose the checkbox actually maps to
+ * 1:1. The other three still require HR to grant them individually, exactly
+ * as today.
+ *
+ * That is still enough to clear the readiness blocker: readinessBlockers reads
+ * dpdp.required_status, computed as 'granted' the moment ANY of the four
+ * purposes is granted (see candidateSnapshotSql) — so this closes the gap for
+ * every candidate who consented at onboarding without inventing consent for
+ * purposes they were never asked about.
+ *
+ * Never overwrites an existing row for the purpose (ON DUPLICATE KEY in
+ * upsertDpdpConsent would, but this checks first) — a withdrawal or an
+ * HR-recorded decision must never be silently re-granted by a backfill.
+ */
+export async function syncDpdpConsentFromOnboarding(
+  candidateId: string,
+  actorId: string,
+): Promise<{ synced: boolean; reason?: string }> {
+  const [profileRows] = await db.execute<RowDataPacket[]>(
+    `SELECT dpdp_consent FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const profile = (profileRows as RowDataPacket[])[0];
+  if (!profile || !Number(profile.dpdp_consent)) {
+    return { synced: false, reason: "No DPDP consent recorded on the onboarding profile" };
+  }
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM dpdp_consent_register WHERE candidate_id = ? AND purpose_code = 'candidate_onboarding' LIMIT 1`,
+    [candidateId],
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return { synced: false, reason: "candidate_onboarding consent is already recorded" };
+  }
+
+  await upsertDpdpConsent(
+    candidateId,
+    { purpose_code: "candidate_onboarding", consent_status: "granted", source: "onboarding_portal_sync" },
+    actorId,
+  );
+  return { synced: true };
+}
+
 export async function generateEmployeeCode(candidateId: string, actorId: string) {
   const readiness = await validateReadiness(candidateId);
   if (readiness.blockers.length) {
@@ -985,6 +1040,9 @@ export async function generateEmployeeCode(candidateId: string, actorId: string)
       console.warn(`[joining-control-room] bank auto-sync skipped for ${candidateId}:`, error);
     });
   }
+  await syncDpdpConsentFromOnboarding(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] dpdp auto-sync skipped for ${candidateId}:`, error);
+  });
   await validateReadiness(candidateId);
   return result;
 }

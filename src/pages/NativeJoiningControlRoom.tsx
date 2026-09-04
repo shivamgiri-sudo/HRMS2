@@ -245,7 +245,11 @@ function seedStatutoryForm(saved: any, profile: OnboardingProfile) {
     // An ESIC number on the profile is positive evidence the candidate is covered. Its
     // absence proves nothing (coverage is a wage test), so it can only turn the flag on.
     esi_applicable: row.id ? Boolean(row.esi_applicable) : Boolean(firstFilled(p.esic_number)) || blankStatutory.esi_applicable,
-    declaration_status: firstFilled(row.declaration_status) || "pending",
+    // A saved row's status is HR's own recorded decision and is never overridden here.
+    // Before any save exists, default the dropdown to "verified" when the candidate
+    // already accepted the statutory declaration at onboarding — still just a
+    // suggestion on an empty form, since nothing writes until HR presses Save.
+    declaration_status: firstFilled(row.declaration_status) || (!row.id && Number(p.statutory_declaration_accepted) ? "verified" : "pending"),
   };
 }
 
@@ -1149,6 +1153,21 @@ export default function NativeJoiningControlRoom() {
                   </TabsContent>
 
                   <TabsContent value="dpdp" className="grid gap-4">
+                    {Boolean(detail.onboarding?.profile?.dpdp_consent) && !(detail.dpdp || []).some((d: any) => d.purpose_code === "candidate_onboarding" && d.consent_status === "granted") && (
+                      <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                        The candidate already gave DPDP consent on the onboarding portal. That covers the onboarding
+                        purpose only — BGV, payroll and document-review consent are separate purposes and still need
+                        a decision below.
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="ml-3"
+                          onClick={() => action("dpdp-consent/sync", {}, "Onboarding consent synced")}
+                        >
+                          Sync onboarding consent
+                        </Button>
+                      </div>
+                    )}
                     <div className="grid gap-2 md:grid-cols-4">
                       {["candidate_onboarding", "bgv_verification", "document_review", "payroll_processing"].map((purpose) => (
                         <Button key={purpose} type="button" variant="outline" onClick={() => action("dpdp-consent", { purpose_code: purpose, consent_status: "granted" }, `${purpose} consent granted`)}>{purpose.replaceAll("_", " ")}</Button>

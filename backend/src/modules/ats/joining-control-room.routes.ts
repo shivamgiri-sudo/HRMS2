@@ -13,6 +13,7 @@ import {
   recheckEsignStatus,
   requestDpdpWithdrawal,
   syncBankDetailFromOnboarding,
+  syncDpdpConsentFromOnboarding,
   saveJclrDetails,
   savePayrollControlRoomDetails,
   saveStatutoryDeclaration,
@@ -119,6 +120,13 @@ joiningControlRoomRouter.post("/candidates/:candidateId/bank-detail/sync", h(asy
   const result = await syncBankDetailFromOnboarding(String(employeeId), candidateId, req.authUser!.id);
   const data = await getJoiningControlRoomCandidate(candidateId);
   return res.json({ success: true, data: { ...data, bankSync: result } });
+}));
+
+joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-consent/sync", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const result = await syncDpdpConsentFromOnboarding(candidateId, req.authUser!.id);
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, dpdpSync: result } });
 }));
 
 joiningControlRoomRouter.post("/candidates/:candidateId/salary-register/lock", h(async (req, res) => {
