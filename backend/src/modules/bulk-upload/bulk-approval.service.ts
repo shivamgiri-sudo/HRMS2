@@ -590,13 +590,41 @@ export async function assertCanApprove(
   }
 }
 
-/** Move a batch into the branch-head queue after its rows have been staged. */
+/**
+ * Move a batch into the branch-head queue after its rows have been staged.
+ *
+ * A batch where NOTHING staged does not go into the queue. Every caller used to call this
+ * unconditionally, so a file whose rows all failed validation still arrived in the Branch
+ * Head's queue with nothing in it to approve — and because an approver cannot approve zero
+ * rows, it sat there for good. Live example: LEAVE_APPLICATION_BULK batch
+ * BATCH-1788439883458-R1481-R6759, 17 rows, 0 staged, still listed as awaiting approval
+ * alongside the resubmit of the very same file, which is what "two bulk approvals pending"
+ * turned out to be.
+ *
+ * approval_status is set to NULL rather than a new terminal value so the queue's own
+ * `approval_status IN (...)` filters exclude it without any of them having to change.
+ */
 export async function markPendingApproval(
   batchId: string,
   branchId: string | null,
   staged: number,
   failed: number,
 ): Promise<void> {
+  if (staged <= 0) {
+    await db.execute<ResultSetHeader>(
+      `UPDATE upload_batch
+          SET batch_status = 'validation_failed',
+              approval_status = NULL,
+              branch_id = ?,
+              imported_rows = 0,
+              error_rows = ?,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [branchId, failed, batchId],
+    );
+    return;
+  }
+
   await db.execute<ResultSetHeader>(
     `UPDATE upload_batch
         SET batch_status = 'pending_approval',

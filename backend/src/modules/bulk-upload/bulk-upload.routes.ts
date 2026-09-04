@@ -223,7 +223,12 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     () => dispatchImport(rpc_name, id, req.authUser!.id),
     async (err) => {
       await db.execute(
-        `UPDATE upload_batch SET batch_status = 'failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+        // approval_status is cleared with it. Without that a batch that failed mid-import kept
+        // whatever approval stage it had reached, so it stayed in the Branch Head's queue as
+        // "pending" forever — a batch that failed can never be approved, and the queue had no
+        // way to tell. This is the second half of the duplicate-pending-approval defect.
+        `UPDATE upload_batch SET batch_status = 'failed', approval_status = NULL,
+                error_summary = ?, updated_at = NOW() WHERE id = ?`,
         [String((err as Error)?.message ?? "Import failed").slice(0, 1000), id]
       );
     },
