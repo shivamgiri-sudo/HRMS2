@@ -1551,7 +1551,18 @@ router.patch("/:id",
   }),
   h(c.updateEmployee)
 );
-router.delete("/:id", requireRole("admin"), h(c.deactivateEmployee));
+// Despite the verb this deactivates rather than deletes: it clears active_status
+// and erases nothing (see useEmployees' bulk deactivate, the only UI path here).
+//
+// 'hr' is admitted alongside 'admin' because marking a leaver inactive is routine
+// HR work, and gating it on 'admin' alone meant the people who actually process
+// exits could not do it — reported 2026-09-04 by an MIS user who could see the
+// button and never use it. The narrower alternative was to send them through the
+// Exit module instead; this keeps one obvious path rather than two.
+//
+// Still deliberately NOT open to 'manager': revoking someone's access is not a
+// line-manager action, and the reason is mandatory and audited either way.
+router.delete("/:id", requireRole("admin", "hr"), h(c.deactivateEmployee));
 
 // Journey log
 router.get("/:id/journey", requireRole("admin", "hr", "manager"), async (req: any, res: any, next: any) => {
