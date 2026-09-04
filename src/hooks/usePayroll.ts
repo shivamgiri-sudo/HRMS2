@@ -284,13 +284,30 @@ export function useGeneratePayroll() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ month, year }: { month: number; year: number }) => {
+    mutationFn: async ({
+      month,
+      year,
+      costCentreIds,
+    }: {
+      month: number;
+      year: number;
+      /** Omit for a company-wide run; supply to run only these cost centres. */
+      costCentreIds?: string[];
+    }) => {
       const runMonth = toRunMonth(month, year);
       if (!runMonth) throw new Error("Invalid payroll month");
 
       let runId: string | null = null;
       try {
-        const created = await hrmsApi.post<{ data: any }>("/api/payroll/runs", { runMonth });
+        /*
+         * costCentreIds makes the run scoped — it pays exactly those cost centres and may span
+         * branches. Omitted (or empty), the request keeps the legacy company-wide behaviour, which
+         * is what every existing run is, so callers that do not pass a selection are unaffected.
+         */
+        const created = await hrmsApi.post<{ data: any }>("/api/payroll/runs", {
+          runMonth,
+          ...(costCentreIds?.length ? { costCentreIds } : {}),
+        });
         runId = created.data?.id ?? null;
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
