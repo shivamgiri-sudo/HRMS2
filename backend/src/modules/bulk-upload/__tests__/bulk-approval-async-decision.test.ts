@@ -143,9 +143,9 @@ beforeEach(() => {
   applyRegularizationBatch.mockReset().mockResolvedValue({ applied: 217, failed: 0, errors: [] });
 
   // Route the progress/approver queries by SQL rather than by call order, so the
-  // tests do not have to know how many statements each path issues.
+  // tests do not have to know how many statements each path issues. total/failed/
+  // succeeded all come from one JOIN query now (readBatchProgress's "approve" branch).
   execute.mockReset().mockImplementation(async (sql: string) => {
-    if (/FROM bulk_upload_locked_entity/.test(sql)) return [[{ n: 217 }], []];
     if (/FROM upload_batch_row/.test(sql)) return [[{ total: 217, failed: 0, succeeded: 217 }], []];
     return [[{ display: "Branch Head" }], []];
   });
@@ -170,6 +170,7 @@ describe("POST /approvals/batches/:id/approve", () => {
     await vi.waitFor(() =>
       expect(markDecided).toHaveBeenCalledWith(
         BATCH_ID, "approved", ACTOR, expect.any(String), expect.stringContaining("217 row(s) applied"),
+        { applied: 217, failed: 0 },
       ),
     );
   });
@@ -212,9 +213,10 @@ describe("POST /approvals/batches/:id/approve", () => {
 describe("GET /approvals/batches/:id/job-status", () => {
   it("reports progress while the decision is running", async () => {
     batch.batch_status = "approving";
+    // total/failed/succeeded now come from one JOIN query (see readBatchProgress's
+    // "approve" branch) instead of two separate ones, so a single row carries all three.
     execute.mockImplementation(async (sql: string) => {
-      if (/FROM bulk_upload_locked_entity/.test(sql)) return [[{ n: 128 }], []];
-      if (/FROM upload_batch_row/.test(sql)) return [[{ total: 217, failed: 0 }], []];
+      if (/FROM upload_batch_row/.test(sql)) return [[{ total: 217, failed: 0, succeeded: 128 }], []];
       return [[], []];
     });
 

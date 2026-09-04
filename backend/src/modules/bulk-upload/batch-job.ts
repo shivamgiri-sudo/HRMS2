@@ -136,30 +136,41 @@ export async function readBatchProgress(
   }
 
   if (kind === "approve") {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         COUNT(*)                              AS total,
-         SUM(row_status IN ('error','failed')) AS failed
-       FROM upload_batch_row
-       WHERE upload_batch_id = ? AND created_entity_id IS NOT NULL`,
-      [batchId],
-    );
-    const r = (rows as RowDataPacket[])[0] ?? {};
-    let succeeded = 0;
+    // ONE query, not two. This used to read `total`/`failed` from upload_batch_row and
+    // `succeeded` from bulk_upload_locked_entity in two separate round trips — while a
+    // few hundred rows are being locked concurrently in the background, a poll landing
+    // between those two reads could catch `succeeded` computed a moment later than
+    // `total`, and briefly report more rows done than exist (live example: "Applying
+    // 165 of 148 rows…"). A LEFT JOIN makes both counts come from the same read.
+    let rows: RowDataPacket[];
     try {
-      const [locked] = await db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS n FROM bulk_upload_locked_entity WHERE upload_batch_id = ?",
+      [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*)                              AS total,
+           SUM(ubr.row_status IN ('error','failed')) AS failed,
+           SUM(ble.id IS NOT NULL)                AS succeeded
+         FROM upload_batch_row ubr
+         LEFT JOIN bulk_upload_locked_entity ble
+           ON ble.upload_batch_id = ubr.upload_batch_id AND ble.entity_id = ubr.created_entity_id
+         WHERE ubr.upload_batch_id = ? AND ubr.created_entity_id IS NOT NULL`,
         [batchId],
       );
-      succeeded = Number((locked as RowDataPacket[])[0]?.n ?? 0);
     } catch (err: unknown) {
       // The lock table arrives with migration 1522; before it is applied there is
       // simply no applied-count to report, which is not a reason to fail the poll.
       if (String((err as { code?: unknown })?.code ?? "") !== "ER_NO_SUCH_TABLE") throw err;
-      succeeded = 0;
+      [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total, SUM(row_status IN ('error','failed')) AS failed
+           FROM upload_batch_row WHERE upload_batch_id = ? AND created_entity_id IS NOT NULL`,
+        [batchId],
+      );
     }
+    const r = (rows as RowDataPacket[])[0] ?? {};
+    const total = Number(r.total ?? 0);
     const failed = Number(r.failed ?? 0);
-    return { total: Number(r.total ?? 0), processed: succeeded + failed, succeeded, failed };
+    const succeeded = Number(r.succeeded ?? 0);
+    // Belt and suspenders: processed can never exceed total, whatever the numbers say.
+    return { total, processed: Math.min(succeeded + failed, total), succeeded, failed };
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(

@@ -64,7 +64,7 @@ describe("every built import is reachable from the Bulk Upload Hub", () => {
 describe("bulk leave lands in the status the attendance engine reads", () => {
   it("approves as 'approved', not a status only the leave module knows", async () => {
     const reviewRequest = vi.fn().mockResolvedValue(undefined);
-    const lockEntity = vi.fn().mockResolvedValue(undefined);
+    const lockEntities = vi.fn().mockResolvedValue(undefined);
 
     vi.doMock("../../../db/mysql.js", () => ({
       db: {
@@ -77,7 +77,7 @@ describe("bulk leave lands in the status the attendance engine reads", () => {
     vi.doMock("../bulk-approval.service.js", () => ({
       loadStagedRows: vi.fn(), resolveEmployees: vi.fn(), resolveSingleBranch: vi.fn(),
       linkRowToEntity: vi.fn(), markRowFailed: vi.fn(), markPendingApproval: vi.fn(),
-      normalizeDate: (v: string) => v, lockEntity,
+      normalizeDate: (v: string) => v, lockEntities,
       BulkUploadError: class extends Error {},
     }));
 
@@ -93,8 +93,10 @@ describe("bulk leave lands in the status the attendance engine reads", () => {
     // The engine's override query is `leave_request.status = 'approved'`. Anything
     // else and the nightly run cannot see the leave behind the attendance day.
     expect(status).not.toBe("branch_head_approved");
-    // The row is recorded as locked so it cannot be unpicked one at a time.
-    expect(lockEntity).toHaveBeenCalledTimes(1);
+    // The row is recorded as locked (batched, one call) so it cannot be unpicked
+    // one at a time.
+    expect(lockEntities).toHaveBeenCalledTimes(1);
+    expect(lockEntities.mock.calls[0][0]).toHaveLength(1);
     vi.resetModules();
   });
 

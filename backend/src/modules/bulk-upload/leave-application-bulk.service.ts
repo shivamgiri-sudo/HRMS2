@@ -18,7 +18,7 @@ import type { RowDataPacket } from "mysql2";
 import { leaveService } from "../leave/leave.service.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeDate,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
@@ -225,6 +225,11 @@ export async function applyLeaveBatch(
   // the API is serving. A 217-employee batch fanned out at once asks for 217
   // connections, drains the pool and then overflows the queue — which turns one slow
   // approval into failed requests across the whole app.
+  // Collected here and written in one batched call after the loop instead of one
+  // INSERT per row inline — see the identical change (and its rationale) in
+  // attendance-regularization-bulk.service.ts's applyRegularizationBatch.
+  const toLock: string[] = [];
+
   const groupResults = await mapWithConcurrency(
     [...byEmployee.values()],
     BULK_ROW_CONCURRENCY,
@@ -232,6 +237,7 @@ export async function applyLeaveBatch(
       let grpApplied = 0;
       let grpFailed = 0;
       const grpErrors: string[] = [];
+      const grpLocked: string[] = [];
 
       for (const row of empRows) {
         try {
@@ -270,14 +276,7 @@ export async function applyLeaveBatch(
               approverUserId,
             ),
           );
-          await lockEntity({
-            entityType: ENTITY_TYPE,
-            entityId: row.created_entity_id,
-            batchId: batch.id,
-            batchNo: batch.upload_batch_no,
-            employeeId: null,
-            lockedBy: approverUserId,
-          });
+          grpLocked.push(row.created_entity_id);
           grpApplied++;
         } catch (err) {
           const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
@@ -286,7 +285,7 @@ export async function applyLeaveBatch(
           grpFailed++;
         }
       }
-      return { grpApplied, grpFailed, grpErrors };
+      return { grpApplied, grpFailed, grpErrors, grpLocked };
     },
   );
 
@@ -294,7 +293,19 @@ export async function applyLeaveBatch(
     applied += r.grpApplied;
     failed += r.grpFailed;
     errors.push(...r.grpErrors);
+    toLock.push(...r.grpLocked);
   }
+
+  await lockEntities(
+    toLock.map((entityId) => ({
+      entityType: ENTITY_TYPE,
+      entityId,
+      batchId: batch.id,
+      batchNo: batch.upload_batch_no,
+      employeeId: null,
+      lockedBy: approverUserId,
+    })),
+  );
 
   return { applied, failed, errors };
 }

@@ -19,7 +19,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeMonth,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeMonth,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { withBulkLockRetry } from "./lock-retry.js";
@@ -191,26 +191,24 @@ export async function applyDeductionBatch(
   const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
     try {
       // Guarded on the current status so a replayed approval cannot resurrect a row
-      // a later action deactivated.
-      await withBulkLockRetry(async () => {
-        const [res] = await db.execute<ResultSetHeader>(
+      // a later action deactivated. lockEntity used to run INSIDE this same retry
+      // closure: if IT hit a transient lock (a busy moment on bulk_upload_locked_entity,
+      // written by every row of every concurrent batch), the retry re-ran the UPDATE
+      // too — which then failed its own guard ("no longer pending approval", since the
+      // first attempt had already flipped the status) and reported a row that had
+      // genuinely activated as an error. Locking now happens after the loop, batched,
+      // decoupled entirely from whether the domain UPDATE itself needed a retry.
+      const [res] = await withBulkLockRetry(() =>
+        db.execute<ResultSetHeader>(
           `UPDATE employee_deduction_entries
               SET status = 'active', updated_at = NOW()
             WHERE id = ? AND status = 'pending_approval'`,
           [row.created_entity_id],
-        );
-        if (res.affectedRows === 0) {
-          throw new Error("deduction entry is no longer pending approval");
-        }
-        await lockEntity({
-          entityType: ENTITY_TYPE,
-          entityId: row.created_entity_id,
-          batchId: batch.id,
-          batchNo: batch.upload_batch_no,
-          employeeId: null,
-          lockedBy: approverUserId,
-        });
-      });
+        ),
+      );
+      if (res.affectedRows === 0) {
+        throw new Error("deduction entry is no longer pending approval");
+      }
       void logSensitiveAction({
         actor_user_id: approverUserId,
         actor_role: "branch_head",
@@ -226,7 +224,7 @@ export async function applyDeductionBatch(
           upload_batch_no: batch.upload_batch_no,
         },
       });
-      return { ok: true as const };
+      return { ok: true as const, entityId: row.created_entity_id };
     } catch (err) {
       const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
       await markRowFailed(row.id, msg);
@@ -236,14 +234,27 @@ export async function applyDeductionBatch(
 
   // Tallied after the fact rather than with counters mutated from inside the tasks, so the
   // error order follows row order regardless of the order the tasks happened to finish in.
+  const toLock: string[] = [];
   for (const outcome of outcomes) {
     if (outcome.ok) {
       applied++;
+      toLock.push(outcome.entityId);
     } else {
       failed++;
       errors.push(outcome.msg);
     }
   }
+
+  await lockEntities(
+    toLock.map((entityId) => ({
+      entityType: ENTITY_TYPE,
+      entityId,
+      batchId: batch.id,
+      batchNo: batch.upload_batch_no,
+      employeeId: null,
+      lockedBy: approverUserId,
+    })),
+  );
 
   return { applied, failed, errors };
 }

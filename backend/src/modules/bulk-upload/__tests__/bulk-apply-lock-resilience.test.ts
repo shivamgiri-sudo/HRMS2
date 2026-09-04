@@ -33,17 +33,16 @@ const { logSensitiveAction } = vi.hoisted(() => ({
 }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
-const { markRowFailed, lockEntity } = vi.hoisted(() => ({
+const { markRowFailed, lockEntities } = vi.hoisted(() => ({
   markRowFailed: vi.fn().mockResolvedValue(undefined),
-  lockEntity: vi.fn().mockResolvedValue(undefined),
+  lockEntities: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Only the two helpers the apply path touches are stubbed; the rest are present because an
 // ESM named import fails to link if the mock omits an export the module imports.
 vi.mock("../bulk-approval.service.js", () => ({
   markRowFailed,
-  lockEntity,
-  lockEntities: vi.fn().mockResolvedValue(undefined),
+  lockEntities,
   loadStagedRows: vi.fn(),
   resolveEmployees: vi.fn(),
   resolveSingleBranch: vi.fn(),
@@ -86,7 +85,7 @@ function wireDb(rows: ReturnType<typeof linkedRows>, onUpdate: (entityId: string
 beforeEach(() => {
   vi.clearAllMocks();
   markRowFailed.mockResolvedValue(undefined);
-  lockEntity.mockResolvedValue(undefined);
+  lockEntities.mockResolvedValue(undefined);
 });
 
 describe("applyDeductionBatch — resilience to database lock errors", () => {
@@ -175,7 +174,9 @@ describe("applyDeductionBatch — resilience to database lock errors", () => {
 
     expect(outcome).toMatchObject({ applied: 0, failed: 1 });
     expect(outcome.errors[0]).toContain("no longer pending approval");
-    expect(lockEntity).not.toHaveBeenCalled();
+    // Locking is batched after the loop now — called once regardless, but with
+    // nothing to lock since the one row never applied.
+    expect(lockEntities).toHaveBeenCalledWith([]);
   });
 
   it("reports errors in row order even though rows finish out of order", async () => {
@@ -209,6 +210,8 @@ describe("applyDeductionBatch — resilience to database lock errors", () => {
     const outcome = await applyDeductionBatch(BATCH, "approver-1", null);
 
     expect(outcome).toMatchObject({ applied: 5, failed: 1 });
-    expect(lockEntity).toHaveBeenCalledTimes(5);
+    // One batched call carrying all 5 successfully-applied rows, not 5 separate calls.
+    expect(lockEntities).toHaveBeenCalledTimes(1);
+    expect(lockEntities.mock.calls[0][0]).toHaveLength(5);
   });
 });

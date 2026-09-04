@@ -18,7 +18,7 @@ import { DISPUTE_TYPES } from "../wfm/wfm.validation.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntity, BulkUploadError, normalizeDate,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
@@ -261,6 +261,13 @@ export async function applyRegularizationBatch(
     byEmployee.get(key)!.push(row);
   }
 
+  // Locks are collected here and written ONCE after the loop (see lockEntities call
+  // below) instead of one INSERT per row inline. For a 148-row batch that was 148
+  // sequential round trips competing with the domain engine's own per-row queries for
+  // the same pooled connections — the biggest single throughput cost this apply path
+  // had left after the per-row work itself. Batched, it is one write (chunked at 500).
+  const toLock: { entityId: string; employeeId: string | null }[] = [];
+
   const groupResults = await mapWithConcurrency(
     [...byEmployee.values()],
     BULK_ROW_CONCURRENCY,
@@ -268,6 +275,7 @@ export async function applyRegularizationBatch(
       let grpApplied = 0;
       let grpFailed = 0;
       const grpErrors: string[] = [];
+      const grpLocked: { entityId: string; employeeId: string | null }[] = [];
 
       for (const row of empRows) {
         try {
@@ -283,14 +291,7 @@ export async function applyRegularizationBatch(
               approverUserId,
             )
           );
-          await lockEntity({
-            entityType: ENTITY_TYPE,
-            entityId: row.created_entity_id,
-            batchId: batch.id,
-            batchNo: batch.upload_batch_no,
-            employeeId: row.employee_id ? String(row.employee_id) : null,
-            lockedBy: approverUserId,
-          });
+          grpLocked.push({ entityId: row.created_entity_id, employeeId: row.employee_id ? String(row.employee_id) : null });
           void logSensitiveAction({
             actor_user_id: approverUserId,
             actor_role: "branch_head",
@@ -309,7 +310,7 @@ export async function applyRegularizationBatch(
           grpFailed++;
         }
       }
-      return { grpApplied, grpFailed, grpErrors };
+      return { grpApplied, grpFailed, grpErrors, grpLocked };
     },
   );
 
@@ -317,7 +318,19 @@ export async function applyRegularizationBatch(
     applied += r.grpApplied;
     failed += r.grpFailed;
     errors.push(...r.grpErrors);
+    toLock.push(...r.grpLocked);
   }
+
+  await lockEntities(
+    toLock.map((e) => ({
+      entityType: ENTITY_TYPE,
+      entityId: e.entityId,
+      batchId: batch.id,
+      batchNo: batch.upload_batch_no,
+      employeeId: e.employeeId,
+      lockedBy: approverUserId,
+    })),
+  );
 
   return { applied, failed, errors };
 }
