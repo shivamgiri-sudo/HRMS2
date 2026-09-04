@@ -234,6 +234,11 @@ describe("application shell routing contracts", () => {
       "/super-admin/live-location",
       "/terms-of-service",
       "/two-factor",
+      // Public exit-pass verification page (commit 5c5514ca, "public QR verify page") —
+      // same class as the visitor-gate pages below: reached by scanning a printed QR
+      // code, never from the sidebar. Missing here for the same reason /visitor-gate
+      // once was: the route was mounted without an allowlist entry.
+      "/verify/gp",
       // Public kiosk/gate pages, same class as the two below: reached by QR or a
       // direct link at reception, never from the sidebar. /visitor-gate was mounted
       // without an allowlist entry, which left this contract red on main.
