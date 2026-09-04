@@ -28,7 +28,10 @@
     // Closes 26 stranded joining kits and their 215 checklist rows through
     // finalizeKitEsign, and spends one billed provider call per kit, so the same
     // rule applies: a type error in it is a production data error.
-    "scripts/backfill-stranded-joining-kits.ts"
+    "scripts/backfill-stranded-joining-kits.ts",
+    // Mints a real signing token and sends a real email per candidate through
+    // resendEsignLink; same rule as the three scripts above.
+    "scripts/resend-stuck-esign-links.ts"
   ],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }

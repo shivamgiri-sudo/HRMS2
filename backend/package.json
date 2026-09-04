@@ -13,6 +13,7 @@
     "inbox:reconcile": "tsx scripts/inbox-reconcile.ts",
     "inbox:reconcile:apply": "tsx scripts/inbox-reconcile.ts --apply",
     "backfill:stranded-kits": "tsx scripts/backfill-stranded-joining-kits.ts",
+    "resend:stuck-esign-links": "tsx scripts/resend-stuck-esign-links.ts",
     "migrate": "tsx src/scripts/migrate.ts",
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "preflight": "node scripts/deploy-preflight.mjs && npx tsx scripts/migration-target-table-check.ts",
