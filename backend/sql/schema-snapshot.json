@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1084,
-  "columnCount": 15740,
+  "tableCount": 1085,
+  "columnCount": 15749,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14584,7 +14584,9 @@
       "bank_transfer_initiated",
       "bank_transfer_initiated_at",
       "payslip_emailed",
-      "payslip_emailed_at"
+      "payslip_emailed_at",
+      "branch_id",
+      "cost_centre_id"
     ],
     "salary_prep_line_adjustment": [
       "id",
@@ -14954,7 +14956,8 @@
       "finance_remarks",
       "ceo_acknowledged_by",
       "ceo_acknowledged_at",
-      "ceo_remarks"
+      "ceo_remarks",
+      "scope_kind"
     ],
     "salary_prep_run_archive_20260731": [
       "id",
@@ -15123,6 +15126,14 @@
       "ceo_acknowledged_by",
       "ceo_acknowledged_at",
       "ceo_remarks"
+    ],
+    "salary_prep_run_scope": [
+      "id",
+      "run_id",
+      "run_month",
+      "branch_id",
+      "cost_centre_id",
+      "created_at"
     ],
     "salary_proposal": [
       "id",
