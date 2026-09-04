@@ -1141,16 +1141,37 @@ export const payrollBranchReadinessService = {
     const results: BranchReadinessRecord[] = [];
 
     // Sequential to avoid DB overload
-    for (const branch of branches) {
-      try {
-        const rec = await this.getOrRefresh(month, branch.id);
-        results.push(rec);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(
-          `[BranchReadiness] getHOSummary branch ${branch.id} failed — ${msg}`
-        );
-      }
+    /*
+     * Branches refresh CONCURRENTLY, not one after another.
+     *
+     * Serially, this endpoint took 50.8s for 2026-08 and 43.6s for 2026-09 measured against
+     * production on 2026-09-05 — six branches, each getOrRefresh running its own half-dozen
+     * queries, added end to end. The browser aborts long before that (net::ERR_ABORTED), so the
+     * Branch View rendered permanently blank while the server was still working and would have
+     * answered 200 with correct data. A page that is empty because its data arrives after the
+     * client gave up looks exactly like a page whose data does not exist.
+     *
+     * The branches are independent — different branch_id, no shared state — so there is nothing to
+     * serialise for. Six concurrent refreshes sit well inside the pool.
+     *
+     * The per-branch try/catch is kept deliberately: one branch failing must not take the whole
+     * summary down with it, which is what a bare Promise.all would do.
+     */
+    const refreshed = await Promise.all(
+      branches.map(async (branch) => {
+        try {
+          return await this.getOrRefresh(month, branch.id);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[BranchReadiness] getHOSummary branch ${branch.id} failed — ${msg}`
+          );
+          return null;
+        }
+      })
+    );
+    for (const rec of refreshed) {
+      if (rec) results.push(rec);
     }
 
     // Sort: not_started/blocked (score ASC) → in_progress → ready
@@ -1428,20 +1449,26 @@ export const payrollBranchReadinessService = {
 
     const groups: ProcessReadinessBranchGroup[] = [];
 
-    for (const branch of branches) {
-      const processes = await this.getSummaryForBranch(month, branch.id);
-      const total = processes.length;
-      const ready = processes.filter(p => p.readiness_status === 'ready').length;
-      const avg_score = total > 0
-        ? Math.round(processes.reduce((s, p) => s + p.readiness_score, 0) / total)
-        : 0;
-      groups.push({
-        branch_id: branch.id,
-        branch_name: branch.branch_name,
-        processes,
-        stats: { total, ready, avg_score },
-      });
-    }
+    // Same reasoning as getHOSummary above: branches are independent, so refreshing them one after
+    // another only adds their latencies together until the client gives up. Order is preserved by
+    // Promise.all, so the grouping below is unchanged.
+    const grouped = await Promise.all(
+      branches.map(async (branch) => {
+        const processes = await this.getSummaryForBranch(month, branch.id);
+        const total = processes.length;
+        const ready = processes.filter(p => p.readiness_status === 'ready').length;
+        const avg_score = total > 0
+          ? Math.round(processes.reduce((s, p) => s + p.readiness_score, 0) / total)
+          : 0;
+        return {
+          branch_id: branch.id,
+          branch_name: branch.branch_name,
+          processes,
+          stats: { total, ready, avg_score },
+        };
+      })
+    );
+    groups.push(...grouped);
 
     // Sort: branches with most blocked/not_started first
     groups.sort((a, b) => {
