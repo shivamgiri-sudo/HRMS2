@@ -30,6 +30,12 @@ type SyncResult = {
   pulledEvents: number;
   groupedDays: number;
   migratedDays: number;
+  /**
+   * Days the source returned that were already stored identically and so were not rewritten.
+   * Reported rather than hidden: without it `migrated` appears to collapse after this change,
+   * when in fact the same days are simply no longer being written a second time.
+   */
+  skippedUnchanged: number;
   ignoredExcludedUsers: number;
   inactiveUsers: Array<{ cosecUserId: string; punchDate: string; totalPunches: number }>;
   unmappedUsers: Array<{ cosecUserId: string; punchDate: string; totalPunches: number }>;
@@ -695,6 +701,91 @@ export async function triggerPostSyncPayrollRecalc(
   }
 }
 
+/**
+ * Which of these days actually differ from what biometric_attendance_log already holds.
+ *
+ * Compares the values that would actually be WRITTEN, not the raw ones that were read. The log
+ * stores the output of assessAggregatePunches() — a single punch is stored with no punch-out and a
+ * count of 1, an odd punch count is treated differently in historical mode than in live — so
+ * comparing `group.totalPunches` against the stored `total_punches` would report almost every day
+ * as changed and skip nothing. The assessment is a pure function over values already in hand, so
+ * running it here costs nothing and is the same call migratePunchGroup() makes, with the same mode.
+ *
+ * That also handles the live -> historical transition for free: when a day rolls out of the sync
+ * window its mode changes, the assessment changes with it, and the day is reprocessed once more.
+ *
+ * Deliberately NOT a datetime watermark against the source. A watermark that is slightly wrong
+ * drops punches silently; comparing what we stored is exact, still inspects every group the source
+ * returns, and so picks up a back-dated correction the moment its aggregate differs.
+ *
+ * Groups flagged missingPunch are never skipped — they are written to attendance_exception by a
+ * different path and have no biometric_attendance_log row to compare against, so a stale row under
+ * the same key must not be read as "already done".
+ *
+ * Falls back to returning every group if the lookup fails: doing the work is the safe direction,
+ * since the cost of that is only the load this exists to avoid, while the cost of wrongly skipping
+ * is attendance that never lands.
+ */
+// Exported for test: the failure mode here is silent — a filter that is slightly too eager drops
+// attendance without erroring — so it is exercised directly rather than only through sync().
+export async function filterUnchangedGroups(groups: PunchGroup[], syncToDate: string): Promise<PunchGroup[]> {
+  if (groups.length === 0) return groups;
+  try {
+    const known = new Map<string, { punches: number; first: string; last: string; minutes: number }>();
+    const CHUNK = 500;
+    for (let i = 0; i < groups.length; i += CHUNK) {
+      const slice = groups.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => "(?, ?)").join(", ");
+      const params = slice.flatMap((g) => [g.cosecUserId, g.punchDate]);
+      const [rows] = await db.query<RowDataPacket[]>(
+        `SELECT cosec_user_id,
+                DATE_FORMAT(punch_date, '%Y-%m-%d')                   AS punch_date,
+                total_punches,
+                raw_minutes,
+                DATE_FORMAT(first_punch_in,  '%Y-%m-%d %H:%i:%s')     AS first_punch_in,
+                DATE_FORMAT(last_punch_out,  '%Y-%m-%d %H:%i:%s')     AS last_punch_out
+           FROM biometric_attendance_log
+          WHERE (cosec_user_id, punch_date) IN (${placeholders})`,
+        params,
+      );
+      for (const row of rows) {
+        known.set(`${row.cosec_user_id}|${row.punch_date}`, {
+          punches: Number(row.total_punches ?? 0),
+          minutes: Number(row.raw_minutes ?? 0),
+          first: String(row.first_punch_in ?? ""),
+          last: String(row.last_punch_out ?? ""),
+        });
+      }
+    }
+
+    return groups.filter((group) => {
+      if ((group as any).missingPunch) return true;
+      const seen = known.get(`${group.cosecUserId}|${group.punchDate}`);
+      if (!seen) return true; // never stored — must process
+
+      const assessed = assessAggregatePunches({
+        firstPunch: group.firstPunch,
+        lastPunch: group.lastPunch,
+        totalPunches: group.totalPunches,
+        workingMinutes: group.workingMinutes,
+        mode: assessmentModeForPunchDate(group.punchDate, syncToDate),
+      });
+      return (
+        seen.punches !== assessed.effectivePunchCount
+        || seen.minutes !== Math.round(assessed.effectiveWorkingMinutes)
+        || seen.first !== String(assessed.effectivePunchIn ?? group.firstPunch ?? "")
+        || seen.last !== String(assessed.effectivePunchOut ?? "")
+      );
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      "[COSEC Sync] could not read existing aggregates; processing every day this run",
+    );
+    return groups;
+  }
+}
+
 export const cosecSyncService = {
   getLastSyncResult() {
     return lastSyncResult;
@@ -735,6 +826,7 @@ export const cosecSyncService = {
       pulledEvents: 0,
       groupedDays: 0,
       migratedDays: 0,
+      skippedUnchanged: 0,
       ignoredExcludedUsers: 0,
       inactiveUsers: [],
       unmappedUsers: [],
@@ -766,8 +858,41 @@ export const cosecSyncService = {
         (excludedRows[0] as any[]).map((row) => String(row.cosec_user_id ?? "")),
       );
 
+      /*
+       * Skip the days that have not changed since the last run.
+       *
+       * The source query aggregates per (user, date) across a rolling two-day window, so every
+       * run returned the same ~13,000 punches and re-did the full downstream write for each one:
+       * biometric_attendance_log, integration_biometric_daily, wfm_attendance_session, plus the
+       * per-employee resolution around them. Measured on production 2026-09-04, that saturated
+       * the shared pool on a ten-minute cadence and tripped the database circuit breaker at the
+       * exact second every run finished (11:54:55, 12:05:25, 12:15:54, 12:26:23, 12:36:48) —
+       * taking report downloads, report email, the inbox and the waiting-room displays down with
+       * it. Raising the pool from 25 to 50 did not help, because the work, not the pool, was the
+       * problem.
+       *
+       * A day is reprocessed only when its punch count or its last punch has actually moved.
+       * Deliberately NOT a datetime watermark against the source: last_punch_out is stored in IST
+       * while the source column is in the source's own zone, and a watermark across that boundary
+       * silently drops punches rather than failing loudly. Comparing what we already stored is
+       * exact, and still sees every group the source returns, so a back-dated correction is
+       * picked up the moment its aggregate differs.
+       *
+       * One extra SELECT replaces thousands of writes. The comparison keys on the same
+       * (cosec_user_id, punch_date) pair the log's unique key uses.
+       */
+      const changedGroups = await filterUnchangedGroups(groups, to);
+      const skipped = groups.length - changedGroups.length;
+      result.skippedUnchanged = skipped;
+      if (skipped > 0) {
+        logger.info(
+          { pulled: groups.length, unchanged: skipped, reprocessing: changedGroups.length },
+          "[COSEC Sync] skipping days whose punch count and last punch are unchanged",
+        );
+      }
+
       const writtenByMonth = new Map<string, Set<string>>();
-      for (const group of groups) {
+      for (const group of changedGroups) {
         const isMissingPunch = !!(group as any).missingPunch;
         try {
           const sourceUser = classifySourceUser(group.cosecUserId, sourceMaps);

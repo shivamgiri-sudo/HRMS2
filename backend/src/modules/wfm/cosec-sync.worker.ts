@@ -190,7 +190,7 @@ export function startCosecSyncWorker() {
         from: dateOnly(from),
         to: dateOnly(to),
       });
-      console.log(`[cosec-sync] migrated=${result.migratedDays} pulled=${result.pulledEvents} unmapped=${result.unmappedUsers.length} failed=${result.failed.length}`);
+      console.log(`[cosec-sync] migrated=${result.migratedDays} unchanged=${result.skippedUnchanged} pulled=${result.pulledEvents} unmapped=${result.unmappedUsers.length} failed=${result.failed.length}`);
       // An unmapped user is a person whose punches were discarded outright. Logged at
       // info level this reads as routine; it is how 171 active employees came to have no
       // attendance at all while the sync reported success every five minutes.
