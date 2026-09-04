@@ -55,7 +55,15 @@ PREPARE mstmt_3 FROM @msql_3;
 EXECUTE mstmt_3;
 DEALLOCATE PREPARE mstmt_3;
 
-ALTER TABLE attendance_reconciliation_record
-  ADD INDEX IF NOT EXISTS idx_arr_rta_exception (rta_exception_label);
+SET @midx_101 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_reconciliation_record' AND INDEX_NAME = 'idx_arr_rta_exception'
+);
+SET @midxsql_101 = IF(@midx_101 = 0,
+  'ALTER TABLE attendance_reconciliation_record ADD INDEX idx_arr_rta_exception (rta_exception_label)',
+  'SELECT "idx_arr_rta_exception already exists" AS message');
+PREPARE midxstmt_101 FROM @midxsql_101;
+EXECUTE midxstmt_101;
+DEALLOCATE PREPARE midxstmt_101;
 
 SELECT '230_attendance_reconciliation_rta_linkage.sql applied successfully' AS migration_status;

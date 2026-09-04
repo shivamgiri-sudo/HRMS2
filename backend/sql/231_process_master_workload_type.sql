@@ -52,7 +52,15 @@ EXECUTE mstmt_2;
 DEALLOCATE PREPARE mstmt_2; for outbound: {"campaign_target_type":"sales"}'
   AFTER workload_type;
 
-ALTER TABLE process_master
-  ADD INDEX IF NOT EXISTS idx_pm_workload_type (workload_type);
+SET @midx_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_master' AND INDEX_NAME = 'idx_pm_workload_type'
+);
+SET @midxsql_1 = IF(@midx_1 = 0,
+  'ALTER TABLE process_master ADD INDEX idx_pm_workload_type (workload_type)',
+  'SELECT "idx_pm_workload_type already exists" AS message');
+PREPARE midxstmt_1 FROM @midxsql_1;
+EXECUTE midxstmt_1;
+DEALLOCATE PREPARE midxstmt_1;
 
 SELECT '231_process_master_workload_type.sql applied successfully' AS migration_status;

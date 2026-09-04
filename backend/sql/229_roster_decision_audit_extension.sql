@@ -155,7 +155,15 @@ EXECUTE mstmt_9;
 DEALLOCATE PREPARE mstmt_9;
 
 -- Index for week-level reporting
-ALTER TABLE roster_decision_audit
-  ADD INDEX IF NOT EXISTS idx_rda_process_week (process_id, week_start_date);
+SET @midx_101 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_decision_audit' AND INDEX_NAME = 'idx_rda_process_week'
+);
+SET @midxsql_101 = IF(@midx_101 = 0,
+  'ALTER TABLE roster_decision_audit ADD INDEX idx_rda_process_week (process_id, week_start_date)',
+  'SELECT "idx_rda_process_week already exists" AS message');
+PREPARE midxstmt_101 FROM @midxsql_101;
+EXECUTE midxstmt_101;
+DEALLOCATE PREPARE midxstmt_101;
 
 SELECT '229_roster_decision_audit_extension.sql applied successfully' AS migration_status;
