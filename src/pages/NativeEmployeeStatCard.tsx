@@ -898,6 +898,10 @@ const TABS: { key: StatTab; label: string; icon: React.ReactNode }[] = [
   { key: "attendance", label: "Attendance", icon: <CalendarDays className="h-4 w-4" /> },
   { key: "leave",      label: "Leave",      icon: <Clock className="h-4 w-4" /> },
   { key: "salary",     label: "Salary",     icon: <IndianRupee className="h-4 w-4" /> },
+  // PayslipsTab was fully built — it even picks /payroll/payslip/my vs /list/:id
+  // depending on whose record it is — but nothing ever set activeTab to "payslips",
+  // so the panel existed and no button in the app could open it.
+  { key: "payslips",   label: "Payslips",   icon: <CreditCard className="h-4 w-4" /> },
   { key: "assets",     label: "Assets",     icon: <Package className="h-4 w-4" /> },
   { key: "journey",    label: "Journey",    icon: <TrendingUp className="h-4 w-4" /> },
 ];
@@ -1159,7 +1163,14 @@ export default function NativeEmployeeStatCard() {
 
               {/* ── Tab Bar ──────────────────────────────────────────────── */}
               <div className="flex overflow-x-auto gap-1 rounded-2xl bg-white p-1 shadow border border-slate-100 no-scrollbar">
-                {TABS.filter(tab => tab.key !== "salary" || canSeeSalary).map(tab => (
+                {TABS.filter(tab => {
+                  // Salary is payroll-only. Payslips are payroll-or-your-own: the
+                  // panel already switches to /payroll/payslip/my for your own
+                  // record, and your payslips are yours to read.
+                  if (tab.key === "salary") return canSeeSalary;
+                  if (tab.key === "payslips") return canSeeSalary || isSelf;
+                  return true;
+                }).map(tab => (
                   <button key={tab.key} onClick={() => setActiveTab(tab.key)}
                     className={cn(
                       "flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition-all",
@@ -1353,7 +1364,7 @@ export default function NativeEmployeeStatCard() {
                 )}
 
                 {/* Payslips */}
-                {activeTab === "payslips" && resolvedId && (
+                {activeTab === "payslips" && resolvedId && (canSeeSalary || isSelf) && (
                   <div className="p-6"><PayslipsTab employeeId={resolvedId} isSelf={isSelf} /></div>
                 )}
 

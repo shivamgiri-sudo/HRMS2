@@ -106,7 +106,38 @@ describe('salary structure — the page gate matches the API gate', () => {
   });
 
   it('hides the tab button and refuses to render the panel', () => {
-    expect(page).toContain('TABS.filter(tab => tab.key !== "salary" || canSeeSalary)');
+    // Both halves matter: hiding the button alone would still leave the panel
+    // renderable if activeTab were ever set to "salary" some other way.
+    expect(page).toContain('if (tab.key === "salary") return canSeeSalary;');
     expect(page).toContain('activeTab === "salary" && resolvedId && canSeeSalary');
+  });
+});
+
+/**
+ * The Payslips tab was built and unreachable.
+ *
+ * PayslipsTab existed in full — it even chooses /payroll/payslip/my for your own
+ * record and /payroll/payslip/list/:id for someone else's — and `activeTab` was
+ * never set to "payslips" by anything, so no button in the application could open
+ * it. Switched on 2026-09-04.
+ */
+describe('the payslips tab is reachable', () => {
+  const page = readFileSync(
+    resolve(process.cwd(), '../src/pages/NativeEmployeeStatCard.tsx'),
+    'utf8',
+  );
+
+  it('is registered in the tab bar', () => {
+    expect(page).toMatch(/key:\s*"payslips",\s*label:\s*"Payslips"/);
+  });
+
+  it('is visible to payroll roles or to the person themselves, and nobody else', () => {
+    expect(page).toContain('if (tab.key === "payslips") return canSeeSalary || isSelf;');
+    expect(page).toContain('activeTab === "payslips" && resolvedId && (canSeeSalary || isSelf)');
+  });
+
+  it('keeps salary stricter than payslips', () => {
+    // Your own payslips are yours; the sanctioned structure is payroll-only.
+    expect(page).toContain('if (tab.key === "salary") return canSeeSalary;');
   });
 });
