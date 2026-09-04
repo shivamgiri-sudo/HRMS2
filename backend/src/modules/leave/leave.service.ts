@@ -784,8 +784,17 @@ export const leaveService = {
         const byYear = groupDatesByYear(chargeable);
         const deductionBuckets: Array<{ leaveTypeId: string; year: number; days: number; isPrimary: boolean }> = [];
 
+        // A half day is 0.5 of ONE date. Counting dates here charged it a whole day: every
+        // half-day leave approved before this deducted 1.00 against a total_days of 0.50,
+        // measured on live data as 14 requests taking 14.00 days of CL/ML instead of 7.00.
+        // Whole-day requests are unaffected — for them the date count IS the day count.
+        // daysNeeded flows into the ledger write, the annual-cap check and the
+        // leave_balance_deduction audit row that cancel/reject reads back to reverse, so
+        // correcting it here corrects the entire chain rather than one symptom.
+        const isHalfDayRequest = Number(request.total_days) === 0.5;
+
         for (const [year, datesInYear] of byYear) {
-          const daysNeeded = datesInYear.length;
+          const daysNeeded = isHalfDayRequest ? 0.5 : datesInYear.length;
 
           const primary = await readBalance(conn, employeeId, leaveTypeId, year);
           // No ledger row yet for the DIRECTLY REQUESTED type (e.g. HR hasn't
@@ -879,7 +888,7 @@ export const leaveService = {
         // half_day 0.5, present 1.0). See halfDayAttendanceTarget. Read fresh here rather than
         // trusting submit-time state: attendance can be reclassified in between, and this is
         // the write that decides what the employee is actually paid.
-        const isHalfDayApproval = Number(request.total_days) === 0.5 && isPaidType;
+        const isHalfDayApproval = isHalfDayRequest && isPaidType;
         const halfDayTargets = new Map<string, string>();
         if (isHalfDayApproval && chargeable.length) {
           // No generic: `conn` here is the untyped transaction handle every other conn.execute

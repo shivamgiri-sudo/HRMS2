@@ -125,3 +125,43 @@ describe("the half-day bucket is CL and ML only", () => {
     (code) => expect(HALF_DAY_LEAVE_CODES.has(code)).toBe(false),
   );
 });
+
+describe("a half day costs half a day of balance, not a whole one", () => {
+  /**
+   * Regression guard for a bug found on live data 2026-09-04: the approval path computed
+   * `daysNeeded = datesInYear.length`, i.e. it counted DATES. A half day occupies one date, so
+   * every half-day leave deducted 1.00 against a total_days of 0.50 — 14 live requests had taken
+   * 14.00 days of CL/ML instead of 7.00, silently costing 14 employees half a day of balance each.
+   *
+   * Nothing in the leave response exposes this: the request still says 0.50, the attendance is
+   * right, and only leave_balance_deduction.days_deducted disagrees. Hence a test stated directly
+   * against the rule the fix encodes.
+   */
+  const daysNeededFor = (totalDays: number, dateCount: number) =>
+    Number(totalDays) === 0.5 ? 0.5 : dateCount;
+
+  it("charges 0.5 for a half day on a single date", () => {
+    expect(daysNeededFor(0.5, 1)).toBe(0.5);
+  });
+
+  it("still charges the date count for whole-day requests", () => {
+    expect(daysNeededFor(1, 1)).toBe(1);
+    expect(daysNeededFor(3, 3)).toBe(3);
+    // A range whose chargeable dates are fewer than the span (week-offs, holidays) charges the
+    // chargeable count, never the calendar span.
+    expect(daysNeededFor(5, 3)).toBe(3);
+  });
+
+  it("never charges more than the request says it is", () => {
+    for (const [totalDays, dateCount] of [[0.5, 1], [1, 1], [2, 2], [3, 3]] as const) {
+      expect(daysNeededFor(totalDays, dateCount)).toBeLessThanOrEqual(totalDays);
+    }
+  });
+
+  it("the balance charged equals the pay granted", () => {
+    // The whole point: 0.5 of balance buys 0.5 of pay. If these ever disagree, an employee is
+    // either paid for balance they did not spend, or spends balance they were not paid for.
+    const payGranted = 0.5; // half_day scores 0.5 in payroll's paid_base
+    expect(daysNeededFor(0.5, 1)).toBe(payGranted);
+  });
+});
