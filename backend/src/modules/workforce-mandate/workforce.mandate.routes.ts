@@ -5,6 +5,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { workforceMandateService } from "./workforce.mandate.service.js";
 import { getHcFormula } from "./hc-formula.service.js";
+import { lmsDb } from "../../db/lms-mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -201,20 +203,70 @@ router.get(
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
       branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
     );
-    // Candidates in the ATS pipeline for the processes actually in view — not the whole
-    // ats_candidate table, which spans every process, every branch, for the platform's entire
-    // history (34,905 rows) and floored Available Production HC to 0 on every single load.
-    const [inTrainingRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
-      `SELECT COUNT(*) AS cnt FROM ats_candidate
-       WHERE current_stage IN ('Applied','Screened','Selected','Onboarding')
-         AND applied_for_process IN (?)`,
-      [processIds]
-    );
+    // In Training = live headcount sitting in an active NHT (New Hire Training) batch in the
+    // LMS, for the processes actually in view — not the whole ats_candidate table (every
+    // process, every branch, the platform's entire application history: 34,905 rows, which
+    // floored Available Production HC to 0 on every load). The LMS, not the ATS pipeline, is
+    // the system of record for "who is currently in training" (CLAUDE.md's LMS Integration
+    // Rule) — user ruling 2026-09-04.
+    //
+    // trainee_master carries the HRMS process/branch id on ~78% of rows (process_hrms_id /
+    // branch_hrms_id); the rest predate that backfill and only have the client/branch name as
+    // free text, so a row without the id is matched by name against this scope's own mandates
+    // instead of being dropped. batch_master.total_trainees is a denormalised counter that can
+    // drift from reality (measured live: one active batch showed 0 there against 10 real rows
+    // in trainee_master) — counting trainee_master rows directly is the source of truth.
+    //
+    // Read-only, wrapped and never thrown: an LMS outage must not take down the rest of this
+    // dashboard, which is otherwise entirely HRMS-local. Failure -> 0, same as "no data yet".
+    let inTrainingHc = 0;
+    if (processIds.length > 0) {
+      try {
+        const [lmsRows] = await lmsDb.query<RowDataPacket[]>(
+          `SELECT tm.process_hrms_id, tm.branch_hrms_id, tm.process AS process_name,
+                  tm.branch AS branch_name, COUNT(*) AS cnt
+           FROM trainee_master tm
+           JOIN batch_master bm ON bm.batch_no = tm.batch_no
+           WHERE bm.batch_type = 'NHT' AND bm.batch_status = 'Active'
+           GROUP BY tm.process_hrms_id, tm.branch_hrms_id, tm.process, tm.branch`
+        );
+
+        const inScopeProcessIds = new Set<string>(processIds);
+        const inScopeProcessNames = new Set<string>(
+          mandates.map((m: any) => String(m.process_name ?? "").trim().toLowerCase()).filter(Boolean)
+        );
+        const branchNameFilter = branchId
+          ? String(mandates.find((m: any) => String(m.branch_id) === branchId)?.branch_name ?? "")
+              .trim().toLowerCase() || null
+          : null;
+
+        for (const row of lmsRows as any[]) {
+          const rowProcessId = row.process_hrms_id ? String(row.process_hrms_id) : null;
+          const matchesProcess = rowProcessId
+            ? inScopeProcessIds.has(rowProcessId)
+            : inScopeProcessNames.has(String(row.process_name ?? "").trim().toLowerCase());
+          if (!matchesProcess) continue;
+
+          if (branchId) {
+            const rowBranchId = row.branch_hrms_id ? String(row.branch_hrms_id) : null;
+            const matchesBranch = rowBranchId
+              ? rowBranchId === branchId
+              : branchNameFilter !== null
+                && String(row.branch_name ?? "").trim().toLowerCase() === branchNameFilter;
+            if (!matchesBranch) continue;
+          }
+
+          inTrainingHc += Number(row.cnt ?? 0);
+        }
+      } catch (err: unknown) {
+        console.error("[capacity-summary] LMS in-training lookup failed, defaulting to 0:", err);
+        inTrainingHc = 0;
+      }
+    }
 
     const activeHc = Number(activeRows[0]?.cnt ?? 0);
     const onNoticeHc = Number(onNoticeRows[0]?.cnt ?? 0);
     const longLeaveHc = Number(longLeaveRows[0]?.cnt ?? 0);
-    const inTrainingHc = Number(inTrainingRows[0]?.cnt ?? 0);
     const availableProductionHc = Math.max(0, activeHc - onNoticeHc - longLeaveHc - inTrainingHc);
 
     // Aggregate mandate totals
