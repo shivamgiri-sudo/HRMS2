@@ -418,6 +418,170 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   };
 }
 
+/**
+ * Re-send the same kit's signing email with a fresh link, without touching
+ * Luckpay at all.
+ *
+ * Why a fresh link rather than the original: employee_joining_document_public_token
+ * only ever stores public_token_hash, never the plaintext token — deliberately,
+ * so a leaked database dump cannot be turned into a working signing link. That
+ * means the original email's link cannot be reconstructed from anything stored
+ * here; a genuine resend has to mint a new token and email it, exactly as the
+ * first send did.
+ *
+ * Never re-initiates with the provider — the Luckpay document (providerReferenceId)
+ * from the original dispatchJoiningKit call is untouched, for the same
+ * non-idempotency reason dispatchJoiningKit itself never retries: the vendor
+ * would treat a second POST as a duplicate. The candidate signs the exact same
+ * document they always would have; only the link that reaches them is new.
+ *
+ * The previous active token for this kit is marked 'superseded' rather than
+ * left alone: findPendingEsignItems (esign-compliance.worker.ts) joins on
+ * token_status = 'active', and two active tokens for one checklist item would
+ * make that query return the row twice and send the daily reminder twice.
+ */
+type KitForRelink = RowDataPacket & {
+  status: string;
+  employee_id: string;
+  candidate_id: string | null;
+  anchor_checklist_id: string;
+  personal_email: string | null;
+  official_email: string | null;
+  full_name: string | null;
+};
+
+async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
+  const [kits] = await db.execute<RowDataPacket[]>(
+    `SELECT k.*, e.personal_email,
+            COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name
+       FROM employee_joining_esign_kit k
+       JOIN employees e ON e.id = k.employee_id
+      WHERE k.id = ? LIMIT 1`,
+    [kitId],
+  );
+  return ((kits as RowDataPacket[])[0] as KitForRelink) ?? null;
+}
+
+/**
+ * Mint a brand-new signing link for a kit that is already 'sent', without
+ * emailing anything itself — the two callers below each decide how to deliver
+ * it (a bespoke branded email for a human-triggered resend, the generic
+ * notification template's action button for the automated reminder).
+ *
+ * The previous active token for this kit is marked 'superseded' rather than
+ * left alone: findPendingEsignItems (esign-compliance.worker.ts) joins on
+ * token_status = 'active', and two active tokens for one checklist item would
+ * make that query return the row twice and send the daily reminder twice.
+ *
+ * Never re-initiates with the provider — the Luckpay document
+ * (providerReferenceId) from the original dispatchJoiningKit call is
+ * untouched, for the same non-idempotency reason dispatchJoiningKit itself
+ * never retries: the vendor would treat a second POST as a duplicate. The
+ * candidate signs the exact same document they always would have; only the
+ * link that reaches them is new.
+ */
+async function mintFreshKitSigningLink(kit: KitForRelink, actorUserId: string | null): Promise<string> {
+  await db.execute(
+    `UPDATE employee_joining_document_public_token
+        SET token_status = 'superseded'
+      WHERE kit_id = ? AND token_status = 'active'`,
+    [kit.id],
+  );
+
+  const publicToken = randomBytes(24).toString("hex");
+  await db.execute(
+    `INSERT INTO employee_joining_document_public_token
+       (id, checklist_id, kit_id, employee_id, candidate_id, document_code,
+        public_token_hash, token_status, expires_at, created_by)
+     VALUES (?, ?, ?, ?, ?, 'JOINING_KIT', ?, 'active', (NOW() + INTERVAL 7 DAY), ?)`,
+    [randomUUID(), String(kit.anchor_checklist_id), kit.id, String(kit.employee_id),
+     kit.candidate_id ?? null, sha256(publicToken), actorUserId],
+  );
+  return `${frontendBaseUrl()}/employee/joining-kit/esign/${publicToken}`;
+}
+
+/**
+ * Re-send the same kit's signing email with a fresh link, without touching
+ * Luckpay at all. The human-triggered counterpart to
+ * autoRefreshKitLinkForReminder below — this one sends its own branded email
+ * immediately, on a Payroll HR click.
+ *
+ * Why a fresh link rather than the original: employee_joining_document_public_token
+ * only ever stores public_token_hash, never the plaintext token — deliberately,
+ * so a leaked database dump cannot be turned into a working signing link. That
+ * means the original email's link cannot be reconstructed from anything stored
+ * here; a genuine resend has to mint a new token and email it, exactly as the
+ * first send did.
+ */
+export async function resendKitEsignLink(
+  kitId: string,
+  actorUserId: string | null,
+): Promise<{ resent: boolean; message: string; emailedTo?: string[] }> {
+  const kit = await loadKitForRelink(kitId);
+  if (!kit) throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
+  if (String(kit.status) !== "sent") {
+    return { resent: false, message: `This kit is "${kit.status}", not awaiting a signature — there is nothing to resend.` };
+  }
+
+  const employeeId = String(kit.employee_id);
+  const recipients = [kit.personal_email, kit.official_email]
+    .filter((e): e is string => typeof e === "string" && e.includes("@"));
+  if (recipients.length === 0) {
+    return { resent: false, message: "This employee has no email address on record." };
+  }
+
+  const [items] = await db.execute<RowDataPacket[]>(
+    `SELECT document_name FROM employee_joining_esign_kit_item WHERE kit_id = ? ORDER BY sort_order`,
+    [kitId],
+  );
+  const documents = (items as RowDataPacket[]).map((i) => String(i.document_name));
+  const signLink = await mintFreshKitSigningLink(kit, actorUserId);
+
+  const emailedTo: string[] = [];
+  try {
+    const { emailService } = await import("../communication/email.service.js");
+    for (const addr of [...new Set(recipients)]) {
+      await emailService.send({
+        to: addr,
+        subject: `Reminder: sign your joining documents — MAS Callnet`,
+        html: buildKitEmailHtml({ employeeName: String(kit.full_name ?? ""), documents, signLink }),
+      });
+      emailedTo.push(addr);
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await audit(kitId, employeeId, "KIT_LINK_RESEND_EMAIL_FAILED", actorUserId, { error: message });
+    return { resent: false, message: `A fresh signing link was created, but the email failed to send: ${message}` };
+  }
+
+  await audit(kitId, employeeId, "KIT_LINK_RESENT", actorUserId, { emailedTo });
+  return { resent: true, message: `Signing link re-sent to ${emailedTo.join(", ")}.`, emailedTo };
+}
+
+/**
+ * The automated counterpart, called from esign-compliance.worker.ts's daily
+ * reminder for a kit-scoped item. Mints the same fresh link as a manual
+ * resend, but delivers it through the existing esign_reminder notification
+ * (email/SMS/portal) instead of a second, separate email — the worker passes
+ * the returned URL in as that dispatch's actionUrl override.
+ *
+ * Best-effort by design: a kit that was deleted between the query and this
+ * call, or any other lookup failure, must not stop the reminder itself from
+ * going out with its old (still generically true) message — it simply goes
+ * out without a fresh button, same as before this existed.
+ */
+export async function autoRefreshKitLinkForReminder(kitId: string): Promise<string | null> {
+  try {
+    const kit = await loadKitForRelink(kitId);
+    if (!kit || String(kit.status) !== "sent") return null;
+    return await mintFreshKitSigningLink(kit, null);
+  } catch (error) {
+    console.warn(`[joining-kit] reminder link refresh failed for kit ${kitId}:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 function buildKitEmailHtml(d: { employeeName: string; documents: string[]; signLink: string }): string {
   const list = d.documents.map((n) => `<li style="margin:3px 0">${n}</li>`).join("");
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">

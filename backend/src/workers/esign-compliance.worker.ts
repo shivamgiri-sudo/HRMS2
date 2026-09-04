@@ -1,5 +1,6 @@
 import { notificationEventService } from "../modules/communication/notification-event.service.js";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
+import { autoRefreshKitLinkForReminder } from "../modules/employees/joiningKitDispatch.service.js";
 
 let db: any;
 try {
@@ -167,6 +168,7 @@ async function findPendingEsignItems(): Promise<any[]> {
          c.document_name,
          c.status,
          c.due_at,
+         pt.kit_id,
          pt.created_at AS esign_link_created_at,
          pt.expires_at,
          e.full_name AS employee_name,
@@ -243,16 +245,25 @@ async function processEsignCompliance(): Promise<void> {
         // window where a send that succeeded is never recorded, and the next
         // cycle sends it again.
                 if (claim_reminder.ok) {
+          // Kit-scoped items CAN carry a real button: mintFreshKitSigningLink
+          // (via autoRefreshKitLinkForReminder) issues a brand-new token, since
+          // the original is stored only as a hash and cannot be rebuilt — this
+          // is the same escape hatch as the manual "Resend signing link" button
+          // in the Joining Control Room, just fired on the daily schedule
+          // instead of a click. Investigated live 2026-09-04: 24 candidates sat
+          // at Luckpay's own "0 pages opened" state because the kit email is
+          // the only channel it ever went out on and this reminder, until now,
+          // never gave them a second try at the link either.
+          //
+          // Per-document items (kit_id IS NULL) are unchanged: no fresh link is
+          // minted for them, so the message still points at "the link already
+          // sent" as it always has — that path has not been audited for the
+          // same fix and stays out of scope here.
+          const freshLink = item.kit_id ? await autoRefreshKitLinkForReminder(String(item.kit_id)) : null;
           const result_reminder = await notificationEventService.dispatch({
             eventCode: "esign_reminder",
             recipientEmployeeIds: [item.employee_id],
-            // No outbound action button: the signing token is stored only as a
-            // hash, so no link to it can be rebuilt here. The mail names the
-            // document and points back at the still-valid link the signer already
-            // has. The portal item keeps /profile for anyone who has a login —
-            // and a preboarding candidate has none, which is exactly why the old
-            // /profile button was useless to the person it was chasing.
-            actionUrl: "",
+            actionUrl: freshLink ?? "",
             data: {
               document_name: item.document_name,
               days_pending: String(daysPending),

@@ -794,6 +794,42 @@ export async function recheckEsignStatus(candidateId: string): Promise<{ checked
   return { checked: rows.length, completed };
 }
 
+/**
+ * Re-send the joining kit's signing link, for a candidate who never opened the
+ * original one.
+ *
+ * Investigated live 2026-09-04: 24 candidates were stuck at Luckpay's own
+ * "INITIATED, 0 pages opened" state, not because the eSign was broken, but
+ * because the joining-kit dispatch only ever emails the link — it never texts
+ * it — for a candidate population where a personal email often goes unchecked.
+ * This is the recovery action: mint and send a fresh link (see
+ * resendKitEsignLink's own doc comment for why it must be fresh, not
+ * resent-as-is) to whichever kit is currently awaiting this candidate's
+ * signature, so Payroll HR is not stuck only re-polling a status that will
+ * never change on its own.
+ */
+export async function resendEsignLink(candidateId: string, actorId: string): Promise<{ resent: boolean; message: string; emailedTo?: string[] }> {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+
+  const [kits] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employee_joining_esign_kit
+      WHERE (candidate_id = ? OR (? IS NOT NULL AND employee_id = ?)) AND status = 'sent'
+      ORDER BY sent_at DESC LIMIT 1`,
+    [candidateId, employeeId, employeeId],
+  );
+  const kitId = (kits as RowDataPacket[])[0]?.id;
+  if (!kitId) {
+    return { resent: false, message: "No joining kit is currently awaiting this candidate's signature." };
+  }
+
+  const { resendKitEsignLink } = await import("../employees/joiningKitDispatch.service.js");
+  return resendKitEsignLink(String(kitId), actorId);
+}
+
 export async function lockSalaryRegister(candidateId: string, actorId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT phr.*, sep.status AS proposal_status, sep.proposed_gross_salary

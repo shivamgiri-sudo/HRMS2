@@ -27,6 +27,11 @@ import { describe, expect, it } from 'vitest';
  *    when the candidate already accepted the declaration at onboarding, instead
  *    of always suggesting "pending" — still just a pre-save suggestion HR must
  *    confirm with Save.
+ * 7. A "Resend signing link" action mints a fresh joining-kit token and re-mails
+ *    it, for the population found stuck at Luckpay's own "never opened" state
+ *    because the kit flow only ever emails the link once. The same fresh-link
+ *    minting also now reaches the automated daily reminder, which previously
+ *    never carried a link at all.
  */
 const service = readFileSync(
   resolve(process.cwd(), 'src/modules/ats/joining-control-room.service.ts'),
@@ -38,6 +43,14 @@ const routes = readFileSync(
 );
 const page = readFileSync(
   resolve(process.cwd(), '../src/pages/NativeJoiningControlRoom.tsx'),
+  'utf8',
+);
+const kitDispatch = readFileSync(
+  resolve(process.cwd(), 'src/modules/employees/joiningKitDispatch.service.ts'),
+  'utf8',
+);
+const complianceWorker = readFileSync(
+  resolve(process.cwd(), 'src/workers/esign-compliance.worker.ts'),
   'utf8',
 );
 
@@ -162,5 +175,60 @@ describe('statutory declaration suggestion defaults to verified when the candida
     const body = fn.slice(0, fn.indexOf('\n}'));
     expect(body).toContain('firstFilled(row.declaration_status)');
     expect(body).toContain('!row.id && Number(p.statutory_declaration_accepted)');
+  });
+});
+
+describe('resend signing link — never touches Luckpay, always mints a fresh token', () => {
+  it('mints a new token rather than reusing the stored hash', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('async function mintFreshKitSigningLink'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain("randomBytes(24).toString(\"hex\")");
+    expect(body).toContain('INSERT INTO employee_joining_document_public_token');
+    expect(body).not.toContain('luckpayClient');
+    expect(body).not.toContain('esignWithUrl');
+  });
+
+  it('supersedes the previous active token so the reminder query never double-counts the kit', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('async function mintFreshKitSigningLink'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain("SET token_status = 'superseded'");
+    expect(body.indexOf("token_status = 'superseded'")).toBeLessThan(body.indexOf('INSERT INTO'));
+  });
+
+  it('refuses to resend a kit that is not currently awaiting a signature', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('export async function resendKitEsignLink'));
+    const body = fn.slice(0, fn.indexOf('\nexport async function autoRefreshKitLinkForReminder'));
+    expect(body).toContain('String(kit.status) !== "sent"');
+  });
+
+  it('is reachable as a route and a button in the Joining Control Room', () => {
+    expect(routes).toContain('/candidates/:candidateId/esign/resend-link');
+    expect(service).toContain('export async function resendEsignLink');
+    expect(page).toContain('esign/resend-link');
+    expect(page).toContain('Resend signing link');
+  });
+
+  it('surfaces a real failure reason instead of the generic success toast', () => {
+    const fn = routes.slice(routes.indexOf('/candidates/:candidateId/esign/resend-link'));
+    const body = fn.slice(0, fn.indexOf('}));'));
+    expect(body).toContain('if (!result.resent)');
+    expect(body).toContain('res.status(409)');
+  });
+});
+
+describe('the automated daily reminder can now carry a real link for kit-scoped items', () => {
+  it('mints a fresh link for a kit item and passes it as the dispatch actionUrl', () => {
+    expect(complianceWorker).toContain('import { autoRefreshKitLinkForReminder }');
+    expect(complianceWorker).toContain('item.kit_id ? await autoRefreshKitLinkForReminder(String(item.kit_id)) : null');
+    expect(complianceWorker).toContain('actionUrl: freshLink ?? ""');
+  });
+
+  it('leaves the per-document (non-kit) path unchanged — no link minted there', () => {
+    const dispatchCall = complianceWorker.slice(
+      complianceWorker.indexOf('const freshLink ='),
+      complianceWorker.indexOf('reminders++;'),
+    );
+    // The ternary itself is the guard: null for anything without a kit_id.
+    expect(dispatchCall).toContain('item.kit_id ?');
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, ExternalLink, FileText, Loader2, RefreshCw, Search, ShieldCheck, UserCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, ExternalLink, FileText, Loader2, RefreshCw, Search, Send, ShieldCheck, UserCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
@@ -870,13 +870,27 @@ export default function NativeJoiningControlRoom() {
                         per-call billing sane — so a signature completed a few minutes
                         ago can still read as pending here. This asks the provider
                         directly instead of waiting for the schedule. */}
-                    <Button
-                      type="button" variant="outline" className="w-fit"
-                      onClick={() => action("esign/recheck", {}, "Checked with the provider")}
-                      disabled={busy}
-                    >
-                      <RefreshCw className="mr-2 h-4 w-4" />Check e-sign status now
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button" variant="outline" className="w-fit"
+                        onClick={() => action("esign/recheck", {}, "Checked with the provider")}
+                        disabled={busy}
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />Check e-sign status now
+                      </Button>
+                      {/* For a candidate who never opened the original link — the joining-kit
+                          email is the only channel it ever went out on. Mints a fresh link
+                          (the old one's token is never stored as plaintext, so it cannot be
+                          re-sent as-is) and re-emails it, without touching the eSign provider
+                          again. */}
+                      <Button
+                        type="button" variant="outline" className="w-fit"
+                        onClick={() => action("esign/resend-link", {}, "Signing link re-sent")}
+                        disabled={busy}
+                      >
+                        <Send className="mr-2 h-4 w-4" />Resend signing link
+                      </Button>
+                    </div>
                     {esign && esign.total > 0 ? (
                       <>
                         <div className="grid gap-3 md:grid-cols-4">

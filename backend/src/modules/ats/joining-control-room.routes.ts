@@ -12,6 +12,7 @@ import {
   lockSalaryRegister,
   recheckEsignStatus,
   requestDpdpWithdrawal,
+  resendEsignLink,
   syncBankDetailFromOnboarding,
   syncDpdpConsentFromOnboarding,
   saveJclrDetails,
@@ -105,6 +106,21 @@ joiningControlRoomRouter.post("/candidates/:candidateId/esign/recheck", h(async 
   const result = await recheckEsignStatus(req.params.candidateId);
   const data = await getJoiningControlRoomCandidate(req.params.candidateId);
   return res.json({ success: true, data: { ...data, recheck: result } });
+}));
+
+joiningControlRoomRouter.post("/candidates/:candidateId/esign/resend-link", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const result = await resendEsignLink(candidateId, req.authUser!.id);
+  if (!result.resent) {
+    // Non-2xx so the UI's generic action() helper surfaces this exact reason
+    // instead of showing its fixed "Signing link re-sent" success toast for a
+    // resend that did not actually happen — there was no kit awaiting a
+    // signature, or the employee has no email on file, are common and real,
+    // not exceptional.
+    return res.status(409).json({ success: false, message: result.message });
+  }
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, resend: result } });
 }));
 
 joiningControlRoomRouter.post("/candidates/:candidateId/bank-detail/sync", h(async (req, res) => {
