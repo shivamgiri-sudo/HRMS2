@@ -112,8 +112,12 @@ function titleCase(value: unknown) {
 
 function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div className="space-y-2">
-      <Label className="text-xs font-bold uppercase tracking-[0.13em] text-slate-500">{label}</Label>
+    // min-w-0 lets this grid/flex item shrink below its label's natural width instead of
+    // overflowing into the next column; break-words wraps a long label onto a second line
+    // rather than spilling text over the neighboring field when the column is narrow
+    // (e.g. a form panel nested inside a split-pane inside a two-column tab layout).
+    <div className="min-w-0 space-y-2">
+      <Label className="text-xs font-bold uppercase tracking-[0.13em] text-slate-500 break-words">{label}</Label>
       {children}
       {hint ? <p className="text-xs leading-5 text-slate-500">{hint}</p> : null}
     </div>
@@ -367,6 +371,11 @@ export default function PnlMasterControlCenterPage() {
   const plans = legacy.monthlyPlansQuery.data ?? [];
   const periods = legacy.periodsQuery.data ?? [];
   const adjustments = legacy.adjustmentsQuery.data ?? [];
+  // Governance tab "Data-source readiness" — these two used to be hardcoded `true`. `undefined`
+  // (query still loading, or not yet enabled because no period is selected) is distinct from a
+  // real false, so the card can show a neutral state instead of flashing a false "Ready".
+  const grnAllocationsReady = bpo.grnAllocationReadinessQuery.data?.ready;
+  const vendorPaymentsReady = bpo.vendorPaymentReadinessQuery.data?.ready;
   const revenueRules = bpo.revenueRulesQuery.data ?? [];
   const deliveryActuals = bpo.deliveryActualsQuery.data ?? [];
   const revenueComponents = bpo.revenueComponentsQuery.data ?? [];
@@ -375,16 +384,22 @@ export default function PnlMasterControlCenterPage() {
   const classificationRules = bpo.classificationRulesQuery.data ?? [];
 
   const health = useMemo(() => {
-    const total = Math.max(processes.length, 1);
-    const mapped = processes.filter((process) => process.client_id && process.branch_id).length;
+    // Commercial metrics (mapping, contracts, rules) apply only to client-facing processes.
+    // Internal support processes (HR, Finance, IT, Admin) have no client_id by design and
+    // must not count as gaps — using the full process list as denominator would cap the score
+    // well below 100% even when everything is configured correctly.
+    const clientProcesses = processes.filter((process) => process.client_id);
+    const clientTotal = Math.max(clientProcesses.length, 1);
+
+    const mapped = clientProcesses.filter((process) => process.branch_id).length;
     const contractProcessIds = new Set(contracts.map((row) => String(row.process_id ?? "")).filter(Boolean));
     const ruleProcessIds = new Set(revenueRules.map((row) => String(row.process_id ?? "")).filter(Boolean));
     const planProcessIds = new Set(plans.map((row) => String(row.process_id ?? "")).filter(Boolean));
     const classificationCoverage = classificationRules.length > 0 ? 100 : 0;
-    const mappingPct = (mapped / total) * 100;
-    const contractPct = (processes.filter((process) => contractProcessIds.has(process.id)).length / total) * 100;
-    const rulePct = (processes.filter((process) => ruleProcessIds.has(process.id)).length / total) * 100;
-    const planPct = (processes.filter((process) => planProcessIds.has(process.id)).length / total) * 100;
+    const mappingPct = (mapped / clientTotal) * 100;
+    const contractPct = (clientProcesses.filter((process) => contractProcessIds.has(process.id)).length / clientTotal) * 100;
+    const rulePct = (clientProcesses.filter((process) => ruleProcessIds.has(process.id)).length / clientTotal) * 100;
+    const planPct = (clientProcesses.filter((process) => planProcessIds.has(process.id)).length / clientTotal) * 100;
     const score = Math.round((mappingPct + contractPct + rulePct + planPct + classificationCoverage) / 5);
 
     const manualGroups = new Map<string, number>();
@@ -403,10 +418,11 @@ export default function PnlMasterControlCenterPage() {
       rulePct,
       planPct,
       classificationCoverage,
-      unmappedProcesses: processes.filter((process) => !process.client_id || !process.branch_id),
-      withoutContract: processes.filter((process) => !contractProcessIds.has(process.id)),
-      withoutRule: processes.filter((process) => !ruleProcessIds.has(process.id)),
-      withoutPlan: processes.filter((process) => !planProcessIds.has(process.id)),
+      // Unmapped = client processes missing branch; internal processes are correctly unmapped by design
+      unmappedProcesses: clientProcesses.filter((process) => !process.branch_id),
+      withoutContract: clientProcesses.filter((process) => !contractProcessIds.has(process.id)),
+      withoutRule: clientProcesses.filter((process) => !ruleProcessIds.has(process.id)),
+      withoutPlan: clientProcesses.filter((process) => !planProcessIds.has(process.id)),
       allocationIssues,
     };
   }, [allocationPolicies, classificationRules.length, contracts, plans, processes, revenueRules]);
@@ -706,11 +722,13 @@ export default function PnlMasterControlCenterPage() {
   return (
     <DashboardLayout>
       <div className="flex h-full flex-col">
-        {/* 48px slim header */}
-        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white">
+        {/* Slim header — min-h (not a fixed h-12) plus flex-wrap so the title, period badge and
+            four action buttons reflow onto a second line on a narrow window instead of being
+            clipped off-screen by a row that was never allowed to grow past 48px. */}
+        <div className="flex flex-wrap items-center justify-between gap-y-2 border-b px-4 py-2 min-h-[48px] shrink-0 bg-white">
           <h1 className="text-base font-bold text-slate-900">P&L Master & Control Center</h1>
           {/* Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
             <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={() => setBulkUploadOpen(true)}>
               <FileSpreadsheet className="h-3.5 w-3.5" />Bulk Upload
@@ -1091,22 +1109,24 @@ export default function PnlMasterControlCenterPage() {
                           {/* DeliveryActualPayload carries no branchId of its own — narrowed
                               against the page-level branchFilter instead, per user decision. */}
                           <Field label="Process"><ProcessSelect value={deliveryForm.processId} onChange={(value) => setDeliveryForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
-                          <div className="grid gap-4 sm:grid-cols-3">
+                          <div className="grid gap-4 grid-cols-2">
                             <Field label="Period"><MonthYearPicker value={deliveryForm.periodCode} onChange={(v) => setDeliveryForm((current) => ({ ...current, periodCode: v }))} /></Field>
                             <Field label="Activity date"><Input className="rounded-xl" type="date" value={deliveryForm.activityDate ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, activityDate: event.target.value }))} /></Field>
-                            <Field label="Metric key"><Input className="rounded-xl" value={deliveryForm.metricKey} onChange={(event) => setDeliveryForm((current) => ({ ...current, metricKey: event.target.value }))} /></Field>
                           </div>
-                          <div className="grid gap-4 sm:grid-cols-5">
+                          <Field label="Metric key"><Input className="rounded-xl" value={deliveryForm.metricKey} onChange={(event) => setDeliveryForm((current) => ({ ...current, metricKey: event.target.value }))} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
                             {(["plannedUnits", "deliveredUnits", "acceptedUnits", "rejectedUnits", "billableUnits"] as const).map((key) => <Field key={key} label={titleCase(key)}><Input className="rounded-xl" type="number" value={deliveryForm[key] ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, [key]: numberValue(event.target.value) }))} /></Field>)}
                           </div>
-                          <div className="grid gap-4 sm:grid-cols-3">
+                          <div className="grid gap-4 grid-cols-2">
                             <Field label="Productive hours"><Input className="rounded-xl" type="number" value={deliveryForm.productiveHours ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, productiveHours: numberValue(event.target.value) }))} /></Field>
                             <Field label="Login hours"><Input className="rounded-xl" type="number" value={deliveryForm.loginHours ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, loginHours: numberValue(event.target.value) }))} /></Field>
-                            <Field label="Talk minutes"><Input className="rounded-xl" type="number" value={deliveryForm.talkMinutes ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, talkMinutes: numberValue(event.target.value) }))} /></Field>
                           </div>
-                          <div className="grid gap-4 sm:grid-cols-4">
+                          <Field label="Talk minutes"><Input className="rounded-xl" type="number" value={deliveryForm.talkMinutes ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, talkMinutes: numberValue(event.target.value) }))} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
                             <Field label="Quality %"><Input className="rounded-xl" type="number" value={deliveryForm.qualityScore ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, qualityScore: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
                             <Field label="SLA %"><Input className="rounded-xl" type="number" value={deliveryForm.slaScore ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, slaScore: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                          </div>
+                          <div className="grid gap-4 grid-cols-2">
                             <Field label="Data source"><Input className="rounded-xl" value={deliveryForm.dataSource ?? "manual"} onChange={(event) => setDeliveryForm((current) => ({ ...current, dataSource: event.target.value }))} /></Field>
                             <Field label="Source reference"><Input className="rounded-xl" value={deliveryForm.sourceReference ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, sourceReference: event.target.value }))} /></Field>
                           </div>
@@ -1155,15 +1175,16 @@ export default function PnlMasterControlCenterPage() {
                           {/* RevenueComponentPayload carries no branchId of its own — narrowed
                               against the page-level branchFilter instead, per user decision. */}
                           <Field label="Process"><ProcessSelect value={revenueComponentForm.processId} onChange={(value) => setRevenueComponentForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
-                          <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="grid gap-4 grid-cols-2">
                             <Field label="Component type"><select className={selectClass} value={revenueComponentForm.componentType} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, componentType: event.target.value }))}><option value="incentive">Incentive</option><option value="reward">Reward</option><option value="penalty">Penalty</option><option value="sla_deduction">SLA deduction</option><option value="credit_note">Credit note</option><option value="rate_true_up">Rate true-up</option><option value="fx_adjustment">FX adjustment</option><option value="ramp_up">Ramp-up</option><option value="training_revenue">Training revenue</option><option value="one_time">One-time</option><option value="other">Other</option></select></Field>
                             <Field label="Direction"><select className={selectClass} value={revenueComponentForm.direction} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, direction: event.target.value as "increase" | "decrease" }))}><option value="increase">Increase revenue</option><option value="decrease">Decrease revenue</option></select></Field>
                           </div>
                           <Field label="Description"><Textarea className="rounded-xl" rows={2} value={revenueComponentForm.description} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, description: event.target.value }))} /></Field>
-                          <div className="grid gap-4 sm:grid-cols-3">
+                          <div className="grid gap-4 grid-cols-2">
                             <Field label="Amount INR"><Input className="rounded-xl" type="number" value={revenueComponentForm.amountInr} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, amountInr: numberValue(event.target.value) }))} /></Field>
                             <Field label="Recognition date"><Input className="rounded-xl" type="date" value={revenueComponentForm.recognitionDate ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, recognitionDate: event.target.value }))} /></Field>
-                            <Field label="Invoice reference"><Input className="rounded-xl" value={revenueComponentForm.invoiceReference ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, invoiceReference: event.target.value }))} /></Field>
+                          </div>
+                          <Field label="Invoice reference"><Input className="rounded-xl" value={revenueComponentForm.invoiceReference ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, invoiceReference: event.target.value }))} /></Field>
                           </div>
                         </div>
                       }
@@ -1538,13 +1559,36 @@ export default function PnlMasterControlCenterPage() {
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex items-center gap-2 mb-3"><Database className="h-4 w-4 text-sky-600" /><p className="text-sm font-black text-slate-950">Data-source readiness</p></div>
                     <div className="space-y-2">
-                      {([["Payroll", classificationRules.length > 0], ["Commercial rules", revenueRules.length > 0], ["Delivery actuals", deliveryActuals.length > 0], ["GRN allocations", true], ["Vendor payments", true], ["Monthly plans", plans.length > 0]] as [string, boolean][]).map(([label, ready]) => (
+                      {([
+                        ["Payroll", classificationRules.length > 0],
+                        ["Commercial rules", revenueRules.length > 0],
+                        ["Delivery actuals", deliveryActuals.length > 0],
+                        ["GRN allocations", grnAllocationsReady],
+                        ["Vendor payments", vendorPaymentsReady],
+                        ["Monthly plans", plans.length > 0],
+                      ] as [string, boolean | undefined][]).map(([label, ready]) => (
                         <div key={label} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
                           <span className="text-sm font-bold text-slate-800">{label}</span>
-                          {ready ? <CheckCircle2 aria-label="Ready" className="h-5 w-5 text-emerald-500" /> : <XCircle aria-label="Not ready" className="h-5 w-5 text-rose-500" />}
+                          {ready === undefined ? (
+                            <span className="text-xs text-slate-400">Checking…</span>
+                          ) : ready ? (
+                            <CheckCircle2 aria-label="Ready" className="h-5 w-5 text-emerald-500" />
+                          ) : (
+                            <XCircle aria-label="Not ready" className="h-5 w-5 text-rose-500" />
+                          )}
                         </div>
                       ))}
                     </div>
+                    {(grnAllocationsReady === false || vendorPaymentsReady === false) && (
+                      <p className="mt-3 text-xs leading-5 text-slate-500">
+                        {grnAllocationsReady === false && (
+                          <>GRN allocations: {bpo.grnAllocationReadinessQuery.data?.unreconciledAllocationCount} allocation(s) across {bpo.grnAllocationReadinessQuery.data?.unreconciledGrnCount} GRN(s) still draft/reserved, not yet consumed into P&amp;L cost for {period}. </>
+                        )}
+                        {vendorPaymentsReady === false && (
+                          <>Vendor payments: {bpo.vendorPaymentReadinessQuery.data?.pendingCount} payment(s) still outstanding for {period}.</>
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
 

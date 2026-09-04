@@ -26,6 +26,20 @@ const PAYMENT_READ_ROLES = [
   "admin",
   "finance",
 ] as const;
+// Mirrors `pnlRoles` in src/config/routes/finance.routes.tsx exactly — the role list that can
+// open the P&L Master & Control Center page this endpoint feeds (its Governance tab). Kept
+// separate from PAYMENT_READ_ROLES because that page's route additionally admits ceo/coo/
+// payroll_head, who must get a real readiness answer here too, not a 403.
+const PNL_GOVERNANCE_READ_ROLES = [
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "finance",
+  "finance_head",
+  "accounts_head",
+  "payroll_head",
+] as const;
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -298,6 +312,28 @@ router.get(
     });
     const { rows: data } = await vendorPaymentService.getAgingReport({ branchScope });
     res.json({ success: true, data });
+  })
+);
+
+// Must stay above /vendor-payments/:id, same reason as /vendor-payments/aging above: Express
+// matches routes in declaration order and :id matches any literal segment.
+//
+// Feeds the P&L Master & Control Center's Governance tab (PnlMasterControlCenterPage.tsx,
+// "Data-source readiness" card — that field was a hardcoded `true` placeholder before this
+// endpoint existed).
+router.get(
+  "/vendor-payments/period-readiness",
+  requireRole(...PNL_GOVERNANCE_READ_ROLES),
+  h(async (req, res) => {
+    const periodCode = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) {
+      return res.status(400).json({ success: false, error: "period must be in YYYY-MM format" });
+    }
+    const data = await vendorPaymentService.getPeriodReadiness({
+      periodCode,
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    res.json({ success: true, ...data });
   })
 );
 

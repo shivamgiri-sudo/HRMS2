@@ -215,6 +215,41 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
     enabled: !!period,
   });
 
+  // Governance tab "Data-source readiness" signals — real per-period checks replacing what
+  // used to be two hardcoded `true` literals in PnlMasterControlCenterPage.tsx. `enabled:
+  // !!period` matches rewardPenaltyQuery's own guard below: both are meaningless without a
+  // period to check.
+  const grnAllocationReadinessQuery = useQuery({
+    queryKey: ["pnl-grn-allocation-readiness", period, branchId],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{
+        success: boolean;
+        ready: boolean;
+        unreconciledAllocationCount: number;
+        unreconciledGrnCount: number;
+        unreconciledPnlCostAmount: number;
+      }>(`/api/finance/grn-reports/allocation-readiness${queryString({ period, branchId })}`);
+      return response;
+    },
+    staleTime: 30_000,
+    enabled: !!period,
+  });
+
+  const vendorPaymentReadinessQuery = useQuery({
+    queryKey: ["pnl-vendor-payment-readiness", period, branchId],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{
+        success: boolean;
+        ready: boolean;
+        pendingCount: number;
+        pendingBalance: number;
+      }>(`/api/finance/vendor-payments/period-readiness${queryString({ period, branchId })}`);
+      return response;
+    },
+    staleTime: 30_000,
+    enabled: !!period,
+  });
+
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["bpo-pnl-revenue-rules"] }),
@@ -302,6 +337,8 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
     allocationPoliciesQuery,
     classificationRulesQuery,
     rewardPenaltyQuery,
+    grnAllocationReadinessQuery,
+    vendorPaymentReadinessQuery,
     saveRevenueRule,
     saveDeliveryActual,
     saveRevenueComponent,

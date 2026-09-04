@@ -805,4 +805,43 @@ export const vendorPaymentService = {
       });
     }
   },
+
+  /**
+   * Governance-tab readiness signal for a P&L period: are the vendor payments tied to this
+   * period's GRNs actually settled? Ready means nothing is left in a not-yet-paid state.
+   *
+   * "NOT IN ('Paid','Closed')" mirrors getAgingReport's own definition of outstanding above —
+   * same statuses count as pending there. Period is the GRN's own accounting period (the P&L
+   * period the invoice books into), not vpt.due_date's month — a vendor payment can fall due in
+   * a different calendar month than the period its cost belongs to, and due_date is what the
+   * AP Aging report already covers. Falls back to bill_date's month exactly as documented in
+   * 1085_grn_billing_cycle_and_accounting_period.sql ("every read path must fall back... when
+   * this is NULL") — accounting_period is NULL on any GRN raised before that migration.
+   */
+  async getPeriodReadiness(options: { periodCode: string; branchId?: string }) {
+    const params: unknown[] = [options.periodCode];
+    let branchClause = "";
+    if (options.branchId) {
+      branchClause = " AND vpt.branch_id = ?";
+      params.push(options.branchId);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          COUNT(*) AS pending_count,
+          SUM(COALESCE(vpt.balance_amount, 0)) AS pending_balance
+         FROM vendor_payment_tracking vpt
+         JOIN grn_request g ON g.id = vpt.grn_request_id
+        WHERE vpt.payment_status NOT IN ('Paid', 'Closed')
+          AND COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?${branchClause}`,
+      params
+    );
+    const row = rows[0] ?? {};
+    const pendingCount = Number(row.pending_count ?? 0);
+    return {
+      periodCode: options.periodCode,
+      pendingCount,
+      pendingBalance: Number(row.pending_balance ?? 0),
+      ready: pendingCount === 0,
+    };
+  },
 };

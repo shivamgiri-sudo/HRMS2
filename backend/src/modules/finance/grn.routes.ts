@@ -59,6 +59,20 @@ const FINANCE_REPORT_ROLES: RoleKey[] = [
   "branch_head",
   "branch_admin",
 ];
+// Mirrors `pnlRoles` in src/config/routes/finance.routes.tsx exactly — the role list that can
+// open the P&L Master & Control Center page this endpoint feeds. Kept separate from
+// FINANCE_REPORT_ROLES (no branch_head/branch_admin; that page never admits them) and from
+// GRN_READ_ROLES (no hr/hr_admin; this is an aggregate financial signal, not a single GRN).
+const PNL_GOVERNANCE_READ_ROLES: RoleKey[] = [
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "finance",
+  "finance_head",
+  "accounts_head",
+  "payroll_head",
+];
 /*
  * The GRN approval chain is two stages, not three.
  *
@@ -788,6 +802,32 @@ function grnReportFiltersFrom(req: AuthenticatedRequest, branchScope: Awaited<Re
     limit: req.query.limit ? Number(req.query.limit) : undefined,
   };
 }
+
+// Feeds the P&L Master & Control Center's Governance tab (PnlMasterControlCenterPage.tsx,
+// "Data-source readiness" card — that field was a hardcoded `true` placeholder before this
+// endpoint existed). Gated to PNL_GOVERNANCE_READ_ROLES rather than FINANCE_REPORT_ROLES
+// because that page's own route (`pnlRoles` in finance.routes.tsx) additionally admits
+// ceo/coo/payroll_head, who must get a real answer here too, not a 403.
+grnRouter.get(
+  "/grn-reports/allocation-readiness",
+  requireRole(...PNL_GOVERNANCE_READ_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const periodCode = String(req.query.period ?? "");
+      if (!/^\d{4}-\d{2}$/.test(periodCode)) {
+        return res.status(400).json({ success: false, error: "period must be in YYYY-MM format" });
+      }
+      const data = await grnService.getAllocationReadiness({
+        periodCode,
+        branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      });
+      res.json({ success: true, ...data });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to compute GRN allocation readiness";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
+    }
+  }
+);
 
 grnRouter.get(
   "/grn-reports/register",

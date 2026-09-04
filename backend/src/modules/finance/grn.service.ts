@@ -2256,6 +2256,54 @@ export const grnService = {
       change_summary: { filePath, originalName, mimeType },
     });
   },
+
+  /**
+   * Governance-tab readiness signal for a P&L period: are this period's GRN cost allocations
+   * actually settled, or still sitting as a budget commitment?
+   *
+   * lifecycle_status walks draft -> reserved (Branch Head approved) -> consumed (Finance Head
+   * approved — the only state vw_process_pnl_grn_allocation counts as real P&L cost, see
+   * 418_grn_allocation_pnl_attribution.sql). Per explicit user decision, both 'draft' and
+   * 'reserved' count as NOT ready here — Branch Head sign-off alone is not the same as the
+   * period's cost actually being recognised.
+   *
+   * The period expression mirrors vw_process_pnl_grn_allocation's own COALESCE exactly
+   * (recognition_period, falling back to service_period_end/bill_date/reviewed_at/created_at)
+   * so this reports against the same period a consumed allocation would land in — it is not a
+   * new definition of "period", just the existing one queried on the other lifecycle states.
+   */
+  async getAllocationReadiness(options: { periodCode: string; branchId?: string }) {
+    const params: unknown[] = [options.periodCode];
+    let branchClause = "";
+    if (options.branchId) {
+      branchClause = " AND a.branch_id = ?";
+      params.push(options.branchId);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          COUNT(DISTINCT a.id) AS allocation_count,
+          COUNT(DISTINCT a.grn_request_id) AS grn_count,
+          SUM(COALESCE(a.pnl_cost_amount, 0)) AS pnl_cost_amount
+         FROM grn_cost_allocation a
+         JOIN grn_request g ON g.id = a.grn_request_id
+        WHERE a.lifecycle_status IN ('draft', 'reserved')
+          AND LOWER(COALESCE(g.status, '')) NOT IN ('rejected', 'cancelled', 'reversed')
+          AND COALESCE(
+                a.recognition_period,
+                DATE_FORMAT(COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')
+              ) = ?${branchClause}`,
+      params
+    );
+    const row = rows[0] ?? {};
+    const allocationCount = Number(row.allocation_count ?? 0);
+    return {
+      periodCode: options.periodCode,
+      unreconciledAllocationCount: allocationCount,
+      unreconciledGrnCount: Number(row.grn_count ?? 0),
+      unreconciledPnlCostAmount: Number(row.pnl_cost_amount ?? 0),
+      ready: allocationCount === 0,
+    };
+  },
 };
 
 
