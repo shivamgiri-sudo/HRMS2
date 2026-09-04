@@ -62,6 +62,7 @@ export const updateEmployeeSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   processId: z.string().uuid().nullable().optional(),
   costCentreId: z.string().uuid().nullable().optional(),
+  transferEffectiveMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional(),
   designationId: z.string().uuid().nullable().optional(),
   reportingManagerId: z.string().uuid().nullable().optional(),
   designationName: z.string().trim().max(100).nullable().optional(),

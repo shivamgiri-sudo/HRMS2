@@ -88,6 +88,7 @@ interface EditFormData {
   branch_id: string;
   process_id: string;
   cost_centre_id: string;
+  transfer_effective_month: string; // YYYY-MM — payroll month the branch/CC change takes effect
   manager_id: string;
   hire_date: string;
   salary_start_date: string | null;
@@ -149,6 +150,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     branch_id: "",
     process_id: "",
     cost_centre_id: "",
+    transfer_effective_month: new Date().toISOString().slice(0, 7),
     manager_id: "",
     hire_date: "",
     salary_start_date: null,
@@ -212,6 +214,10 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
 
   const [showHistory, setShowHistory] = useState(false);
   const [isDepartmentManager, setIsDepartmentManager] = useState(false);
+  // Original branch / cost centre — used to detect whether the user changed them
+  // so we can show the effective-month picker only when it's relevant.
+  const [originalBranchId, setOriginalBranchId] = useState("");
+  const [originalCostCentreId, setOriginalCostCentreId] = useState("");
   const [managerSearchOpen, setManagerSearchOpen] = useState(false);
   const [managerSearchQuery, setManagerSearchQuery] = useState("");
   const eligibilityRef = useRef<EmployeeLeaveEligibilityHandle>(null);
@@ -393,6 +399,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         branch_id: employeeDetails.branch_id || "",
         process_id: employeeDetails.process_id || "",
         cost_centre_id: employeeDetails.cost_centre_id || "",
+        transfer_effective_month: new Date().toISOString().slice(0, 7),
         manager_id: employeeDetails.reporting_manager_id || employeeDetails.manager_id || "",
         hire_date: employeeDetails.date_of_joining?.slice?.(0, 10) || employeeDetails.hire_date?.slice?.(0, 10) || "",
         salary_start_date: employeeDetails.salary_start_date?.slice?.(0, 10) || null,
@@ -403,6 +410,8 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         status: String(employeeDetails.employment_status || employeeDetails.status || "active").toLowerCase(),
       });
       setInitialStatus(String(employeeDetails.employment_status || employeeDetails.status || "active").toLowerCase());
+      setOriginalBranchId(employeeDetails.branch_id || "");
+      setOriginalCostCentreId(employeeDetails.cost_centre_id || "");
       setDeactivationReason("");
     }
   }, [employeeDetails]);
@@ -429,6 +438,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         branchId: data.branch_id || null,
         processId: data.process_id || null,
         costCentreId: data.cost_centre_id || null,
+        transferEffectiveMonth: data.transfer_effective_month || null,
         reportingManagerId: data.manager_id || null,
         dateOfJoining: data.hire_date,
         salaryStartDate: data.salary_start_date || null,
@@ -875,6 +885,28 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Effective month — shown only when branch or cost centre is being changed */}
+                {(formData.branch_id !== originalBranchId || formData.cost_centre_id !== originalCostCentreId) && (
+                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <Label htmlFor="transfer_effective_month" className="text-sm font-semibold text-amber-800">
+                      Payroll Effective Month <span className="text-rose-600">*</span>
+                    </Label>
+                    <p className="text-xs text-amber-700">
+                      Select the payroll month from which this branch / cost centre change should take effect.
+                      Payroll for earlier closed months will not be recalculated.
+                    </p>
+                    <Input
+                      id="transfer_effective_month"
+                      type="month"
+                      value={formData.transfer_effective_month}
+                      min={new Date().toISOString().slice(0, 7)}
+                      onChange={(e) => setFormData({ ...formData, transfer_effective_month: e.target.value })}
+                      className="bg-white"
+                      required
+                    />
+                  </div>
+                )}
 
                 {/* Salary Start Date - HR/Admin only */}
                 {canSetSalaryStartDate && (

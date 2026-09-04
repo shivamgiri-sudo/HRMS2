@@ -12,6 +12,7 @@ import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service
 import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
+import { appendJourneyEvent } from "./journeyLog.service.js";
 
 // Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
 // but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
@@ -634,6 +635,34 @@ export const employeeService = {
           ...(branchMoved ? { branchId: input.branchId ?? null } : {}),
           changedBy: actorUserId ?? null,
           reason: deactivationReason ?? null,
+        });
+      }
+
+      // Log cost-centre / branch transfer with effective month for payroll traceability.
+      const ccMoved = input.costCentreId !== undefined &&
+        String(input.costCentreId ?? "") !== String((snap as any).cost_centre_id ?? "");
+      const effectiveMonth = (input as any).transferEffectiveMonth as string | null | undefined;
+      if ((ccMoved || branchMoved) && effectiveMonth) {
+        const eventDate = `${effectiveMonth}-01`;
+        void appendJourneyEvent({
+          employeeId: id,
+          eventType: ccMoved ? "COST_CENTRE_TRANSFER" : "BRANCH_TRANSFER",
+          eventDate,
+          description: [
+            ccMoved ? `Cost Centre changed for payroll month ${effectiveMonth}` : null,
+            branchMoved ? `Branch changed for payroll month ${effectiveMonth}` : null,
+          ].filter(Boolean).join("; "),
+          oldValue: JSON.stringify({
+            ...(ccMoved ? { cost_centre_id: (snap as any).cost_centre_id ?? null } : {}),
+            ...(branchMoved ? { branch_id: (snap as any).branch_id ?? null } : {}),
+          }),
+          newValue: JSON.stringify({
+            ...(ccMoved ? { cost_centre_id: input.costCentreId ?? null } : {}),
+            ...(branchMoved ? { branch_id: input.branchId ?? null } : {}),
+          }),
+          module: "employees",
+          triggeredBy: actorUserId ?? undefined,
+          metadata: { effective_month: effectiveMonth },
         });
       }
 
