@@ -44,6 +44,8 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { ManpowerRiskWidget } from "@/components/workforce/ManpowerRiskWidget";
+
 const ALL = "__all__";
 
 /**
@@ -717,11 +719,20 @@ export default function WFMCapacityDashboard() {
                 </div>
               </div>
               {capacity.byProcess.length === 0 ? (
-                <div className="py-8 text-center text-sm text-slate-400">
-                  Per-process coverage is not served by the capacity API — it returns hiring
-                  demand per process, but no per-process active headcount to compare it against.
-                  <br />
-                  The org-wide figures above are complete.
+                /*
+                 * /capacity-summary has no per-process ACTIVE headcount, so it cannot answer
+                 * coverage per process. /api/manpower-risk/cost-center can — mandated vs active
+                 * vs in-notice per cost centre, with the gap and attrition behind it — and it
+                 * was serving that to nobody: this widget was written, never imported, and its
+                 * live endpoint had no consumer at all. Rendering it here fills the gap with
+                 * real data instead of an apology.
+                 */
+                <div className="p-4 pt-0">
+                  <p className="mb-3 text-xs text-slate-500">
+                    Per cost centre, from the manpower-risk feed — the capacity summary above is
+                    org-wide and carries no per-process active headcount.
+                  </p>
+                  <ManpowerRiskWidget maxRows={10} />
                 </div>
               ) : (
                 capacity.byProcess.map((process) => (
