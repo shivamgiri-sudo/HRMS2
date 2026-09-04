@@ -1,0 +1,11 @@
+{
+  // Typecheck for the report email resolver + the request service that rethrows its errors.
+  //     npx tsc -p tsconfig.reportemail-check.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/reporting/report-email-resolver.ts",
+    "src/modules/reporting/report-request.service.ts",
+    "src/modules/reporting/report-request.routes.ts"
+  ]
+}

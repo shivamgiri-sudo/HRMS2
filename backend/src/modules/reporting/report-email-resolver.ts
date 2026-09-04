@@ -33,6 +33,26 @@ export type EmailResolutionErrorCode =
   | 'INACTIVE';
 
 export class ReportEmailResolutionError extends Error {
+  /*
+   * 422, so the message below actually reaches the person.
+   *
+   * errorHandler surfaces an error's message only when it carries a 4xx statusCode;
+   * anything without one is treated as an unexpected fault and replaced with
+   * "An unexpected server error occurred. Please quote reference <hex>". This class had
+   * none, so every carefully worded reason here — "Your employee record is inactive",
+   * "No official company email address is registered for your employee profile" — was
+   * thrown, caught by report-request.service, audited, rethrown, and then swallowed. The
+   * user was told to quote a reference number for a condition they could have fixed
+   * themselves. Observed live on 2026-09-04 from the Reports screen.
+   *
+   * 422 rather than 400: the request is perfectly well formed, it is the state of the
+   * requester's own employee record that makes it unfulfillable — the same status this
+   * codebase already uses for "the ID card cannot be printed while the employee has no
+   * photo". `code` (NO_EMPLOYEE / INACTIVE / NO_OFFICIAL_EMAIL / INVALID_DOMAIN) rides
+   * along in errorCode, so a caller can branch on it instead of matching prose.
+   */
+  public readonly statusCode = 422;
+
   constructor(
     public readonly code: EmailResolutionErrorCode,
     message: string
