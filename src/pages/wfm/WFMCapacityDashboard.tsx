@@ -46,6 +46,37 @@ import {
 
 const ALL = "__all__";
 
+/**
+ * What /api/workforce-mandate/capacity-summary ACTUALLY returns.
+ *
+ * The view model below (CapacitySummary) is not it, and never was: the endpoint answers
+ * `{ summary, formula, hiringByProcess }` with camelCase-Hc keys, while this page reads
+ * `capacity.overall.hiringDemand`. The `capacityData ?? {...}` default only fires when the
+ * request returns nothing — a successful response is truthy, so `overall` came back
+ * undefined and the page died on first render with
+ *   "Cannot read properties of undefined (reading 'hiringDemand')".
+ * That is every load since it shipped, for every user.
+ *
+ * Mapped here rather than reshaping the endpoint: this page is its only consumer, and the
+ * server-side names match the rest of the workforce-mandate module.
+ */
+interface CapacitySummaryApi {
+  summary?: {
+    totalMandatedHc?: number; requiredStaffedHc?: number; activeHc?: number;
+    onNoticeHc?: number; longLeaveHc?: number; inTrainingHc?: number;
+    availableProductionHc?: number; netGap?: number; hiringDemand?: number;
+    coveragePct?: number; riskSignal?: "green" | "amber" | "red";
+  };
+  formula?: {
+    mandatedHc?: number; shrinkagePct?: number;
+    attritionBufferPct?: number; trainingBufferPct?: number;
+  };
+  hiringByProcess?: Array<{
+    processId: string; processName: string; branchName?: string;
+    mandatedHc?: number; requiredHc?: number; priority?: string;
+  }>;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface CapacitySummary {
@@ -292,7 +323,9 @@ function FormulaCard({ data }: { data: CapacitySummary }) {
             <p className="text-xs text-blue-700">In Training</p>
           </div>
           <div className="p-2 rounded-lg bg-violet-50 text-center">
-            <p className="text-lg font-bold text-violet-600">{data.deductions.pipHC}</p>
+            {/* The capacity API models no PIP population. A bold 0 here would read as
+                "nobody is on a performance plan", which is not something this page knows. */}
+            <p className="text-lg font-bold text-violet-400" title="Not tracked by the capacity API">—</p>
             <p className="text-xs text-violet-700">On PIP</p>
           </div>
         </div>
@@ -459,7 +492,7 @@ export default function WFMCapacityDashboard() {
     queryFn: () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      return hrmsApi.get<CapacitySummary>(`/api/workforce-mandate/capacity-summary?${params}`);
+      return hrmsApi.get<CapacitySummaryApi>(`/api/workforce-mandate/capacity-summary?${params}`);
     },
   });
 
@@ -476,13 +509,47 @@ export default function WFMCapacityDashboard() {
    * same table — and removes a request rather than fixing one.
    */
 
-  const capacity = capacityData ?? {
+  /*
+   * Map the API's answer onto what this page renders. Zeros only ever stand in for "the
+   * request has not returned yet"; nothing here invents a figure the endpoint did not send.
+   *
+   * Three fields have no source at all and are deliberately not faked:
+   *   - byProcess / byBranch: the endpoint returns hiringByProcess, which carries mandated
+   *     and required headcount per process but NO per-process active headcount, so coverage
+   *     and gap cannot be computed for a process without a second query. Left empty, and the
+   *     empty state below says why rather than implying there are no processes.
+   *   - trend: nothing serves six months of history.
+   *   - pipHC: the capacity model has no PIP concept, so the tile renders "—", not 0.
+   */
+  const s = capacityData?.summary;
+  const f = capacityData?.formula;
+  const activeHC = Number(s?.activeHc ?? 0);
+  const onNoticeHC = Number(s?.onNoticeHc ?? 0);
+  const capacity: CapacitySummary = {
     overall: {
-      mandatedHC: 0, activeHC: 0, availableProductionHC: 0, requiredStaffedHC: 0,
-      netGap: 0, hiringDemand: 0, coveragePct: 0, riskLevel: "GREEN" as const,
+      mandatedHC: Number(s?.totalMandatedHc ?? 0),
+      activeHC,
+      availableProductionHC: Number(s?.availableProductionHc ?? 0),
+      requiredStaffedHC: Number(s?.requiredStaffedHc ?? 0),
+      netGap: Number(s?.netGap ?? 0),
+      hiringDemand: Number(s?.hiringDemand ?? 0),
+      coveragePct: Number(s?.coveragePct ?? 0),
+      riskLevel: (String(s?.riskSignal ?? "green").toUpperCase() as "GREEN" | "AMBER" | "RED"),
     },
-    buffers: { shrinkagePct: 0, attritionBufferPct: 0, trainingBufferPct: 0, onNoticePct: 0 },
-    deductions: { onNoticeHC: 0, longLeaveHC: 0, inTrainingHC: 0, pipHC: 0 },
+    buffers: {
+      shrinkagePct: Number(f?.shrinkagePct ?? 0),
+      attritionBufferPct: Number(f?.attritionBufferPct ?? 0),
+      trainingBufferPct: Number(f?.trainingBufferPct ?? 0),
+      // Not returned; derived from two figures that are, so the helper text under the
+      // On Notice tile stays consistent with the number above it.
+      onNoticePct: activeHC > 0 ? Math.round((onNoticeHC / activeHC) * 1000) / 10 : 0,
+    },
+    deductions: {
+      onNoticeHC,
+      longLeaveHC: Number(s?.longLeaveHc ?? 0),
+      inTrainingHC: Number(s?.inTrainingHc ?? 0),
+      pipHC: 0,
+    },
     byProcess: [],
     byBranch: [],
     trend: [],
@@ -650,7 +717,12 @@ export default function WFMCapacityDashboard() {
                 </div>
               </div>
               {capacity.byProcess.length === 0 ? (
-                <div className="py-8 text-center text-slate-400">No process data</div>
+                <div className="py-8 text-center text-sm text-slate-400">
+                  Per-process coverage is not served by the capacity API — it returns hiring
+                  demand per process, but no per-process active headcount to compare it against.
+                  <br />
+                  The org-wide figures above are complete.
+                </div>
               ) : (
                 capacity.byProcess.map((process) => (
                   <ProcessCapacityRow key={process.processId} process={process} />

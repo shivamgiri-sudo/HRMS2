@@ -1,0 +1,10 @@
+{
+  // Typecheck for the WFM Capacity Dashboard (/wfm/capacity-dashboard).
+  //
+  //     npx tsc -p tsconfig.capacity-check.json
+  //
+  // Scoped for the same reason as tsconfig.budgettopup-check.json: the repo-wide app project
+  // reports pre-existing errors elsewhere that bury anything introduced here.
+  "extends": "./tsconfig.app.json",
+  "include": ["src/pages/wfm/WFMCapacityDashboard.tsx", "src/vite-env.d.ts"]
+}
