@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1085,
-  "columnCount": 15752,
+  "columnCount": 15756,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4475,6 +4475,10 @@
       "config_json",
       "secret_enc",
       "is_enabled",
+      "send_blocked",
+      "block_reason",
+      "blocked_by",
+      "blocked_at",
       "test_ok",
       "test_error",
       "test_at",
