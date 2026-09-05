@@ -955,7 +955,7 @@ export default function BulkUploadApprovals() {
         >
           <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200/80">
             {/* Drawer header with gradient accent */}
-            <div className="relative overflow-hidden rounded-t-2xl">
+            <div className="relative shrink-0 overflow-hidden rounded-t-2xl">
               <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-600 via-blue-500 to-cyan-500" />
               <div className="flex items-start justify-between px-6 py-4 pt-5">
                 <div className="flex items-start gap-3">
@@ -1000,7 +1000,7 @@ export default function BulkUploadApprovals() {
             </div>
 
             {/* Preview — cost-centre-wise for the two money types, flat rows otherwise */}
-            <div className="flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
+            <div className="min-h-0 flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
               {TWO_STAGE_TYPES.has(openBatch.upload_type_code) ? (
                 <BatchCostCentreReview
                   batchId={openBatch.id}
@@ -1068,7 +1068,7 @@ export default function BulkUploadApprovals() {
             </div>
 
             {/* Decision footer */}
-            <div className="space-y-4 border-t border-slate-100 bg-slate-50/60 px-6 py-4 rounded-b-2xl">
+            <div className="shrink-0 space-y-4 border-t border-slate-100 bg-slate-50/60 px-6 py-4 rounded-b-2xl">
               <label className="block text-xs font-semibold text-slate-700">
                 Remarks
                 <span className="font-normal text-slate-400 ml-1">
@@ -1196,7 +1196,7 @@ export default function BulkUploadApprovals() {
       {openHistoryBatch && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-[2px]">
           <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200/80">
-            <div className="relative overflow-hidden rounded-t-2xl">
+            <div className="relative shrink-0 overflow-hidden rounded-t-2xl">
               <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-slate-500 via-slate-400 to-slate-300" />
               <div className="flex items-start justify-between px-6 py-4 pt-5">
                 <div className="flex items-start gap-3">
@@ -1230,7 +1230,7 @@ export default function BulkUploadApprovals() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
+            <div className="min-h-0 flex-1 overflow-auto border-t border-slate-100 px-6 py-4">
               {historyLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600" />
@@ -1342,7 +1342,7 @@ export default function BulkUploadApprovals() {
             {/* Discard-from-batch panel — only for a batch that actually applied
                 leave/regularization rows. "Reverse it through that batch," made real. */}
             {batchDiscardable && (
-              <div className="space-y-3 border-t border-slate-100 bg-amber-50/50 px-6 py-4">
+              <div className="shrink-0 space-y-3 border-t border-slate-100 bg-amber-50/50 px-6 py-4">
                 <label className="block text-xs font-semibold text-slate-700">
                   Reason for reversal <span className="text-rose-500">*</span>
                   <span className="font-normal text-slate-400 ml-1">(at least 10 characters — this is the permanent record)</span>
@@ -1374,7 +1374,7 @@ export default function BulkUploadApprovals() {
               </div>
             )}
 
-            <div className="flex items-center justify-end border-t border-slate-100 bg-slate-50/60 px-6 py-3 rounded-b-2xl">
+            <div className="flex shrink-0 items-center justify-end border-t border-slate-100 bg-slate-50/60 px-6 py-3 rounded-b-2xl">
               <button
                 type="button"
                 onClick={() => setOpenHistoryBatch(null)}
