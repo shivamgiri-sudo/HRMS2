@@ -472,17 +472,17 @@ router.get('/rules', h(async (req, res) => {
 
 // GET /rules/resolve - simulate which rule applies
 router.get('/rules/resolve', h(async (req, res) => {
-  const { designationId, processId, branchId, costCentreId } = req.query as Record<string, string>;
+  const { designationId, processId, branchId } = req.query as Record<string, string>;
   const date = (req.query.date as string) || new Date().toISOString().split('T')[0]!;
   const rule = await attendanceEngineService.resolveRule(
-    designationId || null, processId || null, branchId || null, date, costCentreId || null
+    designationId || null, processId || null, branchId || null, date
   );
   return res.json({ success: true, data: rule });
 }));
 
-// GET /cost-centres - cost centres for the rule-builder's Branch -> Cost Centre cascade.
-// Same read audience as the rules list itself (admin/hr open the Attendance Rules Master page).
-router.get('/cost-centres', requireRole('admin', 'hr'), h(async (req, res) => {
+// GET /cost-centres - cost centres for the Payroll Head's Exception Control bulk-apply tab's
+// Branch -> Cost Centre cascade (attendance-exception-bucket.routes.ts).
+router.get('/cost-centres', requireRole('admin', 'hr', 'payroll_head', 'payroll_admin'), h(async (req, res) => {
   const { branchId } = req.query as Record<string, string>;
   const data = await attendanceEngineService.listCostCentresForRules(branchId || null);
   return res.json({ success: true, data });
@@ -492,11 +492,9 @@ router.get('/cost-centres', requireRole('admin', 'hr'), h(async (req, res) => {
 router.post('/rules', requireRole('admin'), h(async (req, res) => {
   const schema = z.object({
     rule_name:          z.string().min(1).max(255),
-    scope_type:         z.enum(['designation','process','branch','process_designation','branch_process','global',
-                                 'cost_centre','cost_centre_designation','branch_cost_centre','branch_cost_centre_designation']),
+    scope_type:         z.enum(['designation','process','branch','process_designation','branch_process','global']),
     designation_id:     z.string().uuid().nullable().optional(),
     process_id:         z.string().uuid().nullable().optional(),
-    cost_centre_id:     z.string().uuid().nullable().optional(),
     branch_id:          z.string().uuid().nullable().optional(),
     attendance_source:  z.enum(['dialler','biometric']),
     full_day_minutes:   z.number().int().min(1).max(1440),
