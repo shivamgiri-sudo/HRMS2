@@ -21,6 +21,7 @@ export interface AttendanceRuleConfig {
   scope_type: string;
   designation_id: string | null;
   process_id: string | null;
+  cost_centre_id: string | null;
   branch_id: string | null;
   attendance_source: AttendanceSource;
   full_day_minutes: number;
@@ -346,34 +347,44 @@ export const attendanceEngineService = {
   },
 
 
-  // Rule resolution — specificity scoring query
+  // Rule resolution — specificity scoring query.
+  //
+  // costCentreId ranks just under designation: it is the unit employees are actually tagged to
+  // (99.6% of active employees carry cost_centre_id, versus 24 of 937 cost centres even linking
+  // to a process), so a cost-centre-scoped rule should beat a process-scoped one for the same
+  // employee. Weights renumbered on an 8/4/2/1 scale to make room — every existing row (only
+  // designation-scoped or global, per production data 2026-09-05) keeps the same relative order
+  // since none of them use process/branch/cost_centre today.
   async resolveRule(
     designationId: string | null,
     processId: string | null,
     branchId: string | null,
-    date: string
+    date: string,
+    costCentreId: string | null = null
   ): Promise<AttendanceRuleConfig> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT *,
-         (CASE WHEN designation_id IS NOT NULL THEN 4 ELSE 0 END +
-          CASE WHEN process_id     IS NOT NULL THEN 2 ELSE 0 END +
-          CASE WHEN branch_id      IS NOT NULL THEN 1 ELSE 0 END) AS specificity
+         (CASE WHEN designation_id  IS NOT NULL THEN 8 ELSE 0 END +
+          CASE WHEN cost_centre_id  IS NOT NULL THEN 4 ELSE 0 END +
+          CASE WHEN process_id      IS NOT NULL THEN 2 ELSE 0 END +
+          CASE WHEN branch_id       IS NOT NULL THEN 1 ELSE 0 END) AS specificity
        FROM attendance_rule_config
        WHERE active_status = 1
          AND effective_from <= ?
          AND (effective_to IS NULL OR effective_to >= ?)
-         AND (designation_id = ? OR designation_id IS NULL)
-         AND (process_id     = ? OR process_id     IS NULL)
-         AND (branch_id      = ? OR branch_id      IS NULL)
+         AND (designation_id  = ? OR designation_id  IS NULL)
+         AND (process_id      = ? OR process_id      IS NULL)
+         AND (branch_id       = ? OR branch_id       IS NULL)
+         AND (cost_centre_id  = ? OR cost_centre_id  IS NULL)
        ORDER BY specificity DESC
        LIMIT 1`,
-      [date, date, designationId, processId, branchId]
+      [date, date, designationId, processId, branchId, costCentreId]
     );
     if (!rows[0]) {
       // Fallback: return hardcoded biometric default if no rule at all in DB
       return {
         id: 'fallback', rule_name: 'Fallback Default', scope_type: 'global',
-        designation_id: null, process_id: null, branch_id: null,
+        designation_id: null, process_id: null, cost_centre_id: null, branch_id: null,
         attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 270,
         grace_minutes: 15, effective_from: date, effective_to: null, active_status: 1,
       };
@@ -992,7 +1003,7 @@ export const attendanceEngineService = {
       bucket?.fullDayThresholdMinutes ?? COSEC_DEFAULT_FULL_DAY_MINUTES;
 
     // Resolve rule
-    let rule = await this.resolveRule(designationId, processId, branchId, date);
+    let rule = await this.resolveRule(designationId, processId, branchId, date, costCentreId);
 
     // G1: DB-backed attendance-logic resolution (replaces hardcoded regex)
     const attendanceLogic = await this.resolveAttendanceLogic(
@@ -1006,7 +1017,7 @@ export const attendanceEngineService = {
     const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
     const biometricMinutes = biometricEvidence.minutes;
     const hasScopedDiallerRule = rule.attendance_source === 'dialler'
-      && Boolean(rule.designation_id || rule.process_id || rule.branch_id);
+      && Boolean(rule.designation_id || rule.process_id || rule.branch_id || rule.cost_centre_id);
     let isAprEmployee = configuredAprEmployee || hasScopedDiallerRule;
     let forcedAprMinutes: number | null = null;
     let forcedAprSourceSystem: string | null = null;
@@ -1670,19 +1681,44 @@ export const attendanceEngineService = {
   // Rules CRUD (admin)
   async listRules(): Promise<AttendanceRuleConfig[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT arc.*, dm.designation_code, pm.process_name, bm.branch_name
+      `SELECT arc.*, dm.designation_code, pm.process_name, bm.branch_name,
+              cc.cost_centre_code, cc.cost_centre_name
        FROM attendance_rule_config arc
-       LEFT JOIN designation_master dm ON dm.id = arc.designation_id
-       LEFT JOIN process_master pm     ON pm.id = arc.process_id
-       LEFT JOIN branch_master bm      ON bm.id = arc.branch_id
+       LEFT JOIN designation_master dm  ON dm.id = arc.designation_id
+       LEFT JOIN process_master pm      ON pm.id = arc.process_id
+       LEFT JOIN branch_master bm       ON bm.id = arc.branch_id
+       LEFT JOIN cost_centre_master cc  ON cc.id = arc.cost_centre_id
        ORDER BY arc.active_status DESC, arc.created_at DESC`
     );
     return rows as AttendanceRuleConfig[];
   },
 
+  /**
+   * Cost centres for the rule-builder's Branch -> Cost Centre -> Designation cascade.
+   * branchId narrows the list to that branch's own cost centres; omitted, every live cost
+   * centre is returned. Live = active_status = 1, the same flag the bulk-upload cost-centre
+   * lookup already treats as the operative signal (status carries a separate approval workflow).
+   */
+  async listCostCentresForRules(branchId?: string | null): Promise<Array<{
+    id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string | null;
+  }>> {
+    const params: unknown[] = [];
+    let where = 'WHERE active_status = 1';
+    if (branchId) { where += ' AND branch_id = ?'; params.push(branchId); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, cost_centre_code, cost_centre_name, branch_id
+       FROM cost_centre_master
+       ${where}
+       ORDER BY cost_centre_name`,
+      params
+    );
+    return rows as Array<{ id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string | null }>;
+  },
+
   async createRule(input: {
     rule_name: string; scope_type: string;
-    designation_id?: string | null; process_id?: string | null; branch_id?: string | null;
+    designation_id?: string | null; process_id?: string | null; cost_centre_id?: string | null;
+    branch_id?: string | null;
     attendance_source: AttendanceSource; full_day_minutes: number; half_day_minutes: number;
     grace_minutes: number; effective_from: string; effective_to?: string | null;
     notes?: string | null; created_by?: string;
@@ -1690,15 +1726,15 @@ export const attendanceEngineService = {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO attendance_rule_config
-         (id, rule_name, scope_type, designation_id, process_id, branch_id,
+         (id, rule_name, scope_type, designation_id, process_id, cost_centre_id, branch_id,
           attendance_source, full_day_minutes, half_day_minutes, grace_minutes,
           effective_from, effective_to, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.rule_name, input.scope_type, input.designation_id ?? null,
-       input.process_id ?? null, input.branch_id ?? null, input.attendance_source,
-       input.full_day_minutes, input.half_day_minutes, input.grace_minutes,
-       input.effective_from, input.effective_to ?? null, input.notes ?? null,
-       input.created_by ?? null]
+       input.process_id ?? null, input.cost_centre_id ?? null, input.branch_id ?? null,
+       input.attendance_source, input.full_day_minutes, input.half_day_minutes,
+       input.grace_minutes, input.effective_from, input.effective_to ?? null,
+       input.notes ?? null, input.created_by ?? null]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM attendance_rule_config WHERE id = ? LIMIT 1`, [id]

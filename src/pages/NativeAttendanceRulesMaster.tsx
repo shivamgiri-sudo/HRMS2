@@ -13,7 +13,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Edit2, Trash2, Play, Clock, Plus } from "lucide-react";
 
 type AttendanceSource = 'dialler' | 'biometric';
-type ScopeType = 'designation' | 'process' | 'branch' | 'process_designation' | 'branch_process' | 'global';
+type ScopeType =
+  | 'designation' | 'process' | 'branch' | 'process_designation' | 'branch_process' | 'global'
+  | 'cost_centre' | 'cost_centre_designation' | 'branch_cost_centre' | 'branch_cost_centre_designation';
 
 interface AttendanceRule {
   id: string;
@@ -21,9 +23,11 @@ interface AttendanceRule {
   scope_type: ScopeType;
   designation_id: string | null;
   process_id: string | null;
+  cost_centre_id: string | null;
   branch_id: string | null;
   designation_code?: string;
   process_name?: string;
+  cost_centre_name?: string;
   branch_name?: string;
   attendance_source: AttendanceSource;
   full_day_minutes: number;
@@ -38,10 +42,11 @@ interface AttendanceRule {
 interface Designation { id: string; designation_code: string; designation_name: string; }
 interface Process { id: string; process_code: string; process_name: string; }
 interface Branch { id: string; branch_code: string; branch_name: string; }
+interface CostCentre { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string | null; }
 
 const EMPTY_FORM = {
   rule_name: '', scope_type: 'designation' as ScopeType,
-  designation_id: '', process_id: '', branch_id: '',
+  designation_id: '', process_id: '', cost_centre_id: '', branch_id: '',
   attendance_source: 'biometric' as AttendanceSource,
   full_day_minutes: 540, half_day_minutes: 270, grace_minutes: 15,
   effective_from: new Date().toISOString().split('T')[0]!,
@@ -53,12 +58,16 @@ function minsToHM(m: number) {
 }
 
 const SCOPE_COLORS: Record<ScopeType, string> = {
-  designation:        'bg-purple-100 text-purple-800',
-  process:            'bg-orange-100 text-orange-800',
-  branch:             'bg-yellow-100 text-yellow-800',
-  process_designation:'bg-pink-100 text-pink-800',
-  branch_process:     'bg-indigo-100 text-indigo-800',
-  global:             'bg-slate-100 text-slate-700',
+  designation:                     'bg-purple-100 text-purple-800',
+  process:                         'bg-orange-100 text-orange-800',
+  branch:                          'bg-yellow-100 text-yellow-800',
+  process_designation:             'bg-pink-100 text-pink-800',
+  branch_process:                  'bg-indigo-100 text-indigo-800',
+  global:                          'bg-slate-100 text-slate-700',
+  cost_centre:                     'bg-teal-100 text-teal-800',
+  cost_centre_designation:         'bg-cyan-100 text-cyan-800',
+  branch_cost_centre:              'bg-sky-100 text-sky-800',
+  branch_cost_centre_designation:  'bg-emerald-100 text-emerald-800',
 };
 
 const ANY_VALUE = "__any__";
@@ -163,6 +172,7 @@ export default function NativeAttendanceRulesMaster() {
   const [designations, setDesignations] = useState<Designation[]>([]);
   const [processes, setProcesses] = useState<Process[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [costCentres, setCostCentres] = useState<CostCentre[]>([]);
 
   // Attendance logic per process
   const [logicRows, setLogicRows] = useState<ProcessLogicRow[]>([]);
@@ -173,25 +183,37 @@ export default function NativeAttendanceRulesMaster() {
   // Simulator state
   const [simDesig, setSimDesig] = useState('');
   const [simProcess, setSimProcess] = useState('');
+  const [simCostCentre, setSimCostCentre] = useState('');
   const [simBranch, setSimBranch] = useState('');
   const [simResult, setSimResult] = useState<AttendanceRule | null>(null);
   const [simLoading, setSimLoading] = useState(false);
+
+  // Cost centres narrow to the chosen branch, in both the create/edit dialog and the simulator —
+  // same "clear the child when the parent changes" rule as every other cascading pair here.
+  const formCostCentreOptions = form.branch_id
+    ? costCentres.filter((c) => c.branch_id === form.branch_id)
+    : costCentres;
+  const simCostCentreOptions = simBranch
+    ? costCentres.filter((c) => c.branch_id === simBranch)
+    : costCentres;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const [rulesRes, orgRes, procRes] = await Promise.all([
+        const [rulesRes, orgRes, procRes, ccRes] = await Promise.all([
           hrmsApi.get<{ success: boolean; data: AttendanceRule[] }>('/api/wfm/attendance/rules'),
           hrmsApi.get<{ success: boolean; data: { designations?: Designation[]; branches?: Branch[] } }>('/api/org'),
           hrmsApi.get<{ success: boolean; data: Process[] }>('/api/processes'),
+          hrmsApi.get<{ success: boolean; data: CostCentre[] }>('/api/wfm/attendance/cost-centres'),
         ]);
         if (!cancelled) {
           setRules(rulesRes.data ?? []);
           setDesignations(orgRes.data?.designations ?? []);
           setBranches(orgRes.data?.branches ?? []);
           setProcesses(procRes.data ?? []);
+          setCostCentres(ccRes.data ?? []);
         }
       } catch {
         toast({ title: 'Failed to load rules', variant: 'destructive' });
@@ -262,6 +284,7 @@ export default function NativeAttendanceRulesMaster() {
       scope_type: rule.scope_type,
       designation_id: rule.designation_id ?? '',
       process_id: rule.process_id ?? '',
+      cost_centre_id: rule.cost_centre_id ?? '',
       branch_id: rule.branch_id ?? '',
       attendance_source: rule.attendance_source,
       full_day_minutes: rule.full_day_minutes,
@@ -294,6 +317,7 @@ export default function NativeAttendanceRulesMaster() {
         scope_type: form.scope_type,
         designation_id: form.designation_id || null,
         process_id: form.process_id || null,
+        cost_centre_id: form.cost_centre_id || null,
         branch_id: form.branch_id || null,
         attendance_source: form.attendance_source,
         full_day_minutes: Number(form.full_day_minutes),
@@ -324,9 +348,10 @@ export default function NativeAttendanceRulesMaster() {
     setSimResult(null);
     try {
       const params = new URLSearchParams();
-      if (simDesig)   params.set('designationId', simDesig);
-      if (simProcess) params.set('processId',     simProcess);
-      if (simBranch)  params.set('branchId',       simBranch);
+      if (simDesig)       params.set('designationId', simDesig);
+      if (simProcess)     params.set('processId',     simProcess);
+      if (simCostCentre)  params.set('costCentreId',  simCostCentre);
+      if (simBranch)      params.set('branchId',       simBranch);
       const res = await hrmsApi.get<{ success: boolean; data: AttendanceRule }>(
         `/api/wfm/attendance/rules/resolve?${params.toString()}`
       );
@@ -338,9 +363,21 @@ export default function NativeAttendanceRulesMaster() {
     }
   };
 
-  const showDesig   = form.scope_type.includes('designation');
-  const showProcess = form.scope_type.includes('process');
-  const showBranch  = form.scope_type.includes('branch');
+  const showDesig      = form.scope_type.includes('designation');
+  const showProcess    = form.scope_type === 'process' || form.scope_type === 'process_designation' || form.scope_type === 'branch_process';
+  const showCostCentre = form.scope_type.includes('cost_centre');
+  const showBranch     = form.scope_type.includes('branch');
+
+  // Branch renders first in the dialog now (Branch -> Cost Centre -> Designation), so picking a
+  // new branch must drop a previously chosen cost centre that no longer belongs to it — the same
+  // "clear the child when the parent changes" rule the finance-year/month pair already follows.
+  const setFormBranch = (branchId: string) => {
+    setForm((f) => {
+      const stillValid = f.cost_centre_id
+        && costCentres.some((c) => c.id === f.cost_centre_id && c.branch_id === branchId);
+      return { ...f, branch_id: branchId, cost_centre_id: stillValid ? f.cost_centre_id : '' };
+    });
+  };
 
   return (
     <DashboardLayout>
@@ -350,7 +387,7 @@ export default function NativeAttendanceRulesMaster() {
         <div className="hrms-page-header">
           <div>
             <h1 className="hrms-page-title">Attendance Rules Master</h1>
-            <p className="hrms-page-subtitle">Configure attendance source and thresholds by designation, process, or branch</p>
+            <p className="hrms-page-subtitle">Configure attendance source and thresholds by branch, cost centre (call centre) and designation</p>
           </div>
           <Button onClick={openCreate} className="gap-2">
             <Plus className="h-4 w-4" /> New Rule
@@ -492,9 +529,10 @@ export default function NativeAttendanceRulesMaster() {
                       </span>
                     </td>
                     <td className="text-xs text-slate-500">
-                      {r.designation_code && <span>Desig: {r.designation_code}</span>}
-                      {r.process_name && <span>Process: {r.process_name}</span>}
                       {r.branch_name && <span>Branch: {r.branch_name}</span>}
+                      {r.cost_centre_name && <span>{r.branch_name ? ' · ' : ''}Cost Centre: {r.cost_centre_name}</span>}
+                      {r.designation_code && <span>{(r.branch_name || r.cost_centre_name) ? ' · ' : ''}Desig: {r.designation_code}</span>}
+                      {r.process_name && <span>Process: {r.process_name}</span>}
                       {r.scope_type === 'global' && <span className="italic">All employees</span>}
                     </td>
                     <td>
@@ -538,7 +576,38 @@ export default function NativeAttendanceRulesMaster() {
             <Play className="h-4 w-4 text-blue-600" /> Rule Simulator
           </h2>
           <p className="text-sm text-slate-500">Check which attendance rule would apply for a given combination before saving changes.</p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Branch</Label>
+              <Select
+                value={simBranch || ANY_VALUE}
+                onValueChange={(value) => {
+                  const nextBranch = value === ANY_VALUE ? '' : value;
+                  setSimBranch(nextBranch);
+                  // Clear the child when the parent changes — a chosen cost centre outside the
+                  // newly picked branch would otherwise sit there silently no longer matching it.
+                  if (simCostCentre && !costCentres.some(c => c.id === simCostCentre && c.branch_id === nextBranch)) {
+                    setSimCostCentre('');
+                  }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ANY_VALUE}>Any</SelectItem>
+                  {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Cost Centre</Label>
+              <Select value={simCostCentre || ANY_VALUE} onValueChange={(value) => setSimCostCentre(value === ANY_VALUE ? '' : value)}>
+                <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ANY_VALUE}>Any</SelectItem>
+                  {simCostCentreOptions.map(c => <SelectItem key={c.id} value={c.id}>{c.cost_centre_code} — {c.cost_centre_name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Designation</Label>
               <Select value={simDesig || ANY_VALUE} onValueChange={(value) => setSimDesig(value === ANY_VALUE ? '' : value)}>
@@ -550,22 +619,12 @@ export default function NativeAttendanceRulesMaster() {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Process</Label>
+              <Label className="text-xs">Process (legacy)</Label>
               <Select value={simProcess || ANY_VALUE} onValueChange={(value) => setSimProcess(value === ANY_VALUE ? '' : value)}>
                 <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ANY_VALUE}>Any</SelectItem>
                   {processes.map(p => <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Branch</Label>
-              <Select value={simBranch || ANY_VALUE} onValueChange={(value) => setSimBranch(value === ANY_VALUE ? '' : value)}>
-                <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ANY_VALUE}>Any</SelectItem>
-                  {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -606,10 +665,14 @@ export default function NativeAttendanceRulesMaster() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="designation">Designation only</SelectItem>
-                    <SelectItem value="process">Process only</SelectItem>
+                    <SelectItem value="cost_centre">Cost Centre only</SelectItem>
                     <SelectItem value="branch">Branch only</SelectItem>
-                    <SelectItem value="process_designation">Process + Designation</SelectItem>
-                    <SelectItem value="branch_process">Branch + Process</SelectItem>
+                    <SelectItem value="cost_centre_designation">Cost Centre + Designation</SelectItem>
+                    <SelectItem value="branch_cost_centre">Branch + Cost Centre</SelectItem>
+                    <SelectItem value="branch_cost_centre_designation">Branch + Cost Centre + Designation</SelectItem>
+                    <SelectItem value="process">Process only (legacy)</SelectItem>
+                    <SelectItem value="process_designation">Process + Designation (legacy)</SelectItem>
+                    <SelectItem value="branch_process">Branch + Process (legacy)</SelectItem>
                     <SelectItem value="global">Global (all employees)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -627,6 +690,35 @@ export default function NativeAttendanceRulesMaster() {
                 </div>
               </div>
             </div>
+            {showBranch && (
+              <div className="space-y-1">
+                <Label>Branch</Label>
+                <Select value={form.branch_id} onValueChange={setFormBranch}>
+                  <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                  <SelectContent>
+                    {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {showCostCentre && (
+              <div className="space-y-1">
+                <Label>Cost Centre (Call Centre)</Label>
+                <Select value={form.cost_centre_id} onValueChange={v => setForm(f => ({...f, cost_centre_id: v}))}>
+                  <SelectTrigger><SelectValue placeholder={form.branch_id ? "Select cost centre" : "Select cost centre (all branches)"} /></SelectTrigger>
+                  <SelectContent>
+                    {formCostCentreOptions.length === 0 ? (
+                      <div className="px-2 py-1.5 text-xs text-slate-400">No cost centres for this branch</div>
+                    ) : (
+                      formCostCentreOptions.map(c => <SelectItem key={c.id} value={c.id}>{c.cost_centre_code} — {c.cost_centre_name}</SelectItem>)
+                    )}
+                  </SelectContent>
+                </Select>
+                {form.branch_id && (
+                  <p className="text-xs text-slate-400">Showing only cost centres in the selected branch.</p>
+                )}
+              </div>
+            )}
             {showDesig && (
               <div className="space-y-1">
                 <Label>Designation</Label>
@@ -645,17 +737,6 @@ export default function NativeAttendanceRulesMaster() {
                   <SelectTrigger><SelectValue placeholder="Select process" /></SelectTrigger>
                   <SelectContent>
                     {processes.map(p => <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {showBranch && (
-              <div className="space-y-1">
-                <Label>Branch</Label>
-                <Select value={form.branch_id} onValueChange={v => setForm(f => ({...f, branch_id: v}))}>
-                  <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
-                  <SelectContent>
-                    {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
