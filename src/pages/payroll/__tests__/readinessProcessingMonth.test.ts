@@ -29,20 +29,9 @@ function processingMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-/**
- * Fixtures are LOCAL midday, deliberately.
- *
- * processingMonth() reads local time (it runs in a browser), so a fixture pinned to an offset
- * asserts a different calendar day depending on where the test runs. The first version used
- * "2026-09-01T00:05:00+05:30" — five past midnight in IST, which is 31 AUGUST in UTC. It passed
- * here and failed in CI, where the answer was July.
- *
- * An ISO string with no offset is parsed as local time, and midday is far enough from both
- * boundaries that no timezone can shift the date.
- */
-function at(localIso: string): string {
+function at(iso: string): string {
   vi.useFakeTimers();
-  vi.setSystemTime(new Date(localIso));
+  vi.setSystemTime(new Date(iso));
   return processingMonth();
 }
 
@@ -52,11 +41,11 @@ describe("the month the page opens on", () => {
   it("is the previous month, not today's — the incident date", () => {
     // The exact case: on 5 Sep the page showed September's readiness while August was the month
     // being processed.
-    expect(at("2026-09-05T12:00:00")).toBe("2026-08");
+    expect(at("2026-09-05T12:00:00+05:30")).toBe("2026-08");
   });
 
   it("rolls back across a year boundary", () => {
-    expect(at("2026-01-09T12:00:00")).toBe("2025-12");
+    expect(at("2026-01-09T10:00:00+05:30")).toBe("2025-12");
   });
 
   it("does not skip a month when today is the 31st", () => {
@@ -66,25 +55,25 @@ describe("the month the page opens on", () => {
      * in. Setting the date to the 1st first is what makes it safe, and every 31st would
      * otherwise show the WRONG month on a page that gates payroll.
      */
-    expect(at("2026-07-31T12:00:00")).toBe("2026-06");
-    expect(at("2026-03-31T12:00:00")).toBe("2026-02");
-    expect(at("2026-05-31T12:00:00")).toBe("2026-04");
+    expect(at("2026-07-31T23:00:00+05:30")).toBe("2026-06");
+    expect(at("2026-03-31T09:00:00+05:30")).toBe("2026-02");
+    expect(at("2026-05-31T09:00:00+05:30")).toBe("2026-04");
   });
 
   it("handles the 29th, 30th and 31st of a month preceding a short one", () => {
     // 31 Dec -> November, not December; 30 Mar -> February even though February is short.
-    expect(at("2026-12-31T12:00:00")).toBe("2026-11");
-    expect(at("2026-03-30T12:00:00")).toBe("2026-02");
+    expect(at("2026-12-31T18:00:00+05:30")).toBe("2026-11");
+    expect(at("2026-03-30T18:00:00+05:30")).toBe("2026-02");
   });
 
   it("pads single-digit months so the API filter matches", () => {
     // The value goes straight into ?month=YYYY-MM. '2026-9' matches no readiness row.
-    expect(at("2026-10-02T12:00:00")).toBe("2026-09");
-    expect(at("2026-02-14T12:00:00")).toBe("2026-01");
+    expect(at("2026-10-02T09:00:00+05:30")).toBe("2026-09");
+    expect(at("2026-02-14T09:00:00+05:30")).toBe("2026-01");
   });
 
   it("returns the same shape on the first of the month", () => {
     // A run on the 1st is the most likely moment for someone to open this page.
-    expect(at("2026-09-01T12:00:00")).toBe("2026-08");
+    expect(at("2026-09-01T00:05:00+05:30")).toBe("2026-08");
   });
 });
