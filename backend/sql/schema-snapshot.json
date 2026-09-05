@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1085,
-  "columnCount": 15749,
+  "columnCount": 15750,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -2265,6 +2265,7 @@
       "scope_type",
       "designation_id",
       "process_id",
+      "cost_centre_id",
       "branch_id",
       "attendance_source",
       "full_day_minutes",
