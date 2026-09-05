@@ -62,6 +62,42 @@ export function getBatchJob(batchId: string): BatchJobState | null {
  * answered by the time this runs, so a throw cannot travel back up to Express and
  * would otherwise become an unhandled rejection.
  */
+/**
+ * How often a running job stamps upload_batch.job_heartbeat_at to prove it is still alive.
+ *
+ * `jobs` above is an in-process Map: it says nothing to anyone once this process dies, which is
+ * how BATCH-1788604867017 sat 'importing' for two and a half hours with 1,246 rows unprocessed.
+ * The heartbeat is the durable half of that state — the one thing that survives the process.
+ */
+const HEARTBEAT_MS = 15_000;
+
+/** Identifies which process held the job, so a post-mortem can say where it died. */
+const JOB_OWNER = `${process.env.WORKERS_PROCESS ? "workers" : "api"}:${process.pid}`;
+
+async function beat(batchId: string): Promise<void> {
+  try {
+    await db.execute(
+      `UPDATE upload_batch SET job_heartbeat_at = NOW(), job_owner = ? WHERE id = ?`,
+      [JOB_OWNER, batchId],
+    );
+  } catch {
+    // Never let a heartbeat failure disturb the work it is only reporting on. A missed beat
+    // makes the job look stale, which is the safe direction: the reaper reports it, and the
+    // reaper only ever marks a batch failed — it never touches the rows.
+  }
+}
+
+/**
+ * Clear the heartbeat when the job ends, so a finished batch is never mistaken for a stalled one.
+ * Left set, a batch that completed normally would keep an ageing heartbeat and eventually be
+ * reported as dead.
+ */
+async function clearBeat(batchId: string): Promise<void> {
+  try {
+    await db.execute(`UPDATE upload_batch SET job_heartbeat_at = NULL WHERE id = ?`, [batchId]);
+  } catch { /* as above */ }
+}
+
 export function startBatchJob(
   batchId: string,
   kind: BatchJobKind,
@@ -73,6 +109,11 @@ export function startBatchJob(
   jobs.set(batchId, job);
 
   void (async () => {
+    await beat(batchId);
+    // unref() so a running job never holds the process open at shutdown — if we are going down,
+    // the heartbeat stopping is exactly the signal we want to leave behind.
+    const ticker = setInterval(() => { void beat(batchId); }, HEARTBEAT_MS);
+    (ticker as unknown as { unref?: () => void }).unref?.();
     try {
       job.result = await work();
       job.phase = "done";
@@ -84,6 +125,8 @@ export function startBatchJob(
         await onFailure(err).catch(() => { /* the original error is what matters */ });
       }
     } finally {
+      clearInterval(ticker);
+      await clearBeat(batchId);
       job.finishedAt = Date.now();
     }
   })();
