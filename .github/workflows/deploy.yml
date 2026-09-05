@@ -165,7 +165,23 @@ jobs:
     name: Deploy to 192.168.11.225
     needs: ci-gate
     runs-on: self-hosted
-    timeout-minutes: 15
+    # 30, not 15.
+    #
+    # This job installs deps, builds frontend AND backend, swaps two dist trees and then waits up
+    # to ~3 minutes for a backend that re-applies migrations at boot — all on a single-core box
+    # that is also running MySQL, the API, 45 workers and this runner. Fifteen minutes did not
+    # cover it.
+    #
+    # The failure mode was expensive and completely silent about its cause: on 2026-09-05 the job
+    # was killed mid-health-check at attempt 21 of 90, which the script could only read as "the
+    # backend never came up". It rolled a perfectly good release back, left production on the
+    # previous build, and reported a deploy failure whose log showed nothing but connection
+    # refused. Three consecutive deploys were lost to the clock, not to any defect in the code
+    # being shipped.
+    #
+    # A timeout must sit ABOVE the work it bounds, not inside it, or it stops being a safety net
+    # and becomes the thing that breaks the deploy.
+    timeout-minutes: 30
     environment: production
 
     steps:
