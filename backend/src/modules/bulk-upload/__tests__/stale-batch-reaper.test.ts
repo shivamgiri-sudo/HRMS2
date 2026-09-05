@@ -20,7 +20,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { query: (...a: unknown[]) => query
 
 const {
   findStalledBatches, markBatchStalled, reapStalledBatches, stallSummary,
-  TRANSIENT_BATCH_STATUSES, STALL_MINUTES,
+  TRANSIENT_BATCH_STATUSES, STALL_MINUTES, HEARTBEAT_STALL_MINUTES,
 } = await import("../stale-batch-reaper.service.js");
 
 const STALLED = {
@@ -48,7 +48,9 @@ describe("what counts as stalled", () => {
     const sql = String(query.mock.calls[0][0]);
     expect(sql).toContain("b.updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)");
     expect(sql).not.toContain("b.created_at <");
-    expect(query.mock.calls[0][1]).toEqual([...TRANSIENT_BATCH_STATUSES, 30]);
+    expect(query.mock.calls[0][1]).toEqual([
+      ...TRANSIENT_BATCH_STATUSES, HEARTBEAT_STALL_MINUTES, 30,
+    ]);
   });
 
   it("counts the rows that were never processed, not the ones that failed validation", () => {
@@ -141,5 +143,55 @@ describe("the sweep", () => {
     const r = await reapStalledBatches();
     expect(r).toEqual({ scanned: 0, marked: 0, batches: [] });
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("a heartbeat decides faster, and more certainly", () => {
+  it("judges a batch that left one on the heartbeat, not on updated_at", async () => {
+    /*
+     * updated_at only moves as ROWS COMPLETE, so it cannot tell a dead job from a slow one and
+     * has to wait 30 minutes to be safe. A heartbeat is stamped every 15 seconds by a job that
+     * is genuinely running, so silence means the process is gone — the same verdict in minutes.
+     */
+    query.mockResolvedValueOnce([[]]);
+    await findStalledBatches();
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toContain("b.job_heartbeat_at IS NOT NULL");
+    expect(sql).toContain("b.job_heartbeat_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)");
+    expect(HEARTBEAT_STALL_MINUTES).toBeLessThan(STALL_MINUTES);
+  });
+
+  it("falls back to updated_at only when there is no heartbeat", async () => {
+    // Batches predating migration 1673, and jobs that died before their first beat. The two
+    // arms must be mutually exclusive or a heartbeat batch would also be judged on the slow
+    // rule and effectively never reaped early.
+    query.mockResolvedValueOnce([[]]);
+    await findStalledBatches();
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toContain("b.job_heartbeat_at IS NULL");
+    expect(sql).toContain("OR (b.job_heartbeat_at IS NULL");
+  });
+
+  it("never reaps a batch whose heartbeat is current, however long it has run", async () => {
+    // The property that makes this safe to run every 10 minutes: a live 40-minute import is
+    // beating, so it is not stalled no matter what updated_at says.
+    query.mockResolvedValueOnce([[]]);
+    await findStalledBatches();
+    const sql = String(query.mock.calls[0][0]);
+    // The heartbeat arm requires the beat to be OLD; a fresh beat matches neither arm.
+    expect(sql).not.toMatch(/job_heartbeat_at\s*>\s*DATE_SUB/);
+  });
+
+  it("reports which process held it and how the verdict was reached", async () => {
+    // A post-mortem needs to know where it died, and whether "stalled" was the fast certain
+    // answer or the slow inferred one.
+    query.mockResolvedValueOnce([[
+      { id: "b1", upload_batch_no: "B1", upload_type_code: "T", batch_status: "importing",
+        total_rows: 10, imported_rows: 4, remaining_rows: 6, idle_minutes: 99,
+        job_owner: "workers:1234", had_heartbeat: 1 },
+    ]]);
+    const [b] = await findStalledBatches();
+    expect(b.jobOwner).toBe("workers:1234");
+    expect(b.hadHeartbeat).toBe(true);
   });
 });
