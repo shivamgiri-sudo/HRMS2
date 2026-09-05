@@ -15,10 +15,10 @@
  */
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { leaveService } from "../leave/leave.service.js";
+import { leaveService, NO_CHARGEABLE_DAYS } from "../leave/leave.service.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
+  markRowFailed, markRowSkipped, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
@@ -55,6 +55,7 @@ export async function importLeaveBatch(
   const errors: string[] = [];
   let staged = 0;
   let failed = 0;
+  let skipped = 0;
 
   const matched = rows
     .map((r) => employees.get((r.data.employee_code ?? "").toUpperCase()))
@@ -123,6 +124,7 @@ export async function importLeaveBatch(
     async (empRows) => {
       let grpStaged = 0;
       let grpFailed = 0;
+      let grpSkipped = 0;
       const grpErrors: string[] = [];
       for (const row of empRows) {
         const d = row.data;
@@ -150,23 +152,33 @@ export async function importLeaveBatch(
           grpStaged++;
         } catch (err) {
           const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
+          // "Every date is a week-off or holiday" is not a bad row — it is a row with nothing to
+          // do. Charging it would deduct entitlement for a day nobody was rostered to work;
+          // failing it tells the uploader their file is broken when it is not. A 29-row file
+          // reporting 28 "errors", most of them Sundays, reads as a failed upload.
+          if ((err as { code?: string })?.code === NO_CHARGEABLE_DAYS) {
+            await markRowSkipped(row.rowId, msg);
+            grpSkipped++;
+            continue;
+          }
           grpErrors.push(msg);
           await markRowFailed(row.rowId, msg);
           grpFailed++;
         }
       }
-      return { grpStaged, grpFailed, grpErrors };
+      return { grpStaged, grpFailed, grpSkipped, grpErrors };
     },
   );
 
   for (const r of groupResults) {
     staged += r.grpStaged;
     failed += r.grpFailed;
+    skipped += r.grpSkipped;
     errors.push(...r.grpErrors);
   }
 
   await markPendingApproval(batchId, branchId, staged, failed);
-  return { staged, failed, branchId, errors };
+  return { staged, failed, skipped, branchId, errors };
 }
 
 interface LinkedRow extends RowDataPacket {
