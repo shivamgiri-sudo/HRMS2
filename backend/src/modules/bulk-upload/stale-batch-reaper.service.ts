@@ -43,11 +43,26 @@ export const TRANSIENT_BATCH_STATUSES = ["importing", "approving", "validating",
  */
 export const STALL_MINUTES = 30;
 
+/**
+ * The same judgement, for a batch whose job left a heartbeat (migration 1673).
+ *
+ * A heartbeat is stamped every 15 seconds by a job that is actually running, so silence means
+ * the process is gone — not that a row is taking a while. That is a far stronger signal than
+ * `updated_at`, which moves only as rows complete and so cannot tell a dead job from a slow one.
+ * Minutes, not half an hour, and still generous enough to survive a GC pause, a pool wait or a
+ * brief network stall.
+ */
+export const HEARTBEAT_STALL_MINUTES = 3;
+
 export interface StalledBatch {
   id: string;
   uploadBatchNo: string;
   uploadTypeCode: string;
   status: string;
+  /** Which process last held the job, when it left a heartbeat. Empty when it did not. */
+  jobOwner: string | null;
+  /** Whether the verdict came from the heartbeat (fast, certain) or from updated_at (slow). */
+  hadHeartbeat: boolean;
   totalRows: number;
   importedRows: number;
   remainingRows: number;
@@ -63,6 +78,8 @@ interface StalledRow extends RowDataPacket {
   imported_rows: number;
   remaining_rows: number;
   idle_minutes: number;
+  job_owner: string | null;
+  had_heartbeat: number;
 }
 
 /** Batches sitting in a working state with no progress for longer than `stallMinutes`. */
@@ -70,15 +87,27 @@ export async function findStalledBatches(stallMinutes = STALL_MINUTES): Promise<
   const placeholders = TRANSIENT_BATCH_STATUSES.map(() => "?").join(",");
   const [rows] = await db.query<StalledRow[]>(
     `SELECT b.id, b.upload_batch_no, b.upload_type_code, b.batch_status,
-            b.total_rows, b.imported_rows,
+            b.total_rows, b.imported_rows, b.job_owner,
+            (b.job_heartbeat_at IS NOT NULL) AS had_heartbeat,
             (SELECT COUNT(*) FROM upload_batch_row r
               WHERE r.upload_batch_id = b.id AND r.row_status IN ('valid','pending')) remaining_rows,
             TIMESTAMPDIFF(MINUTE, b.updated_at, NOW()) idle_minutes
        FROM upload_batch b
       WHERE b.batch_status IN (${placeholders})
-        AND b.updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        AND (
+              -- A job that left a heartbeat is judged on the heartbeat: it proves itself alive
+              -- every 15 seconds, so silence means the process is gone.
+              (b.job_heartbeat_at IS NOT NULL
+               AND b.job_heartbeat_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+              -- No heartbeat: either the batch predates migration 1673, or the job died before
+              -- its first beat. Fall back to updated_at and the longer threshold, which is all
+              -- that was available before — it moves only as rows complete, so it cannot tell a
+              -- dead job from a slow one and has to be generous.
+           OR (b.job_heartbeat_at IS NULL
+               AND b.updated_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+        )
       ORDER BY b.updated_at ASC`,
-    [...TRANSIENT_BATCH_STATUSES, stallMinutes],
+    [...TRANSIENT_BATCH_STATUSES, HEARTBEAT_STALL_MINUTES, stallMinutes],
   );
 
   return rows.map((r) => ({
@@ -86,6 +115,8 @@ export async function findStalledBatches(stallMinutes = STALL_MINUTES): Promise<
     uploadBatchNo: String(r.upload_batch_no),
     uploadTypeCode: String(r.upload_type_code),
     status: String(r.batch_status),
+    jobOwner: r.job_owner ? String(r.job_owner) : null,
+    hadHeartbeat: Number(r.had_heartbeat ?? 0) === 1,
     totalRows: Number(r.total_rows ?? 0),
     importedRows: Number(r.imported_rows ?? 0),
     remainingRows: Number(r.remaining_rows ?? 0),
