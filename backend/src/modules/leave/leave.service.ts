@@ -746,6 +746,19 @@ export const leaveService = {
           partnerTypeId = (partnerTypeRows as RowDataPacket[])[0]?.id ?? null;
         }
 
+        // The partner's OWN annual cap. Drawing a CL overflow from ML must not push ML past
+        // its own limit — pooling shares a shortfall, it does not create entitlement. Read
+        // alongside the id so the cap and the balance can never be checked against different
+        // rows.
+        let partnerMaxDaysPerYear = 0;
+        if (partnerTypeId) {
+          const [partnerCapRows] = await conn.execute(
+            `SELECT COALESCE(max_days_per_year, 0) AS cap FROM leave_type_master WHERE id = ? LIMIT 1`,
+            [partnerTypeId]
+          );
+          partnerMaxDaysPerYear = Number((partnerCapRows as RowDataPacket[])[0]?.cap ?? 0);
+        }
+
         const byYear = groupDatesByYear(chargeable);
         const deductionBuckets: Array<{ leaveTypeId: string; year: number; days: number; isPrimary: boolean }> = [];
 
@@ -772,31 +785,62 @@ export const leaveService = {
           // pooling should only draw from balance that was actually
           // allocated, never invent credit from an allocation that was
           // never set up for the other type.
+          // For a POOLED type the annual cap is the POOL's, not each bucket's.
+          //
+          // Owner ruling 2026-09-05: CL and ML share one yearly allowance of 12 — which is
+          // exactly CL's 7 plus ML's 5, so the per-type numbers are the notional split, not two
+          // separate ceilings. Derived from the masters rather than hard-coding 12, so changing
+          // either cap moves the pool with it.
+          //
+          // Enforcing 7 and 5 separately refused people who had days left. MAS48651 had used
+          // 7 CL and 1 ML — 8 of his 12 — and a one-day CL request was refused as "would exceed
+          // the annual limit of 7 for CL", while four days of his allowance sat unused in the
+          // other bucket. Worse, his CL was ALLOCATED 8 against a cap of 7 (784 employees carry
+          // an allocation above their cap), so the balance screen showed a day the cap could
+          // never let him take.
+          const partner: BalanceSnapshot | null = partnerTypeId
+            ? await readBalance(conn, employeeId, partnerTypeId, year)
+            : null;
+          const pooled = partnerTypeId !== null && partner !== null;
+
+          // Cap first, because it binds before balance does: it is what decides how much this
+          // request may draw at all, and only then does it matter which bucket supplies it.
+          const capTotal = pooled ? maxDaysPerYear + partnerMaxDaysPerYear : maxDaysPerYear;
+          const usedTotal = pooled ? primary.usedDays + partner!.usedDays : primary.usedDays;
+          if (capTotal > 0 && usedTotal + daysNeeded > capTotal) {
+            const scope = pooled ? `${leaveCode}+${partnerCode} combined` : leaveCode;
+            const split = pooled
+              ? ` (${primary.usedDays} ${leaveCode} + ${partner!.usedDays} ${partnerCode})`
+              : "";
+            throw new Error(
+              `Approving this request would exceed the annual limit of ${capTotal} day(s) ` +
+              `for ${scope} in ${year}. Already used: ${usedTotal}${split}, requested: ${daysNeeded}.`
+            );
+          }
+
+          // Now decide which bucket pays for it. Own type first, overflow to the partner —
+          // that overflow is the whole point: a CL request with CL exhausted is still within
+          // the pool, so it comes out of ML rather than being refused.
+          //
+          // A missing ledger row for the DIRECTLY REQUESTED type stays permissive (an
+          // administrative gap, not a real shortfall) exactly as before; a missing row for the
+          // PARTNER never invents credit, because pooling may only draw balance that was
+          // actually allocated.
           const fromPrimary = primary.exists ? Math.min(daysNeeded, primary.available) : daysNeeded;
           let remainder = daysNeeded - fromPrimary;
 
           let fromPartner = 0;
-          let partner: BalanceSnapshot | null = null;
-          if (remainder > 0 && partnerTypeId) {
-            partner = await readBalance(conn, employeeId, partnerTypeId, year);
-            fromPartner = partner.exists ? Math.min(remainder, partner.available) : 0;
+          if (remainder > 0 && pooled) {
+            fromPartner = partner!.exists ? Math.min(remainder, partner!.available) : 0;
             remainder -= fromPartner;
           }
 
           if (remainder > 0) {
-            const poolNote = partnerTypeId
-              ? ` (pooled with ${partnerCode}: ${primary.available} ${leaveCode} + ${partner?.available ?? 0} ${partnerCode})`
+            const poolNote = pooled
+              ? ` (pooled with ${partnerCode}: ${primary.available} ${leaveCode} + ${partner!.available} ${partnerCode})`
               : "";
             throw new Error(
               `Insufficient leave balance for ${year}. Available: ${primary.available + fromPartner}${poolNote}, Requested: ${daysNeeded}.`
-            );
-          }
-          // maxDaysPerYear is enforced on the requested type's own usage —
-          // pooling covers a balance shortfall, not the annual cap.
-          if (maxDaysPerYear > 0 && (primary.usedDays + fromPrimary) > maxDaysPerYear) {
-            throw new Error(
-              `Approving this request would exceed the annual limit of ${maxDaysPerYear} day(s) ` +
-              `for ${leaveCode} in ${year}. Already used: ${primary.usedDays}.`
             );
           }
 
