@@ -23,6 +23,7 @@ import {
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 import { withBulkLockRetry } from "./lock-retry.js";
+import { sendSMS } from "../communication/sms.helper.js";
 
 export const ENTITY_TYPE = "attendance_regularization";
 
@@ -211,6 +212,8 @@ interface LinkedRow extends RowDataPacket {
   row_no: number;
   created_entity_id: string;
   employee_id: string | null;
+  /** Needed to key the deferred payroll recalculation by employee-MONTH. */
+  session_date: string | null;
 }
 
 /**
@@ -224,7 +227,8 @@ interface LinkedRow extends RowDataPacket {
  */
 async function linkedRows(batchId: string): Promise<LinkedRow[]> {
   const [rows] = await db.execute<LinkedRow[]>(
-    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id, ar.employee_id
+    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id, ar.employee_id,
+            DATE_FORMAT(ar.session_date, '%Y-%m-%d') AS session_date
        FROM upload_batch_row ubr
        LEFT JOIN attendance_regularization ar ON ar.id = ubr.created_entity_id
       WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ? AND ubr.created_entity_id IS NOT NULL
@@ -232,6 +236,120 @@ async function linkedRows(batchId: string): Promise<LinkedRow[]> {
     [batchId, ENTITY_TYPE],
   );
   return rows as LinkedRow[];
+}
+
+/**
+ * The three side effects reviewRegularization defers for the bulk path, run once each.
+ *
+ * Inline, these dominate the approval loop. The payroll recalculation is the worst: it re-costs
+ * an employee's entire open month, and running it per row means an employee with ten corrections
+ * in the file has their month re-costed ten times for the same final answer. Keyed by
+ * employee-MONTH here, a 3,653-row batch spanning ~700 employees does ~700 recalculations
+ * instead of 3,653.
+ *
+ * Nothing is dropped — the work-inbox alerts still close, the SMS still goes, the month is still
+ * recalculated. Only the number of times each happens changes, and recalculation is idempotent,
+ * so the end state is identical.
+ *
+ * Every part is best-effort and independently caught: the approvals are already committed, and a
+ * failed notification must not turn a successful batch into a failed one. A missed inbox clear is
+ * swept up by the reconciliation worker; a stale payroll line surfaces in payroll readiness.
+ */
+async function runDeferredSideEffects(
+  applied: Array<{ employeeId: string; sessionDate: string; regularizationId: string }>,
+  approverUserId: string,
+): Promise<void> {
+  if (applied.length === 0) return;
+
+  const employeeIds = [...new Set(applied.map((a) => a.employeeId))];
+
+  // 1. Close the work-inbox alerts these decisions settle — one statement for the whole batch
+  //    instead of one per row, each carrying a correlated NOT EXISTS.
+  try {
+    const placeholders = employeeIds.map(() => "?").join(",");
+    await db.execute(
+      `UPDATE work_inbox_item
+          SET is_actioned = 1, is_read = 1
+        WHERE is_actioned = 0
+          AND entity_type = 'attendance'
+          AND type IN ('attendance_regularization','attendance_missing_punch','attendance_validation')
+          AND entity_id IN (${placeholders})
+          AND NOT EXISTS (
+                SELECT 1 FROM attendance_regularization ar
+                 WHERE ar.employee_id = work_inbox_item.entity_id
+                   AND ar.status NOT IN ('approved','rejected','cancelled','discarded'))`,
+      employeeIds,
+    );
+  } catch { /* non-fatal: the inbox reconciliation sweep closes what this misses */ }
+
+  // 2. One SMS per employee, not per row. Someone with eight corrections in the file gets one
+  //    message about the batch rather than eight identical ones seconds apart.
+  try {
+    const placeholders = employeeIds.map(() => "?").join(",");
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id IN (${placeholders})`,
+      employeeIds,
+    );
+    const byEmp = new Map<string, { name: string; phone: string | null }>();
+    for (const e of empRows as any[]) {
+      byEmp.set(String(e.id), { name: String(e.name ?? ""), phone: e.mobile ?? e.personal_phone ?? null });
+    }
+    const datesByEmp = new Map<string, string[]>();
+    for (const a of applied) {
+      if (!datesByEmp.has(a.employeeId)) datesByEmp.set(a.employeeId, []);
+      datesByEmp.get(a.employeeId)!.push(a.sessionDate);
+    }
+    for (const [empId, dates] of datesByEmp) {
+      const emp = byEmp.get(empId);
+      if (!emp?.phone) continue;
+      const sorted = [...new Set(dates)].sort();
+      sendSMS(emp.phone, "attendance_regularization_approved", {
+        name: emp.name,
+        date: sorted.length === 1 ? sorted[0] : `${sorted[0]} +${sorted.length - 1} more`,
+      }).catch(() => {});
+    }
+  } catch { /* non-fatal */ }
+
+  // 3. Payroll recalculation, once per distinct employee-month.
+  try {
+    const { recalculateOpenPayrollForEmployee, queuePayrollRecalculation } = await import(
+      "../payroll/payroll-targeted-recalculation.service.js"
+    );
+    const byEmpMonth = new Map<string, { employeeId: string; month: string; regularizationId: string }>();
+    for (const a of applied) {
+      const month = a.sessionDate.slice(0, 7);
+      const key = `${a.employeeId}|${month}`;
+      if (!byEmpMonth.has(key)) {
+        byEmpMonth.set(key, { employeeId: a.employeeId, month, regularizationId: a.regularizationId });
+      }
+    }
+    // Bounded like the row loop: a recalculation is heavier than a row, and the pool is shared
+    // with 45 workers.
+    await mapWithConcurrency([...byEmpMonth.values()], BULK_ROW_CONCURRENCY, async (t) => {
+      try {
+        await recalculateOpenPayrollForEmployee({
+          employeeId: t.employeeId,
+          payrollMonth: t.month,
+          sourceEventType: "attendance_regularization",
+          sourceEventId: t.regularizationId,
+          reason: `Bulk approved attendance regularizations for ${t.month}`,
+          actorUserId: approverUserId,
+        });
+      } catch (err: any) {
+        try {
+          await queuePayrollRecalculation({
+            employeeId: t.employeeId,
+            payrollMonth: t.month,
+            sourceEventType: "attendance_regularization",
+            sourceEventId: t.regularizationId,
+            reason: `Bulk recalculation failed: ${err?.message ?? String(err)}`,
+            requestedBy: approverUserId,
+          });
+        } catch { /* payroll readiness will surface the stale line */ }
+      }
+    });
+  } catch { /* non-fatal */ }
 }
 
 export async function applyRegularizationBatch(
@@ -276,6 +394,7 @@ export async function applyRegularizationBatch(
       let grpFailed = 0;
       const grpErrors: string[] = [];
       const grpLocked: { entityId: string; employeeId: string | null }[] = [];
+      const grpApplied_: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
 
       for (const row of empRows) {
         try {
@@ -289,9 +408,23 @@ export async function applyRegularizationBatch(
                   : `Branch Head bulk approval (${batch.upload_batch_no})`,
               },
               approverUserId,
+              // Work-inbox clear, SMS and payroll recalculation are per-employee-month concerns,
+              // not per-row ones. Run inline they dominate this loop — the recalculation alone
+              // re-costs an employee's whole month once per correction they have in the file.
+              // Collected below and run once each after the loop; see runDeferredSideEffects.
+              { deferSideEffects: true },
             )
           );
           grpLocked.push({ entityId: row.created_entity_id, employeeId: row.employee_id ? String(row.employee_id) : null });
+          // Collected for the deferred side effects. Only rows that actually applied, so a
+          // failed row never triggers a notification or a recalculation of its own.
+          if (row.employee_id && row.session_date) {
+            grpApplied_.push({
+              employeeId: String(row.employee_id),
+              sessionDate: String(row.session_date),
+              regularizationId: row.created_entity_id,
+            });
+          }
           void logSensitiveAction({
             actor_user_id: approverUserId,
             actor_role: "branch_head",
@@ -310,15 +443,17 @@ export async function applyRegularizationBatch(
           grpFailed++;
         }
       }
-      return { grpApplied, grpFailed, grpErrors, grpLocked };
+      return { grpApplied, grpFailed, grpErrors, grpLocked, grpApplied_ };
     },
   );
 
+  const appliedRows: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
   for (const r of groupResults) {
     applied += r.grpApplied;
     failed += r.grpFailed;
     errors.push(...r.grpErrors);
     toLock.push(...r.grpLocked);
+    appliedRows.push(...r.grpApplied_);
   }
 
   await lockEntities(
@@ -331,6 +466,9 @@ export async function applyRegularizationBatch(
       lockedBy: approverUserId,
     })),
   );
+
+  // After the locks, so a side effect that runs long cannot delay the batch's own bookkeeping.
+  await runDeferredSideEffects(appliedRows, approverUserId);
 
   return { applied, failed, errors };
 }
