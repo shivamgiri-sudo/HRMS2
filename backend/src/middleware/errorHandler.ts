@@ -52,7 +52,28 @@ export function errorHandler(
   }
 
   if (error instanceof Error) {
-    const operationalError = error as Error & { statusCode?: number; code?: string };
+    const operationalError = error as Error & { statusCode?: number; code?: string; retryAfter?: number };
+
+    // db/mysql.ts's circuit breaker throws a plain Error with code=CIRCUIT_BREAKER_OPEN
+    // and retryAfter, no statusCode — so it fell through to the generic 500 mask below
+    // exactly like MulterError used to (see that fix's comment above): a database that
+    // is briefly unreachable read to the user as "An unexpected server error occurred.
+    // Please quote reference <hex> if you contact HR", indistinguishable from a real
+    // bug and pointing them at a support ticket for something that clears itself in
+    // under a minute. 503 (Service Unavailable) is also the honest status here — a
+    // retriable condition, not a server fault — and the Retry-After header is the
+    // standard way to tell a client how long to wait before trying again.
+    if (operationalError.code === "CIRCUIT_BREAKER_OPEN") {
+      const retryAfter = operationalError.retryAfter ?? 30;
+      res.set("Retry-After", String(retryAfter));
+      return res.status(503).json({
+        success: false,
+        errorCode: operationalError.code,
+        retryAfter,
+        message: `The system is briefly reconnecting to the database. Please try again in ${retryAfter} second${retryAfter === 1 ? "" : "s"}.`
+      });
+    }
+
     const statusCode = operationalError.statusCode;
     // 4xx errors are operational (bad request, unauthorized, etc.) — safe to surface message
     if (statusCode && statusCode >= 400 && statusCode < 500) {
