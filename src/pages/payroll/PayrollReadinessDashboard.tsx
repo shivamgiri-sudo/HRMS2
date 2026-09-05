@@ -280,8 +280,24 @@ function processingMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/**
+ * The auth token is stored under "hrms_access_token" — that is the key hrmsApi.ts writes on
+ * login, reads on every request and clears on logout.
+ *
+ * This read "hrms_token", which has never existed, so every one of the ELEVEN calls below sent
+ * `Authorization: Bearer null` and came back 401. The page still looked alive because its branch
+ * LIST goes through hrmsApi (correct key) — only the parts using this helper were dead: the
+ * branch detail drawer, the process checklist and sign-off, request-freeze, and the HO OVERRIDE.
+ *
+ * The override is the one that matters. It is the control that unblocks a branch whose readiness
+ * cannot otherwise pass, and it is the documented way to get Head Office payroll moving — a
+ * button that silently could not work, on the page whose job is to gate payroll.
+ *
+ * Uses the same key as the shared client rather than a second literal, because two places
+ * spelling one key is how this happened.
+ */
 async function apiFetch(url: string, opts?: RequestInit) {
-  const token = localStorage.getItem("hrms_token");
+  const token = localStorage.getItem("hrms_access_token");
   const res = await fetch(url, {
     ...opts,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...opts?.headers },
