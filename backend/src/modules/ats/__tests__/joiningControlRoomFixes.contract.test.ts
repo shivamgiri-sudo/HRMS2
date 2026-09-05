@@ -232,3 +232,35 @@ describe('the automated daily reminder can now carry a real link for kit-scoped 
     expect(dispatchCall).toContain('item.kit_id ?');
   });
 });
+
+describe('salary_component_assignments syncs from a locked salary register, never invented', () => {
+  it('copies ats_payroll_hr_validation\'s own breakdown rather than deriving or estimating one', () => {
+    const fn = service.slice(service.indexOf('export async function syncSalaryComponentFromValidation'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('payroll.basic_salary');
+    expect(body).toContain('payroll.hra');
+    expect(body).toContain('payroll.conveyance');
+    expect(body).toContain('payroll.special_allowance');
+    // net_estimate is left NULL, not computed — no formula for it anywhere here.
+    expect(body).toMatch(/NULL,\s*\?,\s*NOW\(\)/);
+  });
+
+  it('requires the register to actually be locked, not merely present', () => {
+    const fn = service.slice(service.indexOf('export async function syncSalaryComponentFromValidation'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('Number(payroll.salary_register_locked) !== 1');
+  });
+
+  it('never overwrites an existing active assignment', () => {
+    const fn = service.slice(service.indexOf('export async function syncSalaryComponentFromValidation'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain("WHERE employee_id = ? AND status = 'active'");
+    expect(body.indexOf('existing')).toBeLessThan(body.indexOf('INSERT INTO salary_component_assignments'));
+  });
+
+  it('runs automatically the moment a salary register locks', () => {
+    const fn = service.slice(service.indexOf('export async function lockSalaryRegister'));
+    const body = fn.slice(0, fn.indexOf('\nexport async function approveSalaryProposal'));
+    expect(body).toContain('await syncSalaryComponentFromValidation(candidateId, actorId)');
+  });
+});
