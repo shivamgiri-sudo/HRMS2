@@ -60,6 +60,7 @@ import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nigh
 import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
 import { startHelpdeskSlaCron, stopHelpdeskSlaCron } from "../modules/helpdesk/helpdesk-sla.cron.js";
 import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from "./inbox-reconciliation.worker.js";
+import { startAttendanceCorrectionReconciliationWorker, stopAttendanceCorrectionReconciliationWorker } from "./attendance-correction-reconciliation.worker.js";
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
@@ -308,6 +309,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startInboxReconciliationWorker(); return Promise.resolve(); },
   },
   {
+    // Notices approved attendance changes that never reached the record. Read-only; the write
+    // guard prevents the known causes, this catches causes we do not know about yet.
+    name: "attendance-correction-reconciliation",
+    start: () => { startAttendanceCorrectionReconciliationWorker(); return Promise.resolve(); },
+  },
+  {
     name: "report-generation",
     start: startReportGenerationWorker,
   },
@@ -464,6 +471,7 @@ function shutdown(): void {
   stopWalkinSlaCron();
   stopHelpdeskSlaCron();
   stopInboxReconciliationWorker();
+  stopAttendanceCorrectionReconciliationWorker();
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
