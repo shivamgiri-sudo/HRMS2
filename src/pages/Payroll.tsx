@@ -15,6 +15,7 @@ import {
   Sparkles,
   TrendingUp,
   Users,
+  Building2,
   Wallet,
   X,
   Zap,
@@ -84,6 +85,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import RunScopePicker from "@/components/payroll/RunScopePicker";
+import type { PickerBranch } from "@/components/payroll/runScopeSelection";
+import { useMonthCoverage } from "@/hooks/useMonthCoverage";
 
 const months = [
   { value: "1", label: "January" },
@@ -270,6 +274,34 @@ const Payroll = () => {
     ? new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
         .format(new Date(Number(processingRunMonth.split("-")[0]), Number(processingRunMonth.split("-")[1]) - 1, 1))
     : null;
+
+  // ── Scoped run (e.g. Head Office only) ────────────────────────────────────────────────────
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [selectedCostCentreIds, setSelectedCostCentreIds] = useState<string[]>([]);
+  /**
+   * The month the picker asks coverage for MUST be the month the run is created for, or a cost
+   * centre could look free here and be refused by the server for a different month.
+   */
+  const scopeMonth = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
+  const { data: coverage, isLoading: coverageLoading } = useMonthCoverage(
+    scopeDialogOpen ? scopeMonth : ""
+  );
+  /** Coverage is a flat list of cost centres; the picker wants them grouped under their branch. */
+  const scopeBranches: PickerBranch[] = useMemo(() => {
+    const byBranch = new Map<string, PickerBranch>();
+    for (const cc of coverage?.costCentres ?? []) {
+      if (!byBranch.has(cc.branchId)) {
+        byBranch.set(cc.branchId, { branchId: cc.branchId, branchName: cc.branchName, costCentres: [] });
+      }
+      byBranch.get(cc.branchId)!.costCentres.push({
+        costCentreId: cc.costCentreId,
+        costCentreCode: cc.costCentreCode,
+        staff: cc.staff,
+        status: cc.status,
+      });
+    }
+    return [...byBranch.values()].sort((a, b) => a.branchName.localeCompare(b.branchName));
+  }, [coverage]);
 
   const availableYears = useMemo(() => {
     const years = new Set<number>();
@@ -487,6 +519,38 @@ const Payroll = () => {
       title: "Export Complete",
       description: `${dataToExport.length} payroll records exported to PDF.`,
     });
+  };
+
+  /**
+   * The same generation, confined to the ticked cost centres.
+   *
+   * Identical to handleGeneratePayroll except for costCentreIds — which is the whole difference
+   * between paying Head Office and paying the company. The success message names the count so a
+   * scoped run cannot be mistaken for a company one after the fact.
+   */
+  const handleGenerateScopedPayroll = () => {
+    const count = selectedCostCentreIds.length;
+    generatePayroll.mutate(
+      { month: currentMonth, year: currentYear, costCentreIds: selectedCostCentreIds },
+      {
+        onSuccess: (data) => {
+          setScopeDialogOpen(false);
+          setSelectedCostCentreIds([]);
+          toast({
+            title: "Scoped payroll generated",
+            description: `${data.count} employee(s) across ${count} cost centre(s).`,
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: "Failed to generate scoped payroll",
+            description:
+              error instanceof Error ? error.message : "An error occurred.",
+            variant: "destructive",
+          });
+        },
+      }
+    );
   };
 
   const handleGeneratePayroll = () => {
@@ -893,6 +957,23 @@ const Payroll = () => {
             </div>
           }
           primaryAction={
+            <div className="flex items-center gap-2">
+              {/*
+                Run a chosen set of cost centres — e.g. Head Office alone — rather than the whole
+                company. The backend has supported this since the scoped-run work landed, and
+                RunScopePicker was built for it, but nothing ever rendered the picker: every route
+                into payroll generation called the hook without costCentreIds, so a scoped run was
+                unreachable from the UI and "Generate Payroll" could only ever mean everybody.
+              */}
+              <Button
+                variant="outline"
+                className="h-10 rounded-[var(--r-md)] px-4 text-xs font-semibold"
+                onClick={() => setScopeDialogOpen(true)}
+                disabled={generatePayroll.isPending}
+              >
+                <Building2 className="mr-2 h-4 w-4" />
+                Run by Cost Centre
+              </Button>
               <Button
                 className="h-10 rounded-[var(--r-md)] bg-[var(--brand-500)] px-4 text-xs font-semibold text-white hover:bg-[var(--brand-600)]"
                 onClick={handleGeneratePayroll}
@@ -905,8 +986,45 @@ const Payroll = () => {
                 )}
                 {generatePayroll.isPending ? "Generating..." : "Generate Payroll"}
               </Button>
+            </div>
           }
         />
+
+        <Dialog open={scopeDialogOpen} onOpenChange={setScopeDialogOpen}>
+          <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
+            <DialogHeader className="shrink-0">
+              <DialogTitle>Run payroll for selected cost centres</DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <p className="mb-3 text-xs text-slate-500">
+                Pays only the cost centres you tick, for {processingLabel}. A cost centre already
+                covered by a live run this month is shown but cannot be picked — the server refuses
+                it either way, so this only saves you the round trip.
+              </p>
+              <RunScopePicker
+                branches={scopeBranches}
+                value={selectedCostCentreIds}
+                onChange={setSelectedCostCentreIds}
+                loading={coverageLoading}
+              />
+            </div>
+            <DialogFooter className="shrink-0">
+              <Button variant="outline" onClick={() => setScopeDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleGenerateScopedPayroll}
+                disabled={selectedCostCentreIds.length === 0 || generatePayroll.isPending}
+              >
+                {generatePayroll.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Run {selectedCostCentreIds.length} cost centre
+                {selectedCostCentreIds.length === 1 ? "" : "s"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <PayrollJourneyStrip
           runSummaries={runSummaries}

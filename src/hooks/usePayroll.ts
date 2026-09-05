@@ -312,10 +312,34 @@ export function useGeneratePayroll() {
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
         if (!message.toLowerCase().includes("already exists")) throw error;
+        /*
+         * Adopt the month's existing run — but NEVER a voided one.
+         *
+         * This fallback used to take runs[0] whatever its status. On 2026-09-05 that silently
+         * resurrected a CANCELLED run: the create was refused as a duplicate, this branch
+         * adopted the cancelled row, and the /calculate below flipped it to 'processing' —
+         * undoing a deliberate cancellation and paying against a run somebody had voided.
+         *
+         * A cancelled or rejected run does not occupy its month (see VOID_RUN_STATUSES in
+         * payroll/run-status.ts). If the ONLY run for this month is voided, the create should
+         * have succeeded; being here with nothing adoptable means something is genuinely wrong,
+         * so surface it rather than reviving a corpse.
+         */
+        const VOID_STATUSES = ["cancelled", "rejected"];
         const existing = await hrmsApi.get<{ data: any[] }>(
-          `/api/payroll/runs?runMonth=${runMonth}&limit=1`
+          `/api/payroll/runs?runMonth=${runMonth}&limit=20`
         );
-        runId = existing.data?.[0]?.id ?? null;
+        const adoptable = (existing.data ?? []).filter(
+          (r: any) => !VOID_STATUSES.includes(String(r?.status ?? "").trim().toLowerCase())
+        );
+        if (!adoptable.length) {
+          throw new Error(
+            `Payroll for ${runMonth} could not be created, and the only existing run for that ` +
+            `month is cancelled. A cancelled run cannot be reused — it has to be investigated ` +
+            `rather than restarted.`
+          );
+        }
+        runId = adoptable[0]?.id ?? null;
       }
 
       if (!runId) throw new Error("Could not find or create payroll run");
