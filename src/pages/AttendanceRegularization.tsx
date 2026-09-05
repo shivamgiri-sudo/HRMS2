@@ -95,6 +95,7 @@ type EmployeeRequest = {
   employee_id: string | null;
   employee_code: string | null;
   submitted_by: string | null;
+  manager_name: string | null;
   request_type_code: string;
   title: string;
   reason: string | null;
@@ -143,6 +144,7 @@ type WfmRegularizationRow = {
   employee_id: string;
   employee_name?: string | null;
   employee_code?: string | null;
+  manager_name?: string | null;
   session_date: string;
   status: string;
   requested_status?: string | null;
@@ -318,6 +320,7 @@ function normalizeRegularizationRow(row: WfmRegularizationRow): EmployeeRequest 
     employee_id: row.employee_id,
     employee_code: row.employee_code ?? null,
     submitted_by: row.employee_name ?? row.employee_code ?? null,
+    manager_name: row.manager_name ?? null,
     request_type_code: requestTypeCode,
     title: requestTypeCode === "exception"
       ? `Exception (${disputeType}) for ${attendanceDate}`
@@ -1935,6 +1938,7 @@ export default function AttendanceRegularization() {
                       </Th>
                       <Th>Request</Th>
                       {viewTab !== "my_requests" && <Th>Employee</Th>}
+                      {viewTab !== "my_requests" && <Th>Manager</Th>}
                       <Th>Date</Th>
                       <Th>Type</Th>
                       <Th>Status</Th>
@@ -1980,6 +1984,11 @@ export default function AttendanceRegularization() {
                                   You
                                 </span>
                               )}
+                            </Td>
+                          )}
+                          {viewTab !== "my_requests" && (
+                            <Td>
+                              <div className="text-slate-700">{request.manager_name || "—"}</div>
                             </Td>
                           )}
                           <Td>{detail?.attendance_date || "—"}</Td>

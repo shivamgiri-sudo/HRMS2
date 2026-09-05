@@ -1299,6 +1299,7 @@ wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: an
             b.branch_name,
             p.process_name,
             arm.label AS reason_label,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name,
             adr.attendance_status AS current_attendance_status,
             adr.lwp_value AS current_lwp,
             adr.is_locked AS attendance_locked,
@@ -1326,6 +1327,7 @@ wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: an
        LEFT JOIN branch_master b ON b.id = COALESCE(ar.branch_id, e.branch_id)
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN attendance_reason_master arm ON arm.code = ar.reason_code
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
        LEFT JOIN attendance_daily_record adr
               ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
        LEFT JOIN integration_biometric_daily ibd

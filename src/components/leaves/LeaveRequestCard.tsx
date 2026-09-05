@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Check, X, Calendar, Clock, UserCheck, RotateCcw } from "lucide-react";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { formatDate, formatDateTime } from "@/lib/utils";
+import { getLeaveColor } from "@/lib/leaveColors";
 
 /*
  * One LeaveRequest, defined where the data comes from.
@@ -69,8 +70,10 @@ const getLeaveTypeStyle = (type: string): string => {
 // then threw "onDiscard is not defined" instead of simply hiding the button.
 export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: LeaveRequestCardProps) {
   return (
-    <Card className="overflow-hidden transition-all duration-300 hover:shadow-lg">
-      <CardContent className="p-6">
+    <Card className="relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
+      {/* Left accent — same color the type badge and the balance/chart tiles use, via the shared leaveColors map */}
+      <span className={`absolute inset-y-0 left-0 w-1.5 ${getLeaveColor(request.type)}`} aria-hidden="true" />
+      <CardContent className="p-6 pl-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
             <Avatar className="h-12 w-12">
@@ -132,8 +135,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                 {onApprove && (
                   <Button
                     size="sm"
-                    variant="outline"
-                    className="border-emerald-500/20 text-emerald-600 hover:bg-emerald-500/10"
+                    className="bg-emerald-600 text-white shadow-sm shadow-emerald-600/25 transition-colors hover:bg-emerald-700"
                     onClick={() => onApprove(request.id)}
                   >
                     <Check className="mr-1 h-4 w-4" />
@@ -144,7 +146,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-destructive/20 text-destructive hover:bg-destructive/10"
+                    className="border-destructive/30 text-destructive hover:bg-destructive/10"
                     onClick={() => onReject(request.id)}
                   >
                     <X className="mr-1 h-4 w-4" />

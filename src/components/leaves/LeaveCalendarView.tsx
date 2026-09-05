@@ -253,7 +253,7 @@ export function LeaveCalendarView() {
                 return (
                   <div
                     key={leave.id}
-                    className="flex items-center gap-3 rounded-lg border p-3"
+                    className="flex items-center gap-3 rounded-lg border p-3 transition-shadow hover:shadow-sm"
                   >
                     <div className="relative">
                       <Avatar className="h-10 w-10">

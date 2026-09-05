@@ -18,17 +18,77 @@ import { parseISO, getMonth, getYear } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const TYPE_COLORS: Record<string, string> = {
-  CL: "#1B6AB5",
-  EL: "#3BAD49",
-  ML: "#f59e0b",
-  PTRL: "#8b5cf6",
-  MTRL: "#ec4899",
+
+/**
+ * One tone per leave type, shared by the balance rings and both charts below — so
+ * "Casual Leave" is the same blue everywhere on this tab instead of three
+ * independently-guessed color sets. Keyed by the short code (what `useLeaveBalances`
+ * returns as `leave_code`); `resolveTone` below matches the full type name the
+ * charts carry (e.g. "Casual Leave") back to the same key.
+ */
+const LEAVE_TONE: Record<string, { grad: string; border: string; hex: string; text: string }> = {
+  CL:   { grad: "from-blue-50 to-indigo-50",   border: "border-blue-200",   hex: "#3b82f6", text: "text-blue-700" },
+  EL:   { grad: "from-emerald-50 to-green-50", border: "border-emerald-200", hex: "#10b981", text: "text-emerald-700" },
+  ML:   { grad: "from-purple-50 to-violet-50", border: "border-purple-200", hex: "#a855f7", text: "text-purple-700" },
+  LWP:  { grad: "from-amber-50 to-orange-50",  border: "border-amber-200", hex: "#f59e0b", text: "text-amber-700" },
+  MTRL: { grad: "from-cyan-50 to-teal-50",     border: "border-cyan-200",  hex: "#06b6d4", text: "text-cyan-700" },
+  PTRL: { grad: "from-pink-50 to-rose-50",     border: "border-pink-200",  hex: "#ec4899", text: "text-pink-700" },
 };
-const DEFAULT_COLOR = "#94a3b8";
+const DEFAULT_TONE = { grad: "from-slate-50 to-slate-100", border: "border-slate-200", hex: "#94a3b8", text: "text-slate-600" };
+
+/** Matches a leave code directly (CL, EL, ...) or a full name (Casual Leave, Sick Leave) to a tone. */
+function resolveTone(codeOrName: string) {
+  const key = codeOrName.trim().toUpperCase();
+  if (LEAVE_TONE[key]) return LEAVE_TONE[key];
+  const name = codeOrName.toLowerCase();
+  if (name.includes("casual")) return LEAVE_TONE.CL;
+  if (name.includes("earned") || name.includes("annual")) return LEAVE_TONE.EL;
+  if (name.includes("medical") || name.includes("sick")) return LEAVE_TONE.ML;
+  if (name.includes("without pay") || name.includes("lwp")) return LEAVE_TONE.LWP;
+  if (name.includes("maternity")) return LEAVE_TONE.MTRL;
+  if (name.includes("paternity")) return LEAVE_TONE.PTRL;
+  return DEFAULT_TONE;
+}
 
 interface LeaveTrendsProps {
   employeeId: string | undefined;
+}
+
+/**
+ * 56px / 5px-stroke progress ring per the frozen leave-balance-card spec: the arc fills
+ * by available/allocated proportion (how much is left to use), color keyed to the same
+ * per-type tone as the chart bars, with the available-days figure centered.
+ */
+function LeaveBalanceRing({ available, allocated, hex }: { available: number; allocated: number; hex: string }) {
+  const size = 56;
+  const stroke = 5;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = allocated > 0 ? Math.max(0, Math.min(1, available / allocated)) : 0;
+  const offset = circumference * (1 - pct);
+
+  return (
+    <div className="relative h-14 w-14 shrink-0">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-slate-200/70" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={hex}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          style={{ transition: "stroke-dashoffset 400ms ease" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[13px] font-bold leading-none text-slate-900">{available.toFixed(1)}</span>
+      </div>
+    </div>
+  );
 }
 
 export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
@@ -100,20 +160,26 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
 
   return (
     <div className="space-y-4">
-      {/* Summary stats row */}
+      {/* Summary stats row — one progress ring per leave type, toned by resolveTone() */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {balances?.map((b) => (
-          <div key={b.id} className="rounded-xl border bg-white p-3 text-center shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{b.leave_code}</p>
-            <p className="mt-1 text-xl font-bold text-slate-900">
-              {b.available_days.toFixed(1)}
-              <span className="text-xs font-normal text-slate-400">/{b.allocated_days.toFixed(0)}</span>
-            </p>
-            <p className="text-[10px] text-slate-400 mt-0.5">
-              {b.used_days.toFixed(1)} used
-            </p>
-          </div>
-        ))}
+        {balances?.map((b) => {
+          const tone = resolveTone(b.leave_code);
+          return (
+            <div
+              key={b.id}
+              className={`flex items-center gap-3 rounded-xl border bg-gradient-to-br p-3 shadow-sm transition-shadow hover:shadow-md ${tone.grad} ${tone.border}`}
+            >
+              <LeaveBalanceRing available={b.available_days} allocated={b.allocated_days} hex={tone.hex} />
+              <div className="min-w-0">
+                <p className={`text-[10px] font-bold uppercase tracking-widest ${tone.text}`}>{b.leave_code}</p>
+                <p className="text-xs text-slate-500">
+                  of <span className="font-semibold text-slate-700">{b.allocated_days.toFixed(0)}</span> allotted
+                </p>
+                <p className="text-[10px] text-slate-400">{b.used_days.toFixed(1)} used</p>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -131,14 +197,21 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
             ) : (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={monthlyData} barSize={12} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="leaveMonthlyFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#1B6AB5" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="#1B6AB5" stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip
+                    cursor={{ fill: "#f1f5f9" }}
                     formatter={(v: number) => [`${v} day${v !== 1 ? "s" : ""}`, "Used"]}
                     contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
                   />
-                  <Bar dataKey="days" fill="#1B6AB5" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="days" fill="url(#leaveMonthlyFill)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -157,33 +230,38 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
                 No approved leaves recorded for {currentYear}
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={180}>
-                <BarChart
-                  data={byTypeData}
-                  layout="vertical"
-                  barSize={14}
-                  margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                  <XAxis type="number" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <YAxis dataKey="type" type="category" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={36} />
-                  <Tooltip
-                    formatter={(v: number) => [`${v} day${v !== 1 ? "s" : ""}`, "Used"]}
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                  />
-                  <Bar dataKey="days" radius={[0, 4, 4, 0]}>
-                    {byTypeData.map((entry) => {
-                      const code = entry.type.split(" ")[0]?.toUpperCase();
-                      return (
-                        <Cell
-                          key={entry.type}
-                          fill={TYPE_COLORS[code] ?? DEFAULT_COLOR}
-                        />
-                      );
-                    })}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart
+                    data={byTypeData}
+                    layout="vertical"
+                    barSize={14}
+                    margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <YAxis dataKey="type" type="category" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={36} />
+                    <Tooltip
+                      cursor={{ fill: "#f1f5f9" }}
+                      formatter={(v: number) => [`${v} day${v !== 1 ? "s" : ""}`, "Used"]}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                    />
+                    <Bar dataKey="days" radius={[0, 4, 4, 0]}>
+                      {byTypeData.map((entry) => (
+                        <Cell key={entry.type} fill={resolveTone(entry.type).hex} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-slate-100 pt-2">
+                  {byTypeData.map((entry) => (
+                    <span key={entry.type} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: resolveTone(entry.type).hex }} />
+                      {entry.type}
+                    </span>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
