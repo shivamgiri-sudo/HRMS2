@@ -37,7 +37,14 @@ export type MonthCoverage = {
   totals: { paid: number; inRun: number; notStarted: number; uncovered: number };
 };
 
-export async function getMonthCoverage(month: string): Promise<MonthCoverage> {
+/**
+ * @param visibleBranchIds Branch ids this caller may see, or null for unrestricted. Resolved by
+ *   the route from the caller's assignment scopes — never from anything the client sends.
+ */
+export async function getMonthCoverage(
+  month: string,
+  visibleBranchIds: Set<string> | null = null,
+): Promise<MonthCoverage> {
   /*
    * Cost centres with their run state. A LEFT JOIN through the scope table rather than a lookup per
    * cost centre: there are 401 active cost centres, and this is rendered on a dashboard.
@@ -87,6 +94,10 @@ export async function getMonthCoverage(month: string): Promise<MonthCoverage> {
   const [uncovered] = await db.execute<RowDataPacket[]>(
     `SELECT e.id,
             e.employee_code,
+            -- Needed for row scope below. COALESCE because the whole point of this query is
+            -- employees whose cost centre is missing or dead, so bm.id is frequently NULL —
+            -- falling back to the employee's own branch keeps them scoped rather than invisible.
+            COALESCE(bm.id, e.branch_id) AS branch_id,
             CASE WHEN e.cost_centre_id IS NULL
                  THEN 'no cost centre assigned'
                  WHEN ccm.id IS NULL
@@ -112,7 +123,7 @@ export async function getMonthCoverage(month: string): Promise<MonthCoverage> {
     [month],
   );
 
-  const costCentres: CoverageCostCentre[] = ccRows.map((r) => ({
+  const allCostCentres: CoverageCostCentre[] = ccRows.map((r) => ({
     costCentreId: String(r.cost_centre_id),
     costCentreCode: String(r.cost_centre_code ?? ""),
     branchId: String(r.branch_id),
@@ -124,7 +135,30 @@ export async function getMonthCoverage(month: string): Promise<MonthCoverage> {
     status: (!r.run_id ? "not_started" : isRunClosed(r.run_status) ? "paid" : "in_run") as CoverageStatus,
   }));
 
-  const uncoveredEmployees = uncovered.map((r) => ({
+  /*
+   * Row scope. This returned every branch's cost centres and headcounts to anyone holding a
+   * payroll role, so a branch-scoped user opening the run-scope picker saw the whole company's
+   * structure. Creating a run was already confined by requireScopedRole, so this was visibility
+   * rather than escalation — but org structure and headcount are not a branch user's to browse,
+   * and every comparable payroll surface scopes its rows.
+   *
+   * `null` means unrestricted, matching resolveVisibleBranchIds() in
+   * bank-payment-readiness.routes.ts — including its deliberate treatment of a caller with no
+   * scope rows, which stays unrestricted so this is not a silent regression for existing users.
+   */
+  const costCentres = visibleBranchIds
+    ? allCostCentres.filter((c) => visibleBranchIds.has(c.branchId))
+    : allCostCentres;
+
+  /*
+   * Scoped by the same rule. Left unfiltered, a branch user would see a cost-centre list confined
+   * to their branch beside an "uncovered employees" list from the whole company — two halves of
+   * one answer disagreeing about who the answer is about.
+   */
+  const visibleUncovered = visibleBranchIds
+    ? uncovered.filter((r) => r.branch_id && visibleBranchIds.has(String(r.branch_id)))
+    : uncovered;
+  const uncoveredEmployees = visibleUncovered.map((r) => ({
     employeeId: String(r.id),
     employeeCode: String(r.employee_code ?? ""),
     reason: String(r.reason),

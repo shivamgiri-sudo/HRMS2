@@ -166,3 +166,92 @@ describe("the route", () => {
     expect(handler).not.toContain('"branch_head"');
   });
 });
+
+describe("row scope — a branch user does not see the whole company", () => {
+  /*
+   * This endpoint feeds the run-scope picker, and returned EVERY branch's cost centres and
+   * headcounts to anyone holding a payroll role. Creating a run was already confined by
+   * requireScopedRole, so this was visibility rather than escalation — but org structure and
+   * headcount are not a branch user's to browse, and every comparable payroll surface scopes
+   * its rows.
+   */
+  const twoBranches = [
+    cc({ cost_centre_id: "cc-ho", branch_id: "br-ho", branch_name: "HEAD OFFICE" }),
+    cc({ cost_centre_id: "cc-noida", branch_id: "br-noida", branch_name: "NOIDA" }),
+  ];
+  const twoUncovered = [
+    { id: "e1", employee_code: "MAS1", branch_id: "br-ho", reason: "no cost centre assigned" },
+    { id: "e2", employee_code: "MAS2", branch_id: "br-noida", reason: "no cost centre assigned" },
+  ];
+
+  it("returns only the caller's branches when scoped", async () => {
+    respond(twoBranches, twoUncovered);
+    const r = await getMonthCoverage("2026-08", new Set(["br-ho"]));
+    expect(r.costCentres.map((c) => c.branchId)).toEqual(["br-ho"]);
+  });
+
+  it("scopes the uncovered list to the same branches", async () => {
+    // Left unfiltered, a branch user sees their own cost centres beside the whole company's
+    // unpaid employees — two halves of one answer disagreeing about who it is about.
+    respond(twoBranches, twoUncovered);
+    const r = await getMonthCoverage("2026-08", new Set(["br-ho"]));
+    expect(r.uncoveredEmployees.map((e) => e.employeeCode)).toEqual(["MAS1"]);
+  });
+
+  it("recomputes totals from what the caller can see", async () => {
+    // Totals describing rows the caller cannot see would report a month as incomplete for
+    // reasons they have no way to investigate.
+    respond(twoBranches, twoUncovered);
+    const r = await getMonthCoverage("2026-08", new Set(["br-ho"]));
+    expect(r.totals.notStarted).toBe(1);
+    expect(r.totals.uncovered).toBe(1);
+  });
+
+  it("is unrestricted when no scope is passed, so existing callers are unchanged", async () => {
+    respond(twoBranches, twoUncovered);
+    const r = await getMonthCoverage("2026-08");
+    expect(r.costCentres).toHaveLength(2);
+    expect(r.uncoveredEmployees).toHaveLength(2);
+  });
+
+  it("shows nothing when the caller is scoped to a branch with no cost centres", async () => {
+    // Scoped by something other than branch (process, department) yields an empty set. Falling
+    // through to "see everything" there would widen access by accident, which is the failure
+    // that actually matters.
+    respond(twoBranches, twoUncovered);
+    const r = await getMonthCoverage("2026-08", new Set<string>());
+    expect(r.costCentres).toHaveLength(0);
+    expect(r.uncoveredEmployees).toHaveLength(0);
+  });
+
+  it("keeps an uncovered employee visible when their cost centre is dead", async () => {
+    /*
+     * The whole point of the uncovered list is employees whose cost centre is missing or
+     * inactive, so the branch join is frequently NULL. The query COALESCEs to the employee's own
+     * branch — without that, scoping would hide exactly the people it exists to surface.
+     */
+    respond(twoBranches, [
+      { id: "e3", employee_code: "MAS3", branch_id: "br-ho", reason: "cost centre no longer exists" },
+    ]);
+    const r = await getMonthCoverage("2026-08", new Set(["br-ho"]));
+    expect(r.uncoveredEmployees.map((e) => e.employeeCode)).toEqual(["MAS3"]);
+  });
+});
+
+describe("the route resolves scope itself", () => {
+  it("never takes the branch from the client", () => {
+    // A caller who could name their own branches could read any branch's structure.
+    const idx = routes.indexOf('router.get("/runs/coverage"');
+    const block = routes.slice(idx, idx + 1400);
+    expect(block).toContain("resolveVisibleBranchIdsForCoverage(req.authUser!.id)");
+    expect(block).not.toMatch(/req\.(query|body)\.branch/i);
+  });
+
+  it("leaves HO roles unrestricted", () => {
+    // payroll_head and finance_head run the whole company's payroll; scoping them to a branch
+    // would break the view this picker exists for.
+    const idx = routes.indexOf("async function resolveVisibleBranchIdsForCoverage");
+    const fn = routes.slice(idx, idx + 700);
+    expect(fn).toMatch(/"super_admin", "admin", "payroll_head", "finance_head"/);
+  });
+});
