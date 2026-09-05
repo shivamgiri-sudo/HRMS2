@@ -61,6 +61,7 @@ import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
 import { startHelpdeskSlaCron, stopHelpdeskSlaCron } from "../modules/helpdesk/helpdesk-sla.cron.js";
 import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from "./inbox-reconciliation.worker.js";
 import { startAttendanceCorrectionReconciliationWorker, stopAttendanceCorrectionReconciliationWorker } from "./attendance-correction-reconciliation.worker.js";
+import { startBulkUploadStaleBatchWorker, stopBulkUploadStaleBatchWorker } from "./bulk-upload-stale-batch.worker.js";
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
@@ -309,6 +310,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startInboxReconciliationWorker(); return Promise.resolve(); },
   },
   {
+    // Notices bulk-upload batches whose job was lost to a restart and left them 'importing'
+    // forever. Marks them failed with a row count, so a dead import is visible instead of silent.
+    name: "bulk-upload-stale-batch",
+    start: () => { startBulkUploadStaleBatchWorker(); return Promise.resolve(); },
+  },
+  {
     // Notices approved attendance changes that never reached the record. Read-only; the write
     // guard prevents the known causes, this catches causes we do not know about yet.
     name: "attendance-correction-reconciliation",
@@ -472,6 +479,7 @@ function shutdown(): void {
   stopHelpdeskSlaCron();
   stopInboxReconciliationWorker();
   stopAttendanceCorrectionReconciliationWorker();
+  stopBulkUploadStaleBatchWorker();
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
