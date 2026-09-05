@@ -1484,15 +1484,28 @@ export const payrollBranchReadinessService = {
   // validatePayrollRunCreation
   // -------------------------------------------------------------------------
 
+  /**
+   * Which branches are not ready for a payroll run this month.
+   *
+   * `branchIds` narrows the check to the branches a run actually covers. Without it this asked
+   * "is EVERY branch in the company ready", which is right for a company-wide run and wrong for a
+   * scoped one: a run paying only HEAD OFFICE was refused because NOIDA was not ready, which is
+   * precisely the coupling scoped runs exist to remove. Omitting the argument keeps the
+   * company-wide behaviour every existing caller relies on.
+   */
   async validatePayrollRunCreation(
-    month: string
+    month: string,
+    branchIds?: string[]
   ): Promise<{ blocked: string[]; ready: string[] }> {
     let branches: Array<{ id: string; branch_name: string }> = [];
 
     try {
+      const scoped = Array.isArray(branchIds) && branchIds.length > 0;
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, branch_name FROM branch_master WHERE active_status = 1`,
-        []
+        `SELECT id, branch_name FROM branch_master
+          WHERE active_status = 1
+          ${scoped ? `AND id IN (${branchIds!.map(() => "?").join(",")})` : ""}`,
+        scoped ? branchIds! : []
       );
       branches = rows as Array<{ id: string; branch_name: string }>;
     } catch {

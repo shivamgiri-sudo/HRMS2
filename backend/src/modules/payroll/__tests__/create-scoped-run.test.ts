@@ -99,12 +99,18 @@ describe("duplicate rules differ by run kind", () => {
      * runs it would permit exactly one cost-centre run per month, which is the opposite of the
      * feature.
      */
-    const idx = service.indexOf("const isScoped = scopeRows.length > 0;");
-    expect(idx).toBeGreaterThan(-1);
-    const after = service.slice(idx, idx + 1400);
-    expect(after).toContain("if (isScoped) {");
-    expect(after).toContain("} else {");
-    expect(after.indexOf("assertCostCentresFree")).toBeLessThan(after.indexOf("Payroll run already exists"));
+    /*
+     * Anchored on the duplicate-check region itself, not on where isScoped is declared. That
+     * declaration moved above the readiness gate (the gate needs to know which branches the run
+     * covers), and a test pinned to its old position fails on a refactor that changed nothing about
+     * the rule it is guarding.
+     */
+    const idx = service.indexOf("await assertCostCentresFree(");
+    expect(idx, "scoped duplicate guard not found").toBeGreaterThan(-1);
+    const region = service.slice(idx - 400, idx + 1400);
+    expect(region).toContain("} else {");
+    // The scoped guard runs first; the one-run-per-month check sits in the else arm for company runs.
+    expect(region.indexOf("assertCostCentresFree")).toBeLessThan(region.indexOf("Payroll run already exists"));
   });
 
   it("writes the scope inside the same transaction as the run", () => {

@@ -8,6 +8,7 @@ import {
   assertCostCentresFree,
   insertRunScope,
   resolveCostCentreScope,
+  ScopeError,
 } from "./payroll-run-scope.service.js";
 import { leaveService } from "../leave/leave.service.js";
 import { validateTransition, canEdit, type RunStatus } from "./payroll-lifecycle.js";
@@ -339,20 +340,49 @@ export const payrollService = {
   // ─── Prep Runs ─────────────────────────────────────────────────────────────
 
   async createRun(input: CreateRunInput, userId: string): Promise<SalaryPrepRun> {
-    // M1 Branch Readiness Gate: validate that all branches are ready
+    /*
+     * Resolve the selection BEFORE the readiness gate, because the gate has to know which
+     * branches this run actually covers.
+     *
+     * The gate used to ask "is every branch in the company ready". For a company-wide run that is
+     * right. For a scoped run it is exactly the coupling scoped runs exist to remove: a run paying
+     * only HEAD OFFICE was refused because NOIDA was not ready. Verified live on 2026-09-05 - the
+     * first real scoped run came back "The following branches are not ready: Delhi Office, NOIDA,
+     * AHMEDABAD-JALDARSHAN, HEAD OFFICE, NOIDA-2, NOIDA-DIALDESK" when only HEAD OFFICE was
+     * selected.
+     */
+    const scopeRows = input.costCentreIds?.length
+      ? await resolveCostCentreScope(input.costCentreIds)
+      : [];
+    const isScoped = scopeRows.length > 0;
+    const scopedBranchIds = [...new Set(scopeRows.map((r) => r.branchId))];
+
+    // M1 Branch Readiness Gate: every branch this run covers must be ready.
     try {
       const { payrollBranchReadinessService } = await import("./payroll-branch-readiness.service.js");
-      const validation = await payrollBranchReadinessService.validatePayrollRunCreation(input.runMonth);
+      const validation = await payrollBranchReadinessService.validatePayrollRunCreation(
+        input.runMonth,
+        isScoped ? scopedBranchIds : undefined,
+      );
       if (validation.blocked.length > 0) {
-        throw new Error(
-          `Cannot create payroll run. The following branches are not ready: ${validation.blocked.join(", ")}. ` +
-          `Ensure attendance is frozen and readiness score ≥ 80 for all branches, or apply HO override.`
+        /*
+         * A ScopeError, not a bare Error. errorHandler.ts reads `statusCode`; a plain Error is
+         * masked as "An unexpected server error occurred. Please quote reference ..." - which is
+         * what this refusal looked like in production, hiding a perfectly actionable message
+         * behind a 500 and a reference number.
+         */
+        throw new ScopeError(
+          "BRANCH_NOT_READY",
+          `Cannot create payroll run. Not ready: ${validation.blocked.join(", ")}. ` +
+          `Freeze attendance and reach a readiness score of 80, or apply an HO override.`,
+          409,
         );
       }
     } catch (err: unknown) {
-      // If error is the validation message, throw it; otherwise log and allow creation (table may not exist yet)
+      // A refusal propagates; anything else (e.g. the readiness table missing) is logged and the
+      // creation proceeds, which is the pre-existing behaviour.
+      if (err instanceof ScopeError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("not ready")) throw err;
       console.warn("[createRun] Branch readiness check skipped:", msg);
     }
 
@@ -391,11 +421,7 @@ export const payrollService = {
          * empty list and resolves each cost centre's branch server-side, so the scope rows every
          * later query trusts cannot disagree with the cost centre master.
          */
-        const scopeRows = input.costCentreIds?.length
-          ? await resolveCostCentreScope(input.costCentreIds)
-          : [];
-        const isScoped = scopeRows.length > 0;
-
+        // scopeRows / isScoped were resolved above, before the readiness gate that needs them.
         if (isScoped) {
           // Readable refusal naming the clashing run. The UNIQUE key on
           // (run_month, cost_centre_id) is what actually guarantees one run per cost centre; this
