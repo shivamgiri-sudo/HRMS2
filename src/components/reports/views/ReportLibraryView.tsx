@@ -34,6 +34,7 @@
 
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Search, Star, Clock, Mail, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight,
   BarChart3, Users, CalendarDays, CreditCard, FileCheck, UserPlus, TrendingDown,
@@ -1160,9 +1161,21 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
         `/api/reports/${selectedReport.code}/request`,
         { filters }
       );
-      setRequestMessage(`Request ${res.requestReference} queued. Report will be emailed to ${res.recipientEmailMasked}.`);
+      const successText = `Request ${res.requestReference} queued. Report will be emailed to ${res.recipientEmailMasked}.`;
+      setRequestMessage(successText);
+      // The inline text next to the buttons auto-clears in 8s and is easy to miss
+      // entirely — this used to be the ONLY confirmation a user got, so a request
+      // that genuinely succeeded (queued, generated, emailed) looked exactly like
+      // one that silently did nothing. A toast is the same mechanism every other
+      // success/failure in this app already surfaces through, and stays up long
+      // enough (10s) plus a manual dismiss to actually be seen. "My Reports" is
+      // where the full history and delivery status ultimately live; this toast is
+      // just the immediate acknowledgement that the click was registered.
+      toast.success(successText, { duration: 10_000 });
     } catch (error) {
-      setRequestMessage(error instanceof Error ? error.message : "Request failed. Please try again.");
+      const msg = error instanceof Error ? error.message : "Request failed. Please try again.";
+      setRequestMessage(msg);
+      toast.error(msg, { duration: 10_000 });
     } finally {
       window.setTimeout(() => setRequestMessage(""), 8000);
     }
