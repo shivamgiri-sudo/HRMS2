@@ -172,6 +172,12 @@ export interface RowOutcome {
 export interface ImportOutcome {
   staged: number;
   failed: number;
+  /**
+   * Rows that needed no work and were correctly left alone — see markRowSkipped. Optional
+   * because only the leave importer can currently produce them; a caller that does not set it
+   * has none rather than an unknown number.
+   */
+  skipped?: number;
   branchId: string | null;
   errors: string[];
 }
@@ -388,6 +394,28 @@ export async function markRowFailed(rowId: string, message: string): Promise<voi
           SET row_status = 'error', error_messages = ?
         WHERE id = ?`,
       [JSON.stringify([message.slice(0, 500)]), rowId],
+    ),
+  );
+}
+
+/**
+ * The row needed no work, and that is the correct outcome — not a failure.
+ *
+ * A leave row whose every date falls on the employee's roster week-off or a company holiday is
+ * the case this exists for. Creating the request would deduct entitlement for a day nobody was
+ * due to work; failing the row tells the uploader their file was wrong when it was not, and a
+ * file of 29 rows reporting 28 "errors" reads as a broken upload rather than as 28 days that
+ * simply did not need charging.
+ *
+ * The reason is still recorded, so a skipped row can always be explained.
+ */
+export async function markRowSkipped(rowId: string, reason: string): Promise<void> {
+  await withBulkLockRetry(() =>
+    db.execute(
+      `UPDATE upload_batch_row
+          SET row_status = 'skipped', error_messages = ?
+        WHERE id = ?`,
+      [JSON.stringify([reason.slice(0, 500)]), rowId],
     ),
   );
 }
@@ -670,6 +698,13 @@ export interface ReconcileResult {
   importedRows: number;
   errorRows: number;
   discardedRows: number;
+  /**
+   * Rows that needed no work and were correctly left alone — not a success, not a failure.
+   * A leave day falling entirely on a roster week-off is the case this exists for: there is
+   * nothing to charge, so creating a request would deduct entitlement for a non-working day,
+   * but failing the row tells the uploader their file was wrong when it was not.
+   */
+  skippedRows: number;
   /** Rows THIS call had to force-resolve because they were never reached. */
   recoveredRows: number;
 }
@@ -698,7 +733,7 @@ export async function reconcileStuckRows(batchId: string): Promise<ReconcileResu
         SET row_status = 'error',
             error_messages = ?
       WHERE upload_batch_id = ?
-        AND row_status NOT IN ('imported', 'error', 'discarded')`,
+        AND row_status NOT IN ('imported', 'error', 'discarded', 'skipped')`,
     [
       JSON.stringify([
         "This row never reached a final outcome — the batch finished processing without " +
@@ -719,7 +754,8 @@ export async function reconcileStuckRows(batchId: string): Promise<ReconcileResu
     `SELECT COUNT(*) AS total,
             SUM(row_status = 'imported')  AS imported,
             SUM(row_status = 'error')     AS error_count,
-            SUM(row_status = 'discarded') AS discarded
+            SUM(row_status = 'discarded') AS discarded,
+            SUM(row_status = 'skipped')   AS skipped
        FROM upload_batch_row
       WHERE upload_batch_id = ?`,
     [batchId],
@@ -730,6 +766,7 @@ export async function reconcileStuckRows(batchId: string): Promise<ReconcileResu
     importedRows: Number(c.imported ?? 0),
     errorRows: Number(c.error_count ?? 0),
     discardedRows: Number(c.discarded ?? 0),
+    skippedRows: Number(c.skipped ?? 0),
     recoveredRows,
   };
 }
