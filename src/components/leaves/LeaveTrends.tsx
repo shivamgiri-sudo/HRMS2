@@ -54,43 +54,6 @@ interface LeaveTrendsProps {
   employeeId: string | undefined;
 }
 
-/**
- * 56px / 5px-stroke progress ring per the frozen leave-balance-card spec: the arc fills
- * by available/allocated proportion (how much is left to use), color keyed to the same
- * per-type tone as the chart bars, with the available-days figure centered.
- */
-function LeaveBalanceRing({ available, allocated, hex }: { available: number; allocated: number; hex: string }) {
-  const size = 56;
-  const stroke = 5;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const pct = allocated > 0 ? Math.max(0, Math.min(1, available / allocated)) : 0;
-  const offset = circumference * (1 - pct);
-
-  return (
-    <div className="relative h-14 w-14 shrink-0">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-slate-200/70" />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={hex}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 400ms ease" }}
-        />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-[13px] font-bold leading-none text-slate-900">{available.toFixed(1)}</span>
-      </div>
-    </div>
-  );
-}
-
 export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
   const currentYear = new Date().getFullYear();
 
@@ -150,7 +113,7 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
       </div>
     );
   }
@@ -160,38 +123,65 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
 
   return (
     <div className="space-y-4">
-      {/* Summary stats row — one progress ring per leave type, toned by resolveTone() */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {balances?.map((b) => {
-          const tone = resolveTone(b.leave_code);
-          return (
-            <div
-              key={b.id}
-              className={`flex items-center gap-3 rounded-xl border bg-gradient-to-br p-3 shadow-sm transition-shadow hover:shadow-md ${tone.grad} ${tone.border}`}
-            >
-              <LeaveBalanceRing available={b.available_days} allocated={b.allocated_days} hex={tone.hex} />
-              <div className="min-w-0">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${tone.text}`}>{b.leave_code}</p>
-                <p className="text-xs text-slate-500">
-                  of <span className="font-semibold text-slate-700">{b.allocated_days.toFixed(0)}</span> allotted
+      {/* Leave Wallet — one segmented gauge for the whole allowance, plus a per-type
+          legend readout. Replaces the previous six separate ring cards: this reads as
+          "how my one allowance splits up" rather than six disconnected numbers. */}
+      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Your Leave Wallet — {currentYear}</h3>
+            <p className="mt-0.5 text-xs text-slate-400">How your {totalAllocated.toFixed(0)}-day allowance breaks down</p>
+          </div>
+          {totalAllocated > 0 && (
+            <span className="text-xs text-slate-400">
+              {totalUsed.toFixed(1)} of {totalAllocated.toFixed(1)} days used ·{" "}
+              <span className="font-bold text-[#3BAD49]">{((totalUsed / totalAllocated) * 100).toFixed(0)}%</span>
+            </span>
+          )}
+        </div>
+
+        <div className="mt-5 flex h-[22px] w-full overflow-hidden rounded-full bg-white/10">
+          {balances?.map((b) => {
+            const tone = resolveTone(b.leave_code);
+            const widthPct = totalAllocated > 0 ? (b.used_days / totalAllocated) * 100 : 0;
+            if (widthPct <= 0) return null;
+            return (
+              <div
+                key={b.id}
+                style={{ width: `${widthPct}%`, backgroundColor: tone.hex }}
+                title={`${b.leave_code}: ${b.used_days.toFixed(1)} day(s) used`}
+              />
+            );
+          })}
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          {balances?.map((b) => {
+            const tone = resolveTone(b.leave_code);
+            return (
+              <div key={b.id} className="border-l-2 pl-2.5" style={{ borderColor: tone.hex }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{b.leave_code}</p>
+                <p className="mt-0.5 text-lg font-bold leading-tight text-white">
+                  {b.available_days.toFixed(1)}
+                  <span className="text-[11px] font-medium text-slate-500">/{b.allocated_days.toFixed(0)}</span>
                 </p>
-                <p className="text-[10px] text-slate-400">{b.used_days.toFixed(1)} used</p>
+                <p className="text-[10px] text-slate-500">{b.used_days.toFixed(1)} used</p>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Monthly usage chart */}
-        <Card>
+        <Card className="border-white/10 bg-white/5">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Monthly Leave Usage ({currentYear})</CardTitle>
-            <CardDescription className="text-xs">Approved leave days taken per month</CardDescription>
+            <CardTitle className="text-sm font-semibold text-white">Monthly Leave Usage ({currentYear})</CardTitle>
+            <CardDescription className="text-xs text-slate-400">Approved leave days taken per month</CardDescription>
           </CardHeader>
           <CardContent>
             {monthlyData.every((m) => m.days === 0) ? (
-              <div className="flex items-center justify-center py-10 text-xs text-muted-foreground">
+              <div className="flex items-center justify-center py-10 text-xs text-slate-400">
                 No approved leaves recorded for {currentYear}
               </div>
             ) : (
@@ -203,13 +193,15 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
                       <stop offset="100%" stopColor="#1B6AB5" stopOpacity={0.55} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="month" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.08)" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} allowDecimals={false} />
                   <Tooltip
-                    cursor={{ fill: "#f1f5f9" }}
+                    cursor={{ fill: "rgba(255,255,255,0.06)" }}
                     formatter={(v: number) => [`${v} day${v !== 1 ? "s" : ""}`, "Used"]}
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                    contentStyle={{ fontSize: 12, borderRadius: 8, background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", color: "#e2e8f0" }}
+                    labelStyle={{ color: "#e2e8f0" }}
+                    itemStyle={{ color: "#e2e8f0" }}
                   />
                   <Bar dataKey="days" fill="url(#leaveMonthlyFill)" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -219,14 +211,14 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
         </Card>
 
         {/* By leave type chart */}
-        <Card>
+        <Card className="border-white/10 bg-white/5">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Leave by Type ({currentYear})</CardTitle>
-            <CardDescription className="text-xs">Approved days taken per leave type</CardDescription>
+            <CardTitle className="text-sm font-semibold text-white">Leave by Type ({currentYear})</CardTitle>
+            <CardDescription className="text-xs text-slate-400">Approved days taken per leave type</CardDescription>
           </CardHeader>
           <CardContent>
             {byTypeData.length === 0 ? (
-              <div className="flex items-center justify-center py-10 text-xs text-muted-foreground">
+              <div className="flex items-center justify-center py-10 text-xs text-slate-400">
                 No approved leaves recorded for {currentYear}
               </div>
             ) : (
@@ -238,13 +230,15 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
                     barSize={14}
                     margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                    <XAxis type="number" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
-                    <YAxis dataKey="type" type="category" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={36} />
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(255,255,255,0.08)" />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <YAxis dataKey="type" type="category" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} width={36} />
                     <Tooltip
-                      cursor={{ fill: "#f1f5f9" }}
+                      cursor={{ fill: "rgba(255,255,255,0.06)" }}
                       formatter={(v: number) => [`${v} day${v !== 1 ? "s" : ""}`, "Used"]}
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", color: "#e2e8f0" }}
+                      labelStyle={{ color: "#e2e8f0" }}
+                      itemStyle={{ color: "#e2e8f0" }}
                     />
                     <Bar dataKey="days" radius={[0, 4, 4, 0]}>
                       {byTypeData.map((entry) => (
@@ -253,9 +247,9 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-slate-100 pt-2">
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-white/10 pt-2">
                   {byTypeData.map((entry) => (
-                    <span key={entry.type} className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                    <span key={entry.type} className="flex items-center gap-1.5 text-[10px] text-slate-400">
                       <span className="h-2 w-2 rounded-full" style={{ backgroundColor: resolveTone(entry.type).hex }} />
                       {entry.type}
                     </span>
@@ -269,10 +263,10 @@ export function LeaveTrends({ employeeId }: LeaveTrendsProps) {
 
       {/* Utilisation summary */}
       {totalAllocated > 0 && (
-        <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm text-slate-600 flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-slate-400 shrink-0" />
-          You have used <span className="font-semibold text-slate-900 mx-1">{totalUsed.toFixed(1)}</span> of{" "}
-          <span className="font-semibold text-slate-900 mx-1">{totalAllocated.toFixed(1)}</span> allocated days
+        <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+          <TrendingUp className="h-4 w-4 shrink-0 text-slate-400" />
+          You have used <span className="mx-1 font-semibold text-white">{totalUsed.toFixed(1)}</span> of{" "}
+          <span className="mx-1 font-semibold text-white">{totalAllocated.toFixed(1)}</span> allocated days
           {" "}({((totalUsed / totalAllocated) * 100).toFixed(0)}% utilisation) in {currentYear}.
         </div>
       )}

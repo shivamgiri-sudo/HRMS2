@@ -70,21 +70,21 @@ const getLeaveTypeStyle = (type: string): string => {
 // then threw "onDiscard is not defined" instead of simply hiding the button.
 export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: LeaveRequestCardProps) {
   return (
-    <Card className="relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
+    <Card className="relative overflow-hidden border-white/10 bg-white/5 transition-all duration-200 hover:bg-white/8 hover:-translate-y-0.5">
       {/* Left accent — same color the type badge and the balance/chart tiles use, via the shared leaveColors map */}
       <span className={`absolute inset-y-0 left-0 w-1.5 ${getLeaveColor(request.type)}`} aria-hidden="true" />
-      <CardContent className="p-6 pl-7">
+      <CardContent className="p-5 pl-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
-            <Avatar className="h-12 w-12">
-              <AvatarImage src={request.employee.avatar} />
-              <AvatarFallback>
+            <Avatar className="h-11 w-11 rounded-lg">
+              <AvatarImage src={request.employee.avatar} className="rounded-lg" />
+              <AvatarFallback className="rounded-lg bg-white/10 text-xs font-bold text-slate-200">
                 {request.employee.name.split(" ").map((n) => n[0]).join("")}
               </AvatarFallback>
             </Avatar>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-foreground">{request.employee.name}</h3>
+                <h3 className="font-semibold text-white">{request.employee.name}</h3>
                 <Badge
                   variant="secondary"
                   className={getLeaveTypeStyle(request.type)}
@@ -92,38 +92,38 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                   {request.type}
                 </Badge>
                 {request.status === "pending_branch_head" && (
-                  <Badge variant="secondary" className="bg-orange-500/10 text-orange-600 border-orange-500/20">
+                  <Badge variant="secondary" className="border-orange-500/20 bg-orange-500/10 text-orange-400">
                     Escalated — Branch Head
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-muted-foreground">{request.employee.department}</p>
-              <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+              <p className="text-sm text-slate-400">{request.employee.department}</p>
+              <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
                 <Calendar className="h-4 w-4" />
                 <span>
                   {formatDate(request.startDate)} - {formatDate(request.endDate)}
                 </span>
-                <span className="text-foreground font-medium">({request.days} days)</span>
+                <span className="font-medium text-slate-200">({request.days} days)</span>
               </div>
               {request.submittedAt && (
-                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                   <Clock className="h-3 w-3" />
                   <span>Submitted: {formatDateTime(request.submittedAt)}</span>
                 </div>
               )}
-              {request.reason && <p className="mt-2 text-sm text-muted-foreground">{request.reason}</p>}
+              {request.reason && <p className="mt-2 text-sm text-slate-400">{request.reason}</p>}
               {request.status !== "pending" && request.reviewedBy && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
                   <UserCheck className="h-3 w-3" />
                   <span>
                     {request.status === "approved" ? "Approved" : request.status === "rejected" ? "Rejected" : "Reviewed"} by{" "}
-                    <span className="font-medium text-foreground">{request.reviewedBy.name}</span>
+                    <span className="font-medium text-slate-300">{request.reviewedBy.name}</span>
                     {request.reviewedAt && <span> on {formatDate(request.reviewedAt)}</span>}
                   </span>
                 </div>
               )}
               {request.reviewNotes && (
-                <p className="mt-1 text-xs text-muted-foreground italic">
+                <p className="mt-1 text-xs italic text-slate-500">
                   Note: {request.reviewNotes}
                 </p>
               )}
@@ -135,7 +135,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                 {onApprove && (
                   <Button
                     size="sm"
-                    className="bg-emerald-600 text-white shadow-sm shadow-emerald-600/25 transition-colors hover:bg-emerald-700"
+                    className="bg-[#3BAD49] text-white shadow-sm shadow-[#3BAD49]/25 transition-colors hover:bg-[#329b40]"
                     onClick={() => onApprove(request.id)}
                   >
                     <Check className="mr-1 h-4 w-4" />
@@ -146,7 +146,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                    className="border-[#E8231A]/30 bg-transparent text-[#E8231A] hover:bg-[#E8231A]/10"
                     onClick={() => onReject(request.id)}
                   >
                     <X className="mr-1 h-4 w-4" />
@@ -166,7 +166,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                   <Button
                     size="sm"
                     variant="outline"
-                    className="border-destructive/20 text-destructive hover:bg-destructive/10"
+                    className="border-[#E8231A]/20 bg-transparent text-[#E8231A] hover:bg-[#E8231A]/10"
                     onClick={() => onDiscard(request.id)}
                   >
                     <RotateCcw className="mr-1 h-4 w-4" />

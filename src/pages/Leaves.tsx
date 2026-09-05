@@ -26,7 +26,7 @@ import {
   isAfter,
   isBefore,
 } from "date-fns";
-import { normalizeDate, formatISTDate } from "@/lib/utils";
+import { normalizeDate, formatISTDate, cn } from "@/lib/utils";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
@@ -100,25 +100,29 @@ interface LeaveMetricCardProps {
   tone: "amber" | "emerald" | "slate" | "sky";
 }
 
+// Dark tiles matching the hero's own surface tokens (border-white/10 bg-white/8,
+// text-slate-400 labels, #5aa0dd/#1B6AB5/#3BAD49/#f59e0b/#E8231A brand accents) —
+// the same vocabulary the hero already established, extended to the metric row
+// instead of the previous light gradient-card treatment.
 const metricToneMap = {
   amber: {
-    card: "border-amber-100 bg-gradient-to-br from-white via-white to-amber-50",
-    icon: "bg-amber-50 text-amber-700 ring-amber-100",
-    bar: "bg-amber-400",
+    card: "border-white/10 bg-white/[0.06]",
+    icon: "bg-[#f59e0b]/15 text-[#f59e0b] ring-[#f59e0b]/20",
+    bar: "bg-[#f59e0b]",
   },
   emerald: {
-    card: "border-emerald-100 bg-gradient-to-br from-white via-white to-emerald-50",
-    icon: "bg-emerald-50 text-emerald-700 ring-emerald-100",
-    bar: "bg-emerald-400",
+    card: "border-white/10 bg-white/[0.06]",
+    icon: "bg-[#3BAD49]/15 text-[#3BAD49] ring-[#3BAD49]/20",
+    bar: "bg-[#3BAD49]",
   },
   slate: {
-    card: "border-slate-200 bg-white",
-    icon: "bg-slate-100 text-slate-700 ring-slate-200",
-    bar: "bg-slate-300",
+    card: "border-white/10 bg-white/[0.06]",
+    icon: "bg-white/10 text-slate-300 ring-white/10",
+    bar: "bg-slate-400",
   },
   sky: {
-    card: "border-[#c4dcf5] bg-gradient-to-br from-white via-white to-[#e8f2fc]",
-    icon: "bg-[#e8f2fc] text-[#1B6AB5] ring-[#c4dcf5]",
+    card: "border-white/10 bg-white/[0.06]",
+    icon: "bg-[#1B6AB5]/15 text-[#5aa0dd] ring-[#1B6AB5]/20",
     bar: "bg-[#1B6AB5]",
   },
 };
@@ -148,15 +152,15 @@ const LeaveMetricCard = ({
   const style = metricToneMap[tone];
 
   return (
-    <div className={`relative overflow-hidden rounded-2xl border p-4 pl-5 shadow-sm hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200 cursor-pointer ${style.card}`}>
+    <div className={`relative overflow-hidden rounded-2xl border p-4 pl-5 backdrop-blur-sm transition-all duration-200 cursor-pointer hover:bg-white/10 hover:-translate-y-0.5 ${style.card}`}>
       <span className={`absolute inset-y-0 left-0 w-1 ${style.bar}`} aria-hidden="true" />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
             {label}
           </p>
 
-          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">
             {value}
           </h3>
         </div>
@@ -164,7 +168,7 @@ const LeaveMetricCard = ({
         <div className={`rounded-xl p-2.5 ring-1 ${style.icon}`}>{icon}</div>
       </div>
 
-      <p className="mt-3 text-xs leading-5 text-slate-500">{description}</p>
+      <p className="mt-3 text-xs leading-5 text-slate-400">{description}</p>
     </div>
   );
 };
@@ -179,15 +183,15 @@ const EmptyState = ({
   icon: ReactNode;
 }) => {
   return (
-    <Card className="border-dashed border-slate-200 bg-slate-50/70 shadow-none">
+    <Card className="border border-dashed border-white/15 bg-white/[0.03] shadow-none">
       <CardContent className="flex flex-col items-center justify-center py-14 text-center">
-        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/8 text-slate-300 ring-1 ring-white/10">
           {icon}
         </div>
 
-        <h3 className="text-base font-semibold text-slate-950">{title}</h3>
+        <h3 className="text-base font-semibold text-white">{title}</h3>
 
-        <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+        <p className="mt-2 max-w-md text-sm leading-6 text-slate-400">
           {description}
         </p>
       </CardContent>
@@ -666,7 +670,7 @@ const Leaves = () => {
         <Button
           variant="outline"
           size="sm"
-          className="h-9 gap-2 rounded-xl border-slate-200 bg-white text-xs shadow-sm"
+          className="h-9 gap-2 rounded-xl border-white/15 bg-white/5 text-xs text-slate-200 hover:bg-white/10 hover:text-white"
         >
           <ArrowUpDown className="h-3.5 w-3.5" />
           Sort by{" "}
@@ -739,15 +743,15 @@ const Leaves = () => {
     };
 
     return (
-      <div className="mt-4 flex flex-col items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row">
-        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500 sm:justify-start">
+      <div className="mt-4 flex flex-col items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 sm:flex-row">
+        <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 sm:justify-start">
           <span>Show</span>
 
           <Select
             value={pagination.pageSize.toString()}
             onValueChange={(value) => pagination.setPageSize(Number(value))}
           >
-            <SelectTrigger className="h-8 w-[74px] rounded-lg bg-white text-xs">
+            <SelectTrigger className="h-8 w-[74px] rounded-lg border-white/10 bg-white/5 text-xs text-slate-200">
               <SelectValue />
             </SelectTrigger>
 
@@ -770,25 +774,27 @@ const Leaves = () => {
                 onClick={() =>
                   pagination.canGoPrevious && pagination.goToPreviousPage()
                 }
-                className={
-                  !pagination.canGoPrevious
-                    ? "pointer-events-none opacity-50"
-                    : "cursor-pointer"
-                }
+                className={cn(
+                  "border-white/10 bg-transparent text-slate-300 hover:bg-white/10 hover:text-white",
+                  !pagination.canGoPrevious ? "pointer-events-none opacity-50" : "cursor-pointer"
+                )}
               />
             </PaginationItem>
 
             {getPageNumbers().map((page, index) =>
               page === "ellipsis" ? (
                 <PaginationItem key={`ellipsis-${index}`}>
-                  <PaginationEllipsis />
+                  <PaginationEllipsis className="text-slate-500" />
                 </PaginationItem>
               ) : (
                 <PaginationItem key={page}>
                   <PaginationLink
                     onClick={() => pagination.setPage(page)}
                     isActive={pagination.currentPage === page}
-                    className="cursor-pointer"
+                    className={cn(
+                      "cursor-pointer border-white/10 text-slate-300 hover:bg-white/10 hover:text-white",
+                      pagination.currentPage === page && "bg-white/10 text-white"
+                    )}
                   >
                     {page}
                   </PaginationLink>
@@ -799,11 +805,10 @@ const Leaves = () => {
             <PaginationItem>
               <PaginationNext
                 onClick={() => pagination.canGoNext && pagination.goToNextPage()}
-                className={
-                  !pagination.canGoNext
-                    ? "pointer-events-none opacity-50"
-                    : "cursor-pointer"
-                }
+                className={cn(
+                  "border-white/10 bg-transparent text-slate-300 hover:bg-white/10 hover:text-white",
+                  !pagination.canGoNext ? "pointer-events-none opacity-50" : "cursor-pointer"
+                )}
               />
             </PaginationItem>
           </PaginationContent>
@@ -947,20 +952,21 @@ const Leaves = () => {
         />
 
         {/* Leave Requests */}
-        <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 p-4 shadow-lg">
+          <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#1B6AB5]/10 blur-3xl" />
+          <div className="relative mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-sm font-semibold tracking-tight text-slate-950">
+              <h2 className="text-sm font-semibold tracking-tight text-white">
                 Leave Requests
               </h2>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
+              <p className="mt-1 text-xs leading-5 text-slate-400">
                 Review pending requests, track processed leaves and open calendar
                 visibility.
               </p>
             </div>
 
-            <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
-              <CalendarDays className="h-3.5 w-3.5 text-sky-700" />
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/8 px-3 py-2 text-xs font-medium text-slate-300">
+              <CalendarDays className="h-3.5 w-3.5 text-[#5aa0dd]" />
               {requests.length} loaded · {(stats?.pending ?? 0) + (stats?.approved ?? 0) + (stats?.rejected ?? 0)} total
             </div>
           </div>
@@ -970,7 +976,7 @@ const Leaves = () => {
               loaded — an older year would otherwise vanish from the dropdown with nothing to
               explain it, and the export would have quietly shrunk to match. */}
           {leaveLoad.truncated && (
-            <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="relative mb-4 flex items-start gap-2 rounded-xl border border-[#f59e0b]/20 bg-[#f59e0b]/10 px-3 py-2 text-xs text-amber-200">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
               <span>
                 Showing the {leaveLoad.processedLoaded.toLocaleString("en-IN")} most recent processed
@@ -981,18 +987,18 @@ const Leaves = () => {
             </div>
           )}
 
-          <Tabs defaultValue="overview" className="w-full">
+          <Tabs defaultValue="overview" className="relative w-full">
             <div className="mobile-scroll-x w-full">
-              <TabsList className="inline-flex h-auto min-w-max gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 backdrop-blur-sm">
-                <TabsTrigger value="overview" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">My Overview</TabsTrigger>
-                <TabsTrigger value="pending" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">
+              <TabsList className="inline-flex h-auto min-w-max gap-1 rounded-xl border border-white/10 bg-white/5 p-1 backdrop-blur-sm">
+                <TabsTrigger value="overview" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-white sm:text-sm">My Overview</TabsTrigger>
+                <TabsTrigger value="pending" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-white sm:text-sm">
                   Pending
-                  <Badge variant="secondary" className="ml-2">
+                  <Badge variant="secondary" className="ml-2 border-none bg-[#f59e0b]/20 text-[#f59e0b]">
                     {pendingRequests.length}
                   </Badge>
                 </TabsTrigger>
-                <TabsTrigger value="processed" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Processed</TabsTrigger>
-                <TabsTrigger value="calendar" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs sm:text-sm">Calendar</TabsTrigger>
+                <TabsTrigger value="processed" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-white sm:text-sm">Processed</TabsTrigger>
+                <TabsTrigger value="calendar" className="whitespace-nowrap rounded-lg px-3 py-2 text-xs text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-white sm:text-sm">Calendar</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1004,7 +1010,7 @@ const Leaves = () => {
               {isLoading ? (
                 <div className="space-y-4">
                   {[1, 2, 3].map((item) => (
-                    <Skeleton key={item} className="h-32 w-full rounded-2xl" />
+                    <Skeleton key={item} className="h-32 w-full rounded-2xl bg-white/10" />
                   ))}
                 </div>
               ) : pendingRequests.length === 0 ? (
@@ -1015,12 +1021,12 @@ const Leaves = () => {
                 />
               ) : (
                 <>
-                  <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-xs font-semibold text-slate-950">
+                      <p className="text-xs font-semibold text-white">
                         Pending Queue
                       </p>
-                      <p className="mt-0.5 text-xs text-slate-500">
+                      <p className="mt-0.5 text-xs text-slate-400">
                         Requests waiting for approval or rejection.
                       </p>
                     </div>
@@ -1073,7 +1079,7 @@ const Leaves = () => {
               {isLoading ? (
                 <div className="space-y-4">
                   {[1, 2, 3].map((item) => (
-                    <Skeleton key={item} className="h-32 w-full rounded-2xl" />
+                    <Skeleton key={item} className="h-32 w-full rounded-2xl bg-white/10" />
                   ))}
                 </div>
               ) : allProcessedRequests.length === 0 ? (
@@ -1084,12 +1090,12 @@ const Leaves = () => {
                 />
               ) : (
                 <>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-950">
-                      <Filter className="h-3.5 w-3.5 text-sky-700" />
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                    <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-white">
+                      <Filter className="h-3.5 w-3.5 text-[#5aa0dd]" />
                       Processed Filters
                       {hasProcessedFilters && (
-                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
+                        <span className="rounded-full bg-[#1B6AB5]/20 px-2 py-0.5 text-[10px] font-bold text-[#5aa0dd]">
                           {[processedStatusFilter, processedTypeFilter, processedMonthFilter, processedYearFilter, processedBranchFilter, processedProcessFilter].filter((v) => v !== "all").length
                             + (processedSearchQuery.trim() ? 1 : 0)} active
                         </span>
@@ -1102,7 +1108,7 @@ const Leaves = () => {
                         value={processedSearchQuery}
                         onChange={(e) => setProcessedSearchQuery(e.target.value)}
                         placeholder="Search by employee name…"
-                        className="h-10 rounded-xl bg-white pl-9 text-xs"
+                        className="h-10 rounded-xl border-white/10 bg-white/5 pl-9 text-xs text-white placeholder:text-slate-500"
                       />
                     </div>
 
@@ -1112,7 +1118,7 @@ const Leaves = () => {
                           value={processedMonthFilter}
                           onValueChange={setProcessedMonthFilter}
                         >
-                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                          <SelectTrigger className="h-10 rounded-xl border-white/10 bg-white/5 text-xs text-slate-200">
                             <SelectValue placeholder="Month" />
                           </SelectTrigger>
 
@@ -1130,7 +1136,7 @@ const Leaves = () => {
                           value={processedYearFilter}
                           onValueChange={setProcessedYearFilter}
                         >
-                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                          <SelectTrigger className="h-10 rounded-xl border-white/10 bg-white/5 text-xs text-slate-200">
                             <SelectValue placeholder="Year" />
                           </SelectTrigger>
 
@@ -1152,7 +1158,7 @@ const Leaves = () => {
                             )
                           }
                         >
-                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                          <SelectTrigger className="h-10 rounded-xl border-white/10 bg-white/5 text-xs text-slate-200">
                             <SelectValue placeholder="Status" />
                           </SelectTrigger>
 
@@ -1167,7 +1173,7 @@ const Leaves = () => {
                           value={processedTypeFilter}
                           onValueChange={setProcessedTypeFilter}
                         >
-                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                          <SelectTrigger className="h-10 rounded-xl border-white/10 bg-white/5 text-xs text-slate-200">
                             <SelectValue placeholder="Leave Type" />
                           </SelectTrigger>
 
@@ -1185,7 +1191,7 @@ const Leaves = () => {
                           value={processedBranchFilter}
                           onValueChange={setProcessedBranchFilter}
                         >
-                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                          <SelectTrigger className="h-10 rounded-xl border-white/10 bg-white/5 text-xs text-slate-200">
                             <SelectValue placeholder="Branch" />
                           </SelectTrigger>
 
@@ -1203,7 +1209,7 @@ const Leaves = () => {
                           value={processedProcessFilter}
                           onValueChange={setProcessedProcessFilter}
                         >
-                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                          <SelectTrigger className="h-10 rounded-xl border-white/10 bg-white/5 text-xs text-slate-200">
                             <SelectValue placeholder="Process" />
                           </SelectTrigger>
 
@@ -1223,7 +1229,7 @@ const Leaves = () => {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-9 rounded-xl text-xs"
+                            className="h-9 rounded-xl text-xs text-slate-300 hover:bg-white/10 hover:text-white"
                             onClick={clearProcessedFilters}
                           >
                             <RotateCcw className="mr-2 h-3.5 w-3.5" />
@@ -1262,7 +1268,7 @@ const Leaves = () => {
             </TabsContent>
 
             <TabsContent value="calendar" className="mt-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <LeaveCalendarView />
               </div>
             </TabsContent>
