@@ -255,7 +255,24 @@ const Payroll = () => {
 
   // Current month run — used for incentive-applied warning
   const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
-  const currentMonthRun = runSummaries.find(r => r.run_month === currentMonthStr) ?? null;
+  /**
+   * A cancelled run is not this month's run.
+   *
+   * This took the first run matching the month whatever its status, so a run that had been
+   * deliberately CANCELLED kept showing as "ACTIVE PAYROLL RUN" with its employee count and
+   * total — observed live on 2026-09-05, where a voided 3-line stub was still presented as
+   * August's active run at ₹1,75,193. Presenting a voided run as active is how somebody
+   * concludes the month is handled when nothing has been paid.
+   *
+   * Mirrors VOID_RUN_STATUSES in payroll/run-status.ts. Compared case-insensitively because this
+   * column holds both 'FINALIZED' from the payroll UI and lowercase values from older code.
+   */
+  const currentMonthRun =
+    runSummaries.find(
+      (r) =>
+        r.run_month === currentMonthStr &&
+        !["cancelled", "rejected"].includes(String(r.status ?? "").trim().toLowerCase())
+    ) ?? null;
   const currentMonthLabel = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
     .format(new Date(currentYear, currentMonth - 1, 1));
 
