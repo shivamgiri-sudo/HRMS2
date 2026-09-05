@@ -563,25 +563,11 @@ export const wfmService = {
     return rec;
   },
 
-  /**
-   * `options.deferSideEffects` is for the BULK path only, and is deliberately not part of
-   * `ReviewRegularizationInput` — that type is the validated HTTP body, and no API caller should
-   * be able to silence a notification or skip a payroll recalculation by adding a field.
-   *
-   * The three side effects it defers (work-inbox clear, SMS, payroll recalculation) are all
-   * per-EMPLOYEE-MONTH concerns, not per-row ones, and the recalculation is the expensive one: a
-   * 3,653-row batch ran it 3,653 times, re-costing the same employee's month once per correction
-   * they happened to have in the file. The caller runs them once per distinct employee-month
-   * after the loop, which produces the same end state — recalculation is idempotent — for a
-   * fraction of the work. Nothing is dropped; applyRegularizationBatch does all three.
-   */
   async reviewRegularization(
     id: string,
     input: ReviewRegularizationInput,
-    reviewerId: string,
-    options?: { deferSideEffects?: boolean }
+    reviewerId: string
   ): Promise<AttendanceRegularization> {
-    const deferSideEffects = options?.deferSideEffects === true;
     const reg = await this.getRegularization(id);
 
     // Replay guard. This method is not idempotent on its own: it unconditionally rewrites
@@ -833,10 +819,7 @@ export const wfmService = {
     // treated as done — it moves to WFM, and the block below raises their
     // alert. Both keys are closed because alerts carry the employee id, and
     // the request id is accepted too so the fix survives that being corrected.
-    // Deferred in bulk: this statement carries a correlated NOT EXISTS, and running it per row
-    // re-scans the same employee's open requests once per correction. The batch closes the same
-    // alerts for every employee it touched in one pass.
-    if ((input.status as string) !== 'manager_approved' && !deferSideEffects) {
+    if ((input.status as string) !== 'manager_approved') {
       // One statement rather than four: every alert this decision settles is
       // closed atomically, and the review path keeps a single extra round trip.
       //   1. the alert for this specific request;
@@ -905,10 +888,8 @@ export const wfmService = {
       }
     }
 
-    // SMS — regularization approved or rejected (fire-and-forget).
-    // Deferred in bulk: one employee lookup per row is N queries for a message that reads the
-    // same whether it is sent from here or from the batch.
-    if (!deferSideEffects) try {
+    // SMS — regularization approved or rejected (fire-and-forget)
+    try {
       const [empRow] = await db.execute<RowDataPacket[]>(
         `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
          FROM employees WHERE id = ? LIMIT 1`, [reg.employee_id]
@@ -925,9 +906,7 @@ export const wfmService = {
       }
     } catch { /* non-fatal */ }
 
-    // Payroll recalculation. THE expensive one: a full re-cost of that employee's open month.
-    // Deferred in bulk and run once per distinct employee-month instead of once per row.
-    if (input.status === 'approved' && !deferSideEffects) {
+    if (input.status === 'approved') {
       try {
         const { recalculateOpenPayrollForEmployee } = await import('../payroll/payroll-targeted-recalculation.service.js');
         await recalculateOpenPayrollForEmployee({
