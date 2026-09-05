@@ -28,10 +28,22 @@ let intervalRef: ReturnType<typeof setInterval> | undefined;
 // ── Core Processing Function ─────────────────────────────────────────────────
 
 /**
- * Credits CL (0.583/mo) and ML (0.417/mo) to leave_balance_ledger, and
- * EL (1.5/mo) to leave_el_accrual_ledger for every active employee.
- * Idempotent — skips employees that already have a record in leave_el_credit_log
- * for this leave_type / year / month / credit_type='monthly'.
+ * Credits CL/ML to leave_balance_ledger from `leave_credit_schedule`, and EL (1.5/mo) to
+ * leave_el_accrual_ledger, for every active employee.
+ *
+ * CL/ML ACCRUE ONE WHOLE DAY IN ALTERNATE MONTHS, not a fraction every month. The schedule
+ * table holds the pattern — CL in months 1,3,5,7,8,10,12 and ML in 2,4,6,9,11 — which is where
+ * the 7 CL + 5 ML annual entitlement comes from, and why one month (8) doubles up on CL. The
+ * pattern is DATA: change the schedule table, not this worker.
+ *
+ * This docblock previously said "CL (0.583/mo) and ML (0.417/mo)", describing the fractional
+ * accrual that ran before the schedule existed. That was wrong for long enough to mislead a
+ * reader into believing the alternating rule was unimplemented when it had been live all along —
+ * the numbers are recorded here only so the July 2026 credit log, which really does show ML at
+ * 0.417, is recognisable as the old rule rather than a new bug.
+ *
+ * Idempotent — skips employees that already have a record in leave_el_credit_log for this
+ * leave_type / year / month / credit_type='monthly'.
  */
 export async function creditMonthlyLeaves(
   creditYear: number,
