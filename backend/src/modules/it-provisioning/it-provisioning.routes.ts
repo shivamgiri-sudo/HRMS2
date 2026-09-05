@@ -253,7 +253,13 @@ async function changeAppointmentStatus(
 // Functional teams default to their own queue; admin/hr/super_admin can inspect all.
 router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+  // 'hr' deliberately excluded: it is not an unrestricted-viewer role, it is a scoped
+  // role like any other (see resolveDashboardScope's ORG_ALL_ROLES handling, which
+  // already gives real head-office HR an ORG_ALL scope via their scope_type='all' grant
+  // and fails closed to their own branch otherwise). Including it here made anyone who
+  // also held 'hr' — e.g. a branch admin who is also branch HR — bypass branch scoping
+  // entirely and see every branch's unassigned queue instead of their own.
+  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
   const filters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
     assignedRole: isAdmin ? String(req.query.assigned_role ?? 'it') : 'it',
   };
@@ -278,7 +284,8 @@ router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: Authentic
 
 router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+  // See the /stats handler above for why 'hr' is not in this bypass list.
+  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
 
   const filters: Record<string, any> = {
     status:      req.query.status as string | undefined,
@@ -317,7 +324,8 @@ router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: Authen
 
 router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+  // See the /stats handler above for why 'hr' is not in this bypass list.
+  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
   const filters: Record<string, any> = {
     status: req.query.status as string | undefined,
     requestType: req.query.request_type as string | undefined,
