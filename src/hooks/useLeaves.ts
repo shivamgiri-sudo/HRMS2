@@ -9,6 +9,8 @@ export interface LeaveRequest {
     avatar?: string;
     department: string;
   };
+  branch: string;
+  process: string;
   type: string;
   startDate: string;
   endDate: string;
@@ -139,6 +141,8 @@ function mapRawToLeaveRequest(req: any): LeaveRequest {
 
   const dept = req.department_name ?? req.employee?.department ?? "Unassigned";
   const avatar = req.avatar_url ?? req.employee?.avatar ?? undefined;
+  const branch = req.branch_name ?? req.employee?.branch ?? "Unassigned";
+  const process = req.process_name ?? req.employee?.process ?? "Unassigned";
 
   const startRaw = req.from_date ?? req.start_date;
   const endRaw = req.to_date ?? req.end_date;
@@ -153,6 +157,8 @@ function mapRawToLeaveRequest(req: any): LeaveRequest {
     id: req.id,
     employeeId: req.employee_id,
     employee: { name: empName, avatar, department: dept },
+    branch,
+    process,
     type: typeName,
     startDate: startRaw ?? "",
     endDate: endRaw ?? "",
