@@ -348,7 +348,9 @@ async function matchGroupEmployees(filters: { branchId: string | null; costCentr
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name),''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
-            br.branch_name, cc.cost_centre_name, d.designation_name,
+            br.branch_name, cc.cost_centre_name,
+            COALESCE(NULLIF(cc.client_name,''), NULLIF(cc.billing_client_name,'')) AS cost_centre_client_name,
+            d.designation_name,
             b.active_status AS existing_bucket_active
        FROM employees e
        LEFT JOIN branch_master br         ON br.id = e.branch_id

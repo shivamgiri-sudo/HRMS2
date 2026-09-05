@@ -86,7 +86,15 @@ interface CurrentState {
 
 interface Branch { id: string; branch_name: string; }
 interface Designation { id: string; designation_code: string; designation_name: string; }
-interface CostCentre { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string | null; }
+// cost_centre_name is near-identical to cost_centre_code for almost every cost centre (395 of 402
+// active rows, verified live 2026-09-05) — it does not tell two cost centres apart. client_name is
+// the client the cost centre actually serves, which is what a human recognizes it by.
+interface CostCentre { id: string; cost_centre_code: string; cost_centre_name: string; client_name: string | null; branch_id: string | null; }
+
+/** Code plus whichever name actually identifies it — the client, falling back to the raw name. */
+function costCentreLabel(c: { cost_centre_code: string; cost_centre_name: string; client_name?: string | null }): string {
+  return `${c.cost_centre_code} — ${c.client_name || c.cost_centre_name}`;
+}
 
 interface MatchedEmployee {
   id: string;
@@ -94,6 +102,7 @@ interface MatchedEmployee {
   employee_name: string | null;
   branch_name: string | null;
   cost_centre_name: string | null;
+  cost_centre_client_name: string | null;
   designation_name: string | null;
   existing_bucket_active: number | null;
 }
@@ -704,7 +713,7 @@ function BulkExceptionTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => vo
               <SelectContent>
                 <SelectItem value={ANY_VALUE}>{branchId ? 'Any cost centre in this branch' : 'Any cost centre'}</SelectItem>
                 {costCentreOptions.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.cost_centre_code} — {c.cost_centre_name}</SelectItem>
+                  <SelectItem key={c.id} value={c.id}>{costCentreLabel(c)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -761,7 +770,9 @@ function BulkExceptionTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => vo
                             <div className="font-mono text-[11px] text-slate-500">{m.employee_code}</div>
                           </TableCell>
                           <TableCell className="text-sm text-slate-600">{m.branch_name ?? '—'}</TableCell>
-                          <TableCell className="text-sm text-slate-600">{m.cost_centre_name ?? '—'}</TableCell>
+                          <TableCell className="text-sm text-slate-600">
+                            {m.cost_centre_client_name || m.cost_centre_name || '—'}
+                          </TableCell>
                           <TableCell className="text-sm text-slate-600">{m.designation_name ?? '—'}</TableCell>
                           <TableCell>
                             {Number(m.existing_bucket_active) === 1 ? (
