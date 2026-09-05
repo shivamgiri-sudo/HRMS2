@@ -48,7 +48,10 @@ export default function NativeEngagement() {
     setExporting(true);
     try {
       const res = await fetch("/api/engagement/admin/export/csv", {
-        headers: { Authorization: `Bearer ${localStorage.getItem("hrms_token")}` },
+        // "hrms_access_token" is the key hrmsApi.ts writes on login. This read "hrms_token",
+        // which has never existed, so the export sent `Bearer null` and always failed with
+        // "Export failed" — a message that describes the symptom and hides the cause.
+        headers: { Authorization: `Bearer ${localStorage.getItem("hrms_access_token")}` },
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
