@@ -709,6 +709,27 @@ router.post("/runs",
  * route first "coverage" would be captured as a run id and this would 404 through a lookup for a
  * run that does not exist.
  */
+/**
+ * Branch ids this caller may see in the coverage view, or null for "no restriction".
+ *
+ * Deliberately identical in shape to resolveVisibleBranchIds() in
+ * bank-payment-readiness.routes.ts, including the two very different cases that both return
+ * null: an org-wide caller (scope_type 'all'), and a caller with NO scope rows at all. The
+ * second keeps existing users working exactly as before rather than silently blanking their
+ * picker — narrowing that is a separate decision about scope data, not about this endpoint.
+ *
+ * A caller scoped by something other than branch (process, department) gets an empty set and so
+ * sees nothing, rather than falling through to everything. Widening access by accident is the
+ * failure that matters here.
+ */
+async function resolveVisibleBranchIdsForCoverage(userId: string): Promise<Set<string> | null> {
+  if (await hasAnyRoleAsync(userId, "super_admin", "admin", "payroll_head", "finance_head")) return null;
+  const scopes = await getUserAssignmentScopes(userId);
+  if (scopes.length === 0) return null;
+  if (scopes.some((s) => s.scope_type === "all")) return null;
+  return new Set(scopes.map((s) => s.branch_id).filter((b): b is string => !!b));
+}
+
 router.get("/runs/coverage",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
@@ -716,7 +737,16 @@ router.get("/runs/coverage",
     if (!/^\d{4}-\d{2}$/.test(month)) {
       return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
     }
-    return res.json({ success: true, data: await getMonthCoverage(month) });
+    /*
+     * Row scope, resolved from the caller's own assignments — never from anything they send.
+     *
+     * This endpoint feeds the run-scope picker, and returned every branch's cost centres and
+     * headcounts to any payroll role. Creating a run was already confined by requireScopedRole
+     * above, so this was visibility rather than escalation, but org structure and headcount are
+     * not a branch user's to browse.
+     */
+    const visibleBranchIds = await resolveVisibleBranchIdsForCoverage(req.authUser!.id);
+    return res.json({ success: true, data: await getMonthCoverage(month, visibleBranchIds) });
   }),
 );
 
