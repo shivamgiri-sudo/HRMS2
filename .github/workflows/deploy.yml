@@ -38,7 +38,20 @@ jobs:
   # a tool cache it has never used.
   ci-gate:
     name: Typecheck & Build
-    runs-on: self-hosted
+    # GitHub-hosted, NOT self-hosted, and that is the whole point.
+    #
+    # The self-hosted runner lives on the production server, which has ONE CPU core
+    # shared with MySQL, the API and 45 workers. Measured during the 2026-09-04
+    # deploy: `npm ci` took 70.8% of that core while mysqld got 0.6%. Every query
+    # slowed, connections were held longer, the backend exhausted DB_POOL_MAX=50, the
+    # circuit breaker opened, and the restart that followed could not get its
+    # migration locks - so production came back 502 and stayed down.
+    #
+    # Nothing in this job touches the server: it checks out the repo, installs, type-
+    # checks, builds and runs tests. Only the `deploy` job below needs the host, and it
+    # stays self-hosted for that reason. Building here means a deploy no longer starves
+    # the database it is about to restart against.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
