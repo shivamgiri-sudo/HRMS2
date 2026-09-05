@@ -1,5 +1,7 @@
-import type { CommunicationProvider } from './provider.interface.js';
+import type { CommunicationProvider, Attachment } from './provider.interface.js';
 import type { Channel } from '../communication.types.js';
+import type { ProviderResponse, DeliveryStatus } from '../communication.types.js';
+import { isBlocked, isBlockedSync } from './send-block.js';
 import { NodemailerProvider } from './email/nodemailer.provider.js';
 import { LocalEmailProvider } from './email/local-email.provider.js';
 import { SendGridProvider } from './email/sendgrid.provider.js';
@@ -14,22 +16,56 @@ import { MetaWhatsAppProvider } from './whatsapp/meta.provider.js';
 
 type DbConfig = { provider_type: string; config: Record<string, unknown>; secrets: Record<string, string> };
 
+/**
+ * Returned instead of a real provider when an admin has explicitly paused the channel
+ * (communication_provider_config.send_blocked = 1). Never attempts a network call — send()
+ * resolves immediately as a failure, and isConfigured() reports false so every existing caller's
+ * graceful-skip handling (dispatch.service.ts's channelUnconfigured(), for one) treats a pause
+ * exactly like a channel with no credentials, with no special case needed anywhere else.
+ */
+class BlockedProvider implements CommunicationProvider {
+  constructor(private readonly channel: Channel, private readonly reason: string | null) {}
+
+  async send(_recipient: string, _subject: string, _body: string, _attachments?: Attachment[]): Promise<ProviderResponse> {
+    return { success: false, error: `${this.channel} sending is paused${this.reason ? `: ${this.reason}` : ''}` };
+  }
+
+  async getDeliveryStatus(_messageId: string): Promise<DeliveryStatus> {
+    return { status: 'failed', error: `${this.channel} sending is paused` };
+  }
+
+  validateRecipient(_contact: string): boolean { return true; }
+  getName(): string { return `${this.channel}-blocked`; }
+  isConfigured(): boolean { return false; }
+}
+
 class ProviderFactory {
   private cache = new Map<Channel, CommunicationProvider>();
 
   /**
    * DB-first provider resolution. Pass dbConfig from providerConfigService.loadActiveConfig().
    * Falls back to env vars if dbConfig is null/undefined.
+   *
+   * The pause check happens BEFORE the provider cache, on every call — cheap (an in-memory Map
+   * read, refreshed on its own TTL, never a query on the hot path) and it means an admin does not
+   * also have to remember to call clearCache(): the very next send after a pause or unpause sees
+   * the current state, cached provider or not.
    */
   async getProviderAsync(channel: Channel, dbConfig?: DbConfig | null): Promise<CommunicationProvider> {
+    const block = await isBlocked(channel);
+    if (block.blocked) return new BlockedProvider(channel, block.reason);
+
     if (this.cache.has(channel)) return this.cache.get(channel)!;
     const provider = dbConfig ? this.buildFromDb(channel, dbConfig) : this.buildFromEnv(channel);
     this.cache.set(channel, provider);
     return provider;
   }
 
-  /** Synchronous fallback — always uses env vars */
+  /** Synchronous fallback — always uses env vars (pause check reads the cache, never a query). */
   getProvider(channel: Channel): CommunicationProvider {
+    const block = isBlockedSync(channel);
+    if (block.blocked) return new BlockedProvider(channel, block.reason);
+
     if (!this.cache.has(channel)) {
       this.cache.set(channel, this.buildFromEnv(channel));
     }

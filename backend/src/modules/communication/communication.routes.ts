@@ -86,6 +86,27 @@ router.post("/config/:channel/disable", requireRole("admin", "super_admin"), h(a
   return res.json({ success: true, message: `${channel} disabled` });
 }));
 
+// The genuine kill switch (send_blocked) — distinct from enable/disable above, which only
+// chooses DB-stored vs env-var credentials and does not stop sending. See send-block.ts.
+router.post("/config/:channel/block", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  const userId = req.authUser?.id;
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  const reason = String(req.body?.reason ?? "").trim() || null;
+  await providerConfigService.setSendBlocked(channel, true, reason, userId);
+  return res.json({ success: true, message: `${channel} sending paused` });
+}));
+
+router.post("/config/:channel/unblock", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  const userId = req.authUser?.id;
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  await providerConfigService.setSendBlocked(channel, false, null, userId);
+  return res.json({ success: true, message: `${channel} sending resumed` });
+}));
+
 router.post("/config/:channel/test", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const channel = parseChannel(req.params.channel);
   const userId = req.authUser?.id;
