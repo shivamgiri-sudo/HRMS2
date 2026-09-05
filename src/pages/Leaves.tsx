@@ -13,6 +13,7 @@ import {
   Loader2,
   Plus,
   RotateCcw,
+  Search,
   Tag,
   XCircle,
 } from "lucide-react";
@@ -37,6 +38,7 @@ import { LeaveConsentBanner } from "@/components/leaves/LeaveConsentBanner";
 import { LeaveCalendarView } from "@/components/leaves/LeaveCalendarView";
 import { LeaveTrends } from "@/components/leaves/LeaveTrends";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
+import { Input } from "@/components/ui/input";
 
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
@@ -216,6 +218,9 @@ const Leaves = () => {
   const [processedTypeFilter, setProcessedTypeFilter] = useState("all");
   const [processedMonthFilter, setProcessedMonthFilter] = useState("all");
   const [processedYearFilter, setProcessedYearFilter] = useState("all");
+  const [processedBranchFilter, setProcessedBranchFilter] = useState("all");
+  const [processedProcessFilter, setProcessedProcessFilter] = useState("all");
+  const [processedSearchQuery, setProcessedSearchQuery] = useState("");
 
   const canApproveLeaves = isAdminOrHR || roles.includes("manager");
 
@@ -247,10 +252,12 @@ const Leaves = () => {
       requestId,
       status,
       reviewNotes,
+      employeeId,
     }: {
       requestId: string;
       status: "approved" | "rejected" | "branch_head_approved" | "branch_head_rejected";
       reviewNotes: string;
+      employeeId: string;
     }) => {
       // Get reviewer info for notification
       let reviewerName = "HR Team";
@@ -275,9 +282,10 @@ const Leaves = () => {
       // Notify employee (fire and forget)
       hrmsApi.post("/api/communication/dispatch/send", {
         template_name: "leave_status",
-        // No snake_case fallback: the hook maps every row to `employeeId`, and `employee_id` was
-        // never a property of this type — it could only ever have been undefined.
-        recipient_employee_ids: [selectedRequest?.employeeId].filter(Boolean) as string[],
+        // Passed in as a mutate() variable, not read off `selectedRequest` — the quick-approve
+        // path below never sets that state (there is no dialog to populate it from), and reading
+        // outer component state from inside a mutationFn is a stale-closure risk regardless.
+        recipient_employee_ids: [employeeId].filter(Boolean) as string[],
         data: {
           status: plainStatus,
           reviewer_name: reviewerName,
@@ -314,14 +322,21 @@ const Leaves = () => {
     },
   });
 
+  // Approve is one click, no confirmation dialog — remarks on an approval are optional and the
+  // employee sees nothing different either way, so a confirm step only slowed down the common
+  // case. Reject still opens the dialog below: a rejection remark is mandatory (the employee
+  // needs to see why), which is exactly the case a confirm step earns its keep.
   const handleApprove = (id: string) => {
     const request = requests.find((item) => item.id === id);
+    if (!request) return;
 
-    if (request) {
-      setSelectedRequest(request);
-      setActionType("approve");
-      setReviewNotes("");
-    }
+    const escalated = request.status === "pending_branch_head";
+    updateStatusMutation.mutate({
+      requestId: request.id,
+      status: escalated ? "branch_head_approved" : "approved",
+      reviewNotes: "",
+      employeeId: request.employeeId,
+    });
   };
 
   const handleReject = (id: string) => {
@@ -349,6 +364,7 @@ const Leaves = () => {
       requestId: selectedRequest.id,
       status,
       reviewNotes,
+      employeeId: selectedRequest.employeeId,
     });
   };
 
@@ -396,6 +412,17 @@ const Leaves = () => {
     ...new Set(allProcessedRequests.map((request) => request.type)),
   ];
 
+  // Options are built from what is actually loaded — same convention as the leave-type and
+  // year dropdowns above, and the same reason: this list is capped (PROCESSED_ROW_CAP), so an
+  // option here means "present in the loaded rows", not "exists org-wide".
+  const uniqueBranches = [
+    ...new Set(allProcessedRequests.map((request) => request.branch).filter(Boolean)),
+  ].sort();
+
+  const uniqueProcesses = [
+    ...new Set(allProcessedRequests.map((request) => request.process).filter(Boolean)),
+  ].sort();
+
   const uniqueYears = [
     ...new Set(
       allProcessedRequests
@@ -421,7 +448,16 @@ const Leaves = () => {
       processedYearFilter === "all" ||
       leaveDate.getFullYear().toString() === processedYearFilter;
 
-    return statusMatch && typeMatch && monthMatch && yearMatch;
+    const branchMatch =
+      processedBranchFilter === "all" || request.branch === processedBranchFilter;
+
+    const processMatch =
+      processedProcessFilter === "all" || request.process === processedProcessFilter;
+
+    const query = processedSearchQuery.trim().toLowerCase();
+    const searchMatch = !query || request.employee.name.toLowerCase().includes(query);
+
+    return statusMatch && typeMatch && monthMatch && yearMatch && branchMatch && processMatch && searchMatch;
   });
 
   const pendingSorting = useSorting<LeaveRequest>(pendingRequests);
@@ -781,13 +817,19 @@ const Leaves = () => {
     setProcessedTypeFilter("all");
     setProcessedMonthFilter("all");
     setProcessedYearFilter("all");
+    setProcessedBranchFilter("all");
+    setProcessedProcessFilter("all");
+    setProcessedSearchQuery("");
   };
 
   const hasProcessedFilters =
     processedStatusFilter !== "all" ||
     processedTypeFilter !== "all" ||
     processedMonthFilter !== "all" ||
-    processedYearFilter !== "all";
+    processedYearFilter !== "all" ||
+    processedBranchFilter !== "all" ||
+    processedProcessFilter !== "all" ||
+    processedSearchQuery.trim() !== "";
 
   return (
     <DashboardLayout>
@@ -1048,13 +1090,24 @@ const Leaves = () => {
                       Processed Filters
                       {hasProcessedFilters && (
                         <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                          {[processedStatusFilter, processedTypeFilter, processedMonthFilter, processedYearFilter].filter((v) => v !== "all").length} active
+                          {[processedStatusFilter, processedTypeFilter, processedMonthFilter, processedYearFilter, processedBranchFilter, processedProcessFilter].filter((v) => v !== "all").length
+                            + (processedSearchQuery.trim() ? 1 : 0)} active
                         </span>
                       )}
                     </div>
 
+                    <div className="relative mb-3">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <Input
+                        value={processedSearchQuery}
+                        onChange={(e) => setProcessedSearchQuery(e.target.value)}
+                        placeholder="Search by employee name…"
+                        className="h-10 rounded-xl bg-white pl-9 text-xs"
+                      />
+                    </div>
+
                     <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                         <Select
                           value={processedMonthFilter}
                           onValueChange={setProcessedMonthFilter}
@@ -1123,6 +1176,42 @@ const Leaves = () => {
                             {uniqueLeaveTypes.map((type) => (
                               <SelectItem key={type} value={type}>
                                 {type}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <Select
+                          value={processedBranchFilter}
+                          onValueChange={setProcessedBranchFilter}
+                        >
+                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                            <SelectValue placeholder="Branch" />
+                          </SelectTrigger>
+
+                          <SelectContent>
+                            <SelectItem value="all">All Branches</SelectItem>
+                            {uniqueBranches.map((branch) => (
+                              <SelectItem key={branch} value={branch}>
+                                {branch}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <Select
+                          value={processedProcessFilter}
+                          onValueChange={setProcessedProcessFilter}
+                        >
+                          <SelectTrigger className="h-10 rounded-xl bg-white text-xs">
+                            <SelectValue placeholder="Process" />
+                          </SelectTrigger>
+
+                          <SelectContent>
+                            <SelectItem value="all">All Processes</SelectItem>
+                            {uniqueProcesses.map((process) => (
+                              <SelectItem key={process} value={process}>
+                                {process}
                               </SelectItem>
                             ))}
                           </SelectContent>

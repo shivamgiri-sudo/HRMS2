@@ -1680,6 +1680,37 @@ export const attendanceEngineService = {
     return rows as AttendanceRuleConfig[];
   },
 
+  /**
+   * Cost centres for the Payroll Head Exception Control bulk-apply tab's Branch -> Cost Centre
+   * cascade (attendance-exception-bucket.routes.ts). branchId narrows the list to that branch's
+   * own cost centres; omitted, every live cost centre is returned. Live = active_status = 1, the
+   * same flag the bulk-upload cost-centre lookup already treats as the operative signal (status
+   * carries a separate approval workflow). Independent of attendance_rule_config — this reads
+   * cost_centre_master only.
+   *
+   * cost_centre_name is near-useless for telling cost centres apart — 395 of 402 active rows
+   * have cost_centre_name identical to cost_centre_code, verified live 2026-09-05. Which client
+   * a cost centre serves (the thing that actually identifies it) is on client_name /
+   * billing_client_name instead, so that is what the caller should show alongside the code.
+   */
+  async listCostCentresForRules(branchId?: string | null): Promise<Array<{
+    id: string; cost_centre_code: string; cost_centre_name: string; client_name: string | null; branch_id: string | null;
+  }>> {
+    const params: unknown[] = [];
+    let where = 'WHERE active_status = 1';
+    if (branchId) { where += ' AND branch_id = ?'; params.push(branchId); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, cost_centre_code, cost_centre_name,
+              COALESCE(NULLIF(client_name,''), NULLIF(billing_client_name,'')) AS client_name,
+              branch_id
+       FROM cost_centre_master
+       ${where}
+       ORDER BY cost_centre_name`,
+      params
+    );
+    return rows as Array<{ id: string; cost_centre_code: string; cost_centre_name: string; client_name: string | null; branch_id: string | null }>;
+  },
+
   async createRule(input: {
     rule_name: string; scope_type: string;
     designation_id?: string | null; process_id?: string | null; branch_id?: string | null;

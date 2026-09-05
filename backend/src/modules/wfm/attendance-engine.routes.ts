@@ -480,6 +480,14 @@ router.get('/rules/resolve', h(async (req, res) => {
   return res.json({ success: true, data: rule });
 }));
 
+// GET /cost-centres - cost centres for the Payroll Head's Exception Control bulk-apply tab's
+// Branch -> Cost Centre cascade (attendance-exception-bucket.routes.ts).
+router.get('/cost-centres', requireRole('admin', 'hr', 'payroll_head', 'payroll_admin'), h(async (req, res) => {
+  const { branchId } = req.query as Record<string, string>;
+  const data = await attendanceEngineService.listCostCentresForRules(branchId || null);
+  return res.json({ success: true, data });
+}));
+
 // POST /rules - create new rule (admin only)
 router.post('/rules', requireRole('admin'), h(async (req, res) => {
   const schema = z.object({

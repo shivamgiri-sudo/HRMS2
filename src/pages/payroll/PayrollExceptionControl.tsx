@@ -17,6 +17,7 @@ import {
 import { EmployeePicker, employeeDisplayName, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
 import {
   Loader2, ShieldCheck, CalendarDays, AlertTriangle, CheckCircle2, X, Fingerprint, Clock,
+  Users, Search,
 } from 'lucide-react';
 
 /**
@@ -81,6 +82,29 @@ interface CurrentState {
   existing_override: OverrideRow | null;
   run_status: string | null;
   run_closed: boolean;
+}
+
+interface Branch { id: string; branch_name: string; }
+interface Designation { id: string; designation_code: string; designation_name: string; }
+// cost_centre_name is near-identical to cost_centre_code for almost every cost centre (395 of 402
+// active rows, verified live 2026-09-05) — it does not tell two cost centres apart. client_name is
+// the client the cost centre actually serves, which is what a human recognizes it by.
+interface CostCentre { id: string; cost_centre_code: string; cost_centre_name: string; client_name: string | null; branch_id: string | null; }
+
+/** Code plus whichever name actually identifies it — the client, falling back to the raw name. */
+function costCentreLabel(c: { cost_centre_code: string; cost_centre_name: string; client_name?: string | null }): string {
+  return `${c.cost_centre_code} — ${c.client_name || c.cost_centre_name}`;
+}
+
+interface MatchedEmployee {
+  id: string;
+  employee_code: string;
+  employee_name: string | null;
+  branch_name: string | null;
+  cost_centre_name: string | null;
+  cost_centre_client_name: string | null;
+  designation_name: string | null;
+  existing_bucket_active: number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -240,6 +264,9 @@ export default function PayrollExceptionControl() {
             <TabsTrigger value="bucket" className="cursor-pointer gap-1.5">
               <ShieldCheck className="h-4 w-4" /> Exception Bucket
             </TabsTrigger>
+            <TabsTrigger value="bulk" className="cursor-pointer gap-1.5">
+              <Users className="h-4 w-4" /> Bulk by Group
+            </TabsTrigger>
             <TabsTrigger value="payable" className="cursor-pointer gap-1.5">
               <CalendarDays className="h-4 w-4" /> Payable Days
             </TabsTrigger>
@@ -247,6 +274,9 @@ export default function PayrollExceptionControl() {
 
           <TabsContent value="bucket">
             <ExceptionBucketTab flash={flash} />
+          </TabsContent>
+          <TabsContent value="bulk">
+            <BulkExceptionTab flash={flash} />
           </TabsContent>
           <TabsContent value="payable">
             <PayableDaysTab flash={flash} />
@@ -539,6 +569,278 @@ function ExceptionBucketTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => 
           </div>
         )}
       </DetailDrawer>
+    </div>
+  );
+}
+
+// ── Tab: Bulk by Group ────────────────────────────────────────────────────────
+//
+// The 2026-09-02 ruling on this bucket was "name people individually, not by department or
+// designation" — that decision is unchanged here. This tab does not add a group-level rule; it
+// is a faster way to SELECT the individuals: pick Branch -> Cost Centre -> Designation, see
+// exactly who matches, then the same per-employee bucket row (POST /bulk on the backend) is
+// written for each of them, one at a time, with the same audit trail as adding someone by hand.
+
+const ANY_VALUE = '__any__';
+
+function BulkExceptionTab({ flash }: { flash: (k: 'ok' | 'err', t: string) => void }) {
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
+  const [costCentres, setCostCentres] = useState<CostCentre[]>([]);
+  const [loadingMasters, setLoadingMasters] = useState(true);
+
+  const [branchId, setBranchId] = useState('');
+  const [costCentreId, setCostCentreId] = useState('');
+  const [designationId, setDesignationId] = useState('');
+
+  const [singlePunch, setSinglePunch] = useState(false);
+  const [threshold, setThreshold] = useState<string>('default');
+  const [reason, setReason] = useState('');
+
+  const [matched, setMatched] = useState<MatchedEmployee[] | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingMasters(true);
+      try {
+        const [orgRes, ccRes] = await Promise.all([
+          hrmsApi.get<{ success: boolean; data: { branches?: Branch[]; designations?: Designation[] } }>('/api/org'),
+          hrmsApi.get<{ success: boolean; data: CostCentre[] }>('/api/wfm/attendance/cost-centres'),
+        ]);
+        if (!cancelled) {
+          setBranches(orgRes.data?.branches ?? []);
+          setDesignations(orgRes.data?.designations ?? []);
+          setCostCentres(ccRes.data ?? []);
+        }
+      } catch (e: any) {
+        flash('err', e?.message ?? 'Could not load branches, cost centres or designations');
+      } finally {
+        if (!cancelled) setLoadingMasters(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [flash]);
+
+  // Cost centres narrow to the chosen branch — clearing the child when the parent changes, same
+  // as every other cascading pair in this app.
+  const costCentreOptions = branchId ? costCentres.filter((c) => c.branch_id === branchId) : costCentres;
+
+  const setBranch = (value: string) => {
+    const nextBranch = value === ANY_VALUE ? '' : value;
+    setBranchId(nextBranch);
+    if (costCentreId && !costCentres.some((c) => c.id === costCentreId && c.branch_id === nextBranch)) {
+      setCostCentreId('');
+    }
+    setMatched(null);
+  };
+
+  const hasFilter = Boolean(branchId || costCentreId || designationId);
+
+  const preview = async () => {
+    if (!hasFilter) return flash('err', 'Pick at least a Branch, Cost Centre, or Designation first');
+    setPreviewing(true);
+    setMatched(null);
+    try {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      if (costCentreId) params.set('costCentreId', costCentreId);
+      if (designationId) params.set('designationId', designationId);
+      const res = await hrmsApi.get<{ data: MatchedEmployee[] }>(
+        `/api/wfm/attendance-exception-bucket/match-employees?${params.toString()}`
+      );
+      setMatched(res.data ?? []);
+    } catch (e: any) {
+      flash('err', e?.message ?? 'Could not preview matching employees');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const apply = async () => {
+    if (!matched) return flash('err', 'Preview the matching employees first');
+    if (matched.length === 0) return flash('err', 'No employees matched — nothing to apply');
+    if (reason.trim().length < 10) return flash('err', 'Give a reason of at least 10 characters');
+    if (!singlePunch && threshold === 'default') {
+      return flash('err', 'Set at least one exception — any punch counts as present, or a shorter full day');
+    }
+    setApplying(true);
+    try {
+      const res = await hrmsApi.post<{ message?: string }>('/api/wfm/attendance-exception-bucket/bulk', {
+        branchId: branchId || undefined,
+        costCentreId: costCentreId || undefined,
+        designationId: designationId || undefined,
+        single_punch_counts_as_present: singlePunch,
+        full_day_threshold_minutes: threshold === 'default' ? null : Number(threshold),
+        reason: reason.trim(),
+      });
+      flash('ok', res.message ?? 'Applied to the matched employees');
+      setMatched(null); setReason(''); setSinglePunch(false); setThreshold('default');
+    } catch (e: any) {
+      flash('err', e?.message ?? 'Could not apply the bulk exception');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <SectionLabel>Find employees by Branch, Cost Centre and Designation</SectionLabel>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <Label className="mb-1.5 block text-sm">Branch</Label>
+            <Select value={branchId || ANY_VALUE} onValueChange={setBranch} disabled={loadingMasters}>
+              <SelectTrigger className="h-9 rounded-xl text-sm"><SelectValue placeholder="Any branch" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY_VALUE}>Any branch</SelectItem>
+                {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-sm">Cost Centre (Call Centre)</Label>
+            <Select
+              value={costCentreId || ANY_VALUE}
+              onValueChange={(v) => { setCostCentreId(v === ANY_VALUE ? '' : v); setMatched(null); }}
+              disabled={loadingMasters}
+            >
+              <SelectTrigger className="h-9 rounded-xl text-sm">
+                <SelectValue placeholder={branchId ? 'Any cost centre in this branch' : 'Any cost centre'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY_VALUE}>{branchId ? 'Any cost centre in this branch' : 'Any cost centre'}</SelectItem>
+                {costCentreOptions.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{costCentreLabel(c)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="mb-1.5 block text-sm">Designation</Label>
+            <Select
+              value={designationId || ANY_VALUE}
+              onValueChange={(v) => { setDesignationId(v === ANY_VALUE ? '' : v); setMatched(null); }}
+              disabled={loadingMasters}
+            >
+              <SelectTrigger className="h-9 rounded-xl text-sm"><SelectValue placeholder="Any designation" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ANY_VALUE}>Any designation</SelectItem>
+                {designations.map((d) => <SelectItem key={d.id} value={d.id}>{d.designation_code} — {d.designation_name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <Button onClick={preview} disabled={previewing || loadingMasters} variant="outline" className="cursor-pointer gap-1.5">
+            {previewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Preview matching employees
+          </Button>
+        </div>
+
+        {matched !== null && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            {matched.length === 0 ? (
+              <p className="text-sm text-slate-500">No active employees match this combination.</p>
+            ) : (
+              <>
+                <p className="mb-2 text-sm font-medium text-slate-800">
+                  {matched.length} employee{matched.length === 1 ? '' : 's'} match
+                  {matched.some((m) => Number(m.existing_bucket_active) === 1) && ' — some are already in the bucket and will be updated'}
+                </p>
+                <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Branch</TableHead>
+                        <TableHead>Cost Centre</TableHead>
+                        <TableHead>Designation</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {matched.map((m) => (
+                        <TableRow key={m.id}>
+                          <TableCell>
+                            <div className="font-medium text-slate-800">{m.employee_name ?? '—'}</div>
+                            <div className="font-mono text-[11px] text-slate-500">{m.employee_code}</div>
+                          </TableCell>
+                          <TableCell className="text-sm text-slate-600">{m.branch_name ?? '—'}</TableCell>
+                          <TableCell className="text-sm text-slate-600">
+                            {m.cost_centre_client_name || m.cost_centre_name || '—'}
+                          </TableCell>
+                          <TableCell className="text-sm text-slate-600">{m.designation_name ?? '—'}</TableCell>
+                          <TableCell>
+                            {Number(m.existing_bucket_active) === 1 ? (
+                              <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">Already in bucket</Badge>
+                            ) : (
+                              <span className="text-xs text-slate-400">New</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {matched !== null && matched.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <SectionLabel>Exception to apply to all {matched.length} matched employees</SectionLabel>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <Label className="mb-1.5 block text-sm">Full day counts as</Label>
+              <Select value={threshold} onValueChange={setThreshold} disabled={applying}>
+                <SelectTrigger className="h-9 rounded-xl text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {THRESHOLD_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <Switch id="bulk-single-punch" checked={singlePunch} onCheckedChange={setSinglePunch} disabled={applying} />
+            <div>
+              <Label htmlFor="bulk-single-punch" className="cursor-pointer text-sm font-medium text-slate-800">
+                Any COSEC punch counts as present
+              </Label>
+              <p className="mt-0.5 text-xs text-slate-600">
+                Applies the same rule as the single-employee form above, to every matched employee.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <Label className="mb-1.5 block text-sm">Reason <span className="text-red-600">*</span></Label>
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              disabled={applying}
+              rows={2}
+              placeholder={`Why these ${matched.length} employees are exempt from the standard COSEC rules…`}
+              className="rounded-xl text-sm"
+            />
+          </div>
+
+          <div className="mt-4 flex justify-end">
+            <Button onClick={apply} disabled={applying} className="cursor-pointer gap-1.5">
+              {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+              Apply to {matched.length} employee{matched.length === 1 ? '' : 's'}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

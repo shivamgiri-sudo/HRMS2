@@ -887,7 +887,103 @@ export async function lockSalaryRegister(candidateId: string, actorId: string) {
      VALUES (UUID(), (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1), ?, 'LOCK', ?)`,
     [candidateId, actorId, JSON.stringify({ gross, salaryEffective })],
   );
+  // Best-effort, same reasoning as the DPDP/bank auto-syncs elsewhere in this
+  // file: the salary just became genuinely locked, so the appointment-letter
+  // eligibility check — which reads salary_component_assignments, a different
+  // table entirely — should not have to wait for someone to separately notice
+  // and re-key it.
+  await syncSalaryComponentFromValidation(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] salary component auto-sync skipped for ${candidateId}:`, error);
+  });
   return getJoiningControlRoomCandidate(candidateId);
+}
+
+/**
+ * Copy a locked salary_register's own component breakdown into
+ * salary_component_assignments, the table appointmentLetterEligibility.service.ts
+ * and payroll actually read.
+ *
+ * The gap this closes: lockSalaryRegister writes salary_register from
+ * ats_payroll_hr_validation, but never salary_component_assignments — a
+ * completely different table with a completely different set of writers
+ * (payroll-head-review.service.ts, salary-change.service.ts,
+ * ats/salary-component-assignment.routes.ts), none of which this flow ever
+ * called. Verified live 2026-09-05: 27 candidates had a locked salary_register
+ * with a real basic/hra/conveyance/special_allowance breakdown already sitting
+ * on ats_payroll_hr_validation, and appointmentLetterEligibility still reported
+ * salary_not_assigned for every one of them, because it reads
+ * salary_component_assignments specifically.
+ *
+ * Copies ats_payroll_hr_validation's OWN basic_salary/hra/conveyance/
+ * special_allowance/pf_amount/esic_amount columns directly — this is not a
+ * derived or estimated split, it is the exact breakdown Payroll HR already
+ * entered and had locked. package_id is left NULL (no salary_package_master
+ * row was ever chosen for these candidates) and net_estimate is left NULL
+ * rather than computed, since inventing either would be guessing at numbers
+ * nobody approved.
+ *
+ * Requires salary_register_locked = 1 — a validation that was never locked is
+ * not yet a final figure — and never overwrites an existing active row, same
+ * non-overwrite rule as every other sync in this file.
+ */
+export async function syncSalaryComponentFromValidation(candidateId: string, actorId: string): Promise<{ synced: boolean; reason?: string }> {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  if (!employeeId) return { synced: false, reason: "No employee record exists yet for this candidate" };
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM salary_component_assignments WHERE employee_id = ? AND status = 'active' LIMIT 1`,
+    [employeeId],
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return { synced: false, reason: "Employee already has an active salary component assignment" };
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT salary_register_locked, salary_start_date, joining_date, gross_salary,
+            basic_salary, hra, conveyance, special_allowance, pf_amount, esic_amount,
+            (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1) AS salary_register_id
+       FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
+    [candidateId, candidateId],
+  );
+  const payroll = (rows as RowDataPacket[])[0];
+  if (!payroll || Number(payroll.salary_register_locked) !== 1) {
+    return { synced: false, reason: "Salary register is not locked" };
+  }
+  if (payroll.basic_salary == null || payroll.gross_salary == null) {
+    return { synced: false, reason: "Payroll HR validation has no salary component breakdown to copy" };
+  }
+
+  const effectiveDate = toDateOnly(payroll.salary_start_date || payroll.joining_date);
+  const pfApplicable = Number(payroll.pf_amount ?? 0) > 0;
+  const esiApplicable = Number(payroll.esic_amount ?? 0) > 0;
+
+  await db.execute(
+    `INSERT INTO salary_component_assignments
+       (id, employee_id, effective_date, package_id,
+        basic, hra, conveyance, special_allowance,
+        bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+        gross, pf_applicable, esi_applicable, employer_pf, employer_esi,
+        pf_employee, esic_employee, ctc, net_estimate, assigned_by, assigned_at,
+        approval_reference, status)
+     VALUES (UUID(), ?, ?, NULL,
+             ?, ?, ?, ?,
+             0, 0, 0, 0, 0, 0,
+             ?, ?, ?, NULL, NULL,
+             ?, ?, ?, NULL, ?, NOW(),
+             ?, 'active')`,
+    [
+      employeeId, effectiveDate,
+      payroll.basic_salary, payroll.hra ?? 0, payroll.conveyance ?? 0, payroll.special_allowance ?? 0,
+      payroll.gross_salary, pfApplicable ? 1 : 0, esiApplicable ? 1 : 0,
+      payroll.pf_amount ?? null, payroll.esic_amount ?? null, payroll.gross_salary,
+      actorId, payroll.salary_register_id ? String(payroll.salary_register_id) : "joining_control_room_lock_sync",
+    ],
+  );
+  return { synced: true };
 }
 
 export async function approveSalaryProposal(candidateId: string, input: JsonRecord, actorId: string) {

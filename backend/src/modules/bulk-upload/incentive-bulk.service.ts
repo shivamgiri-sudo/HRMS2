@@ -25,6 +25,7 @@ import {
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { withBulkLockRetry } from "./lock-retry.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 export const ENTITY_TYPE = "incentive_upload_line";
 
@@ -103,14 +104,28 @@ export async function importIncentiveBatch(
     return String((r as RowDataPacket[])[0]?.upload_batch_no ?? batchId);
   })();
 
+  // Pass A — validation, sequential and cheap (pure JS; the only DB call is the rare,
+  // Map-deduplicated incentive-batch-header INSERT). Same-file duplicates are caught
+  // here too, in memory via `seenKeys`, BEFORE the batched cross-batch check below —
+  // two rows sharing a key both reading "not found" out of one shared query result
+  // could otherwise both survive, creating a real duplicate line that never existed
+  // when this loop ran one row (and one duplicate SELECT) at a time.
+  interface Candidate {
+    row: (typeof rows)[number];
+    emp: NonNullable<ReturnType<typeof employees.get>>;
+    master: IncentiveMasterRow;
+    amount: number;
+    payMonth: string;
+  }
+  const candidates: Candidate[] = [];
+  const seenKeys = new Set<string>();
+
   for (const row of rows) {
     const d = row.data;
     const emp = employees.get((d.employee_code ?? "").toUpperCase());
     // Accept incentive_code by code OR by full incentive_name (case-insensitive)
     const codeOrName = (d.incentive_code ?? "").trim().toUpperCase();
     const master = masters.get(codeOrName);
-    // Resolve to the canonical code for downstream writes
-    const code = master?.incentive_code ?? codeOrName;
     const amount = Number(d.amount);
 
     let validationError: string | null = null;
@@ -130,18 +145,12 @@ export async function importIncentiveBatch(
 
     if (!validationError) d.pay_month = normalizeMonth(d.pay_month) as string;
 
-    // Duplicate guard: same employee + incentive code + pay month already staged/approved
     if (!validationError && emp && master) {
-      const [dupRows] = await db.execute<RowDataPacket[]>(
-        `SELECT iul.id FROM incentive_upload_line iul
-           JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
-          WHERE iul.employee_id = ? AND iub.incentive_id = ? AND iub.salary_month = ?
-            AND iub.status NOT IN ('rejected','inactive')
-          LIMIT 1`,
-        [emp.id, master.id, d.pay_month],
-      );
-      if ((dupRows as RowDataPacket[]).length > 0) {
-        validationError = `Duplicate: ${d.incentive_code} for ${d.employee_code} in ${d.pay_month} already exists in a pending/approved batch`;
+      const key = `${emp.id}::${master.id}::${d.pay_month}`;
+      if (seenKeys.has(key)) {
+        validationError = `Duplicate: ${d.incentive_code} for ${d.employee_code} in ${d.pay_month} appears more than once in this file`;
+      } else {
+        seenKeys.add(key);
       }
     }
 
@@ -153,28 +162,118 @@ export async function importIncentiveBatch(
       continue;
     }
 
-    try {
-      const incentiveBatchId = await incentiveBatchFor(master, d.pay_month, uploadBatchNo);
-      const lineId = randomUUID();
-      await db.execute(
-        `INSERT INTO incentive_upload_line
-           (id, batch_id, employee_id, employee_code, incentive_code, amount, remarks,
-            validation_status, branch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'ok', ?)`,
-        [
-          lineId, incentiveBatchId, emp.id, emp.employee_code, master.incentive_code,
-          amount, d.remarks || null, emp.branch_id,
-        ],
-      );
-      await linkRowToEntity(row.rowId, ENTITY_TYPE, lineId);
-      staged++;
-    } catch (err) {
-      const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
+    candidates.push({ row, emp, master, amount, payMonth: d.pay_month });
+  }
+
+  // One batched cross-batch duplicate check instead of one SELECT per row: fetch every
+  // (employee, incentive, month) triple already staged/approved for the employees and
+  // months this file actually touches, then match each candidate against it in memory.
+  // Chunked on employee_id at 500 in case a single file spans that many distinct
+  // employees. This is what turns N duplicate-check round trips into 1 (or a handful).
+  const existingKeys = new Set<string>();
+  const distinctEmployeeIds = [...new Set(candidates.map((c) => c.emp.id))];
+  const distinctMonths = [...new Set(candidates.map((c) => c.payMonth))];
+  const EMP_CHUNK = 500;
+  for (let i = 0; i < distinctEmployeeIds.length; i += EMP_CHUNK) {
+    const empSlice = distinctEmployeeIds.slice(i, i + EMP_CHUNK);
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT iul.employee_id, iub.incentive_id, iub.salary_month
+         FROM incentive_upload_line iul
+         JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
+        WHERE iub.status NOT IN ('rejected','inactive')
+          AND iul.employee_id IN (${empSlice.map(() => "?").join(",")})
+          AND iub.salary_month IN (${distinctMonths.map(() => "?").join(",")})`,
+      [...empSlice, ...distinctMonths],
+    );
+    for (const r of existingRows as RowDataPacket[]) {
+      existingKeys.add(`${r.employee_id}::${r.incentive_id}::${r.salary_month}`);
+    }
+  }
+
+  interface ReadyRow {
+    row: (typeof rows)[number];
+    emp: NonNullable<ReturnType<typeof employees.get>>;
+    master: IncentiveMasterRow;
+    amount: number;
+    payMonth: string;
+    incentiveBatchId: string;
+    lineId: string;
+  }
+  const ready: ReadyRow[] = [];
+  for (const { row, emp, master, amount, payMonth } of candidates) {
+    const d = row.data;
+    if (existingKeys.has(`${emp.id}::${master.id}::${payMonth}`)) {
+      const msg =
+        `Row ${row.rowNo} (${d.employee_code}): Duplicate: ${d.incentive_code} for ${d.employee_code} ` +
+        `in ${payMonth} already exists in a pending/approved batch`;
       errors.push(msg);
       await markRowFailed(row.rowId, msg);
       failed++;
+      continue;
     }
+    const incentiveBatchId = await incentiveBatchFor(master, payMonth, uploadBatchNo);
+    ready.push({ row, emp, master, amount, payMonth, incentiveBatchId, lineId: randomUUID() });
   }
+
+  // Pass B — the actual writes, chunked at 500 rows per statement rather than one
+  // statement per row (same trip-per-chunk trick used for employee/branch/etc. master
+  // imports, and for lockEntities on the approval side of this very file). Chunks run
+  // BULK_ROW_CONCURRENCY at a time; safe because every row's key is unique after Pass
+  // A's dedup, so no two chunks ever touch the same incentive_upload_line row.
+  const INSERT_CHUNK = 500;
+  const chunks: ReadyRow[][] = [];
+  for (let i = 0; i < ready.length; i += INSERT_CHUNK) chunks.push(ready.slice(i, i + INSERT_CHUNK));
+
+  const insertLineSql = (placeholders: string) => `
+    INSERT INTO incentive_upload_line
+       (id, batch_id, employee_id, employee_code, incentive_code, amount, remarks,
+        validation_status, branch_id)
+     VALUES ${placeholders}`;
+  const lineParams = (r: ReadyRow) => [
+    r.lineId, r.incentiveBatchId, r.emp.id, r.emp.employee_code, r.master.incentive_code,
+    r.amount, r.row.data.remarks || null, r.emp.branch_id,
+  ];
+
+  await mapWithConcurrency(chunks, BULK_ROW_CONCURRENCY, async (chunkRows) => {
+    try {
+      // One INSERT for the whole chunk...
+      await db.execute(
+        insertLineSql(chunkRows.map(() => "(?, ?, ?, ?, ?, ?, ?, 'ok', ?)").join(", ")),
+        chunkRows.flatMap(lineParams),
+      );
+      // ...then one UPDATE to link every row in it back to its line, instead of
+      // linkRowToEntity's per-row UPDATE run once per row.
+      const cases = chunkRows.map(() => "WHEN ? THEN ?").join(" ");
+      const caseParams = chunkRows.flatMap((r) => [r.row.rowId, r.lineId]);
+      const ids = chunkRows.map((r) => r.row.rowId);
+      await db.execute(
+        `UPDATE upload_batch_row
+            SET created_entity_type = ?, created_entity_id = CASE id ${cases} END, row_status = 'imported'
+          WHERE id IN (${ids.map(() => "?").join(",")})`,
+        [ENTITY_TYPE, ...caseParams, ...ids],
+      );
+      staged += chunkRows.length;
+    } catch {
+      // The chunk's batched INSERT failed — a constraint violation on one of its rows
+      // is the likely cause, not a problem with the other 499. Retry this chunk only,
+      // one row at a time, exactly like the pre-batching code did, so only the
+      // genuinely bad row ends up marked as an error (employee-master-bulk.service.ts
+      // uses the same fallback for the same reason).
+      for (const r of chunkRows) {
+        const d = r.row.data;
+        try {
+          await db.execute(insertLineSql("(?, ?, ?, ?, ?, ?, ?, 'ok', ?)"), lineParams(r));
+          await linkRowToEntity(r.row.rowId, ENTITY_TYPE, r.lineId);
+          staged++;
+        } catch (err) {
+          const msg = `Row ${r.row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
+          errors.push(msg);
+          await markRowFailed(r.row.rowId, msg);
+          failed++;
+        }
+      }
+    }
+  });
 
   // Roll the per-batch totals up from the lines actually written, so the header can
   // never disagree with its own detail.

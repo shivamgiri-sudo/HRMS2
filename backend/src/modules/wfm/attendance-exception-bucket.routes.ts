@@ -131,6 +131,39 @@ attendanceExceptionBucketRouter.get("/", h(async (req, res) => {
   });
 }));
 
+// ─── GET /match-employees ─────────────────────────────────────────────────────
+/**
+ * Preview for the Branch/Cost Centre/Designation bulk-apply flow — who would be affected, before
+ * anything is written. Requires at least one filter so "match everyone" cannot happen by leaving
+ * the form blank.
+ *
+ * Registered ahead of GET /:id: Express matches routes in registration order, and "/:id" would
+ * otherwise swallow this path with id="match-employees" and shadow it entirely.
+ */
+attendanceExceptionBucketRouter.get("/match-employees", h(async (req, res) => {
+  if (!(await assertPayrollAccess(req.authUser.id))) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll access required" });
+  }
+
+  const filters = bulkGroupFilters(req.query as Record<string, unknown>);
+  if (!filters.branchId && !filters.costCentreId && !filters.designationId) {
+    return res.status(400).json({
+      success: false,
+      error: "Pick at least a Branch, Cost Centre, or Designation before previewing.",
+    });
+  }
+
+  const rows = await matchGroupEmployees(filters);
+  if (rows.length > MAX_BULK_MATCH) {
+    return res.status(400).json({
+      success: false,
+      error: `This matches more than ${MAX_BULK_MATCH} employees. Narrow the filters (add a Cost Centre or Designation) before bulk-applying.`,
+    });
+  }
+
+  return res.json({ success: true, data: rows });
+}));
+
 // ─── GET /:id ─────────────────────────────────────────────────────────────────
 /** One row with its full audit timeline, for the drill-down drawer. */
 attendanceExceptionBucketRouter.get("/:id", h(async (req, res) => {
@@ -160,6 +193,82 @@ attendanceExceptionBucketRouter.get("/:id", h(async (req, res) => {
     },
   });
 }));
+
+/**
+ * Upsert one employee's bucket row and audit it. Shared by the single-employee POST / below and
+ * the Branch/Cost Centre/Designation bulk-apply endpoint — bulk-apply is a faster way to SELECT
+ * the people, not a different write path: it still ends as one named row per employee, matching
+ * the 2026-09-02 ruling that this bucket names individuals rather than describing them by group.
+ */
+async function upsertBucketRow(args: {
+  employeeId: string;
+  singlePunch: 0 | 1;
+  thresholdValue: number | null;
+  reason: string;
+  actorId: string;
+  actorRole: string;
+  req: AuthenticatedRequest;
+}): Promise<{ id: string; created: boolean }> {
+  const { employeeId, singlePunch, thresholdValue, reason, actorId, actorRole, req } = args;
+
+  const [existingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, single_punch_counts_as_present, full_day_threshold_minutes, reason, active_status
+       FROM employee_attendance_exception_bucket WHERE employee_id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const existing = existingRows[0] ?? null;
+  const id = existing ? String(existing.id) : randomUUID();
+
+  if (existing) {
+    await db.execute(
+      `UPDATE employee_attendance_exception_bucket
+          SET single_punch_counts_as_present = ?,
+              full_day_threshold_minutes     = ?,
+              reason                         = ?,
+              active_status                  = 1,
+              updated_by                     = ?,
+              deactivated_by                 = NULL,
+              deactivated_at                 = NULL,
+              deactivation_reason            = NULL
+        WHERE id = ?`,
+      [singlePunch, thresholdValue, reason, actorId, id],
+    );
+  } else {
+    await db.execute(
+      `INSERT INTO employee_attendance_exception_bucket
+         (id, employee_id, single_punch_counts_as_present, full_day_threshold_minutes, reason, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, employeeId, singlePunch, thresholdValue, reason, actorId],
+    );
+  }
+
+  void logSensitiveAction({
+    actor_user_id: actorId,
+    actor_role:    actorRole,
+    action_type:   existing ? "ATTENDANCE_EXCEPTION_BUCKET_UPDATED" : "ATTENDANCE_EXCEPTION_BUCKET_ASSIGNED",
+    module_key:    "attendance",
+    entity_type:   ENTITY_TYPE,
+    entity_id:     id,
+    employee_id:   employeeId,
+    reason,
+    old_value_json: existing
+      ? {
+          single_punch_counts_as_present: existing.single_punch_counts_as_present,
+          full_day_threshold_minutes:     existing.full_day_threshold_minutes,
+          reason:                         existing.reason,
+          active_status:                  existing.active_status,
+        }
+      : undefined,
+    new_value_json: {
+      single_punch_counts_as_present: singlePunch,
+      full_day_threshold_minutes:     thresholdValue,
+      active_status:                  1,
+    },
+    req,
+  });
+
+  return { id, created: !existing };
+}
 
 // ─── POST / ───────────────────────────────────────────────────────────────────
 /**
@@ -203,68 +312,137 @@ attendanceExceptionBucketRouter.post("/", h(async (req, res) => {
   );
   if (!empRows.length) return res.status(404).json({ success: false, error: "Employee not found" });
 
-  const [existingRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, single_punch_counts_as_present, full_day_threshold_minutes, reason, active_status
-       FROM employee_attendance_exception_bucket WHERE employee_id = ? LIMIT 1`,
-    [employee_id.trim()],
-  );
-  const existing = existingRows[0] ?? null;
-  const id = existing ? String(existing.id) : randomUUID();
-
-  if (existing) {
-    await db.execute(
-      `UPDATE employee_attendance_exception_bucket
-          SET single_punch_counts_as_present = ?,
-              full_day_threshold_minutes     = ?,
-              reason                         = ?,
-              active_status                  = 1,
-              updated_by                     = ?,
-              deactivated_by                 = NULL,
-              deactivated_at                 = NULL,
-              deactivation_reason            = NULL
-        WHERE id = ?`,
-      [singlePunch, threshold.value, String(reason).trim(), req.authUser.id, id],
-    );
-  } else {
-    await db.execute(
-      `INSERT INTO employee_attendance_exception_bucket
-         (id, employee_id, single_punch_counts_as_present, full_day_threshold_minutes, reason, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, employee_id.trim(), singlePunch, threshold.value, String(reason).trim(), req.authUser.id],
-    );
-  }
-
-  void logSensitiveAction({
-    actor_user_id: req.authUser.id,
-    actor_role:    access.actorRole,
-    action_type:   existing ? "ATTENDANCE_EXCEPTION_BUCKET_UPDATED" : "ATTENDANCE_EXCEPTION_BUCKET_ASSIGNED",
-    module_key:    "attendance",
-    entity_type:   ENTITY_TYPE,
-    entity_id:     id,
-    employee_id:   employee_id.trim(),
-    reason:        String(reason).trim(),
-    old_value_json: existing
-      ? {
-          single_punch_counts_as_present: existing.single_punch_counts_as_present,
-          full_day_threshold_minutes:     existing.full_day_threshold_minutes,
-          reason:                         existing.reason,
-          active_status:                  existing.active_status,
-        }
-      : undefined,
-    new_value_json: {
-      single_punch_counts_as_present: singlePunch,
-      full_day_threshold_minutes:     threshold.value,
-      active_status:                  1,
-    },
+  const { id, created } = await upsertBucketRow({
+    employeeId: employee_id.trim(),
+    singlePunch,
+    thresholdValue: threshold.value,
+    reason: String(reason).trim(),
+    actorId: req.authUser.id,
+    actorRole: access.actorRole,
     req,
   });
 
-  return res.status(existing ? 200 : 201).json({
+  return res.status(created ? 201 : 200).json({
     success: true,
     data: await getRowById(id),
-    message: existing
-      ? "Exception updated. It applies from the next attendance processing run."
-      : "Employee added to the exception bucket. It applies from the next attendance processing run.",
+    message: created
+      ? "Employee added to the exception bucket. It applies from the next attendance processing run."
+      : "Exception updated. It applies from the next attendance processing run.",
+  });
+}));
+
+// ─── Bulk-by-group helpers ────────────────────────────────────────────────────
+
+const MAX_BULK_MATCH = 500;
+
+/** At least one of the three must be set — an all-blank filter would match every employee. */
+function bulkGroupFilters(query: Record<string, unknown>) {
+  const branchId       = typeof query.branchId === "string" && query.branchId.trim() ? query.branchId.trim() : null;
+  const costCentreId    = typeof query.costCentreId === "string" && query.costCentreId.trim() ? query.costCentreId.trim() : null;
+  const designationId  = typeof query.designationId === "string" && query.designationId.trim() ? query.designationId.trim() : null;
+  return { branchId, costCentreId, designationId };
+}
+
+async function matchGroupEmployees(filters: { branchId: string | null; costCentreId: string | null; designationId: string | null }) {
+  const { branchId, costCentreId, designationId } = filters;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name),''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+            br.branch_name, cc.cost_centre_name,
+            COALESCE(NULLIF(cc.client_name,''), NULLIF(cc.billing_client_name,'')) AS cost_centre_client_name,
+            d.designation_name,
+            b.active_status AS existing_bucket_active
+       FROM employees e
+       LEFT JOIN branch_master br         ON br.id = e.branch_id
+       LEFT JOIN cost_centre_master cc    ON cc.id = e.cost_centre_id
+       LEFT JOIN designation_master d     ON d.id  = e.designation_id
+       LEFT JOIN employee_attendance_exception_bucket b ON b.employee_id = e.id AND b.active_status = 1
+      WHERE e.active_status = 1
+        AND (? IS NULL OR e.branch_id      = ?)
+        AND (? IS NULL OR e.cost_centre_id = ?)
+        AND (? IS NULL OR e.designation_id = ?)
+      ORDER BY employee_name
+      LIMIT ${MAX_BULK_MATCH + 1}`,
+    [branchId, branchId, costCentreId, costCentreId, designationId, designationId],
+  );
+  return rows;
+}
+
+// ─── POST /bulk ────────────────────────────────────────────────────────────────
+/**
+ * Apply the same exception to every active employee matching a Branch/Cost Centre/Designation
+ * combination. The match is re-run server-side from the filters, never trusted from the client's
+ * preview list, so it cannot be applied to someone who transferred out between preview and submit.
+ * Writes one individual bucket row per matched employee — same upsert, same audit trail as the
+ * single-employee form above; this is a faster SELECT, not a new kind of rule.
+ */
+attendanceExceptionBucketRouter.post("/bulk", h(async (req, res) => {
+  const access = await assertPayrollAccess(req.authUser.id);
+  if (!access) {
+    return res.status(403).json({ success: false, error: "Forbidden: Payroll Head or Payroll Admin role required" });
+  }
+
+  const body = req.body ?? {};
+  const filters = bulkGroupFilters(body);
+  if (!filters.branchId && !filters.costCentreId && !filters.designationId) {
+    return res.status(400).json({
+      success: false,
+      error: "Pick at least a Branch, Cost Centre, or Designation before applying.",
+    });
+  }
+
+  const rErr = reasonError(body.reason);
+  if (rErr) return res.status(400).json({ success: false, error: rErr });
+
+  const threshold = normaliseThreshold(body.full_day_threshold_minutes);
+  if ("error" in threshold) return res.status(400).json({ success: false, error: threshold.error });
+
+  const singlePunch = body.single_punch_counts_as_present === true || body.single_punch_counts_as_present === 1 ? 1 : 0;
+  if (singlePunch === 0 && threshold.value === null) {
+    return res.status(400).json({
+      success: false,
+      error: "Set at least one exception: single-punch-counts-as-present, or a full-day threshold.",
+    });
+  }
+
+  const rows = await matchGroupEmployees(filters);
+  if (rows.length === 0) {
+    return res.status(404).json({ success: false, error: "No active employees match this combination." });
+  }
+  if (rows.length > MAX_BULK_MATCH) {
+    return res.status(400).json({
+      success: false,
+      error: `This matches more than ${MAX_BULK_MATCH} employees. Narrow the filters before applying.`,
+    });
+  }
+
+  const reason = String(body.reason).trim();
+  let created = 0;
+  let updated = 0;
+  const failed: Array<{ employee_id: string; error: string }> = [];
+
+  for (const row of rows) {
+    try {
+      const result = await upsertBucketRow({
+        employeeId: String(row.id),
+        singlePunch,
+        thresholdValue: threshold.value,
+        reason,
+        actorId: req.authUser.id,
+        actorRole: access.actorRole,
+        req,
+      });
+      if (result.created) created += 1; else updated += 1;
+    } catch (e: any) {
+      failed.push({ employee_id: String(row.id), error: e?.message ?? "Unknown error" });
+    }
+  }
+
+  return res.status(201).json({
+    success: true,
+    message: `Applied to ${created + updated} of ${rows.length} matched employees (${created} added, ${updated} updated).`
+      + (failed.length ? ` ${failed.length} failed.` : ""),
+    data: { matched: rows.length, created, updated, failed },
   });
 }));
 
