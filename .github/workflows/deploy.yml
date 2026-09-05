@@ -416,11 +416,36 @@ jobs:
             exit 1
           fi
 
+          # These were two bare `grep -q` calls. Under `set -euo pipefail` a miss exits the whole
+          # step with code 1 and NOT ONE WORD of output — on 2026-09-05 that failed a deploy whose
+          # backend was already healthy and live, printed nothing between "Backend became healthy"
+          # and "Process completed with exit code 1", and skipped the frontend step entirely,
+          # leaving new backend + old frontend. The headers were correct when checked minutes
+          # later, so this was a race: /api/health answers before every route and middleware is
+          # mounted, and the check ran in that window.
+          #
+          # Retried briefly, and a failure now PRINTS what it actually got. A deploy that fails
+          # must say why; one that half-deploys in silence is worse than one that refuses.
           CORS_HEADERS="$(mktemp)"
           trap 'rm -f "$CORS_HEADERS"' EXIT
-          curl -s -D "$CORS_HEADERS" -o /dev/null -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches
-          grep -qi '^access-control-allow-origin: https://visitor-management-portal.shivam-giri.chatgpt.site' "$CORS_HEADERS"
-          grep -qi '^access-control-allow-credentials: true' "$CORS_HEADERS"
+          cors_ok=0
+          for cors_attempt in 1 2 3 4 5 6 7 8 9 10; do
+            curl -s -D "$CORS_HEADERS" -o /dev/null -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches || true
+            if grep -qi '^access-control-allow-origin: https://visitor-management-portal.shivam-giri.chatgpt.site' "$CORS_HEADERS" \
+               && grep -qi '^access-control-allow-credentials: true' "$CORS_HEADERS"; then
+              cors_ok=1
+              [ "$cors_attempt" -gt 1 ] && echo "CORS headers correct on attempt ${cors_attempt} (app was still warming)."
+              break
+            fi
+            echo "CORS headers not ready yet (${cors_attempt}/10), retrying…"
+            sleep 3
+          done
+          if [ "$cors_ok" -ne 1 ]; then
+            echo "Visitor CORS headers wrong after 10 attempts. Headers actually returned:"
+            sed 's/^/    /' "$CORS_HEADERS"
+            rollback_backend
+            exit 1
+          fi
 
           PROTECTED_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/visitor/visits || echo "000")"
           if [[ "$PROTECTED_CODE" != "401" ]]; then
