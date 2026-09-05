@@ -12,13 +12,8 @@ import { pickConversationEntries } from '../ai-conversation.service.js';
 // See hrms2-omniroute-gateway memory for deployment details. OpenAI-compatible
 // /v1/chat/completions, same request/response shape as OpenRouter, so this
 // provider mirrors openrouter.provider.ts almost exactly.
-const DEFAULT_BASE_URL = 'http://127.0.0.1:20128/v1';
-// 'auto/best-chat' and friends route to reasoning models that spend their
-// entire token budget on hidden reasoning_content and never emit a real
-// `content` field in OmniRoute's keyless free pool — verified 2026-08-25.
-// 'auto/mimo' (mimo-v2.5-free) is the one keyless route confirmed to return
-// real, grounded content in that same free pool.
-const DEFAULT_MODEL = 'auto/mimo';
+const DEFAULT_BASE_URL = 'http://127.0.0.1:3002/v1';
+const DEFAULT_MODEL = 'auto';
 
 function baseUrl(value?: string): string {
   const candidate = String(value || process.env.OMNIROUTE_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
@@ -84,7 +79,7 @@ export class OmniRouteProvider implements AiProvider {
       const result = await this.call({
         apiKey,
         model,
-        baseUrl: DEFAULT_BASE_URL,
+        baseUrl: baseUrl(undefined),
         timeoutMs: 30_000,
         systemInstruction: request.systemInstruction || 'You are Mira, MAS Callnet’s helpful HRMS assistant.',
         userQuestion: request.userQuestion,
