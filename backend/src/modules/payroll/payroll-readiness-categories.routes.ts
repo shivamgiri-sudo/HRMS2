@@ -27,6 +27,7 @@ import {
   type CategoryCheckResult,
   type ReadinessCategoriesResult,
 } from "./payroll-readiness-categories.service.js";
+import { VOID_RUN_STATUSES_SQL } from "./run-status.js";
 
 export const payrollReadinessCategoriesRouter = Router();
 
@@ -92,6 +93,11 @@ async function resolveRunForMonth(month: string): Promise<string | null> {
     `SELECT id FROM salary_prep_run
       WHERE run_month = ?
         AND LOWER(COALESCE(created_by, '')) NOT IN (${placeholders})
+        -- A cancelled run is not the month's run. Without this, August 2026 resolved to a
+        -- CANCELLED stub and the whole category evaluation ran against a voided run — reporting
+        -- readiness for something nobody is paying. The honest answer once that run is cancelled
+        -- is "not_created", which also returns immediately instead of evaluating.
+        AND LOWER(TRIM(COALESCE(status, ''))) NOT IN (${VOID_RUN_STATUSES_SQL})
       ORDER BY created_at DESC LIMIT 1`,
     [month, ...SYNTHETIC_RUN_CREATORS],
   );
