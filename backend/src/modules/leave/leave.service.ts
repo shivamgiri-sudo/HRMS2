@@ -7,14 +7,6 @@ import {
   halfDayRefusalMessage,
 } from "../../shared/halfDayLeave.js";
 import { assertDaysWritable } from "../../shared/attendanceLockGuard.js";
-
-/**
- * Marks "this request needs no leave at all" — every date falls on the employee's roster
- * week-off or a company holiday. Distinct from every other refusal in this file, which mean the
- * request is not allowed; this one means there is nothing to charge. Bulk callers skip such a
- * row rather than failing it.
- */
-export const NO_CHARGEABLE_DAYS = "NO_CHARGEABLE_DAYS";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { notifyLeaveSubmitted, notifyLeaveDecision, notifyLeavePendingBranchHead } from "./leave.notifications.js";
@@ -354,15 +346,8 @@ export const leaveService = {
     // and the audit row can never record different numbers.
     const storedDays = isHalfDay ? 0.5 : chargeableCount;
     if (chargeableCount === 0) {
-      // Carries a code so callers can tell "nothing to do here" apart from "this request is
-      // wrong". A person submitting one request still gets the error — they picked a date and
-      // deserve to be told it needs no leave. A bulk file is different: the row is a no-op, and
-      // failing it reports a broken upload when nothing is broken. See markRowSkipped.
-      throw Object.assign(
-        new Error(
-          `Every date in ${input.fromDate} – ${input.toDate} is a Week Off or company holiday for this employee — there are no working days to charge leave against.`
-        ),
-        { code: NO_CHARGEABLE_DAYS },
+      throw new Error(
+        `Every date in ${input.fromDate} – ${input.toDate} is a Week Off or company holiday for this employee — there are no working days to charge leave against.`
       );
     }
 

@@ -53,17 +53,9 @@ const SKIPS: Record<string, string> = {
     "APR reconciliation; reports differences rather than forcing them",
   "modules/payroll/payroll-attendance-control.service.ts":
     "dialler/APR import; additionally refuses to overwrite any owned row",
+  "shared/attendanceRestore.ts":
+    "restore helper; a locked day is out of scope for an automatic restore",
 };
-
-/**
- * Comments are stripped before scanning. Half the files that DISCUSS this pattern — including
- * the guard and the reconciliation service — do not write a locked day at all, and counting
- * their prose as a write site would demand they declare a policy they have no use for. The
- * question is what the SQL does, not what the comments say about it.
- */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-}
 
 function filesUsingPattern(dir: string, found: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -72,7 +64,7 @@ function filesUsingPattern(dir: string, found: string[] = []): string[] {
       if (entry.name === "__tests__" || entry.name === "node_modules") continue;
       filesUsingPattern(full, found);
     } else if (entry.name.endsWith(".ts")) {
-      if (PATTERN.test(stripComments(fs.readFileSync(full, "utf8")))) {
+      if (PATTERN.test(fs.readFileSync(full, "utf8"))) {
         found.push(path.relative(SRC, full).split(path.sep).join("/"));
       }
     }
