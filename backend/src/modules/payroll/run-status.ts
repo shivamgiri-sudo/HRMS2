@@ -71,6 +71,27 @@ export const LOCK_TERMINAL_STATUSES_SQL = "'locked','disbursed','cancelled'";
 export const CLOSED_RUN_STATUSES_SQL = "'locked','disbursed','finalized'";
 
 /**
+ * Runs that no longer occupy their month — a voided run must not block its own replacement.
+ *
+ * The one-company-run-per-month check in payroll.service.ts filtered on month, branch, process
+ * and scope_kind but on NO status, so ANY existing row blocked a new run forever. Reject a run
+ * and the month became unrunnable; there was no way back except deleting the row and its audit
+ * trail with it.
+ *
+ * Found on 2026-08: salary_prep_run 5035d780 carried status FINALIZED while having computed
+ * nobody's pay — total_employees = 0, three salary lines against July's 1,371, no payslips, no
+ * bank transfers. Cancelling it is the honest way to free the month; deleting it would erase the
+ * evidence that it ever existed, which is exactly what an auditor would want to see.
+ *
+ * Deliberately NOT part of CLOSED_RUN_STATUSES: a cancelled run is not closed to recomputation,
+ * it is gone. Nothing should recompute it either.
+ */
+export const VOID_RUN_STATUSES: ReadonlySet<string> = new Set(["cancelled", "rejected"]);
+
+/** SQL form of VOID_RUN_STATUSES, for statements that filter in the database. */
+export const VOID_RUN_STATUSES_SQL = "'cancelled','rejected'";
+
+/**
  * Ordering that picks the canonical run when a month holds more than one.
  *
  * A month can legitimately hold several runs — a re-run, a correction, an

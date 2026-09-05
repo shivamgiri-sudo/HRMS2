@@ -12,6 +12,7 @@ import {
 } from "./payroll-run-scope.service.js";
 import { leaveService } from "../leave/leave.service.js";
 import { validateTransition, canEdit, type RunStatus } from "./payroll-lifecycle.js";
+import { VOID_RUN_STATUSES_SQL } from "./run-status.js";
 import { notifyPayrollRunStatus, notifyPayslipsReady } from "./payroll.notifications.js";
 import type {
   BulkAssignInput,
@@ -431,12 +432,17 @@ export const payrollService = {
         } else {
           // Company runs stay one-per-month. Scoped runs deliberately do not: a month is expected
           // to hold several, one per group of cost centres.
+          // A voided run does not occupy its month. Without this the check matched on month,
+          // branch, process and scope_kind but on NO status, so any existing row blocked a new
+          // run forever — reject one and the month became unrunnable, with no way back except
+          // deleting the row and its audit trail with it.
           const [dup] = await conn.execute(
             `SELECT id FROM salary_prep_run
               WHERE run_month = ?
                 AND (branch_filter <=> ?)
                 AND (process_filter <=> ?)
                 AND scope_kind = 'company'
+                AND LOWER(TRIM(COALESCE(status,''))) NOT IN (${VOID_RUN_STATUSES_SQL})
               LIMIT 1`,
             [input.runMonth, input.branchFilter ?? null, input.processFilter ?? null]
           );
