@@ -649,16 +649,38 @@ export const wfmService = {
           capturedBy: reviewerId,
         });
 
-        if (
-          existing &&
-          Number(existing.is_locked ?? 0) === 1 &&
-          (
-            (existing.regularization_id && existing.regularization_id !== id) ||
-            (existing.override_by && existing.override_by !== reviewerId)
-          )
-        ) {
+        /*
+         * A locked day cannot be corrected, so refuse instead of pretending to.
+         *
+         * upsertDailyRecord writes every column as IF(is_locked = 0, VALUES(x), x). On a locked day
+         * that statement SUCCEEDS and changes nothing - no error, no warning - so the correction
+         * evaporates while this function reports success and stamps the regularization 'approved'.
+         *
+         * This check used to fire only when the lock belonged to ANOTHER correction. A day locked by
+         * the payroll freeze has neither regularization_id nor override_by, so it fell straight
+         * through to the silent no-op. Measured on production 2026-09-05: batch BATCH-1788287542227
+         * created 916 approved regularizations for August, of which 809 changed nothing - 660 days
+         * still half_day and 149 still absent, every one locked by the freeze with no owner. Since
+         * attendance status IS the pay, that is roughly 479 days of pay silently not credited, with
+         * nobody told.
+         *
+         * So: refuse unless THIS correction already owns the lock (a re-review of its own day).
+         * A frozen month needs the deliberate unlock path, not a write that quietly disappears.
+         */
+        const lockedDay = existing && Number(existing.is_locked ?? 0) === 1;
+        const ownsExistingLock =
+          (existing?.regularization_id && existing.regularization_id === id) ||
+          (existing?.override_by && existing.override_by === reviewerId);
+
+        if (lockedDay && !ownsExistingLock) {
+          const lockedByAnotherCorrection =
+            !!existing?.regularization_id || !!existing?.override_by;
           throw new Error(
-            `Attendance record is already locked by another correction for employee ${reg.employee_id} on ${reg.session_date}.`
+            lockedByAnotherCorrection
+              ? `Attendance record is already locked by another correction for employee ${reg.employee_id} on ${reg.session_date}.`
+              : `Attendance for ${String(reg.session_date).slice(0, 10)} is locked because payroll for that month is frozen, `
+                + `so this correction cannot be applied and has NOT been saved. Unlock the day through the `
+                + `attendance-correction governance path, or handle it as an arrears adjustment in an open month.`
           );
         }
 
