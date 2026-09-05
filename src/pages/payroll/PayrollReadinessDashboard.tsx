@@ -257,8 +257,26 @@ function getScoreColors(score: number) {
   };
 }
 
-function currentMonth(): string {
+/**
+ * The month this page should open on: the one being PREPARED for payroll, not today's.
+ *
+ * Payroll is closed monthly and always in arrears — August's payroll is prepared during
+ * September — so the readiness of the current calendar month is not what anyone comes here to
+ * see. It defaulted to today's month anyway, which meant that on 2026-09-05, with August being
+ * processed, this page showed SEPTEMBER: Head Office read "22%, blocked, 2/10 checks" when
+ * August's actual score was 42 and three of its checks had just been satisfied.
+ *
+ * Worse, it disagreed silently with the Payroll page beside it, which correctly says
+ * "Currently processing: August 2026". Two pages, two months, no indication either was
+ * answering a different question — so a Payroll Head deciding whether August can run was
+ * reading September's answer.
+ *
+ * The month picker still lets any month be chosen; this only decides where the page starts.
+ */
+function processingMonth(): string {
   const d = new Date();
+  d.setDate(1); // avoid the 31st-of-a-month rolling back two months
+  d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
@@ -476,15 +494,44 @@ interface ChecklistDef {
   isPercent?: boolean;
 }
 
+/**
+ * The checks the readiness SCORE is actually built from — see computeScore() in
+ * payroll-branch-readiness.service.ts. The two must list the same things, or the card shows a
+ * tick count and a score that disagree about the same branch.
+ *
+ * They did disagree, in three ways, and each one flattered the branch or hid a gate:
+ *
+ *   - `attendance_data_ready` was MISSING. It carries the single largest weight (20) because it
+ *     is WFM declaring the month closed — the most important gate on the card was the one the
+ *     card did not show.
+ *   - `noc_resolved` was counted. It DEFAULTS TO 1 in the DDL and is 1 on all 59 August and all
+ *     53 September rows — every branch in the company, always. It rendered a green tick for a
+ *     check nobody has ever performed. computeScore() had already stopped scoring it for exactly
+ *     this reason; the card never got the message.
+ *   - `overtime_entered` was counted but is NOT scored: overtime_allowed is false company-wide,
+ *     so it is a box no branch is permitted to tick.
+ *
+ * `holiday_work_approved` also defaults to 1 and is likewise unscored. Both it and NOC are still
+ * SHOWN below the count as unverified, rather than deleted — a defaulted flag that nobody checks
+ * is worth knowing about, and quietly dropping it from the page would hide the problem instead
+ * of naming it.
+ */
 const BRANCH_CHECKLIST_DEFS: ChecklistDef[] = [
+  { key: "attendance_data_ready", label: "Attendance Data Ready" },
   { key: "attendance_frozen", label: "Attendance Frozen" },
   { key: "incentives_status", label: "Incentives Approved" },
+  { key: "custom_deductions_uploaded", label: "Custom Deductions" },
   { key: "leave_finalized", label: "Leaves Finalized" },
   { key: "regularization_complete", label: "Regularizations" },
-  { key: "custom_deductions_uploaded", label: "Custom Deductions" },
-  { key: "overtime_entered", label: "Overtime" },
   { key: "bank_details_pct", label: "Bank Details", isPercent: true },
   { key: "uan_complete_pct", label: "UAN", isPercent: true },
+];
+
+/**
+ * Shown, but never counted: these default to 1 in the table, so their value says nothing about
+ * whether anyone looked. Kept visible so the gap is legible rather than invisible.
+ */
+const BRANCH_UNVERIFIED_DEFS: ChecklistDef[] = [
   { key: "noc_resolved", label: "NOC" },
   { key: "holiday_work_approved", label: "Holiday Work" },
 ];
@@ -538,7 +585,14 @@ function BranchCard({
           <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${s.badge}`}>
             {s.badgeText}
           </span>
-          <span className="text-[11px] text-slate-400">{doneCount}/{totalCount} checks</span>
+          <span
+            className="text-[11px] text-slate-400"
+            title={`Counts only the checks the score is built from. ${BRANCH_UNVERIFIED_DEFS
+              .map((d) => d.label)
+              .join(" and ")} default to yes in the database and are not counted — their value does not tell you whether anyone checked.`}
+          >
+            {doneCount}/{totalCount} checks
+          </span>
         </div>
 
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
@@ -1617,7 +1671,7 @@ function BranchScopeOwnView({ month, processOnly = false }: { month: string; pro
 export default function PayrollReadinessDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const scope = searchParams.get("scope") || "branch";
-  const [month, setMonth] = useState(currentMonth);
+  const [month, setMonth] = useState(processingMonth);
   const { roleKeys, scopes, isLoading: roleLoading } = useWorkforceAccess();
   const { user } = useAuth();
   const qc = useQueryClient();
