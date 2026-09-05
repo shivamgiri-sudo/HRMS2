@@ -6,6 +6,7 @@ import {
   halfDayAttendanceTarget,
   halfDayRefusalMessage,
 } from "../../shared/halfDayLeave.js";
+import { assertDaysWritable } from "../../shared/attendanceLockGuard.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { notifyLeaveSubmitted, notifyLeaveDecision, notifyLeavePendingBranchHead } from "./leave.notifications.js";
@@ -863,6 +864,18 @@ export const leaveService = {
             halfDayTargets.set(String(d), target);
           }
         }
+
+        // Refuse before writing, because the write below CANNOT fail: its
+        // `IF(is_locked = 0, ...)` columns succeed and change nothing on a locked day, so
+        // without this the approval would complete, report success, and discard the leave.
+        // That is not hypothetical — it silently dropped 70 approved leave days from
+        // BATCH-1788525513744 before this guard existed. See shared/attendanceLockGuard.ts.
+        await assertDaysWritable(
+          conn,
+          request.employee_id,
+          chargeable.map((d) => String(d)),
+          "This leave approval",
+        );
 
         const valuesSql = chargeable.map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')").join(", ");
         const valuesParams: unknown[] = [];
