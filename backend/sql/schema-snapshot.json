@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1085,
-  "columnCount": 15750,
+  "columnCount": 15752,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -16355,6 +16355,8 @@
       "error_rows",
       "imported_rows",
       "batch_status",
+      "job_heartbeat_at",
+      "job_owner",
       "approval_status",
       "branch_id",
       "submitted_for_approval_at",
