@@ -484,11 +484,23 @@ export async function createEmployeeFromCandidate(
     result.employeeId = employeeId;
     result.employeeCode = employeeCode;
 
-    // Payroll Head mandatory review gate (migration 1541/1542): nothing told
-    // any payroll_head user a new pending_review row existed except them
-    // proactively checking the queue. Post-commit, fire-and-forget — mirrors
-    // the AML screening block below, and must never be able to affect
-    // whether this hire itself succeeded.
+    // Payroll Head mandatory review gate (migration 1541/1542). Post-commit,
+    // fire-and-forget — mirrors the AML screening block below, and must never
+    // be able to affect whether this hire itself succeeded.
+    //
+    // priority raised 'normal' -> 'high' 2026-09-06: this notification WAS
+    // firing correctly (verified live — 141 real rows in work_inbox_item,
+    // spanning three weeks) but sat unread. Root cause wasn't a missing or
+    // broken producer, it was sort order: /api/inbox/my-pending orders
+    // FIELD(priority,'urgent','high','normal','low'), and the two active
+    // payroll_head users each carry 24-87 higher-priority items ahead of
+    // these in their combined queue — normal-priority items were being
+    // correctly delivered and then permanently buried. The sibling
+    // rejection notification for the same review (payroll_head_review_rejected,
+    // below in this module) was already 'high'; this is the same signal at
+    // the other end of the same review and belongs at the same priority —
+    // an employee excluded from every payroll run until this is actioned is
+    // not a routine item.
     db.execute<RowDataPacket[]>(
       `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key = 'payroll_head'`
     ).then(async ([rows]) => {
@@ -503,7 +515,7 @@ export async function createEmployeeFromCandidate(
             entity_type: 'employee',
             entity_id: employeeId,
             action_url: `/payroll/salary-review/${employeeId}`,
-            priority: 'normal',
+            priority: 'high',
           })
         )
       );
