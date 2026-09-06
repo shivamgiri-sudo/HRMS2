@@ -303,7 +303,6 @@ export const navGroups: NavGroup[] = [
           { label: "QA Audit Forms",      href: "/quality/audit-forms",   icon: ic(ClipboardList), pageCode: "QA_EVALUATION", description: "Define what a process is scored on", roles: ["super_admin","admin","qa","tq_head"] },
           { label: "Score a Call",        href: "/quality/file-audit",    icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "File a QA audit", roles: ["super_admin","admin","qa","quality_analyst","tq_head"] },
           { label: "Process Metrics",     href: "/kpi/process-metrics",   icon: ic(BarChart3), pageCode: "KPI_CONFIG", description: "What each process is measured on", roles: ["super_admin","admin","qa","tq_head","process_manager"] },
-          { label: "Onfido Process",      href: "/onfido-process/dashboard", icon: ic(ShieldCheck), pageCode: "ONFIDO_PROCESS_DASHBOARD", description: "Onfido DOC/POA volume, AHT, quality and escalations", roles: ["super_admin","admin","ceo","coo","manager","process_manager","team_leader","branch_head","qa","quality_analyst","wfm"] },
         ],
       },
       {
