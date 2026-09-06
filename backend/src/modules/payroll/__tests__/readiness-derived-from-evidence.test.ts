@@ -113,3 +113,44 @@ describe("a derivation can correct a false negative but never invent a positive"
     expect(d.slice(Math.max(0, idx - 120), idx)).toMatch(/\b0,\s*$|\b0,\s*\n\s*"/);
   });
 });
+
+describe("custom deductions: nothing to upload is not the same as not done", () => {
+  it("is satisfied only when the branch has no deduction entries for the month", () => {
+    /*
+     * Owner ruling: deductions are not mandatory every month. Worth 10 of 100 and satisfiable
+     * only by a tick, a branch with nothing to deduct was permanently penalised for not
+     * confirming an upload it had no reason to make — Head Office sat at 72 against a threshold
+     * of 80 for exactly this, with employee_deduction_entries holding ONE row company-wide.
+     */
+    const d = derivation();
+    expect(d).toContain("employee_deduction_entries");
+    expect(d).toMatch(/deductionsPending === 0\) updates\.custom_deductions_uploaded = 1/);
+  });
+
+  it("leaves the manual confirmation in place when entries DO exist", () => {
+    /*
+     * "Somebody uploaded some deductions" does not establish that they uploaded all of them.
+     * That judgement needs a person, and this is the one case where the tick earns its keep — so
+     * there must be exactly ONE place setting this flag, guarded by the zero-entries condition,
+     * and no unconditional second one.
+     */
+    const d = derivation();
+    expect((d.match(/custom_deductions_uploaded = 1/g) ?? []).length).toBe(1);
+    expect(d).toMatch(/if \(deductionsPending === 0\) updates\.custom_deductions_uploaded = 1/);
+  });
+
+  it("scopes the count to this branch and month", () => {
+    const d = derivation();
+    expect(d).toContain("d.run_month = ?");
+    expect(d).toContain("e.branch_id = ?");
+  });
+
+  it("treats an unreadable count as unsatisfied, not as zero", () => {
+    // safeQuery's fallback is -1 here precisely so a failed query cannot read as "no deductions
+    // exist" and hand the branch 10 points it has not earned.
+    const d = derivation();
+    const idx = d.indexOf("deduction_entry_count");
+    expect(idx).toBeGreaterThan(-1);
+    expect(d.slice(Math.max(0, idx - 200), idx)).toContain("-1,");
+  });
+});

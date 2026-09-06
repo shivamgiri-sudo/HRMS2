@@ -787,6 +787,40 @@ export const payrollBranchReadinessService = {
     if (Number(updates.pending_leave_count ?? -1) === 0) updates.leave_finalized = 1;
     if (Number(updates.pending_regularization_count ?? -1) === 0) updates.regularization_complete = 1;
 
+    // Custom deductions: NOTHING TO UPLOAD IS NOT THE SAME AS NOT DONE.
+    //
+    // Owner ruling 2026-09-06: deductions are not mandatory every month. Most months a branch has
+    // none, yet this was worth 10 of the 100 readiness points and could only be satisfied by
+    // ticking a box — so a branch with nothing to deduct was permanently penalised for not
+    // confirming an upload it had no reason to make. Head Office sat at 72 against a threshold of
+    // 80 for exactly this, with employee_deduction_entries holding ONE row company-wide.
+    //
+    // Deriving it only where the answer is unambiguous: no entries for this branch-month means
+    // there is nothing outstanding. Where entries DO exist the manual confirmation still stands,
+    // because "somebody uploaded some deductions" does not tell us they uploaded all of them —
+    // that judgement needs a person, and this is the case where the tick earns its keep.
+    const deductionsPending = await safeQuery(
+      async () => {
+        const proc = processId ? "AND e.process_id = ?" : "";
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt
+             FROM employee_deduction_entries d
+             JOIN employees e ON e.id = d.employee_id
+            WHERE d.run_month = ?
+              AND e.branch_id = ?
+              AND e.active_status = 1
+              ${proc}`,
+          [month, branchId, ...(processId ? [processId] : [])]
+        );
+        return Number((rows[0] as any)?.cnt ?? 0);
+      },
+      // -1, not 0: a failed query must not read as "no deductions exist" and silently satisfy
+      // the check. Unknown stays unsatisfied.
+      -1,
+      "deduction_entry_count"
+    );
+    if (deductionsPending === 0) updates.custom_deductions_uploaded = 1;
+
     // --- Persist updates when table exists -----------------------------------
     if (!(await tableExists())) return;
 

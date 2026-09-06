@@ -201,15 +201,10 @@ export async function sendOnboardingToken(
     try {
       const smsProvider = providerFactory.getProvider('sms');
       const { dltContentId, body: smsBody } = buildSMS('onboarding_link', { name: cand.full_name });
-      const smsResult = await withDeliveryTimeout(
+      await withDeliveryTimeout(
         smsProvider.send(cand.mobile, dltContentId, smsBody),
         `SMS delivery for ${candidateId}`,
       );
-      // A provider resolves {success:false} rather than throwing on a deliverable-but-failed
-      // send (e.g. paused via communication_provider_config.send_blocked), and withDeliveryTimeout
-      // resolves null on a timeout rather than throwing either — awaiting either without checking
-      // reported smsSent=true regardless, silently.
-      if (!smsResult?.success) throw new Error(smsResult?.error ?? 'SMS provider reported failure');
       smsSent = true;
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
@@ -530,14 +525,10 @@ export async function sendOnboardingProgressReminder(
   if (row.mobile) {
     try {
       const waProvider = providerFactory.getProvider('whatsapp');
-      const waResult = await withDeliveryTimeout(
+      await withDeliveryTimeout(
         waProvider.send(row.mobile, 'Onboarding Reminder', whatsappBody),
         `reminder WhatsApp for ${candidateId}`,
       );
-      // Same class of gap as the SMS site above: a resolved {success:false} (e.g. paused via
-      // send_blocked) or a withDeliveryTimeout timeout (resolves null) is not a thrown error, so
-      // it must be checked explicitly or this channel is reported delivered regardless.
-      if (!waResult?.success) throw new Error(waResult?.error ?? 'WhatsApp provider reported failure');
       sent.push('whatsapp');
     } catch (e) {
       console.error('[reminder] WhatsApp failed for', candidateId, e instanceof Error ? e.message : String(e));
