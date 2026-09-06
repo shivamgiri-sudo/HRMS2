@@ -57,6 +57,10 @@ const ALL_PAGES = [
   // evaluated under them), so super_admin is the ONLY way in. Omitting it here left it
   // reachable by nobody at all under demo mode.
   "UAT_TRIAGE_CONSOLE", "UAT_RELEASE_BOARD", "UAT_CHECKLIST_ADMIN",
+  // Same gap as the others above: migration 1676 seeds this into the real
+  // page_catalog for real users, but a demo login never calls that API, so
+  // without it here the Process KPI Dashboard is unreachable under demo mode.
+  "PROCESS_KPI_DASHBOARD",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);
