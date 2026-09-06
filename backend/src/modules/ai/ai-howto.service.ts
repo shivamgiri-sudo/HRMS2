@@ -24,6 +24,7 @@ import { expandRoles, normalizeRoleInputs } from '../../platform/policy/index.js
 import { getAccessMe } from '../access/access.service.js';
 import type { AiAction, AiGenerateResponse } from './ai-provider.types.js';
 import { HOWTO_CATALOG, type HowToEntry } from './ai-howto-catalog.js';
+import { KNOWLEDGE_CATALOG, type KnowledgeEntry } from './mira-hrms-knowledge.js';
 
 export interface HowToAnswerResult {
   handled: boolean;
@@ -140,4 +141,28 @@ export async function answerHowToQuestion(
     intent: `howto:${entry.code}`,
     response: response(`Here's how to ${entry.title.toLowerCase()}:\n\n${entry.steps.join('\n')}`, [action], startedAt),
   };
+}
+
+/**
+ * The deep-knowledge entry matching this question, if any.
+ *
+ * Unlike answerHowToQuestion() this does NOT answer — it hands back the entry so
+ * the caller can inject entry.knowledge into the provider's system prompt and let
+ * the model explain it. That is the point: an explanation has to be phrased for
+ * the question that was actually asked (and, now, in the user's language), which
+ * a fixed catalog string cannot do.
+ *
+ * Also unlike answerHowToQuestion(), there is no looksLikeHowToQuestion() gate.
+ * "Why was PF deducted twice" is not phrased as a how-to and shouldn't have to be;
+ * the topical aliases are the whole filter. Not role-gated either — these blocks
+ * describe system behaviour, not anyone's records.
+ *
+ * First match wins, so KNOWLEDGE_CATALOG order is precedence. Synchronous by
+ * design: it runs on the hot path before every external provider call, and it is
+ * only a regex scan over a small in-memory array.
+ */
+export function findDeepKnowledge(question: string): KnowledgeEntry | null {
+  const text = String(question ?? '');
+  if (!text.trim()) return null;
+  return KNOWLEDGE_CATALOG.find((entry) => entry.aliases.some((pattern) => pattern.test(text))) ?? null;
 }
