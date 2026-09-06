@@ -207,8 +207,27 @@ function useMonthOptions(count = 15) {
   }, [count]);
 }
 
-function currentMonth() {
+/**
+ * The month this page should open on: the one being PREPARED, not today's.
+ *
+ * Payroll is closed monthly and always in arrears — August's payroll is signed off during
+ * September — so the cost-centre sign-off for the current calendar month is not what anyone
+ * comes here to do. It defaulted to today's month anyway.
+ *
+ * On 2026-09-06 that showed SEPTEMBER, where every cost centre reads UNPROCESSED and the header
+ * says "HO APPROVED 0 / 6". Head Office's AUGUST sign-off was complete — all four of its cost
+ * centres at 'ho_approved' since 4 September, through HR finalize -> Branch Head -> HO. The page
+ * reported none of it, because it was answering about a month nobody has started.
+ *
+ * Same defect and same fix as PayrollReadinessDashboard's processingMonth(). setDate(1) first,
+ * or the 31st of a month rolls back into the month it started in.
+ *
+ * The month picker still allows any month; this only decides where the page starts.
+ */
+function processingMonth() {
   const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
@@ -225,7 +244,7 @@ export default function BranchCostCentreAttendance() {
   // was wrong: the effect that auto-selects the first branch wrote the param, the write was
   // reverted on the next render, and branchId fell back to "" — which disables the query. The
   // screen showed "Select branch" and an empty table while the API had already returned its rows.
-  const [month, setMonth] = useState<string>(params.get("month") ?? currentMonth());
+  const [month, setMonth] = useState<string>(params.get("month") ?? processingMonth());
   const [branchId, setBranchId] = useState<string>(params.get("branchId") ?? "");
   const [selectedCc, setSelectedCc] = useState<CostCentreRow | null>(null);
 
