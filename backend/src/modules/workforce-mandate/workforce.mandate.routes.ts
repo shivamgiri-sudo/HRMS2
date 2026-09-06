@@ -166,42 +166,44 @@ router.get(
     const { db } = await import("../../db/mysql.js");
 
     // Mandated headcount is an Ops-Executive seat count (role_group='all', hc_type='production'),
-    // not "everyone on the process" — Team Leaders/QA/Managers/Trainers hold their own separate
-    // headcount and were never part of what a client is billed a mandated seat count for.
-    // PRODUCTION_SEAT_DESIGNATIONS is the set of designations that fill one of those seats —
-    // 'EXECUTIVE' plus 'DATA-ANALYST' (user ruling 2026-09-04: a client billed for production
-    // seats staffed by data analysts instead of call-handling executives still has those seats
-    // filled; GS1's mandate is entirely Data-Analyst-staffed and was reading as 0 active / 100%
-    // gap under an Executive-only filter). Every live count below is scoped to (a) the processes
-    // actually carrying an active mandate in view, and (b) this designation set.
-    const PRODUCTION_SEAT_DESIGNATIONS = ["EXECUTIVE", "DATA-ANALYST"];
+    // not "everyone on the process" — TLs/QA/Managers/Trainers hold separate headcount.
+    // "Executive Operations profile" (migration 1082): designation REGEXP '^executive( *-.*)?$'
+    // AND department = OPERATIONS, plus DATA-ANALYST without a dept gate (GS1 ruling 2026-09-04).
+    const PROD_SEAT_SQL = `(
+      (LOWER(TRIM(d.designation_name)) REGEXP '^executive( *- *.+)?$'
+        AND UPPER(COALESCE(dept.dept_name,'')) = 'OPERATIONS')
+      OR d.designation_name = 'DATA-ANALYST'
+    )`;
     const processIds = Array.from(new Set(mandates.map((m: any) => String(m.process_id))));
 
     const zeroRow = [{ cnt: 0 }];
     const [activeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM employees e
-       JOIN designation_master d ON d.id = e.designation_id
-       WHERE e.active_status = 1 AND d.designation_name IN (?) AND e.process_id IN (?)
+       JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       WHERE e.active_status = 1 AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
        ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
+      branchId ? [processIds, branchId] : [processIds]
     );
     const [onNoticeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM exit_request er
        JOIN employees e ON er.employee_id = e.id
-       JOIN designation_master d ON d.id = e.designation_id
+       JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
        WHERE er.status IN ('accepted','notice_serving')
-         AND d.designation_name IN (?) AND e.process_id IN (?)
+         AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
+      branchId ? [processIds, branchId] : [processIds]
     );
     const [longLeaveRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
       `SELECT COUNT(*) AS cnt FROM leave_request lr
        JOIN employees e ON lr.employee_id = e.id
-       JOIN designation_master d ON d.id = e.designation_id
+       JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
        WHERE lr.status = 'approved' AND lr.to_date >= CURDATE() AND lr.total_days >= 5
-         AND d.designation_name IN (?) AND e.process_id IN (?)
+         AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [PRODUCTION_SEAT_DESIGNATIONS, processIds, branchId] : [PRODUCTION_SEAT_DESIGNATIONS, processIds]
+      branchId ? [processIds, branchId] : [processIds]
     );
     // In Training = live headcount sitting in an active NHT (New Hire Training) batch in the
     // LMS, for the processes actually in view — not the whole ats_candidate table (every

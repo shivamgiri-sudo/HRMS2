@@ -49,12 +49,17 @@ manpowerRiskRouter.get(
     const branchFilterSql = branchId ? "AND wm.branch_id = ?" : "";
     const branchFilterParams = branchId ? [branchId] : [];
 
-    // Designations that fill a mandated production seat — 'EXECUTIVE' plus 'DATA-ANALYST'
-    // (user ruling 2026-09-04: a client billed for production seats staffed by data analysts
-    // instead of call-handling executives still has those seats filled; GS1's mandate is
-    // entirely Data-Analyst-staffed and read as 0 active / 100% gap under an Executive-only
-    // filter). Team Leaders/QA/Managers/Trainers still don't count.
-    const PRODUCTION_SEAT_DESIGNATIONS = ["EXECUTIVE", "DATA-ANALYST"];
+    // Production seat filter: "Executive Operations profile" as defined by migration 1082.
+    // EXECUTIVE and all its variants (EXECUTIVE - VOICE, EXECUTIVE - BACKEND, EXECUTIVE - FIELD,
+    // etc.) in the OPERATIONS department — not just anyone on the process with an EXECUTIVE
+    // designation (TLs, QA, managers, trainers are also designated EXECUTIVE in some branches).
+    // DATA-ANALYST is included without a department gate per user ruling 2026-09-04: GS1's mandate
+    // is entirely Data-Analyst-staffed and their department is not OPERATIONS.
+    const PRODUCTION_SEAT_EXPR = `(
+      (LOWER(TRIM(d.designation_name)) REGEXP '^executive( *- *.+)?$'
+        AND UPPER(COALESCE(dept.dept_name,'')) = 'OPERATIONS')
+      OR d.designation_name = 'DATA-ANALYST'
+    )`;
 
     // Mandate: latest active record per process+branch
     const [rows] = await db.query<RowDataPacket[]>(
@@ -75,12 +80,13 @@ manpowerRiskRouter.get(
          -- Available active headcount. active_status = 1 ALONE remains the canonical
          -- employment-status definition (ruling 2026-08-07, guarded by
          -- attendance-canon.contract.test.ts) — that ruling is about not narrowing on
-         -- employment_status, and is untouched here. designation_name IN PRODUCTION_SEAT_
-         -- DESIGNATIONS is a separate, orthogonal filter: mandated_hc is a production-seat
-         -- count, not a count of everyone on the process, so a Team Leader/QA/Manager/Trainer
-         -- must not be counted as filling one of those seats.
+         -- employment_status, and is untouched here. PRODUCTION_SEAT_EXPR is a separate,
+         -- orthogonal filter: mandated_hc is an Ops-Executive seat count (role_group='all',
+         -- hc_type='production'), not a count of everyone on the process. TLs, QA, Managers,
+         -- Trainers must not fill those seats even when their designation string starts with
+         -- EXECUTIVE, because they belong to a non-OPERATIONS department.
          COUNT(DISTINCT CASE
-           WHEN e.active_status = 1 AND d.designation_name IN (?)
+           WHEN e.active_status = 1 AND ${PRODUCTION_SEAT_EXPR}
            THEN e.id
          END) AS active_hc,
 
@@ -88,7 +94,7 @@ manpowerRiskRouter.get(
          COUNT(DISTINCT CASE
            WHEN e.active_status = 1
             AND er.status IN ('accepted', 'notice_serving')
-            AND d.designation_name IN (?)
+            AND ${PRODUCTION_SEAT_EXPR}
            THEN e.id
          END) AS in_notice_count,
 
@@ -98,7 +104,7 @@ manpowerRiskRouter.get(
          COUNT(DISTINCT CASE
            WHEN er.status IN ('exited', 'exit_confirmed')
             AND er.updated_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-            AND d.designation_name IN (?)
+            AND ${PRODUCTION_SEAT_EXPR}
            THEN er.id
          END) AS exits_3m
 
@@ -108,7 +114,8 @@ manpowerRiskRouter.get(
        LEFT JOIN employees e
               ON e.process_id = wm.process_id
              AND e.branch_id  = wm.branch_id
-       LEFT JOIN designation_master d ON d.id = e.designation_id
+       LEFT JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master  dept ON dept.id = e.department_id
        LEFT JOIN exit_request er ON er.employee_id = e.id
        WHERE wm.active_status = 1
          AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
@@ -120,7 +127,6 @@ manpowerRiskRouter.get(
          wm.role_group, wm.mandated_hc, wm.buffer_pct, wm.alert_threshold_pct
        ORDER BY p.process_name, b.branch_name`,
       [
-        PRODUCTION_SEAT_DESIGNATIONS, PRODUCTION_SEAT_DESIGNATIONS, PRODUCTION_SEAT_DESIGNATIONS,
         ...scoped.params, ...branchFilterParams,
       ]
     );
