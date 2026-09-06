@@ -12,6 +12,7 @@ import {
   lockSalaryRegister,
   recheckEsignStatus,
   requestDpdpWithdrawal,
+  redispatchDeadEsignKit,
   resendEsignLink,
   syncBankDetailFromOnboarding,
   syncDpdpConsentFromOnboarding,
@@ -121,6 +122,16 @@ joiningControlRoomRouter.post("/candidates/:candidateId/esign/resend-link", h(as
   }
   const data = await getJoiningControlRoomCandidate(candidateId);
   return res.json({ success: true, data: { ...data, resend: result } });
+}));
+
+// Real provider cost: a brand-new Luckpay signing session, for a kit whose
+// existing one has already died. Never called by any worker — human-only,
+// same discipline as dispatchJoiningKit's own no-retry rule.
+joiningControlRoomRouter.post("/candidates/:candidateId/esign/redispatch-dead-kit", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const result = await redispatchDeadEsignKit(candidateId, req.authUser!.id);
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: result.status === "sent", data: { ...data, redispatch: result } });
 }));
 
 joiningControlRoomRouter.post("/candidates/:candidateId/bank-detail/sync", h(async (req, res) => {

@@ -294,3 +294,36 @@ describe('resend/reminder never mint a link to an already-dead Luckpay session',
     expect(guardAt).toBeLessThan(mintAt);
   });
 });
+
+describe('redispatchDeadKit — the only path allowed to re-bill the provider', () => {
+  it('refuses to abandon a kit whose session is not actually dead', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('async function abandonDeadKit'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('kitEsignSessionIsAlive(kitId)');
+    expect(body).toContain('statusCode: 409');
+  });
+
+  it('refuses to redispatch when the existing kit is not actually dead', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('export async function redispatchDeadKit'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('kitEsignSessionIsAlive(existingKitId)');
+  });
+
+  it('abandons the dead kit before queueing a new one, and carries the candidate_id forward', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('export async function redispatchDeadKit'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    const abandonAt = body.indexOf('abandonDeadKit(');
+    const queueAt = body.indexOf('queueJoiningKit(');
+    const dispatchAt = body.indexOf('dispatchJoiningKit(');
+    expect(abandonAt).toBeGreaterThan(-1);
+    expect(abandonAt).toBeLessThan(queueAt);
+    expect(queueAt).toBeLessThan(dispatchAt);
+    expect(body).toContain('candidateId: existing.candidate_id');
+  });
+
+  it('is never called from any worker — human-only, reachable as a route', () => {
+    expect(complianceWorker).not.toContain('redispatchDeadKit');
+    expect(routes).toContain('/candidates/:candidateId/esign/redispatch-dead-kit');
+    expect(service).toContain('export async function redispatchDeadEsignKit');
+  });
+});

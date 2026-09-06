@@ -830,6 +830,26 @@ export async function resendEsignLink(candidateId: string, actorId: string): Pro
   return resendKitEsignLink(String(kitId), actorId);
 }
 
+/**
+ * Recovery for a candidate whose joining kit's Luckpay session has already
+ * failed or expired — the case resendEsignLink can never fix, since a resend
+ * only mints a new internal link to the SAME provider session, and this one
+ * is dead. This is the one path that deliberately re-bills the provider: a
+ * genuinely new kit, assembled and dispatched from scratch.
+ */
+export async function redispatchDeadEsignKit(candidateId: string, actorId: string) {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  if (!employeeId) {
+    throw Object.assign(new Error("No employee record exists yet for this candidate"), { statusCode: 409 });
+  }
+  const { redispatchDeadKit } = await import("../employees/joiningKitDispatch.service.js");
+  return redispatchDeadKit(employeeId, actorId);
+}
+
 export async function lockSalaryRegister(candidateId: string, actorId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT phr.*, sep.status AS proposal_status, sep.proposed_gross_salary

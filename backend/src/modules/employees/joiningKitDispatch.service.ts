@@ -620,6 +620,71 @@ export async function autoRefreshKitLinkForReminder(kitId: string): Promise<stri
   }
 }
 
+/**
+ * Close out a kit whose Luckpay session has already reached a terminal state,
+ * so queueJoiningKit stops handing it back as "the" open kit for this
+ * employee. Refuses on a kit that is still alive — this is a one-way door
+ * (open_marker cleared, status set to 'abandoned') and must never be used to
+ * discard a kit someone could still complete.
+ */
+async function abandonDeadKit(kitId: string, employeeId: string, actorUserId: string | null): Promise<void> {
+  if (await kitEsignSessionIsAlive(kitId)) {
+    throw Object.assign(
+      new Error("This kit's signing session is not in a terminal state — it cannot be abandoned."),
+      { statusCode: 409 },
+    );
+  }
+  await db.execute(
+    `UPDATE employee_joining_esign_kit SET status = 'abandoned', open_marker = NULL WHERE id = ?`,
+    [kitId],
+  );
+  await audit(kitId, employeeId, "KIT_ABANDONED_DEAD_SESSION", actorUserId, {
+    reason: "Underlying Luckpay session reached a terminal state before completion",
+  });
+}
+
+/**
+ * Recovery path for exactly the gap kitEsignSessionIsAlive guards against:
+ * an employee whose kit is stuck open with a Luckpay session that has
+ * already failed/expired, which no resend or reminder can ever fix because
+ * dispatchJoiningKit never retries a provider call. This is the one place
+ * that deliberately DOES pay for a new one — abandon the dead kit, then run
+ * the exact same queue+dispatch path a brand-new employee would take.
+ *
+ * Real cost: a fresh, separately billed Luckpay session, and a newly
+ * assembled document package the employee has to open and sign again from
+ * scratch. Never called automatically by any worker — this only ever runs
+ * on an explicit request naming the employee, same discipline as
+ * dispatchJoiningKit's own non-retry rule protects against accidental
+ * double-billing.
+ */
+export async function redispatchDeadKit(employeeId: string, actorUserId: string | null): Promise<DispatchOutcome> {
+  const [open] = await db.execute<RowDataPacket[]>(
+    `SELECT id, candidate_id FROM employee_joining_esign_kit WHERE employee_id = ? AND open_marker = 'Y' LIMIT 1`,
+    [employeeId],
+  );
+  const existing = (open as RowDataPacket[])[0];
+  if (!existing) {
+    throw Object.assign(new Error("This employee has no open joining kit to redispatch."), { statusCode: 404 });
+  }
+  const existingKitId = String(existing.id);
+  if (await kitEsignSessionIsAlive(existingKitId)) {
+    throw Object.assign(
+      new Error("This employee's current kit is still awaiting signature and its session is not dead — redispatch is only for a kit whose provider session has already failed or expired."),
+      { statusCode: 409 },
+    );
+  }
+
+  await abandonDeadKit(existingKitId, employeeId, actorUserId);
+  const { kitId: newKitId } = await queueJoiningKit({
+    employeeId,
+    candidateId: existing.candidate_id ?? null,
+    actorUserId,
+    triggerSource: "redispatch_dead_session",
+  });
+  return dispatchJoiningKit(newKitId, actorUserId);
+}
+
 function buildKitEmailHtml(d: { employeeName: string; documents: string[]; signLink: string }): string {
   const list = d.documents.map((n) => `<li style="margin:3px 0">${n}</li>`).join("");
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">
