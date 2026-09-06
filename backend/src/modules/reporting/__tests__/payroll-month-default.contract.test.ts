@@ -23,7 +23,21 @@ const strip = (s: string) => s.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*
  * So the rule this pins is: default by DRIVING TABLE, not by whether the SQL mentions run_month.
  */
 
-const PAYROLL_TABLES = ["salary_prep_line", "salary_prep_run", "legacy_payslip_snapshot"];
+/**
+ * salary_prep_line_component is included for the same reason as the other three: it is payroll
+ * data keyed to a run, so a report reading it SHOULD default to the latest payroll month.
+ *
+ * It also has to be here for a mechanical reason worth stating, because it is precisely the trap
+ * this file's own drivingTable() comments describe. payroll-register pivots its earning
+ * components with correlated subqueries in the SELECT list, so `FROM salary_prep_line_component`
+ * now appears BEFORE the statement's real `FROM salary_prep_line`. drivingTable() takes the first
+ * FROM it sees, read the component table as the driving one, did not find it in this list, and
+ * concluded payroll-register does not read payroll at all — exactly how the earlier
+ * `FROM process_master` subquery fooled it.
+ */
+const PAYROLL_TABLES = [
+  "salary_prep_line", "salary_prep_run", "legacy_payslip_snapshot", "salary_prep_line_component",
+];
 
 interface Block { name: string; body: string; file: string }
 
