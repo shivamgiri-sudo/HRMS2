@@ -464,6 +464,35 @@ async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
 }
 
 /**
+ * Whether the kit's own Luckpay session is still one a fresh link could
+ * actually complete.
+ *
+ * employee_joining_esign_kit.status and employee_document_esign_transaction.status
+ * are two separate columns on two separate tables, and nothing keeps them in
+ * lock-step: a kit can sit at 'sent' indefinitely while its underlying Luckpay
+ * transaction has independently reached a terminal state. Verified live
+ * 2026-09-06: 5 of the 17 candidates resent a link on 2026-09-05 already had a
+ * transaction reading status='FAILED' straight from Luckpay ("Esign status
+ * fetched from saved transaction" — the same boilerplate on every one, not a
+ * per-candidate rejection reason) *before* the resend ran. Minting a new
+ * internal token pointed every one of those emails at a Luckpay document that
+ * was already dead — the candidate could open the link, but Luckpay had
+ * already closed the underlying session, so nothing they did there could have
+ * been captured. This is the guard that stops that: a resend or reminder only
+ * mints a link when the kit's own transaction is not already terminal.
+ */
+async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM employee_document_esign_transaction
+      WHERE kit_id = ? ORDER BY initiated_at DESC LIMIT 1`,
+    [kitId],
+  );
+  const status = String((rows as RowDataPacket[])[0]?.status ?? "").toLowerCase();
+  if (!status) return true; // no transaction row yet: nothing to have failed
+  return !["failed", "expired", "cancelled", "abandoned_unresolved"].includes(status);
+}
+
+/**
  * Mint a brand-new signing link for a kit that is already 'sent', without
  * emailing anything itself — the two callers below each decide how to deliver
  * it (a bespoke branded email for a human-triggered resend, the generic
@@ -479,7 +508,9 @@ async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
  * untouched, for the same non-idempotency reason dispatchJoiningKit itself
  * never retries: the vendor would treat a second POST as a duplicate. The
  * candidate signs the exact same document they always would have; only the
- * link that reaches them is new.
+ * link that reaches them is new. That also means this can only ever help a
+ * kit whose Luckpay session is still alive — see kitEsignSessionIsAlive,
+ * which both callers check first.
  */
 async function mintFreshKitSigningLink(kit: KitForRelink, actorUserId: string | null): Promise<string> {
   await db.execute(
@@ -522,6 +553,12 @@ export async function resendKitEsignLink(
   if (!kit) throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
   if (String(kit.status) !== "sent") {
     return { resent: false, message: `This kit is "${kit.status}", not awaiting a signature — there is nothing to resend.` };
+  }
+  if (!(await kitEsignSessionIsAlive(kitId))) {
+    return {
+      resent: false,
+      message: "The candidate's signing session has already failed or expired at the provider. Resending a link cannot fix this — the kit needs to be re-dispatched as a new signing request, which bills the provider again.",
+    };
   }
 
   const employeeId = String(kit.employee_id);
@@ -575,6 +612,7 @@ export async function autoRefreshKitLinkForReminder(kitId: string): Promise<stri
   try {
     const kit = await loadKitForRelink(kitId);
     if (!kit || String(kit.status) !== "sent") return null;
+    if (!(await kitEsignSessionIsAlive(kitId))) return null;
     return await mintFreshKitSigningLink(kit, null);
   } catch (error) {
     console.warn(`[joining-kit] reminder link refresh failed for kit ${kitId}:`, error instanceof Error ? error.message : error);

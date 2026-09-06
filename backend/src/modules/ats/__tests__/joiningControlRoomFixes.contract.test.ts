@@ -264,3 +264,33 @@ describe('salary_component_assignments syncs from a locked salary register, neve
     expect(body).toContain('await syncSalaryComponentFromValidation(candidateId, actorId)');
   });
 });
+
+describe('resend/reminder never mint a link to an already-dead Luckpay session', () => {
+  it('checks the transaction status, not just the kit status, before minting', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('async function kitEsignSessionIsAlive'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain('FROM employee_document_esign_transaction');
+    expect(body).toContain("ORDER BY initiated_at DESC LIMIT 1");
+    expect(body).toContain('"failed", "expired", "cancelled", "abandoned_unresolved"');
+  });
+
+  it('resendKitEsignLink refuses before minting when the session is dead', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('export async function resendKitEsignLink'));
+    const body = fn.slice(0, fn.indexOf('\nexport async function autoRefreshKitLinkForReminder'));
+    const guardAt = body.indexOf('kitEsignSessionIsAlive(kitId)');
+    const mintAt = body.indexOf('mintFreshKitSigningLink(');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(mintAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(mintAt);
+  });
+
+  it('autoRefreshKitLinkForReminder refuses before minting when the session is dead', () => {
+    const fn = kitDispatch.slice(kitDispatch.indexOf('export async function autoRefreshKitLinkForReminder'));
+    const body = fn.slice(0, fn.indexOf('\nfunction buildKitEmailHtml'));
+    const guardAt = body.indexOf('kitEsignSessionIsAlive(kitId)');
+    const mintAt = body.indexOf('mintFreshKitSigningLink(');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(mintAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(mintAt);
+  });
+});
