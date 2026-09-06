@@ -2,6 +2,21 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { KpiScorecard } from "./portal.types.js";
 import { maskPortalEmployee } from "../../shared/portalMask.js";
+import { getKpiScorecardsForProcessId } from "../process-performance/kpi-scorecard.service.js";
+
+const UNIT_LABEL: Record<string, string> = { percent: "%", seconds: "s", currency: "₹", count: "", ratio: "x" };
+
+/** 'YYYY-MM' -> the {from, to} range this metric family's real source
+ * (kpi_daily_actual) understands: the period's own month plus 6 months back,
+ * matching this file's own getSixMonthsAgo used by the legacy kpi_score path,
+ * so both paths' sparklines cover the same window. */
+function periodToRange(period: string): { from: string; to: string } {
+  const [y, m] = period.split("-").map(Number);
+  const to = new Date(y, m, 0); // last day of the period's month
+  const from = new Date(y, m - 1 - 6, 1); // first day, 6 months back
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(from), to: iso(to) };
+}
 
 export const portalKpiService = {
   computeAchievement(actual: number, target: number, direction: string): number {
@@ -61,6 +76,38 @@ export const portalKpiService = {
           ]
         }
       ];
+    }
+
+    // Sheet-registered processes (BLABLIBLU/Reginald/Finnable/GS1 today) read from the
+    // real kpi_daily_actual pipeline instead of the legacy kpi_template/kpi_score path
+    // below -- null means "not one of these", so every other process's existing
+    // behaviour is untouched. Same honesty rule as the internal dashboard: a metric
+    // this pipeline has no real code for comes back with actual: null, which this
+    // type has no room to explain further (no availability field on KpiScorecard),
+    // so it reads the same as "0% achievement" the legacy path already shows for a
+    // null actual -- a real, pre-existing limitation of this type, not one this
+    // change introduces.
+    const registryRows = await getKpiScorecardsForProcessId(processId, periodToRange(period));
+    if (registryRows) {
+      return registryRows.map((r): KpiScorecard => {
+        const actual = r.actual;
+        const ach = actual != null
+          ? portalKpiService.computeAchievement(actual, r.target, r.direction)
+          : 0;
+        return {
+          metric_id: r.metricKey,
+          metric_code: r.metricKey,
+          metric_name: r.label,
+          unit: UNIT_LABEL[r.unit] ?? "",
+          direction: r.direction,
+          target: r.target,
+          actual,
+          achievement_pct: ach,
+          rag: portalKpiService.ragFromAchievement(ach),
+          sparkline: r.trend
+            .filter((p): p is { period: string; value: number } => p.value != null),
+        };
+      });
     }
 
     // Fetch process name first to build a safe parameterized LIKE

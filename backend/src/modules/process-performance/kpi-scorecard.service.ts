@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import {
   PROCESS_KPI_REGISTRY, findProcessKpiSet, findMetricDef,
-  type KpiFamily, type KpiUnit, type KpiDirection,
+  type KpiFamily, type KpiUnit, type KpiDirection, type ProcessKpiSet,
 } from "./kpi-metric-registry.js";
 
 /**
@@ -130,7 +130,45 @@ export async function getKpiScorecards(
   if (!set) return [];
   const processId = await resolveProcessId(userId, processCode);
   const scope = await kpiScope(userId);
+  return computeScorecards(set, processId, filters, scope);
+}
 
+/** Resolve a raw process_master.id back to its sheet processCode, for callers (the
+ *  Client Portal) that only ever hold a process_master.id, never the sheet's own code. */
+export async function resolveProcessCodeById(processId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_code FROM process_master WHERE id = ? LIMIT 1`, [processId],
+  );
+  return rows.length ? String(rows[0].process_code) : null;
+}
+
+/**
+ * Client Portal entry point. No `buildScopeWhereClause` involved: the portal's own
+ * boundary (a client_user's token-carried `process_id`, re-verified live on every
+ * request by requireClientAuth, plus the controller's `assertProcessAccess`) has
+ * ALREADY authorized this exact processId before this function is ever called --
+ * applying the internal role/scope predicate on top would be redundant, not safer,
+ * and would wrongly deny every portal client (none of them hold an internal
+ * `user_roles` row at all).
+ *
+ * Returns null when this process isn't one of the 4 registered in
+ * kpi-metric-registry.ts, so the caller (portalKpiService) can fall back to its
+ * existing kpi_template/kpi_score path for every other process untouched.
+ */
+export async function getKpiScorecardsForProcessId(
+  processId: string, filters: KpiFilters,
+): Promise<KpiScorecardRow[] | null> {
+  const processCode = await resolveProcessCodeById(processId);
+  if (!processCode) return null;
+  const set = findProcessKpiSet(processCode);
+  if (!set) return null;
+  return computeScorecards(set, processId, filters, { sql: "1=1", params: [] });
+}
+
+async function computeScorecards(
+  set: ProcessKpiSet, processId: string | null,
+  filters: KpiFilters, scope: { sql: string; params: unknown[] },
+): Promise<KpiScorecardRow[]> {
   // One batched query per distinct metric_code actually referenced by this
   // process's registry, rather than one query per sheet row -- several sheet
   // rows (e.g. ABC and Upgrade's Conversion %) share the same metric_code.
