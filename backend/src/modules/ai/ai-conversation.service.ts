@@ -13,6 +13,7 @@
  * follow-up resolution but only released to a provider when they were eligible
  * to go there in the first place.
  */
+import { detectLanguage, type DetectedLang } from './mira-language-detect.js';
 
 export interface ConversationTurn {
   question: string;
@@ -58,7 +59,33 @@ interface Thread {
   turns: ConversationTurn[];
   lastTouched: number;
   pendingAction?: PendingLeaveAction;
+  /** The language Mira is currently answering this thread in. Unset means English. */
+  preferredLanguage?: DetectedLang;
+  /**
+   * A different language seen while `preferredLanguage` is already set, held as a
+   * candidate until it repeats. Kept separate from the active language so a
+   * one-off word in another script cannot switch the session on its own.
+   */
+  pendingLanguage?: DetectedLang;
+  /** Consecutive turns seen in `pendingLanguage`. */
+  consecutiveForeignCount: number;
+  /** Consecutive turns with no detectable non-Latin script, once a language is active. */
+  consecutiveEnglishCount: number;
 }
+
+/**
+ * Turns in a new language before Mira switches to it. Two, not one, because a
+ * single message is too weak a signal — people quote a word, paste a name, or
+ * type one line in their own language inside an otherwise English conversation.
+ */
+const LANGUAGE_SWITCH_TURNS = 2;
+/**
+ * Consecutive English turns before Mira drops back to English. Three, i.e.
+ * slower to leave a language than to enter one: a user who has been writing in
+ * Hindi and sends one short "ok thanks" has not changed language, and flipping
+ * on that would be more jarring than staying put for another turn.
+ */
+const ENGLISH_REVERT_TURNS = 3;
 
 const MAX_TURNS = 6;
 const TTL_MS = 30 * 60_000;
@@ -71,6 +98,70 @@ const PENDING_ACTION_TTL_MS = 10 * 60_000;
 const MAX_REPLAYED_ANSWER = 400;
 
 const threads = new Map<string, Thread>();
+
+/**
+ * One factory for both creation sites (recordTurn and setPendingAction) so the
+ * language counters cannot be initialised in one path and left undefined in the
+ * other.
+ */
+function newThread(now: number): Thread {
+  return {
+    turns: [],
+    lastTouched: now,
+    consecutiveForeignCount: 0,
+    consecutiveEnglishCount: 0,
+  };
+}
+
+/**
+ * Folds this turn's detected script into the thread's language state.
+ *
+ * Asymmetric on purpose: the first detected language is adopted at once (a user
+ * who opens in Telugu should be answered in Telugu immediately), a *change* of
+ * language needs LANGUAGE_SWITCH_TURNS to confirm, and returning to English
+ * needs ENGLISH_REVERT_TURNS. Entering is cheap, leaving is not.
+ */
+function applyLanguageSignal(thread: Thread, question: string): void {
+  const detected = detectLanguage(question);
+
+  if (!detected) {
+    // No script signal. Any half-formed candidate dies here — a candidate only
+    // counts while it is consecutive.
+    thread.pendingLanguage = undefined;
+    thread.consecutiveForeignCount = 0;
+    if (!thread.preferredLanguage) return;
+    thread.consecutiveEnglishCount += 1;
+    if (thread.consecutiveEnglishCount >= ENGLISH_REVERT_TURNS) {
+      thread.preferredLanguage = undefined;
+      thread.consecutiveEnglishCount = 0;
+    }
+    return;
+  }
+
+  thread.consecutiveEnglishCount = 0;
+
+  if (!thread.preferredLanguage || thread.preferredLanguage.code === detected.code) {
+    // First detection, or more of the same language: adopt/reaffirm outright.
+    thread.preferredLanguage = detected;
+    thread.pendingLanguage = undefined;
+    thread.consecutiveForeignCount = 0;
+    return;
+  }
+
+  // A different language while one is already active.
+  if (thread.pendingLanguage?.code === detected.code) {
+    thread.consecutiveForeignCount += 1;
+  } else {
+    thread.pendingLanguage = detected;
+    thread.consecutiveForeignCount = 1;
+  }
+
+  if (thread.consecutiveForeignCount >= LANGUAGE_SWITCH_TURNS) {
+    thread.preferredLanguage = detected;
+    thread.pendingLanguage = undefined;
+    thread.consecutiveForeignCount = 0;
+  }
+}
 
 function sweep(now: number): void {
   for (const [userId, thread] of threads) {
@@ -91,9 +182,12 @@ export function recordTurn(
   const now = Date.now();
   sweep(now);
 
-  const thread = threads.get(userId) ?? { turns: [], lastTouched: now };
+  const thread = threads.get(userId) ?? newThread(now);
   thread.turns.push({ ...turn, at: now });
   if (thread.turns.length > MAX_TURNS) thread.turns = thread.turns.slice(-MAX_TURNS);
+  // Read the language off the question, not the answer: the answer's script is
+  // whatever the model chose to reply in, which is the thing being decided here.
+  applyLanguageSignal(thread, turn.question);
   thread.lastTouched = now;
 
   // Re-insert so iteration order stays least-recently-used first.
@@ -121,12 +215,26 @@ export function lastIntentTurn(userId: string): ConversationTurn | null {
   return null;
 }
 
+/**
+ * The language Mira should answer this user in, or null for English.
+ *
+ * Honours the same TTL as the rest of the thread: a user returning after the
+ * window starts again in English rather than inheriting a language choice made
+ * half an hour ago.
+ */
+export function getPreferredLanguage(userId: string): DetectedLang | null {
+  const thread = threads.get(userId);
+  if (!thread) return null;
+  if (Date.now() - thread.lastTouched > TTL_MS) return null;
+  return thread.preferredLanguage ?? null;
+}
+
 /** Stash a drafted action for this user, replacing any earlier undrafted one. */
 export function setPendingAction(userId: string, action: PendingLeaveAction): void {
   if (!userId) return;
   const now = Date.now();
   sweep(now);
-  const thread = threads.get(userId) ?? { turns: [], lastTouched: now };
+  const thread = threads.get(userId) ?? newThread(now);
   thread.pendingAction = action;
   thread.lastTouched = now;
   threads.delete(userId);
