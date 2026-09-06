@@ -31,7 +31,10 @@
     "scripts/backfill-stranded-joining-kits.ts",
     // Mints a real signing token and sends a real email per candidate through
     // resendEsignLink; same rule as the three scripts above.
-    "scripts/resend-stuck-esign-links.ts"
+    "scripts/resend-stuck-esign-links.ts",
+    // Abandons a dead kit and dispatches a brand-new, billed Luckpay session;
+    // same rule as the scripts above.
+    "scripts/redispatch-dead-esign-kits.ts"
   ],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }

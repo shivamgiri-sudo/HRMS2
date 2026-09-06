@@ -1,0 +1,171 @@
+# Redispatch a brand-new joining kit for employees whose existing kit's
+# Luckpay session has already reached a terminal state (failed/expired), and
+# whose kit can therefore never be recovered by a resend or reminder.
+#
+# WHY THE SELF-HOSTED RUNNER
+# Same reasoning as esign-backfill.yml and esign-link-resend.yml: Luckpay
+# whitelists only the deploy host's egress IP, and /var/www/HRMS2/backend/.env
+# — the Luckpay and SMTP credentials — exists only on that host, with no SSH
+# into it.
+#
+# WHY MANUAL-ONLY, AND WHY IT COSTS MONEY
+# Every confirmed run abandons an existing kit and dispatches a genuinely new
+# one — a fresh, separately billed Luckpay session per employee, and a newly
+# assembled document package the employee has to open and sign again from
+# scratch. That is not something a schedule should ever decide on its own,
+# so the only trigger is a human pressing "Run workflow", same as the two
+# eSign workflows above it.
+
+name: eSign Kit Redispatch (dead Luckpay sessions)
+
+on:
+  workflow_dispatch:
+    inputs:
+      actor_user_id:
+        description: "auth_user.id to attribute this remediation to (recorded in the audit trail; the script refuses to run without it)"
+        required: true
+        type: string
+      mode:
+        description: "list-only enumerates eligible employees and dispatches nothing; confirm actually redispatches and bills the provider"
+        required: true
+        type: choice
+        default: list-only
+        options:
+          - list-only
+          - confirm
+      employee_id:
+        description: "Optional: restrict the run to a single employee id. Leave empty to sweep every eligible one."
+        required: false
+        type: string
+
+concurrency:
+  group: esign-kit-redispatch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  redispatch:
+    name: Redispatch on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - name: Announce the run
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          EMPLOYEE_ID: ${{ inputs.employee_id }}
+        run: |
+          set -euo pipefail
+          echo "mode:          ${MODE}"
+          echo "actor user:    ${ACTOR_USER_ID}"
+          echo "employee id:   ${EMPLOYEE_ID:-<none — all eligible employees>}"
+          if [[ "${MODE}" == "confirm" ]]; then
+            echo "DISPATCHES:    YES — real, separately billed Luckpay sessions will be created."
+          else
+            echo "DISPATCHES:    no — this only lists who is eligible."
+          fi
+
+      # The artifact comes from the deploy pipeline, not from this workflow.
+      - name: Verify the deployed script exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="/var/www/HRMS2/backend/dist/scripts/redispatch-dead-esign-kits.js"
+          if [[ ! -f "$SCRIPT" ]]; then
+            echo "::error::$SCRIPT is missing."
+            echo "This workflow runs the deployed build; it does not compile anything."
+            echo "Run the 'Deploy to Production' workflow on main first, then re-run this."
+            exit 1
+          fi
+          echo "Found $SCRIPT"
+
+      - name: Run the redispatch
+        id: run
+        shell: bash
+        working-directory: /var/www/HRMS2/backend
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          EMPLOYEE_ID: ${{ inputs.employee_id }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p logs
+          REPORT="/var/www/HRMS2/backend/logs/esign-kit-redispatch-$(date -u +%Y%m%dT%H%M%SZ)-run${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.csv"
+
+          ARGS=(dist/scripts/redispatch-dead-esign-kits.js)
+          ARGS+=(--actor-user-id "$ACTOR_USER_ID")
+          if [[ -n "${EMPLOYEE_ID// /}" ]]; then
+            ARGS+=(--employee-id "$EMPLOYEE_ID")
+          fi
+          ARGS+=(--report "$REPORT")
+          if [[ "$MODE" == "confirm" ]]; then
+            ARGS+=(--confirm)
+          fi
+
+          echo "+ node ${ARGS[*]}"
+
+          CODE=0
+          node "${ARGS[@]}" || CODE=$?
+
+          echo "exit_code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "report_path=${REPORT}" >> "$GITHUB_OUTPUT"
+          echo "Script exited ${CODE}; report at ${REPORT}"
+
+      - name: Publish report to run summary
+        if: always()
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          EMPLOYEE_ID: ${{ inputs.employee_id }}
+          REPORT_PATH: ${{ steps.run.outputs.report_path }}
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## eSign kit redispatch — ${MODE}"
+            echo ""
+            echo "- **Actor user id:** \`${ACTOR_USER_ID}\`"
+            echo "- **Employee filter:** ${EMPLOYEE_ID:-_none — all eligible employees_}"
+            echo "- **Script exit code:** \`${EXIT_CODE:-<script did not run>}\`"
+            echo "- **Report:** \`${REPORT_PATH:-<none>}\`"
+            echo "- **Host:** 192.168.11.225"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -n "${REPORT_PATH:-}" && -f "${REPORT_PATH}" && "${MODE}" == "confirm" ]]; then
+            {
+              echo "### Per-employee report"
+              echo ""
+              echo '```csv'
+              cat "${REPORT_PATH}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload report artifact
+        if: always() && inputs.mode == 'confirm'
+        uses: actions/upload-artifact@v4
+        with:
+          name: esign-kit-redispatch-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.run.outputs.report_path }}
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Fail if the script reported a failure
+        if: always() && steps.run.outputs.exit_code != '0'
+        shell: bash
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          REPORT_PATH: ${{ steps.run.outputs.report_path }}
+        run: |
+          set -euo pipefail
+          echo "::error::Redispatch exited ${EXIT_CODE} — at least one employee was not sent."
+          echo "Read the report for the per-employee reason before re-running: ${REPORT_PATH:-<no report>}"
+          exit 1
