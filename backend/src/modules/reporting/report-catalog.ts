@@ -1525,7 +1525,6 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "branch_name",      label: "BranchName",       format: "text",   width: 130 },
       { key: "cost_center",      label: "Cost Center",      format: "text",   width: 180 },
       { key: "process_name",     label: "Process Name",     format: "text",   width: 170 },
-      { key: "employee_status",  label: "Employee Status",  format: "text",   width: 110, align: "center" },
 
       { key: "cl_current",      label: "CL",           format: "number", width: 64, align: "center" },
       { key: "ml_current",      label: "ML",           format: "number", width: 64, align: "center" },
@@ -1541,18 +1540,23 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "ml_remain",       label: "ML",           format: "number", width: 64, align: "center" },
       { key: "el_remain",       label: "EL",           format: "number", width: 64, align: "center" },
       { key: "ptl_mtl_remain",  label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+      // LAST, matching LEAVE_BALANCE_COLUMNS in leave-balance-format.ts, which drives the XLSX.
+      // The workbook layout is supplied by the business and pins A → Q with four merges, so this
+      // column is appended in R rather than placed beside the other employee details. Screen and
+      // download therefore show the same columns in the same order — the contract test asserts
+      // this list equals LEAVE_BALANCE_COLUMNS exactly.
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
     ],
     headerGroups: [
-      // colSpan values must sum to columns.length (18). The ungrouped block covers
-      // process_name AND employee_status — it was colSpan 1 when process_name was the
-      // only column between "Emp Details" and "Current Leave"; adding employee_status
-      // without widening it left the grouped header row one column short of the data,
-      // which silently shifts every leave group one cell to the left.
+      // colSpan values must sum to columns.length (18). The trailing blank group covers
+      // employee_status in R; without it the grouped header row is one column short of the data
+      // and every leave group shifts one cell left of the numbers it labels.
       { label: "Emp Details",   colSpan: 4 },
-      { label: "",              colSpan: 2 },
+      { label: "",              colSpan: 1 },
       { label: "Current Leave", colSpan: 4 },
       { label: "Leave Taken",   colSpan: 4 },
       { label: "Leave Remain",  colSpan: 4 },
+      { label: "",              colSpan: 1 },
     ],
     filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_MANAGER,

@@ -118,17 +118,27 @@ describe('Leave Balance XLSX — structure', () => {
     ]);
   });
 
-  it('(15) contains all 17 columns in the correct order', async () => {
-    expect(LEAVE_BALANCE_COLUMNS).toHaveLength(17);
+  /**
+   * 18 columns: the authority workbook's A → Q, plus employee_status in R.
+   *
+   * R was APPENDED, not inserted. The report now reports both populations — active employees and
+   * anyone else with ledger history — so a row's state has to be visible. Putting it beside the
+   * other employee details would have shifted every leave group one column right and broken all
+   * four merges the assertions above pin (A1:D1, F1:I1, J1:M1, N1:Q1), so A → Q is untouched and
+   * the new column sits after them.
+   */
+  it('(15) contains all 18 columns in the correct order, authority A→Q first', async () => {
+    expect(LEAVE_BALANCE_COLUMNS).toHaveLength(18);
     expect(LEAVE_BALANCE_COLUMNS.map(c => c.key)).toEqual([
       'emp_code', 'emp_name', 'branch_name', 'cost_center', 'process_name',
       'cl_current', 'ml_current', 'el_current', 'ptl_mtl_current',
       'cl_taken', 'ml_taken', 'el_taken', 'ptl_mtl_taken',
       'cl_remain', 'ml_remain', 'el_remain', 'ptl_mtl_remain',
+      'employee_status',
     ]);
 
     const { ws } = await buildAndRead();
-    expect(ws.columnCount).toBe(17);
+    expect(ws.columnCount).toBe(18);
   });
 
   it('header group spans sum to the column count', () => {
@@ -277,11 +287,14 @@ describe('Report catalog', () => {
     expect(def.primaryKey).toEqual(['emp_code']);
   });
 
-  it('carries the 17 columns and grouped headers', () => {
+  // 18 now: employee_status appended in R for the two-population change. The equality against
+  // LEAVE_BALANCE_COLUMNS is the load-bearing assertion — it is what stops the catalog (screen)
+  // and the format module (XLSX) drifting into showing different columns for the same report.
+  it('carries the 18 columns and grouped headers', () => {
     const def = REPORT_CATALOG.find(r => r.code === 'leave-balance')!;
-    expect(def.columns).toHaveLength(17);
+    expect(def.columns).toHaveLength(18);
     expect(def.columns.map(c => c.key)).toEqual(LEAVE_BALANCE_COLUMNS.map(c => c.key));
-    expect(def.headerGroups?.reduce((n, g) => n + g.colSpan, 0)).toBe(17);
+    expect(def.headerGroups?.reduce((n, g) => n + g.colSpan, 0)).toBe(18);
   });
 
   it('offers Month, Branch and Process — and no Leave Type filter', () => {
