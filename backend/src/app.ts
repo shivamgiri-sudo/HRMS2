@@ -230,6 +230,8 @@ import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js"
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-head-review.routes.js";
 import { processPerformanceRouter } from "./modules/process-performance/process-performance.routes.js";
+import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
+import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-process-dashboard.routes.js";
 import { salaryRevisionRouter } from "./modules/salary-revision/salary-revision.routes.js";
 import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
@@ -321,7 +323,11 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({
-  limit: "5mb",
+  // Bumped from 5mb: high-volume raw-data bulk uploads (e.g. Onfido process reports,
+  // ~1 lakh rows/day/file) stage rows to /bulk-upload/batches/:id/rows in one request per
+  // chunk (see BulkUploadHub.tsx's STAGE_CHUNK_SIZE) — a wide-column chunk of a few
+  // thousand rows can run several MB once JSON-serialised.
+  limit: "25mb",
   verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => { req.rawBody = buf; }
 }));
 app.use(express.urlencoded({ extended: true }));
@@ -736,6 +742,8 @@ app.use("/api/ats", secureDocumentsRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/payroll-head-review", payrollHeadReviewRouter);
 app.use("/api/process-performance", processPerformanceRouter);
+app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
+app.use("/api/onfido-process", onfidoProcessDashboardRouter);
 app.use("/api/salary-revision", salaryRevisionRouter);
 app.use("/api/salary-change", salaryChangeRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);

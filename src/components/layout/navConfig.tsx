@@ -303,6 +303,7 @@ export const navGroups: NavGroup[] = [
           { label: "QA Audit Forms",      href: "/quality/audit-forms",   icon: ic(ClipboardList), pageCode: "QA_EVALUATION", description: "Define what a process is scored on", roles: ["super_admin","admin","qa","tq_head"] },
           { label: "Score a Call",        href: "/quality/file-audit",    icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "File a QA audit", roles: ["super_admin","admin","qa","quality_analyst","tq_head"] },
           { label: "Process Metrics",     href: "/kpi/process-metrics",   icon: ic(BarChart3), pageCode: "KPI_CONFIG", description: "What each process is measured on", roles: ["super_admin","admin","qa","tq_head","process_manager"] },
+          { label: "Onfido Process",      href: "/onfido-process/dashboard", icon: ic(ShieldCheck), pageCode: "ONFIDO_PROCESS_DASHBOARD", description: "Onfido DOC/POA volume, AHT, quality and escalations", roles: ["super_admin","admin","ceo","coo","manager","process_manager","team_leader","branch_head","qa","quality_analyst","wfm"] },
         ],
       },
       {
@@ -312,6 +313,7 @@ export const navGroups: NavGroup[] = [
           { label: "Performance",          href: "/performance",                icon: ic(Target),       roles: ["admin","hr","ceo","coo","manager","process_manager","branch_head","operations_manager","qa","quality_analyst","analyst","super_admin","employee","agent","team_leader","tl"], description: "Performance" },
           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
           { label: "Process Performance", href: "/performance/process-performance", icon: ic(Activity),  roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "OPERATIONS_DASHBOARD", description: "Process health card: headcount, shrinkage, attrition, late comers" },
+          { label: "Process KPI Dashboard", href: "/performance/process-kpi-dashboard", icon: ic(Building2), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "PROCESS_KPI_DASHBOARD", description: "Client/process SLA targets vs actuals, with drilldown" },
           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "KPI Targets", href: "/kpi-targets", icon: ic(Target), pageCode: "KPI_MASTER", description: "Targets by process & designation" },

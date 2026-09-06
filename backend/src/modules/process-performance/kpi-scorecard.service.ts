@@ -1,0 +1,331 @@
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import {
+  PROCESS_KPI_REGISTRY, findProcessKpiSet, findMetricDef,
+  type KpiFamily, type KpiUnit, type KpiDirection,
+} from "./kpi-metric-registry.js";
+
+/**
+ * Client Process KPI Dashboard — scorecards for the targets on the client-facing
+ * "Process KPI's" sheet, per process, with a team-leader -> agent -> raw-row
+ * drill-down.
+ *
+ * Same honesty rule as process-performance.service.ts, and reusing its exact
+ * scope mechanism: a metric either returns a number computed from real
+ * kpi_daily_actual rows, or it returns availability 'no_data' (a pipeline
+ * exists, nothing has landed for this process/window) or 'not_tracked' (no
+ * metric_code anywhere in the system captures this concept at all). Nothing
+ * here fabricates a value.
+ *
+ * Verified live 2026-09-06: none of the 4 processes in the registry have any
+ * rows yet for any of these metric_codes. Every resolver below still issues a
+ * real query keyed on the registry's kpiMetricCode, so a metric starts showing
+ * real numbers the moment a feed populates kpi_daily_actual for it -- no code
+ * change required.
+ */
+
+// Same viewer set as process-performance.service.ts's VIEWER_ROLES, deliberately
+// kept identical -- see that file's comment on why the route list, the service
+// list and the page_catalog grants must all agree.
+const VIEWER_ROLES = [
+  "super_admin", "admin", "ceo", "coo", "manager", "process_manager",
+  "operations_manager", "branch_head", "qa", "quality_analyst", "tq_head",
+];
+
+export interface KpiFilters {
+  from: string;
+  to: string;
+}
+
+/**
+ * `kpi_daily_actual.team_leader_id_at_event` looks like the right column for
+ * manager scoping and grouping, but it is NEVER written: verified live,
+ * 0 of 84,913 rows have it set, system-wide, across every process. Manager
+ * scope and the TL-pod drill level below therefore go through the CURRENT
+ * `employees.reporting_manager_id` instead -- the same live-hierarchy join
+ * process-performance.service.ts uses for its own manager grain -- via a
+ * mandatory `JOIN employees e ON e.id = k.employee_id`, which every query in
+ * this file carries for exactly this reason. `employee_id` is populated on
+ * 100% of rows, so the join never drops a row.
+ */
+async function kpiScope(userId: string) {
+  return buildScopeWhereClause(userId, VIEWER_ROLES, {
+    processId: "k.process_id_at_event",
+    branchId: "k.branch_id_at_event",
+    managerEmployeeId: "e.reporting_manager_id",
+    employeeId: "k.employee_id",
+  }, { allowAdminBypass: true, allowCeoAllRead: true });
+}
+
+/** Resolve the sheet's processCode to the real process_master.id, respecting scope. */
+async function resolveProcessId(userId: string, processCode: string): Promise<string | null> {
+  // A process id is exposed to the caller only if it is also inside their scope
+  // via the employee-scope predicate process-performance.service.ts already
+  // uses -- guessing a processCode in the URL must not reveal an id outside scope.
+  const scope = await buildScopeWhereClause(userId, VIEWER_ROLES, {
+    processId: "p.id", branchId: "p.branch_id",
+  }, { allowAdminBypass: true, allowCeoAllRead: true });
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT p.id FROM process_master p WHERE p.process_code = ? AND (${scope.sql}) LIMIT 1`,
+    [processCode, ...scope.params],
+  );
+  return rows.length ? String(rows[0].id) : null;
+}
+
+export type Availability = "ok" | "no_data" | "not_tracked";
+
+export interface KpiScorecardRow {
+  metricKey: string;
+  label: string;
+  family: KpiFamily;
+  unit: KpiUnit;
+  lobLabel: string;
+  target: number;
+  direction: KpiDirection;
+  availability: Availability;
+  actual: number | null;
+  rag: "good" | "warn" | "crit" | null;
+  trend: Array<{ period: string; value: number | null }>;
+  note?: string;
+}
+
+function ragFor(actual: number, target: number, direction: KpiDirection): "good" | "warn" | "crit" {
+  const ratio = direction === "higher_is_better" ? actual / target : target / Math.max(actual, 1e-9);
+  if (ratio >= 0.995) return "good";
+  if (ratio >= 0.88) return "warn";
+  return "crit";
+}
+
+/** Aggregate expression per family: volume metrics are summed per period, everything else averaged. */
+function aggExprFor(family: KpiFamily): string {
+  return family === "volume" ? "SUM(k.actual_value)" : "AVG(k.actual_value)";
+}
+
+export interface ProcessKpiHeader {
+  processCode: string;
+  processId: string;
+  billingName: string;
+  projectName: string;
+  note: string | null;
+}
+
+export async function getProcessKpiHeader(userId: string, processCode: string): Promise<ProcessKpiHeader | null> {
+  const set = findProcessKpiSet(processCode);
+  if (!set) return null;
+  const processId = await resolveProcessId(userId, processCode);
+  if (!processId) return null;
+  return { processCode, processId, billingName: set.billingName, projectName: set.projectName, note: set.note ?? null };
+}
+
+/** Every registered process, for the picker -- listing only what the sheet defines, not the whole org. */
+export function listRegisteredProcesses(): Array<{ processCode: string; billingName: string; projectName: string }> {
+  return PROCESS_KPI_REGISTRY.map((p) => ({ processCode: p.processCode, billingName: p.billingName, projectName: p.projectName }));
+}
+
+export async function getKpiScorecards(
+  userId: string, processCode: string, filters: KpiFilters,
+): Promise<KpiScorecardRow[]> {
+  const set = findProcessKpiSet(processCode);
+  if (!set) return [];
+  const processId = await resolveProcessId(userId, processCode);
+  const scope = await kpiScope(userId);
+
+  // One batched query per distinct metric_code actually referenced by this
+  // process's registry, rather than one query per sheet row -- several sheet
+  // rows (e.g. ABC and Upgrade's Conversion %) share the same metric_code.
+  const codes = [...new Set(set.metrics.map((m) => m.kpiMetricCode).filter((c): c is string => c !== null))];
+  const actualByCode = new Map<string, { value: number | null; count: number }>();
+  const trendByCode = new Map<string, Array<{ period: string; value: number | null }>>();
+
+  if (processId && codes.length) {
+    // actual_value's aggregate depends on family, but every code here happens to
+    // be single-family across this process's registry today, so one query per
+    // family bucket rather than per code keeps this to two round trips, not N.
+    for (const family of ["rate", "volume", "duration", "roi"] as const) {
+      const codesInFamily = [...new Set(
+        set.metrics.filter((m) => m.family === family && m.kpiMetricCode).map((m) => m.kpiMetricCode as string),
+      )];
+      if (!codesInFamily.length) continue;
+      const agg = aggExprFor(family);
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT m.metric_code, ${agg} AS value, COUNT(*) AS n
+           FROM kpi_daily_actual k
+           JOIN kpi_metric_master m ON m.id = k.metric_id
+           JOIN employees e ON e.id = k.employee_id
+          WHERE m.metric_code IN (${codesInFamily.map(() => "?").join(",")})
+            AND k.process_id_at_event = ?
+            AND k.score_date BETWEEN ? AND ?
+            AND (${scope.sql})
+          GROUP BY m.metric_code`,
+        [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
+      );
+      for (const r of rows) {
+        actualByCode.set(String(r.metric_code), { value: r.value == null ? null : Number(r.value), count: Number(r.n) });
+      }
+      const [trendRows] = await db.execute<RowDataPacket[]>(
+        `SELECT m.metric_code, DATE_FORMAT(k.score_date, '%Y-%m') AS period, ${agg} AS value
+           FROM kpi_daily_actual k
+           JOIN kpi_metric_master m ON m.id = k.metric_id
+           JOIN employees e ON e.id = k.employee_id
+          WHERE m.metric_code IN (${codesInFamily.map(() => "?").join(",")})
+            AND k.process_id_at_event = ?
+            AND k.score_date BETWEEN ? AND ?
+            AND (${scope.sql})
+          GROUP BY m.metric_code, period ORDER BY period ASC`,
+        [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
+      );
+      for (const r of trendRows) {
+        const code = String(r.metric_code);
+        const list = trendByCode.get(code) ?? [];
+        list.push({ period: String(r.period), value: r.value == null ? null : Number(r.value) });
+        trendByCode.set(code, list);
+      }
+    }
+  }
+
+  return set.metrics.map((m): KpiScorecardRow => {
+    if (!m.kpiMetricCode) {
+      return {
+        metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+        target: m.target, direction: m.direction, availability: "not_tracked",
+        actual: null, rag: null, trend: [], note: m.notTrackedNote,
+      };
+    }
+    const found = actualByCode.get(m.kpiMetricCode);
+    const availability: Availability = !processId ? "no_data" : found && found.count > 0 ? "ok" : "no_data";
+    return {
+      metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+      target: m.target, direction: m.direction, availability,
+      actual: availability === "ok" ? found!.value : null,
+      rag: availability === "ok" && found!.value != null ? ragFor(found!.value, m.target, m.direction) : null,
+      trend: trendByCode.get(m.kpiMetricCode) ?? [],
+      note: availability === "no_data"
+        ? "kpi_daily_actual has no rows for this process/window yet -- the pipeline exists, nothing has landed here."
+        : undefined,
+    };
+  });
+}
+
+export interface KpiDetailRecord {
+  id: string;
+  name: string;
+  subtitle: string | null;
+  value: number | null;
+  drillAs: "team_leader" | "employee" | null;
+}
+
+export interface KpiMetricDetail {
+  metricKey: string;
+  label: string;
+  availability: Availability;
+  unit: KpiUnit;
+  trend: Array<{ period: string; value: number | null }>;
+  recordsLabel: string;
+  records: KpiDetailRecord[];
+  note?: string;
+}
+
+/**
+ * Level 2 (by TL pod), level 3 (by agent) and level 4 (raw ledger rows), on top
+ * of the level-1 trend the scorecard already carries. `teamLeaderId`/`employeeId`
+ * walk one level deeper each, mirroring getMetricDetail's stack contract in
+ * process-performance.service.ts -- the frontend detail panel is a variant of
+ * KpiCellDetail.tsx and expects the same shape.
+ */
+export async function getKpiMetricDetail(
+  userId: string, processCode: string, metricKey: string, filters: KpiFilters,
+  teamLeaderId: string | null, employeeId: string | null,
+): Promise<KpiMetricDetail | null> {
+  const def = findMetricDef(processCode, metricKey);
+  if (!def) return null;
+  const label = def.label;
+  const base: KpiMetricDetail = {
+    metricKey, label, availability: "not_tracked", unit: def.unit,
+    trend: [], recordsLabel: "Team leaders", records: [], note: def.notTrackedNote,
+  };
+  if (!def.kpiMetricCode) return base;
+
+  const processId = await resolveProcessId(userId, processCode);
+  if (!processId) return { ...base, availability: "no_data", note: "This process is outside your scope or has no id on file." };
+
+  const scope = await kpiScope(userId);
+  const agg = aggExprFor(def.family);
+  // `employees e` is always joined -- both for the scope predicate's
+  // reporting_manager_id alias, and because "team leader" here means "this
+  // person's current reporting manager" (team_leader_id_at_event is dead, see
+  // kpiScope's comment), so team-pod narrowing filters e.reporting_manager_id.
+  const narrowSql: string[] = ["k.process_id_at_event = ?"];
+  const narrowParams: unknown[] = [processId];
+  if (teamLeaderId) { narrowSql.push("e.reporting_manager_id = ?"); narrowParams.push(teamLeaderId); }
+  if (employeeId) { narrowSql.push("k.employee_id = ?"); narrowParams.push(employeeId); }
+
+  const joinSql = `FROM kpi_daily_actual k
+     JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
+     JOIN employees e ON e.id = k.employee_id
+    WHERE k.score_date BETWEEN ? AND ? AND ${narrowSql.join(" AND ")} AND (${scope.sql})`;
+  const joinParams = [def.kpiMetricCode, filters.from, filters.to, ...narrowParams, ...scope.params];
+
+  const [tr] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period, ${agg} AS value ${joinSql}
+      GROUP BY period ORDER BY period ASC`,
+    joinParams,
+  );
+
+  // Leaf level: the raw ledger behind the leftmost drilled-into employee.
+  if (employeeId) {
+    const [recs] = await db.execute<RowDataPacket[]>(
+      `SELECT k.id, k.score_date, k.actual_value, k.source, k.source_system ${joinSql}
+        ORDER BY k.score_date DESC LIMIT 200`,
+      joinParams,
+    );
+    return {
+      metricKey, label, unit: def.unit,
+      availability: tr.length || recs.length ? "ok" : "no_data",
+      trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
+      recordsLabel: "Recorded entries",
+      records: recs.map((r) => ({
+        id: String(r.id),
+        name: String(r.score_date),
+        subtitle: `${r.source ?? "unknown"}${r.source_system ? ` · ${r.source_system}` : ""}`,
+        value: r.actual_value == null ? null : Number(r.actual_value),
+        drillAs: null,
+      })),
+      note: tr.length || recs.length ? undefined : "No records in this window for this employee.",
+    };
+  }
+
+  // Level 2 (grouped by each agent's current reporting manager -- the "TL pod")
+  // or level 3 (grouped by agent, within one already-chosen manager). `e` is
+  // the agent row (already joined in joinSql); the manager's own name needs a
+  // second, separate join to `employees` since a manager is also a row in the
+  // same table.
+  const groupCol = teamLeaderId ? "e.id" : "e.reporting_manager_id";
+  const nameCol = teamLeaderId ? "e.full_name" : "tl.full_name";
+  const subCol = teamLeaderId ? "e.employee_code" : "tl.employee_code";
+  const managerJoin = teamLeaderId ? "" : "LEFT JOIN employees tl ON tl.id = e.reporting_manager_id";
+  const [recs] = await db.execute<RowDataPacket[]>(
+    `SELECT ${groupCol} AS id, ${nameCol} AS name, ${subCol} AS subtitle, ${agg} AS value
+       ${joinSql.replace("JOIN employees e ON e.id = k.employee_id", `JOIN employees e ON e.id = k.employee_id ${managerJoin}`)}
+        AND ${groupCol} IS NOT NULL
+      GROUP BY id, name, subtitle
+      ORDER BY value ${def.direction === "higher_is_better" ? "ASC" : "DESC"}
+      LIMIT 100`,
+    joinParams,
+  );
+
+  return {
+    metricKey, label, unit: def.unit,
+    availability: tr.length || recs.length ? "ok" : "no_data",
+    trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
+    recordsLabel: teamLeaderId ? "Agents (worst first)" : "TL pods (worst first)",
+    records: recs.map((r) => ({
+      id: String(r.id),
+      name: String(r.name ?? "Unassigned"),
+      subtitle: r.subtitle ? String(r.subtitle) : null,
+      value: r.value == null ? null : Number(r.value),
+      drillAs: teamLeaderId ? "employee" : "team_leader",
+    })),
+    note: tr.length || recs.length ? undefined : "No rows in this window at this level.",
+  };
+}
