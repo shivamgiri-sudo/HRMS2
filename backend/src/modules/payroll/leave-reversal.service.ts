@@ -131,6 +131,40 @@ export async function checkAndReverseLeave(params: {
     );
     const daysToReverse = Math.min(daysInMonth, excessDays);
 
+    // ── 6a-pre. Idempotency guard ─────────────────────────────────────────
+    // leave_reversal_log has a unique key on (leave_request_id, run_month), and both
+    // the balance restore in 6c and the insert in 6d run unconditionally. Recalculating
+    // the same employee for the same month therefore restored the balance a SECOND time
+    // and then threw ER_DUP_ENTRY on the insert, which aborted the surrounding payroll
+    // transaction mid-write. That is how a 219-employee recalculation died after 76 rows,
+    // leaving the run half-updated.
+    //
+    // Ignoring the duplicate on the insert would NOT be enough: 6c would still have run,
+    // double-restoring the balance. The whole iteration has to be skipped.
+    //
+    // The recorded reversal is still counted toward totalDaysReversed and deducted from
+    // excessDays, because paidBase is recomputed from attendance on every run and does not
+    // carry the earlier reversal. Counting it reproduces the first run's newPaidBase, so
+    // recalculating twice yields the same answer as recalculating once.
+    const [priorRows] = await db.execute<RowDataPacket[]>(
+      `SELECT reversed_days FROM leave_reversal_log
+        WHERE leave_request_id = ? AND run_month = ?`,
+      [leave.id, runMonth],
+    );
+    const prior = (priorRows as RowDataPacket[])[0];
+    if (prior) {
+      const alreadyReversed = Number(prior.reversed_days ?? 0);
+      reversedLog.push({
+        leaveRequestId: leave.id,
+        leaveTypeId:    leave.leave_type_id,
+        leaveDate:      leave.from_date,
+        daysReversed:   alreadyReversed,
+      });
+      totalDaysReversed += alreadyReversed;
+      excessDays        -= alreadyReversed;
+      continue;
+    }
+
     // ── 6a. Current balance (available = allocated + adjusted - used) ─────
     const balanceYear = runMonth.slice(0, 4);
     const [balanceRows] = await db.execute<RowDataPacket[]>(
