@@ -1250,9 +1250,29 @@ export async function calculatePayrollRunScoped(
         ORDER BY ssc.sequence`,
       [(emp as any).structure_id],
     );
+    /*
+     * ONLY `fixed` belongs here, because only `fixed` carries a rupee amount in `value`.
+     *
+     * `pct_of_ctc` carries a PERCENTAGE. Including it stored that percentage as money: on
+     * ss-std-001 BASIC is pct_of_ctc = 40, which landed in this dictionary as Rs 40. Combined with
+     * the genuinely-fixed CONV of Rs 1,600 it produced a monthly gross of Rs 1,640 for anyone whose
+     * salary was resolved from the structure template — whatever their real CTC. Found on the
+     * 2026-08 run: 23 lines carrying a basic between Rs 2.58 and Rs 11.61 against a CTC of
+     * Rs 16,588/month, and it had run to completion with no error.
+     *
+     * Dropping pct_of_ctc here is the whole fix, because percentages are already handled properly
+     * by the other path: with no BASIC in this dictionary, hasFixedComponents stays false,
+     * monthlyGrossBase becomes ctc_annual / 12 and effectiveBasicPct becomes ss.basic_pct — the
+     * structure's percentage applied to the CTC, which is what pct_of_ctc always meant.
+     *
+     * Structures that define BASIC as a real `fixed` rupee amount (14,455 of them, one per
+     * employee, rebuilt from db_bill) are untouched and keep their existing behaviour, as does
+     * every employee resolved from salary_component_assignments above — that branch clears this
+     * dictionary and rebuilds it from the assignment.
+     */
     const compAmounts: Record<string, number> = {};
     for (const c of compRows as any[]) {
-      if (c.calc_type === 'fixed' || c.calc_type === 'pct_of_ctc') {
+      if (c.calc_type === 'fixed') {
         compAmounts[c.component_code] = Number(c.value) || 0;
       }
     }
@@ -1322,6 +1342,26 @@ export async function calculatePayrollRunScoped(
            (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
            (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
         : 0;
+    }
+    /*
+     * A monthly gross wildly below the employee's own CTC means the components are wrong, not that
+     * the person is cheap. The pct_of_ctc-as-rupees defect above produced exactly that shape — a
+     * Rs 1,640 gross against a Rs 16,588/month CTC — and the run completed silently, so it was only
+     * found by reconciling against db_bill weeks later.
+     *
+     * Falling back to CTC rather than throwing is deliberate: refusing would drop the employee from
+     * the run and pay them nothing, which is worse than paying them their contracted CTC. The warn
+     * is what makes it visible, and the threshold is generous (a quarter of CTC) so a genuinely
+     * low-component package does not trip it.
+     */
+    const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;
+    if (hasFixedComponents && ctcMonthly > 0 && fixedGross > 0 && fixedGross < ctcMonthly * 0.25) {
+      logger.warn(
+        `[payroll] run ${runId}: employee ${emp.employee_code} has a component gross of ` +
+        `${fixedGross.toFixed(2)} against a CTC of ${ctcMonthly.toFixed(2)}/month — components look ` +
+        `wrong, falling back to CTC. Check salary_component_assignments and the structure template.`
+      );
+      hasFixedComponents = false;
     }
     const monthlyGrossBase = hasFixedComponents ? fixedGross : (emp.ctc_annual / 12);
 
