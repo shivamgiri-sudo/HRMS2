@@ -734,6 +734,59 @@ export const payrollBranchReadinessService = {
       "incentive_batch_status"
     );
 
+    // --- Derive the attestations from evidence -------------------------------
+    //
+    // The five checklist items are TICKED BY HAND and, as the note above says, verify nothing:
+    // the checklist POST writes the column with no query behind it. So the score has been
+    // running on what somebody remembered rather than on what is true, in both directions —
+    // a branch could attest work it had not done, and, as happened here, do the work and still
+    // read as blocked.
+    //
+    // HEAD OFFICE, AUGUST 2026: all four of its cost centres reached 'ho_approved' on the CC
+    // attendance chain (HR finalize -> Branch Head -> HO) on 4 September, and every pending
+    // leave and regularization for the month was cleared. The branch still showed
+    // attendance_data_ready = 0, leave_finalized = 0, regularization_complete = 0, scored 42,
+    // and read "Blocked" — because nobody had ticked three boxes describing work already
+    // finished and recorded elsewhere.
+    //
+    // These derivations do not replace the sign-off; they READ it. A tick already set by a human
+    // is never cleared here — only raised when the evidence exists — so this can correct a
+    // false negative but never manufacture a false positive from a missing record.
+
+    // Attendance: every cost centre in this branch finalised through the CC chain. That chain
+    // IS the WFM/Branch Head/HO declaration, and it is a far stronger signal than the checkbox
+    // it was being asked to duplicate.
+    const ccAttendanceReady = await safeQuery(
+      async () => {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT
+             (SELECT COUNT(*) FROM cost_centre_master ccm
+               WHERE ccm.branch_id = ? AND ccm.active_status = 1
+                 AND EXISTS (SELECT 1 FROM employees e
+                              WHERE e.cost_centre_id = ccm.id AND e.active_status = 1
+                                AND LOWER(COALESCE(e.employment_status,'active')) = 'active')) AS staffed,
+             (SELECT COUNT(*) FROM payroll_cc_attendance_finalization f
+               WHERE f.branch_id = ? AND f.process_month = ?
+                 AND LOWER(f.status) = 'ho_approved') AS approved`,
+          [branchId, branchId, month]
+        );
+        const staffed = Number((rows[0] as any)?.staffed ?? 0);
+        const approved = Number((rows[0] as any)?.approved ?? 0);
+        // A branch with no staffed cost centres has nothing to finalise, and must not be
+        // credited as ready on an empty set.
+        return staffed > 0 && approved >= staffed ? 1 : 0;
+      },
+      0,
+      "cc_attendance_ho_approved"
+    );
+    if (ccAttendanceReady === 1) updates.attendance_data_ready = 1;
+
+    // Leave and regularizations: the counters computed immediately above already say whether
+    // anything is outstanding. Nothing pending IS the finished state — asking someone to also
+    // confirm it by hand adds a step that can only introduce disagreement.
+    if (Number(updates.pending_leave_count ?? -1) === 0) updates.leave_finalized = 1;
+    if (Number(updates.pending_regularization_count ?? -1) === 0) updates.regularization_complete = 1;
+
     // --- Persist updates when table exists -----------------------------------
     if (!(await tableExists())) return;
 
