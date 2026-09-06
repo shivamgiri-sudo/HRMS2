@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Ear,
   EarOff,
+  Globe,
   Loader2,
   Mic,
   MicOff,
@@ -47,6 +48,8 @@ interface MiraSession {
     spokenReplies: boolean;
     crossEmployeePersonalData: boolean;
   };
+  /** Set once Mira has detected a non-English language for this session. */
+  detectedLanguage?: { code: string; name: string } | null;
 }
 
 const DEFAULT_PROMPTS = [
@@ -96,6 +99,20 @@ export function CommandPalette({
     void hrmsApi.get<{ success: boolean; data: MiraSession }>('/api/ai/session')
       .then((response) => setSession(response.data))
       .catch(() => setSession(null));
+  }, []);
+
+  /**
+   * Re-read the session after a message so the language badge reflects what Mira
+   * just decided — detection happens server-side while answering, so the payload
+   * fetched on mount predates it. Failures are swallowed rather than clearing the
+   * session: a missed badge refresh is not worth blanking a working header. This
+   * hits the light /session path (no greet=1), so there is no daily-brief work
+   * behind it.
+   */
+  const refreshSession = useCallback(() => {
+    void hrmsApi.get<{ success: boolean; data: MiraSession }>('/api/ai/session')
+      .then((response) => setSession(response.data))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -233,8 +250,9 @@ export function CommandPalette({
       }]);
     } finally {
       setLoading(false);
+      refreshSession();
     }
-  }, [contextType, input, loading, voice.autoSpeak, voice.speak, voice.beginSpeechStream, voice.pushSpeech, voice.endSpeechStream]);
+  }, [contextType, input, loading, refreshSession, voice.autoSpeak, voice.speak, voice.beginSpeechStream, voice.pushSpeech, voice.endSpeechStream]);
 
   const startVoice = () => {
     if (voice.listening) {
@@ -285,6 +303,16 @@ export function CommandPalette({
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-semibold tracking-tight">{assistantName}</h2>
                 <span className="rounded-full border border-emerald-300/30 bg-emerald-300/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-100">PRIVATE</span>
+                {/* Absent for English, which is the default and needs no announcement. */}
+                {session?.detectedLanguage && (
+                  <span
+                    className="rounded-full border border-indigo-300/30 bg-indigo-400/20 px-2 py-0.5 text-[10px] font-semibold text-indigo-100"
+                    title={`Mira is answering in ${session.detectedLanguage.name}`}
+                  >
+                    <Globe className="mr-1 inline h-2.5 w-2.5" aria-hidden="true" />
+                    {session.detectedLanguage.name}
+                  </span>
+                )}
               </div>
               <p className="truncate text-xs text-blue-100">{session?.assistant.tagline ?? 'Your private HR assistant'}</p>
               <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-300">

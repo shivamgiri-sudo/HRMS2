@@ -25,7 +25,8 @@ import {
   MIRA_TAGLINE,
   MiraDataUnavailableError,
 } from './ai-account.service.js';
-import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries, getPendingAction, detectConfirmation } from './ai-conversation.service.js';
+import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries, getPendingAction, detectConfirmation, getPreferredLanguage } from './ai-conversation.service.js';
+import { detectLanguage } from './mira-language-detect.js';
 import { draftLeaveRequest, confirmLeaveAction, cancelLeaveAction, isLeaveActionRequest, miraActionsEnabled } from './mira-leave-action.service.js';
 import {
   answerCompanyQuestion,
@@ -36,7 +37,7 @@ import {
   getPublicCompanyContext,
   refreshOfficialCompanyKnowledge,
 } from './ai-company-knowledge.service.js';
-import { answerHowToQuestion } from './ai-howto.service.js';
+import { answerHowToQuestion, findDeepKnowledge } from './ai-howto.service.js';
 import { detectFeedbackIntent, describeFeedbackForHistory, logFeedback } from './ai-feedback.service.js';
 import { runTriagePass } from './mira-triage-scheduler.js';
 import { buildDailyBriefForEmployee } from '../management/daily-brief/daily-brief-dispatch.service.js';
@@ -58,6 +59,63 @@ function getRoleKeys(req: AuthenticatedRequest): string[] {
     .map((role) => String(role).trim().toLowerCase())
     .filter(Boolean);
   return normalized.length ? Array.from(new Set(normalized)) : ['employee'];
+}
+
+/**
+ * Which language Mira should answer this turn in.
+ *
+ * The thread's stored preference wins when there is one, because that is where
+ * the switch/revert hysteresis lives (ai-conversation.service.ts) — a single
+ * message in another script must not flip an established session.
+ *
+ * When no language is established yet, this turn's own script decides. That
+ * matters because recordTurn() runs *after* the answer is produced: on a user's
+ * very first Hindi message the thread still holds nothing, so relying on the
+ * stored preference alone would answer the opening question in English and only
+ * switch from the second message on. The stored preference catches up on the next
+ * turn either way, so this only removes the one-turn lag.
+ */
+function resolveResponseLanguage(userId: string, question: string) {
+  return getPreferredLanguage(userId) ?? detectLanguage(question);
+}
+
+/**
+ * The system instruction for an external-provider Mira call: the company base
+ * instruction, plus a language directive when the session is non-English, plus
+ * the matching deep-HRMS context block when the question is about a rule the
+ * catalog covers.
+ *
+ * Both additions are appended rather than substituted, so every guardrail in
+ * COMPANY_SYSTEM_INSTRUCTION (no general knowledge, no invented figures, no PII)
+ * still applies to the enriched prompt.
+ *
+ * Synchronous on purpose — both lookups are regex scans over small in-memory
+ * catalogs, and this sits directly on the request path.
+ */
+function buildMiraSystemInstruction(userId: string, question: string): string {
+  const parts: string[] = [COMPANY_SYSTEM_INSTRUCTION];
+
+  const lang = resolveResponseLanguage(userId, question);
+  if (lang) {
+    parts.push(
+      `\nRespond in ${lang.name} (language code: ${lang.code}). `
+      + 'Maintain this language for the entire session unless the user clearly switches languages for 2 or more consecutive messages. '
+      + 'Keep HRMS field names, status values, and system labels in English even when the surrounding explanation is translated, '
+      + 'so the user can still match what you say to what is on screen.',
+    );
+  }
+
+  const knowledge = findDeepKnowledge(question);
+  if (knowledge) {
+    // Stated as authoritative because it is: these are the rules this system
+    // implements, and the model is being asked to explain them, not to weigh
+    // them against whatever it recalls about Indian payroll in general.
+    parts.push(
+      `\n### HRMS Context\nThe following describes how PeopleOS actually behaves. Treat it as authoritative and explain it in your own words; do not contradict it or supplement it with general knowledge.\n\n${knowledge.knowledge}`,
+    );
+  }
+
+  return parts.join('\n');
 }
 
 function canAccessAnyBusinessAction(roleKeys: string[]): boolean {
@@ -160,13 +218,24 @@ aiInsightsRouter.get('/session', h(async (req, res) => {
     },
   };
 
+  // Surfaced so the chat header can show which language Mira is answering in.
+  // Only the code and display name — the thread's internal switch counters stay
+  // server-side, since the frontend has no decision to make with them.
+  const detectedLanguage = getPreferredLanguage(req.authUser!.id);
+  const sessionData = {
+    ...base,
+    detectedLanguage: detectedLanguage
+      ? { code: detectedLanguage.code, name: detectedLanguage.name }
+      : null,
+  };
+
   if (req.query.greet !== '1') {
-    return res.json(apiSuccess(base));
+    return res.json(apiSuccess(sessionData));
   }
 
   const employee = await getEmployeeForUser(req.authUser!.id);
   if (!employee?.id) {
-    return res.json(apiSuccess({ ...base, greeting: `${timeOfDayGreetingIST()}!`, hasCriticalUpdates: false, updatesPreview: [] }));
+    return res.json(apiSuccess({ ...sessionData, greeting: `${timeOfDayGreetingIST()}!`, hasCriticalUpdates: false, updatesPreview: [] }));
   }
 
   const { db: mysqlDb } = await import('../../db/mysql.js');
@@ -188,11 +257,11 @@ aiInsightsRouter.get('/session', h(async (req, res) => {
     const greeting = updatesPreview.length
       ? `${greetingPrefix} — there ${updatesPreview.length === 1 ? 'is' : 'are'} ${updatesPreview.length} update${updatesPreview.length === 1 ? '' : 's'} for you today. Want me to walk you through them?`
       : `${greetingPrefix}! No critical updates for you right now.`;
-    return res.json(apiSuccess({ ...base, greeting, hasCriticalUpdates: updatesPreview.length > 0, updatesPreview }));
+    return res.json(apiSuccess({ ...sessionData, greeting, hasCriticalUpdates: updatesPreview.length > 0, updatesPreview }));
   } catch (error) {
     // The greeting is a nicety, not core chat function — never fail /session over it.
     console.error('[Mira] failed to build greeting updates', error instanceof Error ? error.message : error);
-    return res.json(apiSuccess({ ...base, greeting: `${greetingPrefix}!`, hasCriticalUpdates: false, updatesPreview: [] }));
+    return res.json(apiSuccess({ ...sessionData, greeting: `${greetingPrefix}!`, hasCriticalUpdates: false, updatesPreview: [] }));
   }
 }));
 
@@ -694,7 +763,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     providerKey: provider.key,
     model: config?.modelName,
     apiKey: config?.apiKey,
-    systemInstruction: COMPANY_SYSTEM_INSTRUCTION,
+    systemInstruction: buildMiraSystemInstruction(userId, safeQuestion),
     userQuestion: safeQuestion,
     sanitizedContext: sanitizationResult.sanitizedContext,
     // Only turns that were themselves external-safe; self-account answers stay
