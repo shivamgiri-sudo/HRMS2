@@ -23,7 +23,7 @@ export const navGroups: NavGroup[] = [
       { label: "My Modules",    href: "/modules",       icon: ic(Package),       pageCode: "MODULE_LAUNCHER", description: "All allowed pages" },
       { label: "Notifications", href: "/notifications", icon: ic(Bell),          public: true, description: "Personal updates" },
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
-      { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], description: "Team attendance, leave, KPI & approvals" },
+      { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], managerVisible: true, description: "Team attendance, leave, KPI & approvals" },
       { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head","wfm","operations_manager","qa","quality_analyst","payroll_head","finance","recruiter","super_admin","hr_admin","recruitment_hr","process_manager"], description: "Reports" },
       { label: "My Reports",    href: "/reports?view=requests", icon: ic(FileText),  public: true, description: "My report requests" },
       { label: "My Dashboard",        href: "/my-dashboard",        icon: ic(LayoutDashboard), pageCode: "EMPLOYEE_SELF_DASHBOARD", description: "Employee dashboard" },

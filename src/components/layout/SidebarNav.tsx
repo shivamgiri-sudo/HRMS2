@@ -20,6 +20,8 @@ export type NavItem = {
   /** When true, visible to all authenticated users regardless of role (e.g. My Space items) */
   public?: boolean;
   description?: string;
+  /** When true, also visible to anyone who has direct reports (is_manager), regardless of role */
+  managerVisible?: boolean;
   /** Sub-items — when present this item becomes a collapsible master */
   children?: NavItem[];
 };
