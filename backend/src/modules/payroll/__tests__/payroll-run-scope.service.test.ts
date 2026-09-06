@@ -10,6 +10,9 @@
  *   3. Two runs claiming the same cost centre in one month, which pays those people twice.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.fn();
@@ -129,5 +132,65 @@ describe("ScopeError", () => {
     expect(err.code).toBe("CC_REQUIRED");
     // statusCode, not status: errorHandler.ts reads statusCode and masks anything else as a 500.
     expect(err.statusCode).toBe(400);
+  });
+});
+
+describe("a company run also claims its people", () => {
+  /*
+   * A COMPANY run covers everybody and writes NO scope rows, so the scope-table check above was
+   * blind to it. Found live 2026-09-06: the August company run held 581 salary lines including
+   * all 15 HEAD OFFICE employees at Rs 13,79,670, and salary_prep_run_scope held ZERO rows for
+   * the month — a scoped Head Office run would have been created without complaint and computed
+   * those same fifteen people a second time.
+   *
+   * The double-payment this guard exists to prevent, arriving through the one door it was not
+   * watching.
+   */
+  const src = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "payroll-run-scope.service.ts"),
+    "utf8",
+  );
+
+  function guard(): string {
+    const i = src.indexOf("export async function assertCostCentresFree");
+    expect(i).toBeGreaterThan(-1);
+    return src.slice(i, src.indexOf("export async function insertRunScope", i));
+  }
+
+  it("checks the salary LINES, not just the scope table", () => {
+    // Lines exist whatever kind of run produced them; scope rows only exist for scoped runs.
+    expect(guard()).toContain("FROM salary_prep_line l");
+  });
+
+  it("matches employees by their cost centre", () => {
+    // A company run names no cost centres, so the only link back to the selection is the
+    // employee's own cost_centre_id.
+    expect(guard()).toContain("e.cost_centre_id IN");
+  });
+
+  it("ignores voided runs, consistently with the scope check above it", () => {
+    // Cancelling releases the claim. Two checks in one function disagreeing about that would be
+    // worse than either alone.
+    expect(guard()).toContain("VOID_RUN_STATUSES_SQL");
+  });
+
+  it("names the run and says what would happen", () => {
+    /*
+     * "Already covered" alone sends someone hunting. The refusal has to say WHICH run holds them
+     * and that proceeding would pay the same people twice, because the safe action — use the
+     * existing run — is not obvious from the error alone.
+     */
+    const g = guard();
+    expect(g).toContain("CC_ALREADY_PAID_IN_RUN");
+    expect(g).toMatch(/compute the same people twice/);
+    expect(g).toMatch(/\$\{runId\}/);
+  });
+
+  it("refuses with 409, the status the error handler will actually surface", () => {
+    // ScopeError carries statusCode; anything else is masked as a 500 and the caller learns
+    // nothing about why they were refused.
+    const g = guard();
+    const idx = g.indexOf("CC_ALREADY_PAID_IN_RUN");
+    expect(g.slice(idx, idx + 600)).toContain("409");
   });
 });

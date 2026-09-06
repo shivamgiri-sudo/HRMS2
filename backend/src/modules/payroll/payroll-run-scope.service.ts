@@ -16,6 +16,7 @@ import type { PoolConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
+import { VOID_RUN_STATUSES_SQL } from "./run-status.js";
 
 /**
  * The property MUST be `statusCode`, not `status`: middleware/errorHandler.ts reads `statusCode` and
@@ -109,6 +110,47 @@ export async function assertCostCentresFree(
     throw new ScopeError(
       "CC_ALREADY_IN_RUN",
       `Already covered by another payroll run for ${runMonth}: ${names}`,
+      409,
+    );
+  }
+
+  /*
+   * A COMPANY run covers everybody and writes NO scope rows.
+   *
+   * The check above only reads salary_prep_run_scope, which exists solely for scoped runs — so a
+   * company run for the same month was completely invisible to it. Found on 2026-09-06: the
+   * August company run held 581 salary lines including all 15 HEAD OFFICE employees at
+   * Rs 13,79,670, and a scoped Head Office run would have been created without complaint and
+   * computed those same fifteen people a second time.
+   *
+   * That is the failure this guard exists to prevent, arriving through the one door it was not
+   * watching. Checking the LINES rather than the run's scope catches it whatever kind of run
+   * produced them.
+   *
+   * Cancelled runs are excluded on the same reasoning as above: cancelling releases the claim.
+   */
+  const [companyRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT DISTINCT ccm.cost_centre_code, ccm.id AS cost_centre_id, r.id AS run_id, r.status
+       FROM salary_prep_line l
+       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN employees e ON e.id = l.employee_id
+       JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+      WHERE r.run_month = ?
+        AND LOWER(TRIM(COALESCE(r.status, ''))) NOT IN (${VOID_RUN_STATUSES_SQL})
+        AND e.cost_centre_id IN (${costCentreIds.map(() => "?").join(",")})`,
+    [runMonth, ...costCentreIds],
+  );
+
+  if (companyRows.length) {
+    const names = companyRows
+      .map((r) => String(r.cost_centre_code ?? r.cost_centre_id))
+      .join(", ");
+    const runId = String(companyRows[0].run_id);
+    throw new ScopeError(
+      "CC_ALREADY_PAID_IN_RUN",
+      `Already included in payroll run ${runId} for ${runMonth} (status ${companyRows[0].status}): ` +
+        `${names}. Those employees already have salary lines in that run — running them again ` +
+        `would compute the same people twice. Use the existing run, or cancel it first.`,
       409,
     );
   }
