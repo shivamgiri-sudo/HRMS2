@@ -43,7 +43,7 @@ const EMPTY_FORM = {
   rule_name: '', scope_type: 'designation' as ScopeType,
   designation_id: '', process_id: '', branch_id: '',
   attendance_source: 'biometric' as AttendanceSource,
-  full_day_minutes: 540, half_day_minutes: 270, grace_minutes: 15,
+  full_day_minutes: 540, half_day_minutes: 270, grace_minutes: 0,
   effective_from: new Date().toISOString().split('T')[0]!,
   effective_to: '', notes: '',
 };

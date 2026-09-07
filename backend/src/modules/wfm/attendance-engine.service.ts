@@ -375,7 +375,7 @@ export const attendanceEngineService = {
         id: 'fallback', rule_name: 'Fallback Default', scope_type: 'global',
         designation_id: null, process_id: null, branch_id: null,
         attendance_source: 'biometric', full_day_minutes: 540, half_day_minutes: 270,
-        grace_minutes: 15, effective_from: date, effective_to: null, active_status: 1,
+        grace_minutes: 0, effective_from: date, effective_to: null, active_status: 1,
       };
     }
     return rows[0] as AttendanceRuleConfig;
