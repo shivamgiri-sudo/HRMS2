@@ -193,7 +193,7 @@ export async function importOnfidoRawBatch(
                  ON DUPLICATE KEY UPDATE ${updateClause}`;
 
     try {
-      await onfidoPool.execute(sql, params);
+      await onfidoPool.execute(sql, params as any);
       for (const r of rowsInChunk) {
         importedRowIds.push(r.rowId);
         importedRows++;
@@ -207,7 +207,7 @@ export async function importOnfidoRawBatch(
             `INSERT INTO ${config.table} (${insertColumns.join(",")})
              VALUES ${placeholderOne}
              ON DUPLICATE KEY UPDATE ${updateClause}`,
-            r.values
+            r.values as any
           );
           importedRowIds.push(r.rowId);
           importedRows++;
