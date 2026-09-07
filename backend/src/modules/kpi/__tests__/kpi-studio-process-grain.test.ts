@@ -193,3 +193,54 @@ describe("field filters", () => {
     expect(plan.params).toContain("VDCL");
   });
 });
+
+/**
+ * A date stored as text.
+ *
+ * Client tables keep dates as varchar constantly. db_masmis.bvo_order_export has
+ * 3,050,861 order rows whose order_date reads "01-01-2025" — DD-MM-YYYY in a
+ * varchar — alongside financial_status ('paid' vs 'COD') and total, which is
+ * precisely the source for Prepaid % and Net Revenue.
+ *
+ * The danger is not that such a column fails. It is that it SUCCEEDS: comparing
+ * `order_date >= '2026-08-01'` compares strings, "01-01-2025" sorts after that
+ * bound, and a month filter returns a confident and completely wrong set of rows
+ * with no error anywhere.
+ */
+describe("date stored as text", () => {
+  const TEXT_DATE_SOURCE = {
+    ...CONSTANT_SOURCE,
+    source_object: "bvo_order_export",
+    date_column: "order_date",
+    date_format: "%d-%m-%Y",
+  };
+
+  it("parses the column everywhere the date is used", () => {
+    const plan = buildProcessQueryPlan(TEXT_DATE_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    // Both WHERE bounds, the SELECT and the GROUP BY. Parsing in the filter while
+    // grouping on the raw text would bucket rows by their spelling and produce one
+    // group per distinct string.
+    const occurrences = plan.sql.match(/STR_TO_DATE\(`order_date`, '%d-%m-%Y'\)/g) ?? [];
+    expect(occurrences.length).toBe(4);
+    expect(plan.sql).not.toMatch(/`order_date` >=/);
+  });
+
+  it("leaves a real date column alone", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.sql).not.toContain("STR_TO_DATE");
+    expect(plan.sql).toContain("`order_date` >=");
+  });
+
+  it("refuses a format that is not on the list, rather than interpolating it", () => {
+    // The format is interpolated, not bound, so this is the injection boundary.
+    const evil = { ...TEXT_DATE_SOURCE, date_format: "%Y') OR 1=1 -- " };
+    expect(() => buildProcessQueryPlan(evil as never, FIELDS, "2026-08-01", "2026-08-31"))
+      .toThrow(/Unsupported date format/);
+  });
+
+  it("still binds the date bounds as parameters", () => {
+    const plan = buildProcessQueryPlan(TEXT_DATE_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.params).toContain("2026-08-01");
+    expect(plan.params).toContain("2026-08-31");
+  });
+});

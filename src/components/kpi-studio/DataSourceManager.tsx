@@ -43,6 +43,26 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
 
 const AGGREGATES = ["SUM", "AVG", "COUNT", "MIN", "MAX", "NONE"] as const;
 
+/**
+ * The formats the backend will accept, with the shape spelled out.
+ *
+ * Kept in step with DATE_FORMATS in kpi-studio.sources.ts, which is where they are
+ * validated before reaching SQL. Showing an example rather than only the pattern
+ * matters: %d-%m-%Y and %m-%d-%Y are indistinguishable to most people until a
+ * date after the 12th of a month silently stops parsing.
+ */
+const DATE_FORMAT_OPTIONS = [
+  { value: "%d-%m-%Y", label: "Day-Month-Year — 31-08-2026" },
+  { value: "%d/%m/%Y", label: "Day/Month/Year — 31/08/2026" },
+  { value: "%m/%d/%Y", label: "Month/Day/Year — 08/31/2026" },
+  { value: "%Y-%m-%d", label: "Year-Month-Day — 2026-08-31" },
+  { value: "%Y/%m/%d", label: "Year/Month/Day — 2026/08/31" },
+  { value: "%d-%b-%Y", label: "Day-Mon-Year — 31-Aug-2026" },
+  { value: "%d %b %Y", label: "Day Mon Year — 31 Aug 2026" },
+  { value: "%Y-%m-%d %H:%i:%s", label: "Year-Month-Day with time — 2026-08-31 14:05:00" },
+  { value: "%d-%m-%Y %H:%i:%s", label: "Day-Month-Year with time — 31-08-2026 14:05:00" },
+] as const;
+
 export function DataSourceManager() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -69,6 +89,7 @@ export function DataSourceManager() {
     employee_key_column: "",
     employee_key_kind: "employee_code",
     date_column: "",
+    date_format: "",
     csv_url: "",
     sheet_tab: "",
     // How this source's rows map to a process, for process-level metrics.
@@ -95,6 +116,7 @@ export function DataSourceManager() {
         employee_key_column: "",
         employee_key_kind: "employee_code",
         date_column: "",
+    date_format: "",
         csv_url: "",
         process_key_kind: "none",
         process_key_column: "",
@@ -285,6 +307,41 @@ export function DataSourceManager() {
                       className="font-mono text-xs"
                     />
                   </label>
+
+                  {/* Offered only where the schema carries it, so the form never
+                      collects something the backend would reject. A dropdown, not
+                      a text box: the set is closed, and a typed format that is
+                      subtly wrong parses to NULL for every row rather than
+                      erroring — the date filter then matches nothing and the
+                      source looks empty instead of misconfigured. */}
+                  {capability.data?.dateFormat && (
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-700">
+                        Is that column text rather than a date?
+                      </span>
+                      <select
+                        value={newSource.date_format}
+                        onChange={(event) =>
+                          setNewSource((previous) => ({ ...previous, date_format: event.target.value }))
+                        }
+                        className="w-full cursor-pointer rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                      >
+                        <option value="">No — it is a real date column</option>
+                        {DATE_FORMAT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+                        Only if the column stores dates as text. Left as a real date, a text column
+                        is compared as a STRING — a month filter then returns the wrong rows without
+                        any error. Parsing cannot use an index, so a large table is slow to read:
+                        3 million order rows take about 50 seconds, which is fine overnight and slow
+                        to sit and watch.
+                      </span>
+                    </label>
+                  )}
 
                   {/* Process mapping. Only offered once the schema supports it, so
                       the form never collects something the backend will reject. */}

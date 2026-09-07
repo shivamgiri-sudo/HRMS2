@@ -23,6 +23,9 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { validateFormula, listFormulaFunctions } from './kpi-formula.engine.js';
 import { validateSheetCsvUrl } from './kpi-studio.gsheet.js';
+// The allowed date formats live with the query builder that interpolates them, so
+// there is one list rather than two that can drift apart.
+import { DATE_FORMATS, isSupportedDateFormat } from './kpi-studio.sources.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────────────────────
 
@@ -339,6 +342,8 @@ export interface StudioCapability {
   processGrain: boolean;
   /** The 1681 column exists: source_field.filter_json. */
   fieldFilters: boolean;
+  /** The 1686 column exists: data_source.date_format, for a date stored as text. */
+  dateFormat: boolean;
 }
 
 let capabilityCache: StudioCapability | null = null;
@@ -380,7 +385,8 @@ export async function getStudioCapability(): Promise<StudioCapability> {
          SUM(TABLE_NAME = 'kpi_studio_data_source'
              AND COLUMN_NAME IN ('process_key_kind','process_key_column','process_key_value','process_id')) AS source_cols,
          SUM(TABLE_NAME = 'kpi_studio_definition' AND COLUMN_NAME = 'grain') AS grain_col,
-         SUM(TABLE_NAME = 'kpi_studio_source_field' AND COLUMN_NAME = 'filter_json') AS filter_col
+         SUM(TABLE_NAME = 'kpi_studio_source_field' AND COLUMN_NAME = 'filter_json') AS filter_col,
+         SUM(TABLE_NAME = 'kpi_studio_data_source' AND COLUMN_NAME = 'date_format') AS date_format_col
          FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME IN ('kpi_studio_data_source','kpi_studio_definition','kpi_studio_source_field')`,
@@ -391,10 +397,13 @@ export async function getStudioCapability(): Promise<StudioCapability> {
       resolution: Number((columnRows as any[])[0]?.n ?? 0) === 6,
       processGrain: Number(grain[0]?.source_cols ?? 0) === 4 && Number(grain[0]?.grain_col ?? 0) === 1,
       fieldFilters: Number(grain[0]?.filter_col ?? 0) === 1,
+      dateFormat: Number(grain[0]?.date_format_col ?? 0) === 1,
     };
   } catch {
     // A failed probe is not a reason to take the KPI pages down. Treat it as "not installed".
-    capabilityCache = { tables: false, resolution: false, processGrain: false, fieldFilters: false };
+    capabilityCache = {
+      tables: false, resolution: false, processGrain: false, fieldFilters: false, dateFormat: false,
+    };
   }
 
   return capabilityCache;
@@ -428,7 +437,7 @@ export async function listDataSources(includeRetired = false): Promise<RowDataPa
   if (!cap.tables) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.id, s.source_code, s.source_name, s.source_type, s.integration_key, s.source_object,
-            s.employee_key_column, s.employee_key_kind, s.date_column, s.description, s.active_status,
+            s.employee_key_column, s.employee_key_kind, s.date_column, s.description, s.active_status,${cap.dateFormat ? ' s.date_format,' : ''}
             s.config_json,${cap.processGrain ? ' s.process_key_kind, s.process_key_column, s.process_key_value, s.process_id,' : ''}
             COUNT(f.id) AS field_count
        FROM kpi_studio_data_source s
@@ -471,6 +480,8 @@ export async function saveDataSource(
     employee_key_column?: string | null;
     employee_key_kind?: string | null;
     date_column?: string | null;
+    /** STR_TO_DATE format when the date column is text. Null for a real DATE. */
+    date_format?: string | null;
     description?: string | null;
     /** google_sheet_csv only: the File → Share → Publish to web CSV link. */
     csv_url?: string | null;
@@ -532,6 +543,19 @@ export async function saveDataSource(
       throw new Error('Name the column that identifies the client');
     }
   }
+  // Validated here as well as at query-build time. A format outside the list is
+  // refused rather than stored, because storing one the builder will later reject
+  // produces a source that looks configured and fails only when something reads
+  // it — the failure mode this module keeps having to design against.
+  const dateFormat = String((input as { date_format?: string | null }).date_format ?? '').trim() || null;
+  if (dateFormat && !isSupportedDateFormat(dateFormat)) {
+    throw new Error(
+      `"${dateFormat}" is not a date format this can parse. Choose one of: ${DATE_FORMATS.join(', ')}`,
+    );
+  }
+  const dateFormatSet = cap.dateFormat ? ', date_format = ?' : '';
+  const dateFormatValues = cap.dateFormat ? [dateFormat] : [];
+
   const processCols = cap.processGrain
     ? ', process_key_kind = ?, process_key_column = ?, process_key_value = ?, process_id = ?'
     : '';
@@ -551,7 +575,7 @@ export async function saveDataSource(
       `UPDATE kpi_studio_data_source
           SET source_name = ?, source_type = ?, integration_key = ?, source_object = ?,
               employee_key_column = ?, employee_key_kind = ?, date_column = ?, description = ?,
-              config_json = COALESCE(?, config_json)${processCols}
+              config_json = COALESCE(?, config_json)${dateFormatSet}${processCols}
         WHERE id = ?`,
       [
         input.source_name.trim(),
@@ -563,6 +587,7 @@ export async function saveDataSource(
         input.date_column?.trim() || null,
         input.description?.trim() || null,
         configJson,
+        ...dateFormatValues,
         ...processValues,
         input.id,
       ],
@@ -577,9 +602,11 @@ export async function saveDataSource(
     `INSERT INTO kpi_studio_data_source
        (id, source_code, source_name, source_type, integration_key, source_object,
         employee_key_column, employee_key_kind, date_column, description, config_json, created_by${
+          cap.dateFormat ? ', date_format' : ''
+        }${
           cap.processGrain ? ', process_key_kind, process_key_column, process_key_value, process_id' : ''
         })
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${cap.processGrain ? ', ?, ?, ?, ?' : ''})`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${cap.dateFormat ? ', ?' : ''}${cap.processGrain ? ', ?, ?, ?, ?' : ''})`,
     [
       id,
       code,
@@ -593,6 +620,7 @@ export async function saveDataSource(
       input.description?.trim() || null,
       configJson,
       userId ?? null,
+      ...dateFormatValues,
       ...processValues,
     ],
   );

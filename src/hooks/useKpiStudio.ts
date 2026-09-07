@@ -17,6 +17,12 @@ export interface StudioCapability {
   tables: boolean;
   /** Definitions can drive live scores (migration 1645 applied). */
   resolution: boolean;
+  /** 1684: a KPI can be measured per process, and a source mapped to one. */
+  processGrain?: boolean;
+  /** 1681: a field can count only the rows matching a condition. */
+  fieldFilters?: boolean;
+  /** 1686: a source can read a date column that is stored as text. */
+  dateFormat?: boolean;
 }
 
 export interface KpiMetricOption {
@@ -68,6 +74,8 @@ export interface DataSourceSummary {
   employee_key_column: string | null;
   employee_key_kind: string | null;
   date_column: string | null;
+  /** STR_TO_DATE format when date_column is text. Null for a real DATE column. */
+  date_format?: string | null;
   description: string | null;
   field_count: number;
   /** 0 once retired. Only the list asked with includeRetired ever carries a 0. */

@@ -403,6 +403,54 @@ function buildQueryPlan(
  * MAS employee IDs in it, so requiring one would exclude exactly the sources
  * this grain exists to serve.
  */
+/**
+ * The date formats a source may declare.
+ *
+ * A fixed list, not free text, for two reasons. A format string is interpolated
+ * into SQL rather than bound -- STR_TO_DATE's second argument cannot be a
+ * parameter in every position this uses it -- so only a value from this list can
+ * ever reach the query. And it is a closed set, which this repository requires to
+ * be a dropdown rather than an Input, because a typed "%d-%m-%y" against
+ * four-digit years fails silently rather than loudly.
+ */
+export const DATE_FORMATS = [
+  '%Y-%m-%d',
+  '%d-%m-%Y',
+  '%d/%m/%Y',
+  '%m/%d/%Y',
+  '%Y/%m/%d',
+  '%d-%b-%Y',
+  '%d %b %Y',
+  '%Y-%m-%d %H:%i:%s',
+  '%d-%m-%Y %H:%i:%s',
+] as const;
+
+export type DateFormat = (typeof DATE_FORMATS)[number];
+
+export function isSupportedDateFormat(value: unknown): value is DateFormat {
+  return typeof value === 'string' && (DATE_FORMATS as readonly string[]).includes(value);
+}
+
+/**
+ * How the date column is referred to in SQL.
+ *
+ * A real DATE column is used directly. A text column is parsed with STR_TO_DATE
+ * so that comparisons are date comparisons -- without it `order_date >= '2026-08-01'`
+ * compares STRINGS, and "01-01-2025" sorts after that bound, so a month filter
+ * returns a confident and wrong set of rows rather than an error.
+ *
+ * The format is re-validated here, not trusted from the row, because this value
+ * is interpolated. A stored value outside the list is refused rather than run.
+ */
+export function dateExpression(dateColumn: string, dateFormat?: string | null): string {
+  const quoted = `\`${dateColumn}\``;
+  if (!dateFormat) return quoted;
+  if (!isSupportedDateFormat(dateFormat)) {
+    throw new Error(`Unsupported date format "${dateFormat}"`);
+  }
+  return `STR_TO_DATE(${quoted}, '${dateFormat}')`;
+}
+
 export function buildProcessQueryPlan(
   source: DataSourceConfig,
   fields: readonly SourceField[],
@@ -424,10 +472,14 @@ export function buildProcessQueryPlan(
 
   const table = assertSafeIdentifier(source.source_object, 'source table');
   const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+  // Everywhere the date is used must go through the SAME expression. Filtering on
+  // a parsed date while grouping by the raw text would bucket rows under strings
+  // like "01-01-2025" and silently produce one group per distinct spelling.
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format);
   const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields);
   const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
-  const where = [`\`${dateColumn}\` >= ?`, `\`${dateColumn}\` < DATE_ADD(?, INTERVAL 1 DAY)`];
+  const where = [`${dateExpr} >= ?`, `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`];
   // Field params come FIRST: a filtered field compiles to a CASE inside the
   // SELECT list, which MySQL binds before the WHERE clause. Getting this order
   // wrong silently shifts every placeholder and produces a plausible-looking
@@ -446,11 +498,11 @@ export function buildProcessQueryPlan(
   }
 
   const sql = `
-    SELECT DATE(\`${dateColumn}\`) AS __score_date,
+    SELECT DATE(${dateExpr}) AS __score_date,
            ${fieldSelect}
       FROM ${quotedTable}
      WHERE ${where.join(' AND ')}
-     GROUP BY DATE(\`${dateColumn}\`)
+     GROUP BY DATE(${dateExpr})
   `;
 
   return { sql, params, fieldNames: names };
