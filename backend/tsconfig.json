@@ -34,7 +34,10 @@
     "scripts/resend-stuck-esign-links.ts",
     // Abandons a dead kit and dispatches a brand-new, billed Luckpay session;
     // same rule as the scripts above.
-    "scripts/redispatch-dead-esign-kits.ts"
+    "scripts/redispatch-dead-esign-kits.ts",
+    // Sends a real email asking a real person to re-enter their bank account
+    // number; same rule as the scripts above.
+    "scripts/request-bank-resubmit.ts"
   ],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }

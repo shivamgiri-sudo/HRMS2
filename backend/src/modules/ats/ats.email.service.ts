@@ -15,7 +15,7 @@ import {
 
 type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
                  'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification' |
-                 'joining_doc_reminder';
+                 'joining_doc_reminder' | 'bank_resubmit_request';
 
 interface SendResult { ok: boolean; error?: string }
 
@@ -193,6 +193,38 @@ export async function sendOnboardingTokenEmail(params: {
     }),
     params.candidateId,
     'token_sent',
+  );
+}
+
+/**
+ * A candidate/employee whose bank account number never made it into storage
+ * (verified 2026-09-07: 31 rows across two now-fixed write bugs, see
+ * saveBankDetails' resave-wipe fix and the async BGV bank-check write fix)
+ * has to re-type it themselves — the encrypted value was genuinely lost,
+ * never merely hidden. Deliberately its own template rather than reusing
+ * sendOnboardingTokenEmail's generic "complete your 10-step form" copy: most
+ * of these 31 are already employees months into the role, for whom a
+ * "complete your joining formalities" email would read as a mistake. This
+ * names the one thing that's actually needed and says nothing about why.
+ */
+export async function sendBankResubmitEmail(params: {
+  candidateId: string; to: string; candidateName: string; onboardingLink: string; bankName?: string | null;
+}): Promise<SendResult> {
+  return send(
+    params.to,
+    'Action needed: confirm your bank account number - MAS Callnet',
+    atsFrame({
+      eyebrow: "Bank Details",
+      title: "Please re-confirm your bank account number",
+      body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
+        <p>We need you to re-enter your bank account number${params.bankName ? ` for your ${escapeHtml(params.bankName)} account` : ""} to keep your salary payment details up to date. Your bank name and IFSC are already on file — only the account number itself needs re-entering.</p>
+        <p style="margin-top:14px">Use the secure link below to open the bank details step directly.</p>`,
+      actionLabel: "Re-enter Account Number",
+      actionUrl: params.onboardingLink,
+      note: "This secure link is valid for 15 days. If it expires, ask HR to resend it.",
+    }),
+    params.candidateId,
+    'bank_resubmit_request',
   );
 }
 

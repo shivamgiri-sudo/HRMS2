@@ -9,6 +9,7 @@ import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import {
   sendOnboardingTokenEmail,
+  sendBankResubmitEmail,
   sendOfferReviewEmail,
   sendWelcomeEmail,
   sendRejectedEmail,
@@ -227,6 +228,99 @@ export async function sendOnboardingToken(
   }
 
   return { token: savedToken, expiresAt: savedExpiry, emailSent, emailError, smsSent, sentTo: sendTo || undefined };
+}
+
+/**
+ * Refreshes the onboarding token and sends a link, same as sendOnboardingToken,
+ * but for the narrower "your bank account number needs re-entry" case rather
+ * than a full resend of the joining-formalities invite.
+ *
+ * Deliberately does NOT touch ats_candidate.profile_status or write an
+ * ats_candidate_stage_log row the way sendOnboardingToken does — those track
+ * pre-hire progress, and most of the population this is for are already
+ * employees months into the role. Bumping profile_status back to
+ * 'onboarding_sent' for someone who finished onboarding weeks ago would be a
+ * wrong, misleading state, not a real re-send of anything.
+ *
+ * Email-only: SMS/WhatsApp delivery in this codebase has a 0% real success
+ * rate in production (no DLT template carries a URL variable, and neither
+ * provider has working credentials configured — see sendOnboardingToken's own
+ * SMS block and its "known content gap, not fixable in code" note), so adding
+ * it here would only add noise, not reach.
+ */
+export async function sendBankResubmitRequest(
+  candidateId: string,
+  requestedBy: string,
+  overrideEmail?: string,
+): Promise<{ token: string; expiresAt: Date; emailSent: boolean; emailError?: string; sentTo?: string }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id, c.full_name, c.email, c.candidate_status, b.bank_name
+       FROM ats_candidate c
+       LEFT JOIN candidate_onboarding_bank_detail b ON b.candidate_id = c.id
+      WHERE c.id = ? AND c.active_status = 1`,
+    [candidateId],
+  );
+  if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+  const cand = rows[0];
+  if (cand.candidate_status === 'not_joining') {
+    throw Object.assign(
+      new Error('This candidate is marked as not joining — no further links are sent'),
+      { statusCode: 409 },
+    );
+  }
+
+  const rawToken = randomUUID() + '-' + randomUUID();
+  const expiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+  await db.execute(
+    `INSERT INTO ats_onboarding_bridge
+       (id, candidate_id, bridge_date, status, onboarding_token, onboarding_token_expires_at, created_by)
+     VALUES (UUID(), ?, CURDATE(), 'pending', ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       onboarding_token = VALUES(onboarding_token),
+       onboarding_token_expires_at = VALUES(onboarding_token_expires_at)`,
+    [candidateId, rawToken, expiresAt, requestedBy],
+  );
+
+  // Re-read for the same reason sendOnboardingToken does: a concurrent call
+  // may have overwritten our token, and the email must carry whatever is
+  // actually saved.
+  const [bridgeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT onboarding_token, onboarding_token_expires_at FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const savedToken = bridgeRows[0]?.onboarding_token ?? rawToken;
+  const savedExpiry = bridgeRows[0]?.onboarding_token_expires_at
+    ? new Date(bridgeRows[0].onboarding_token_expires_at as string)
+    : expiresAt;
+
+  const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+  const onboardingLink = `${baseUrl}/onboard-full?token=${savedToken}`;
+  const sendTo = overrideEmail || cand.email;
+
+  let emailSent = false;
+  let emailError: string | undefined;
+  if (sendTo) {
+    try {
+      await withDeliveryTimeout(
+        sendBankResubmitEmail({
+          candidateId,
+          to: sendTo,
+          candidateName: cand.full_name,
+          onboardingLink,
+          bankName: cand.bank_name ?? null,
+        }),
+        `bank resubmit email delivery for ${candidateId}`,
+      );
+      emailSent = true;
+    } catch (emailErr) {
+      emailError = emailErr instanceof Error ? emailErr.message : String(emailErr);
+      console.error('[onboarding] bank resubmit email delivery failed for', candidateId, emailError);
+    }
+  } else {
+    emailError = 'No email address on file for this candidate';
+  }
+
+  return { token: savedToken, expiresAt: savedExpiry, emailSent, emailError, sentTo: sendTo || undefined };
 }
 
 // ── Token Validation ──────────────────────────────────────────────────────────

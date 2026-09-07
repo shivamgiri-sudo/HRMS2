@@ -15,6 +15,7 @@
     "backfill:stranded-kits": "tsx scripts/backfill-stranded-joining-kits.ts",
     "resend:stuck-esign-links": "tsx scripts/resend-stuck-esign-links.ts",
     "redispatch:dead-esign-kits": "tsx scripts/redispatch-dead-esign-kits.ts",
+    "request:bank-resubmit": "tsx scripts/request-bank-resubmit.ts",
     "migrate": "tsx src/scripts/migrate.ts",
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "preflight": "node scripts/deploy-preflight.mjs && npx tsx scripts/migration-target-table-check.ts",
