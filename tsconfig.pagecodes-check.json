@@ -1,0 +1,7 @@
+{
+  // Typecheck for the 1682 route->page-code mappings.
+  // Scoped per the pattern in tsconfig.phase2rbac-check.json — the root tsconfig has
+  // `"files": []` and exits 0 regardless.
+  "extends": "./tsconfig.app.json",
+  "include": ["src/lib/pageRoutePageCodes.ts", "src/vite-env.d.ts"]
+}
