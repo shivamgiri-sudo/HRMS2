@@ -148,18 +148,27 @@ async function loadSourcesWithFields(
   const result = new Map<string, { source: DataSourceConfig; fields: SourceField[] }>();
   if (!sourceIds.length) return result;
 
+  // Ask before selecting. This branch is shared and a migration may not have
+  // reached a given database yet; selecting a column that is not there turns a
+  // working query into a 400, which is precisely what adding these unconditionally
+  // did once. Same rule this module header states for the 1644/1645 tables.
+  const cap = await getStudioCapability();
+  const processCols = cap.processGrain
+    ? ", process_key_kind, process_key_column, process_key_value, process_id"
+    : "";
+  const filterCol = cap.fieldFilters ? ", filter_json" : "";
+
   const [sourceRows] = await db.execute<RowDataPacket[]>(
     // config_json is required, not optional: it carries the published CSV link for a Google Sheet
     // source, so omitting it makes every sheet-backed KPI fail with "no published link".
     `SELECT id, source_code, source_name, source_type, integration_key, source_object,
-            employee_key_column, employee_key_kind, date_column, config_json,
-            process_key_kind, process_key_column, process_key_value, process_id
+            employee_key_column, employee_key_kind, date_column, config_json${processCols}
        FROM kpi_studio_data_source
       WHERE id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],
   );
   const [fieldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT data_source_id, field_name, source_column, aggregate_fn, source_expression, filter_json
+    `SELECT data_source_id, field_name, source_column, aggregate_fn, source_expression${filterCol}
        FROM kpi_studio_source_field
       WHERE data_source_id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],

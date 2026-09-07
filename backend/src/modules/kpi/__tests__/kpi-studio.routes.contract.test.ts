@@ -189,7 +189,7 @@ describe("a database without the Studio schema", () => {
     schemaMissing();
     const response = await request(appFor("admin")).get("/api/kpi-studio/capability");
     expect(response.status).toBe(200);
-    expect(response.body.data).toEqual({ tables: false, resolution: false });
+    expect(response.body.data).toEqual({ tables: false, resolution: false, processGrain: false, fieldFilters: false });
   });
 
   it("answers a write with an actionable 503 naming the migrations", async () => {
@@ -221,7 +221,7 @@ describe("a database without the Studio schema", () => {
       return [[], []];
     });
     const response = await request(appFor("admin")).get("/api/kpi-studio/capability");
-    expect(response.body.data).toEqual({ tables: true, resolution: false });
+    expect(response.body.data).toEqual({ tables: true, resolution: false, processGrain: false, fieldFilters: false });
   });
 });
 

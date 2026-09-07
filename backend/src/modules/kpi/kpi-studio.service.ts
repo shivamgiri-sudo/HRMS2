@@ -333,6 +333,10 @@ export interface StudioCapability {
   tables: boolean;
   /** The 1645 columns exist on kpi_employee_resolved. */
   resolution: boolean;
+  /** The 1680 columns exist: definition.grain and the source's process mapping. */
+  processGrain: boolean;
+  /** The 1681 column exists: source_field.filter_json. */
+  fieldFilters: boolean;
 }
 
 let capabilityCache: StudioCapability | null = null;
@@ -364,13 +368,31 @@ export async function getStudioCapability(): Promise<StudioCapability> {
           AND COLUMN_NAME IN ('studio_definition_id','formula_expression','data_source_id',
                               'aggregation_method','scoring_type','resolved_scope')`,
     );
+    // Process grain (1680) and field filters (1681) are probed the same way and
+    // for the same reason: this branch is shared and a migration may not have
+    // reached a given database yet. Selecting a column that is not there turns a
+    // working page into a 400 — which is exactly what happened here once, so the
+    // queries below now ask first rather than assume.
+    const [grainRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(TABLE_NAME = 'kpi_studio_data_source'
+             AND COLUMN_NAME IN ('process_key_kind','process_key_column','process_key_value','process_id')) AS source_cols,
+         SUM(TABLE_NAME = 'kpi_studio_definition' AND COLUMN_NAME = 'grain') AS grain_col,
+         SUM(TABLE_NAME = 'kpi_studio_source_field' AND COLUMN_NAME = 'filter_json') AS filter_col
+         FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('kpi_studio_data_source','kpi_studio_definition','kpi_studio_source_field')`,
+    );
+    const grain = grainRows as any[];
     capabilityCache = {
       tables: Number((tableRows as any[])[0]?.n ?? 0) === 6,
       resolution: Number((columnRows as any[])[0]?.n ?? 0) === 6,
+      processGrain: Number(grain[0]?.source_cols ?? 0) === 4 && Number(grain[0]?.grain_col ?? 0) === 1,
+      fieldFilters: Number(grain[0]?.filter_col ?? 0) === 1,
     };
   } catch {
     // A failed probe is not a reason to take the KPI pages down. Treat it as "not installed".
-    capabilityCache = { tables: false, resolution: false };
+    capabilityCache = { tables: false, resolution: false, processGrain: false, fieldFilters: false };
   }
 
   return capabilityCache;
@@ -400,11 +422,12 @@ async function requireStudioTables(): Promise<void> {
 // ─── Data sources ────────────────────────────────────────────────────────────────────────────
 
 export async function listDataSources(): Promise<RowDataPacket[]> {
-  if (!(await getStudioCapability()).tables) return [];
+  const cap = await getStudioCapability();
+  if (!cap.tables) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.id, s.source_code, s.source_name, s.source_type, s.integration_key, s.source_object,
             s.employee_key_column, s.employee_key_kind, s.date_column, s.description, s.active_status,
-            s.config_json, s.process_key_kind, s.process_key_column, s.process_key_value, s.process_id,
+            s.config_json,${cap.processGrain ? ' s.process_key_kind, s.process_key_column, s.process_key_value, s.process_id,' : ''}
             COUNT(f.id) AS field_count
        FROM kpi_studio_data_source s
        LEFT JOIN kpi_studio_source_field f ON f.data_source_id = s.id AND f.active_status = 1
