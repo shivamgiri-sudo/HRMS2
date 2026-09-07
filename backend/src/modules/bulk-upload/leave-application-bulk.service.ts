@@ -15,10 +15,10 @@
  */
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { leaveService, NO_CHARGEABLE_DAYS } from "../leave/leave.service.js";
+import { leaveService } from "../leave/leave.service.js";
 import {
   loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
-  markRowFailed, markRowSkipped, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeDate,
   type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
@@ -152,15 +152,12 @@ export async function importLeaveBatch(
           grpStaged++;
         } catch (err) {
           const msg = `Row ${row.rowNo} (${d.employee_code}): ${(err as Error)?.message ?? String(err)}`;
-          // "Every date is a week-off or holiday" is not a bad row — it is a row with nothing to
-          // do. Charging it would deduct entitlement for a day nobody was rostered to work;
-          // failing it tells the uploader their file is broken when it is not. A 29-row file
-          // reporting 28 "errors", most of them Sundays, reads as a failed upload.
-          if ((err as { code?: string })?.code === NO_CHARGEABLE_DAYS) {
-            await markRowSkipped(row.rowId, msg);
-            grpSkipped++;
-            continue;
-          }
+          // A week-off / holiday date is NOT a reason to drop a leave row. This used to catch
+          // NO_CHARGEABLE_DAYS and mark the row skipped, so a leave applied on the employee’s
+          // week off was quietly discarded — the uploader saw a clean run and no leave record
+          // was ever created. Leave application is not roster-validated: submitRequest now
+          // accepts those rows and they stage like any other, so nothing raises
+          // NO_CHARGEABLE_DAYS any more and there is no case left to special-case here.
           grpErrors.push(msg);
           await markRowFailed(row.rowId, msg);
           grpFailed++;
