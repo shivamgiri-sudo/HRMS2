@@ -896,3 +896,178 @@ export async function explainMetricForEmployee(
       .sort((left, right) => right.days - left.days),
   };
 }
+
+// ─── Process-grain preview ───────────────────────────────────────────────────────────────────
+
+export interface ProcessPreviewDay {
+  date: string;
+  inputs: Record<string, number | null>;
+  value: number | null;
+  status: 'computed' | 'no_data' | 'error';
+  reason?: string;
+}
+
+export interface ProcessPreviewResult {
+  ok: boolean;
+  message?: string;
+  formula: string;
+  from: string;
+  to: string;
+  process_id: string | null;
+  days: ProcessPreviewDay[];
+  /** The average of the days that produced a number. Null when none did. */
+  value: number | null;
+  rows_read: number;
+  source_error?: string;
+}
+
+/**
+ * The process-grain half of the "test it" button.
+ *
+ * previewFormula answers "what does this formula give for THIS PERSON today". A process
+ * metric has no person — AL% for BLABLIBLU is one number for the whole process — so that
+ * function cannot test one, and until this existed a process KPI could only be configured
+ * blind: save it, wait for the nightly compute, and find out the next morning whether the
+ * formula read anything at all.
+ *
+ * It runs over a date RANGE rather than a single day, because that is how a process metric
+ * is read and because one day is a poor test: a formula can look fine on a day the source
+ * happened to be quiet. Each day is reported separately, with the values that produced it.
+ */
+export async function previewProcessFormula(input: {
+  formula: string;
+  dataSourceId: string;
+  extraSourceIds?: string[];
+  from: string;
+  to: string;
+}): Promise<ProcessPreviewResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = ISO_DATE.test(input.from) ? input.from : today;
+  const to = ISO_DATE.test(input.to) ? input.to : from;
+
+  const base: ProcessPreviewResult = {
+    ok: false,
+    formula: input.formula,
+    from,
+    to,
+    process_id: null,
+    days: [],
+    value: null,
+    rows_read: 0,
+  };
+
+  if (from > to) return { ...base, message: 'The start date is after the end date' };
+
+  const capability = await getStudioCapability();
+  if (!capability.tables) {
+    return { ...base, message: 'KPI Studio schema is not installed on this database' };
+  }
+  // Without 1680 a source carries no process mapping, so there is nothing to read
+  // a process metric from. Saying so beats returning an empty result that reads
+  // as "your formula found nothing".
+  if (!capability.processGrain) {
+    return {
+      ...base,
+      message:
+        'Process-level metrics need migration 1680_kpi_studio_process_grain.sql, which this ' +
+        'database does not have yet. Until it is applied, a source cannot be mapped to a process.',
+    };
+  }
+
+  const sourceIds = [...new Set([input.dataSourceId, ...(input.extraSourceIds ?? [])].filter(Boolean))];
+  const sources = await loadSourcesWithFields(sourceIds);
+  const entries = sourceIds
+    .map((sourceId) => sources.get(sourceId))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  if (!entries.length) return { ...base, message: 'Data source not found or inactive' };
+  const allFields = entries.flatMap((entry) => entry.fields);
+  if (!allFields.length) return { ...base, message: 'This data source has no fields configured yet' };
+
+  // Merged exactly the way computeProcessGrainDefinitions merges, so a formula that
+  // previews cannot then fail at compute time for a reason the preview never showed.
+  const merged = new Map<string, Map<string, number | null>>();
+  const failures: string[] = [];
+  let processId: string | null = null;
+  let rowsRead = 0;
+
+  for (const entry of entries) {
+    const source = entry.source as any;
+    processId = processId ?? (source.process_id ?? null);
+    const read = await readProcessGrainValues(source, entry.fields, from, to);
+    if (read.error) {
+      failures.push(`${source.source_code}: ${read.error}`);
+      continue;
+    }
+    rowsRead += read.rowsRead;
+    for (const [date, bucket] of read.values) {
+      const target = merged.get(date) ?? new Map<string, number | null>();
+      for (const [name, value] of bucket) target.set(name, value);
+      merged.set(date, target);
+    }
+  }
+
+  const sourceError = failures.length ? failures.join(' · ') : undefined;
+
+  if (!processId) {
+    return {
+      ...base,
+      rows_read: rowsRead,
+      source_error: sourceError,
+      message:
+        'None of these sources is mapped to a process. Set "This source belongs to" on the ' +
+        'source before a process-level KPI can read it.',
+    };
+  }
+
+  if (!merged.size) {
+    return {
+      ...base,
+      process_id: processId,
+      rows_read: rowsRead,
+      source_error: sourceError,
+      message: sourceError
+        ? 'The data source could not be read'
+        : 'The source returned no rows for these dates. Try a range the data actually covers.',
+    };
+  }
+
+  const fieldNames = [...new Set(allFields.map((field) => field.field_name))];
+  const days: ProcessPreviewDay[] = [];
+
+  for (const date of [...merged.keys()].sort()) {
+    const bucket = merged.get(date)!;
+    const inputs: Record<string, number | null> = {};
+    for (const name of fieldNames) inputs[name] = bucket.get(name) ?? null;
+
+    const evaluated = evaluateFormula(input.formula, inputs);
+    if (evaluated.error) {
+      days.push({ date, inputs, value: null, status: 'error', reason: evaluated.error });
+    } else if (evaluated.value === null || evaluated.value === undefined) {
+      days.push({ date, inputs, value: null, status: 'no_data', reason: evaluated.nullReason });
+    } else {
+      days.push({ date, inputs, value: evaluated.value, status: 'computed' });
+    }
+  }
+
+  // The headline is the mean of the days that produced a number — NOT of every day
+  // in the range. A day the source was silent is absent, not a zero, and averaging
+  // a zero in would quietly understate every metric this previews.
+  const computed = days.filter((day) => day.status === 'computed' && day.value !== null);
+  const value = computed.length
+    ? computed.reduce((total, day) => total + (day.value as number), 0) / computed.length
+    : null;
+
+  return {
+    ok: true,
+    formula: input.formula,
+    from,
+    to,
+    process_id: processId,
+    days,
+    value,
+    rows_read: rowsRead,
+    source_error: sourceError,
+    message: computed.length ? undefined : 'No day in this range produced a number',
+  };
+}

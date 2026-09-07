@@ -7,8 +7,10 @@ import {
   useFormulaHelp,
   useValidateFormula,
   usePreviewFormula,
+  useProcessPreviewFormula,
   type SourceField,
   type PreviewResult,
+  type ProcessPreviewResult,
 } from "@/hooks/useKpiStudio";
 
 /**
@@ -43,6 +45,8 @@ interface FormulaBuilderProps {
   extraSourceIds?: string[];
   /** Employee to test against. Without one the test button explains why it is unavailable. */
   testEmployeeId?: string | null;
+  /** 'process' switches the test panel to a date range — a process metric has no employee. */
+  grain?: string;
   testEmployeeLabel?: string | null;
   onValidityChange?: (valid: boolean) => void;
 }
@@ -103,6 +107,7 @@ export function FormulaBuilder({
   extraSourceIds,
   testEmployeeId,
   testEmployeeLabel,
+  grain = "employee",
   onValidityChange,
 }: FormulaBuilderProps) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -115,9 +120,20 @@ export function FormulaBuilder({
   });
   const [preview, setPreview] = useState<PreviewResult | null>(null);
 
+  // A process metric is tested over a range, not a day: one day is a poor test because
+  // a formula can look fine on a day the source happened to be quiet. Defaults to the
+  // last 7 days ending yesterday, for the same reason testDate is yesterday.
+  const [testFrom, setTestFrom] = useState(() =>
+    new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10));
+  const [testTo, setTestTo] = useState(() =>
+    new Date(Date.now() - 86_400_000).toISOString().slice(0, 10));
+  const [processPreview, setProcessPreview] = useState<ProcessPreviewResult | null>(null);
+  const isProcess = grain === "process";
+
   const help = useFormulaHelp();
   const validate = useValidateFormula();
   const previewMutation = usePreviewFormula();
+  const processPreviewMutation = useProcessPreviewFormula();
 
   const [validation, setValidation] = useState<{ ok: boolean; error?: string; variables: string[] } | null>(null);
 
@@ -212,7 +228,26 @@ export function FormulaBuilder({
     );
   };
 
-  const canTest = Boolean(dataSourceId && testEmployeeId && value.trim() && validation?.ok);
+  const runProcessTest = () => {
+    if (!dataSourceId) return;
+    processPreviewMutation.mutate(
+      {
+        formula: value,
+        data_source_id: dataSourceId,
+        extra_source_ids: extraSourceIds,
+        from: testFrom,
+        to: testTo,
+      },
+      { onSuccess: setProcessPreview },
+    );
+  };
+
+  // A process test needs no employee, which is the whole reason it exists.
+  const canTest = isProcess
+    ? Boolean(dataSourceId && value.trim() && validation?.ok)
+    : Boolean(dataSourceId && testEmployeeId && value.trim() && validation?.ok);
+  const testing = isProcess ? processPreviewMutation.isPending : previewMutation.isPending;
+  const computedDays = (processPreview?.days ?? []).filter((day) => day.status === "computed");
 
   return (
     <TooltipProvider>
@@ -450,23 +485,50 @@ export function FormulaBuilder({
               <FlaskConical className="h-4 w-4 text-indigo-600" />
               Test it on real data
             </span>
-            <Input
-              type="date"
-              value={testDate}
-              max={new Date().toISOString().slice(0, 10)}
-              onChange={(event) => setTestDate(event.target.value)}
-              className="h-8 w-36"
-              aria-label="Date to test against"
-            />
-            <Button size="sm" onClick={runTest} disabled={!canTest || previewMutation.isPending}>
-              {previewMutation.isPending ? (
+            {isProcess ? (
+              <>
+                <Input
+                  type="date"
+                  value={testFrom}
+                  max={testTo}
+                  onChange={(event) => setTestFrom(event.target.value)}
+                  className="h-8 w-36"
+                  aria-label="First date to test"
+                />
+                <span className="text-xs text-slate-400">to</span>
+                <Input
+                  type="date"
+                  value={testTo}
+                  min={testFrom}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={(event) => setTestTo(event.target.value)}
+                  className="h-8 w-36"
+                  aria-label="Last date to test"
+                />
+              </>
+            ) : (
+              <Input
+                type="date"
+                value={testDate}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(event) => setTestDate(event.target.value)}
+                className="h-8 w-36"
+                aria-label="Date to test against"
+              />
+            )}
+            <Button size="sm" onClick={isProcess ? runProcessTest : runTest} disabled={!canTest || testing}>
+              {testing ? (
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Calculator className="mr-1.5 h-3.5 w-3.5" />
               )}
               Run
             </Button>
-            {testEmployeeLabel && <span className="text-xs text-slate-500">against {testEmployeeLabel}</span>}
+            {isProcess ? (
+              <span className="text-xs text-slate-500">across the whole process</span>
+            ) : (
+              testEmployeeLabel && <span className="text-xs text-slate-500">against {testEmployeeLabel}</span>
+            )}
           </div>
 
           {/* Each unavailable reason is stated specifically. "Run is disabled" with no explanation
@@ -475,7 +537,7 @@ export function FormulaBuilder({
             <p className="mt-2 text-xs text-slate-500">
               {!dataSourceId
                 ? "Choose a data source to test against."
-                : !testEmployeeId
+                : !isProcess && !testEmployeeId
                   ? "Pick an employee in step 1 to test against — any employee in the scope will do."
                   : !value.trim()
                     ? "Write a calculation first."
@@ -483,7 +545,85 @@ export function FormulaBuilder({
             </p>
           )}
 
-          {preview && (
+          {/* Process result: one row per day, because that is how it will be computed. */}
+          {isProcess && processPreview && (
+            <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+              {processPreview.message && (
+                <p className={`text-xs leading-relaxed ${processPreview.ok ? "text-amber-700" : "text-rose-700"}`}>
+                  {processPreview.message}
+                </p>
+              )}
+
+              {processPreview.value !== null && (
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-xs text-slate-500">
+                    Average across {computedDays.length} day{computedDays.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="font-mono text-lg font-bold text-emerald-700">
+                    {Number(processPreview.value.toFixed(2))}
+                  </span>
+                </div>
+              )}
+
+              {processPreview.source_error && (
+                <p className="text-xs leading-relaxed text-rose-600">
+                  Source problem: {processPreview.source_error}
+                </p>
+              )}
+
+              {/* The values sit beside each day for the same reason they do on the employee
+                  panel: a wrong number is only diagnosable next to what produced it. */}
+              {processPreview.days.length > 0 && (
+                <div className="max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="px-2.5 py-1.5 font-medium">Day</th>
+                        <th className="px-2.5 py-1.5 font-medium">Values read</th>
+                        <th className="px-2.5 py-1.5 text-right font-medium">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {processPreview.days.map((day) => (
+                        <tr key={day.date} className="border-t border-slate-100">
+                          <td className="whitespace-nowrap px-2.5 py-1.5 font-mono text-slate-600">{day.date}</td>
+                          <td className="px-2.5 py-1.5 font-mono text-[11px] text-slate-500">
+                            {Object.entries(day.inputs)
+                              .map(([name, input]) => `${name}=${input ?? "-"}`)
+                              .join("  ")}
+                          </td>
+                          <td className="whitespace-nowrap px-2.5 py-1.5 text-right">
+                            {day.status === "computed" ? (
+                              <span className="font-mono font-semibold text-emerald-700">
+                                {Number((day.value as number).toFixed(2))}
+                              </span>
+                            ) : day.status === "no_data" ? (
+                              <span className="text-amber-700" title={day.reason ?? "Nothing was measured"}>
+                                no value
+                              </span>
+                            ) : (
+                              <span className="text-rose-700" title={day.reason ?? "Could not calculate"}>
+                                error
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {processPreview.rows_read > 0 && (
+                <p className="text-[11px] text-slate-400">
+                  {processPreview.rows_read.toLocaleString("en-IN")} row
+                  {processPreview.rows_read === 1 ? "" : "s"} read from the source.
+                </p>
+              )}
+            </div>
+          )}
+
+          {!isProcess && preview && (
             <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-xs text-slate-500">Result</span>

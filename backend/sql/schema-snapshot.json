@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1085,
-  "columnCount": 15756,
+  "tableCount": 1088,
+  "columnCount": 15798,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -3114,6 +3114,34 @@
       "alert_hr",
       "alert_wfm",
       "alert_cc_list_json",
+      "created_at",
+      "updated_at"
+    ],
+    "builder_dashboard": [
+      "id",
+      "name",
+      "description",
+      "process_id",
+      "owner_user_id",
+      "visible_roles",
+      "active_status",
+      "created_at",
+      "updated_at"
+    ],
+    "builder_dashboard_widget": [
+      "id",
+      "dashboard_id",
+      "title",
+      "widget_type",
+      "metric_source",
+      "metric_key",
+      "process_id",
+      "date_range",
+      "grid_width",
+      "grid_height",
+      "position",
+      "config_json",
+      "active_status",
       "created_at",
       "updated_at"
     ],
@@ -9479,6 +9507,7 @@
       "id",
       "integration_key",
       "integration_name",
+      "process_id",
       "integration_type",
       "vendor_name",
       "base_url",
@@ -10317,11 +10346,16 @@
       "active_status",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "process_key_kind",
+      "process_key_column",
+      "process_key_value",
+      "process_id"
     ],
     "kpi_studio_definition": [
       "id",
       "metric_id",
+      "grain",
       "branch_id",
       "process_id",
       "designation_id",
@@ -10377,6 +10411,7 @@
       "source_column",
       "aggregate_fn",
       "source_expression",
+      "filter_json",
       "unit",
       "description",
       "active_status",
@@ -12989,6 +13024,19 @@
       "billing_rate_per_hour",
       "close_date",
       "planning_mode"
+    ],
+    "process_metric_actual": [
+      "id",
+      "process_id",
+      "metric_key",
+      "score_date",
+      "actual_value",
+      "source",
+      "source_connector_key",
+      "note",
+      "created_by",
+      "created_at",
+      "updated_at"
     ],
     "process_metric_definition": [
       "id",

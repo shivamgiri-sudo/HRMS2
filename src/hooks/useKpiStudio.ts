@@ -177,6 +177,27 @@ export interface MetricExplanation {
   reason_summary: Array<{ reason: string; days: number }>;
 }
 
+export interface ProcessPreviewDay {
+  date: string;
+  inputs: Record<string, number | null>;
+  value: number | null;
+  status: "computed" | "no_data" | "error";
+  reason?: string;
+}
+
+export interface ProcessPreviewResult {
+  ok: boolean;
+  message?: string;
+  formula: string;
+  from: string;
+  to: string;
+  process_id: string | null;
+  days: ProcessPreviewDay[];
+  value: number | null;
+  rows_read: number;
+  source_error?: string;
+}
+
 export interface UploadPreview {
   file_name: string;
   headers: string[];
@@ -411,6 +432,22 @@ export function usePreviewFormula() {
       employee_id: string;
       date: string;
     }) => (await hrmsApi.post<Envelope<PreviewResult>>("/api/kpi-studio/preview", input)).data,
+  });
+}
+
+/**
+ * The process-grain counterpart. A process metric has no employee to test against,
+ * so it is tested over a date range and answers with one value per day.
+ */
+export function useProcessPreviewFormula() {
+  return useMutation({
+    mutationFn: async (input: {
+      formula: string;
+      data_source_id: string;
+      extra_source_ids?: string[];
+      from: string;
+      to: string;
+    }) => (await hrmsApi.post<Envelope<ProcessPreviewResult>>("/api/kpi-studio/preview-process", input)).data,
   });
 }
 

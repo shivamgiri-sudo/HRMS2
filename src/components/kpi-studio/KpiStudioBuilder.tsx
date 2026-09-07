@@ -685,6 +685,7 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
                   extraSourceIds={state.extra_source_ids}
                   testEmployeeId={testEmployee?.id ?? null}
                   testEmployeeLabel={testEmployee ? `${testEmployee.full_name ?? testEmployee.employee_code}` : null}
+                  grain={state.grain}
                   onValidityChange={setFormulaValid}
                 />
               )}

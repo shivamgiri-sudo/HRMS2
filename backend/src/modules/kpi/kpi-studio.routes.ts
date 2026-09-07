@@ -59,7 +59,12 @@ import {
   commitUploadRows,
   saveManualValue,
 } from './kpi-studio.sources.js';
-import { computeStudioKpis, previewFormula, explainMetricForEmployee } from './kpi-studio.compute.js';
+import {
+  computeStudioKpis,
+  previewFormula,
+  previewProcessFormula,
+  explainMetricForEmployee,
+} from './kpi-studio.compute.js';
 import { validateFormula } from './kpi-formula.engine.js';
 
 const router = Router();
@@ -404,6 +409,37 @@ router.post(
       extraSourceIds: Array.isArray(body.extra_source_ids) ? body.extra_source_ids.map(String) : undefined,
       employeeId: String(body.employee_id),
       date: String(body.date ?? new Date().toISOString().slice(0, 10)),
+    });
+    res.json({ success: true, data: result });
+  }),
+);
+
+/**
+ * The same button, for a metric that has no employee.
+ *
+ * Kept as its own route rather than a flag on /preview: the inputs genuinely differ
+ * (a date range and a process instead of one person on one day) and so does the shape
+ * of the answer, and collapsing them would mean a request that silently means
+ * something else depending on one field.
+ */
+router.post(
+  '/preview-process',
+  requireRole(...CONFIG_ROLES),
+  h(async (req, res) => {
+    const body = req.body ?? {};
+    if (!body.formula || !body.data_source_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Need a formula and a data source to test against',
+      });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await previewProcessFormula({
+      formula: String(body.formula),
+      dataSourceId: String(body.data_source_id),
+      extraSourceIds: Array.isArray(body.extra_source_ids) ? body.extra_source_ids.map(String) : undefined,
+      from: String(body.from ?? today),
+      to: String(body.to ?? body.from ?? today),
     });
     res.json({ success: true, data: result });
   }),
