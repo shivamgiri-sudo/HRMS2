@@ -75,3 +75,22 @@ export const kpiCaptureLimiter = rateLimit({
     message: "Too many submissions from this network. Please wait a few minutes and continue.",
   },
 });
+
+/**
+ * 8 attempts per 15 min per IP — LMS admin self-link (POST /api/lms/admin-link).
+ *
+ * This endpoint verifies a caller-supplied LMS admin ID + password against the LMS's own
+ * login endpoint and, on success, writes an identity mapping. It is a credential-guessing
+ * surface even though it sits behind requireAuth, so it gets its own tight limit rather than
+ * relying on globalLimiter — mirrors the LMS's own loginLimiter (10/15min).
+ */
+export const lmsAdminLinkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many LMS admin link attempts. Please wait a few minutes and try again.",
+  },
+});

@@ -9,7 +9,7 @@ import path from "path";
 
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter, publicRegistrationLimiter, kpiCaptureLimiter } from "./middleware/rateLimiter.js";
+import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter, publicRegistrationLimiter, kpiCaptureLimiter, lmsAdminLinkLimiter } from "./middleware/rateLimiter.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { processRouter } from "./modules/process/process.routes.js";
 import { integrationRouter } from "./modules/integration-hub/integration.routes.js";
@@ -593,6 +593,9 @@ app.use("/api/rta", rtaRouter);
 app.use("/api/account-control", accountControlRouter);
 app.use("/api/workforce-mandate", workforceMandateRouter);
 app.use("/api/manpower-risk", manpowerRiskRouter);
+// Credential-guessing surface (verifies caller-supplied LMS admin password) - scoped limiter
+// ahead of the routers blanket requireAuth, same precedent as publicRegistrationLimiter above.
+app.use("/api/lms/admin-link", lmsAdminLinkLimiter);
 app.use("/api/lms", lmsIntegrationRouter);
 app.use("/api/lms", lmsRouter);
 app.use("/api/benefits", benefitsRouter);

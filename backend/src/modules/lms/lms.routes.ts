@@ -16,6 +16,7 @@ import {
 import { env } from "../../config/env.js";
 import { lmsEmployeeMapper } from "./lms-employee-mapper.js";
 import { randomUUID } from "crypto";
+import axios from "axios";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -374,6 +375,115 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
       message: "LMS launch unavailable",
     });
   }
+}));
+
+/**
+ * Self-service LMS admin identity link.
+ *
+ * lms_admin_identity_map is empty by design (see lmsIdentityNotMapped above) because
+ * admin_user_master carries no employee_code/email to auto-match on, and guessing an
+ * identity is exactly the bug that route's comment documents. This endpoint replaces
+ * "someone runs an INSERT by hand" with proof of ownership: the caller must successfully
+ * log into the LMS with the admin_id + password they claim is theirs. Only on that proof
+ * do we write the mapping — never on the claim alone.
+ *
+ * ctx.access.access.admin (HRMS-role-derived, lms.service.ts getAccessForEmployee) is
+ * still required first: a verified LMS password proves *identity*, not that HRMS intends
+ * to grant this person LMS Admin access at all.
+ */
+router.post("/admin-link", h(async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = await currentLmsContext(req, res);
+  if (!ctx) return;
+  if (!ctx.access.access.admin) {
+    return res.status(403).json({ success: false, message: "LMS administrator access is not assigned to this HRMS user" });
+  }
+
+  const adminId = String(req.body?.adminId ?? "").trim();
+  const password = String(req.body?.password ?? "");
+  if (!adminId || !password) {
+    return res.status(400).json({ success: false, message: "LMS admin ID and password are required" });
+  }
+  if (!env.LMS_API_URL) {
+    return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS backend" });
+  }
+
+  const employeeCode = String(ctx.access.employeeCode ?? "").trim();
+  if (!employeeCode) {
+    return res.status(403).json({ success: false, message: "No employee code on this HRMS account" });
+  }
+
+  const auditFailure = async (reason: string) => {
+    try {
+      await db.execute(
+        `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+         VALUES (?, 'admin_identity_link', 0, 1, 'failed', ?)`,
+        [randomUUID(), req.authUser!.id],
+      );
+    } catch (auditErr) {
+      console.error("[lms/admin-link] audit write failed:", auditErr, "original reason:", reason);
+    }
+  };
+
+  // Refuse to steal an identity another HRMS employee already owns, rather than silently
+  // repointing it — same non-guessing posture as lmsIdentityNotMapped above.
+  const [existingOwner] = await db.execute<RowDataPacket[]>(
+    `SELECT hrms_employee_code FROM lms_admin_identity_map WHERE lms_admin_id = ? AND active = 1 AND hrms_employee_code != ? LIMIT 1`,
+    [adminId, employeeCode],
+  );
+  if (existingOwner[0]?.hrms_employee_code) {
+    await auditFailure("admin_id already linked to a different employee");
+    return res.status(409).json({ success: false, message: "This LMS admin account is already linked to another HRMS employee." });
+  }
+
+  let verified = false;
+  try {
+    const loginRes = await axios.post(
+      `${env.LMS_API_URL.replace(/\/+$/, "")}/api/auth/admin/login`,
+      { adminId, password },
+      { timeout: 10000, validateStatus: () => true },
+    );
+    if (loginRes.status === 200 && loginRes.data?.ok) {
+      verified = true;
+    } else if (loginRes.status === 401) {
+      await auditFailure("invalid credentials");
+      return res.status(401).json({ success: false, message: "Invalid LMS admin ID or password." });
+    } else if (loginRes.status === 403) {
+      await auditFailure("account locked");
+      return res.status(403).json({ success: false, message: loginRes.data?.message || "LMS admin account is locked." });
+    } else {
+      await auditFailure(`unexpected LMS response ${loginRes.status}`);
+      return res.status(502).json({ success: false, message: "LMS verification unavailable. Please try again." });
+    }
+  } catch (err: unknown) {
+    console.error("[lms/admin-link] LMS login call failed:", err instanceof Error ? err.message : err);
+    await auditFailure("LMS login call threw");
+    return res.status(502).json({ success: false, message: "LMS verification unavailable. Please try again." });
+  }
+
+  if (!verified) {
+    await auditFailure("unverified");
+    return res.status(401).json({ success: false, message: "Invalid LMS admin ID or password." });
+  }
+
+  await db.execute(
+    `INSERT INTO lms_admin_identity_map (id, hrms_employee_code, lms_admin_id, active, mapped_by, remarks)
+     VALUES (?, ?, ?, 1, ?, 'Self-linked via verified LMS login')
+     ON DUPLICATE KEY UPDATE lms_admin_id = VALUES(lms_admin_id), active = 1,
+       mapped_by = VALUES(mapped_by), remarks = VALUES(remarks), updated_at = NOW()`,
+    [randomUUID(), employeeCode, adminId, employeeCode],
+  );
+
+  try {
+    await db.execute(
+      `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+       VALUES (?, 'admin_identity_link', 1, 0, 'success', ?)`,
+      [randomUUID(), req.authUser!.id],
+    );
+  } catch (auditErr) {
+    console.error("[lms/admin-link] audit write failed on success path:", auditErr);
+  }
+
+  res.json({ success: true, message: "LMS admin account linked." });
 }));
 
 // Legacy aliases retained for existing pages.
