@@ -291,6 +291,8 @@ async function evaluateAndWrite(
     employeeId: string;
     metricId: string;
     value: number;
+    processId: string | null;
+    branchId: string | null;
   }> = [];
   const logs: Array<{
     definitionId: string;
@@ -372,7 +374,13 @@ async function evaluateAndWrite(
       continue;
     }
 
-    writes.push({ employeeId: employee.id, metricId: definition.metric_id, value: evaluated.value });
+    writes.push({
+      employeeId: employee.id,
+      metricId: definition.metric_id,
+      value: evaluated.value,
+      processId: employee.process_id ?? null,
+      branchId: employee.branch_id ?? null,
+    });
     logs.push({
       definitionId: definition.id,
       metricId: definition.metric_id,
@@ -402,18 +410,36 @@ async function evaluateAndWrite(
   // ── Write actuals ──
   // source='calculated' distinguishes a Studio-computed figure from one an existing sync wrote, so
   // the two can never be confused when reconciling a number with its origin.
+  //
+  // process_id_at_event / branch_id_at_event are written from the employee's
+  // CURRENT process and branch (both already selected by the employee query
+  // above). Without them these rows are invisible to every process-scoped
+  // dashboard -- the Process KPI Dashboard and process-performance both filter
+  // on exactly these columns -- so a Studio figure computed successfully, landed
+  // in the table, and then silently never appeared anywhere. The row was plainly
+  // present; it just never matched. Same class of bug as
+  // team_leader_id_at_event, which turned out never to be written at all.
   const CHUNK = 200;
   for (let index = 0; index < writes.length; index += CHUNK) {
     const chunk = writes.slice(index, index + CHUNK);
-    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?)').join(', ');
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ');
     const params: unknown[] = [];
     for (const write of chunk) {
-      params.push(write.employeeId, write.metricId, options.date, write.value, 'calculated');
+      params.push(
+        write.employeeId, write.metricId, options.date, write.value, 'calculated',
+        write.processId, write.branchId,
+      );
     }
     await db.execute(
-      `INSERT INTO kpi_daily_actual (employee_id, metric_id, score_date, actual_value, source)
+      `INSERT INTO kpi_daily_actual
+         (employee_id, metric_id, score_date, actual_value, source,
+          process_id_at_event, branch_id_at_event)
        VALUES ${placeholders}
-       ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), source = VALUES(source)`,
+       ON DUPLICATE KEY UPDATE
+         actual_value        = VALUES(actual_value),
+         source              = VALUES(source),
+         process_id_at_event = VALUES(process_id_at_event),
+         branch_id_at_event  = VALUES(branch_id_at_event)`,
       params,
     );
     outcome.written += chunk.length;
