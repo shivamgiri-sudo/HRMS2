@@ -465,8 +465,19 @@ export const payrollGovernanceService = {
             AND adr.regularization_id IS NULL
             AND (
               ABS(COALESCE(adr.raw_minutes, 0) - apr_days.apr_minutes) > 1
-              OR adr.source_system <> 'apr.ReportDate'
+              OR adr.source_system NOT IN ('apr.ReportDate', 'apr_bulk')
             )`,
+        // 'apr_bulk' is a second, equally-legitimate write path for apr-sourced dialler rows
+        // (attendance-apr-bulk.routes.ts) alongside 'apr.ReportDate' (payroll-attendance-control /
+        // apr-payroll-reconciliation / attendance-engine). This check only knew about the latter, so
+        // every row populated via the bulk path failed on the source-system arm alone regardless of
+        // whether its minutes actually matched -- measured 2026-09-07 on the August run: apr_bulk was
+        // the single largest dialler source_system tag (4,406 rows) and accounted for effectively all
+        // of a 3,202-row false-positive blocker. The underlying attendance_daily_record minutes were
+        // already correct in the overwhelming majority of those; a separate, still-open cause was the
+        // upstream apr table itself carrying literal duplicate rows for some employee/dates, which
+        // doubles the apr_minutes this check compares against -- not touched here (upstream source
+        // table, needs its own explicit approval), see the sensitive_action_log entry for detail.
         [range.start, effectiveEnd, ...params],
         "APR_ATTENDANCE_DAILY_RECORD_MISMATCH",
         "blocker",
