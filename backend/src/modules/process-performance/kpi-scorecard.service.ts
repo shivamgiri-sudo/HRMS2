@@ -8,6 +8,32 @@ import {
 import { resolveCdrScorecard, getCdrAgentBreakdown, getCdrAgentCalls } from "./kpi-cdr-source.js";
 import { fetchActiveHc, fetchRolling30dAttritionRate, fetchRolling60dShrinkagePct } from "../workforce-mandate/hc-formula.service.js";
 import { SHIVAMGIRI_CLIENT_ID, fetchShivamgiriQualityScore } from "./kpi-shivamgiri-source.js";
+import { fetchProcessMetricValues, type ProcessMetricReading } from "./process-metric-source.js";
+import { logSourceFailure } from "../../shared/apiResponse.js";
+
+/**
+ * This dashboard reads four independent sources: kpi_daily_actual, the dialer
+ * CDR feed, the Shivamgiri audit pilot, and process_metric_actual. Three of
+ * them are other systems' databases or a table this deploy may not have
+ * migrated yet, and any of them can be unreachable on a given request.
+ *
+ * A failure in one source must degrade THAT source's metrics to no_data, not
+ * take down the whole page — verified live: before this, an unmigrated
+ * process_metric_actual made the entire scorecards endpoint 500, including the
+ * CDR and kpi_daily_actual metrics that were answering perfectly.
+ *
+ * The failure is logged through the module-wide logSourceFailure convention
+ * rather than swallowed, so an unreachable source is diagnosable instead of
+ * looking indistinguishable from a client who simply supplied nothing.
+ */
+async function fromSource<T>(scope: string, fallback: T, load: () => Promise<T>): Promise<T> {
+  try {
+    return await load();
+  } catch (err) {
+    logSourceFailure("process-kpi-dashboard", err, { source: scope });
+    return fallback;
+  }
+}
 
 /**
  * Client Process KPI Dashboard — scorecards for the targets on the client-facing
@@ -156,7 +182,11 @@ async function fetchProcessQualityScore(
   // why FINNABLE/GS1 are deliberately not mapped here).
   const clientId = SHIVAMGIRI_CLIENT_ID[processCode];
   if (!clientId) return { value: null, count: 0, asOf: null };
-  const shivamgiri = await fetchShivamgiriQualityScore(clientId);
+  const shivamgiri = await fromSource(
+    `shivamgiri:${processCode}`,
+    { value: null, count: 0, asOfDate: null },
+    () => fetchShivamgiriQualityScore(clientId),
+  );
   return { value: shivamgiri.value, count: shivamgiri.count, asOf: shivamgiri.asOfDate };
 }
 
@@ -328,13 +358,53 @@ async function computeScorecards(
   // processId means this process is unresolved or outside the caller's scope,
   // and a real campaign feed must not leak data past that boundary either.
   if (processId && cdrMetrics.length) {
+    // dialer_db is another team's production database and is reachable only from
+    // inside the network; an outage there must cost these metrics, not the page.
     const results = await Promise.all(
-      cdrMetrics.map((m) => resolveCdrScorecard(m.cdrSource!, m.cdrSource!.field, filters.from, filters.to)),
+      cdrMetrics.map((m) =>
+        fromSource(`dialer_db:${m.metricKey}`, null, () =>
+          resolveCdrScorecard(m.cdrSource!, m.cdrSource!.field, filters.from, filters.to),
+        ),
+      ),
     );
-    cdrMetrics.forEach((m, i) => cdrByMetricKey.set(m.metricKey, results[i]));
+    cdrMetrics.forEach((m, i) => {
+      if (results[i]) cdrByMetricKey.set(m.metricKey, results[i]!);
+    });
+  }
+
+  // Client-supplied figures (manual entry, upload, or the client's own database).
+  // Gated on processId for the same reason the block above is: a null processId
+  // means the process is unresolved or outside the caller's scope, and a
+  // supplied figure must not leak past that boundary either.
+  const processMetrics = set.metrics.filter((m) => !m.kpiMetricCode && !m.cdrSource && m.processSource);
+  let processReadings = new Map<string, ProcessMetricReading>();
+  if (processId && processMetrics.length) {
+    processReadings = await fromSource("process_metric_actual", processReadings, () =>
+      fetchProcessMetricValues(
+        processId,
+        processMetrics.map((m) => m.metricKey),
+        filters.from,
+        filters.to,
+        processMetrics.filter((m) => m.family === "volume").map((m) => m.metricKey),
+      ),
+    );
   }
 
   return set.metrics.map((m): KpiScorecardRow => {
+    if (!m.kpiMetricCode && m.processSource) {
+      const reading = processReadings.get(m.metricKey);
+      const availability: Availability = reading && reading.count > 0 ? "ok" : "no_data";
+      return {
+        metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+        target: m.target, direction: m.direction, availability,
+        actual: availability === "ok" ? reading!.value : null,
+        rag: availability === "ok" && reading!.value != null ? ragFor(reading!.value, m.target, m.direction) : null,
+        trend: reading?.trend ?? [],
+        note: availability === "no_data"
+          ? "No figure supplied for this window yet — this metric is filled in from the process's own upload or database connection."
+          : undefined,
+      };
+    }
     if (m.cdrSource) {
       const cdr = cdrByMetricKey.get(m.metricKey);
       const availability: Availability = cdr && cdr.count > 0 ? "ok" : "no_data";
