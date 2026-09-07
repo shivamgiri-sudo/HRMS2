@@ -766,13 +766,17 @@ export const payrollService = {
       }
     }
 
+    // Aliased `spr` deliberately: payroll.secure.routes.ts builds this route's scope filter
+    // with column names "spr.branch_id" / "spr.process_id", so the table MUST carry that alias
+    // or every branch-scoped user gets ER_BAD_FIELD_ERROR ("Unknown column 'spr.branch_id' in
+    // 'where clause'") instead of their runs. It did, on live traffic, repeatedly.
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM salary_prep_run ${where} ORDER BY run_month DESC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT spr.* FROM salary_prep_run spr ${where} ORDER BY spr.run_month DESC LIMIT ${limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM salary_prep_run ${where}`, params
+      `SELECT COUNT(*) AS total FROM salary_prep_run spr ${where}`, params
     );
     return { data: rows as SalaryPrepRun[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
