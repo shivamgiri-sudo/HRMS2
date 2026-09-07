@@ -431,11 +431,24 @@ async function computeProcessGrainDefinitions(
     // applies to, which is meaningless when there are no people involved.
     const merged = new Map<string, Map<string, number | null>>();
     const fieldNames: string[] = [];
+    // Resolved BEFORE any source is read, so a run scoped to one process does not
+    // pay to scan another's. A process-grain definition takes its process from the
+    // source's mapping, not from its own scope, so this is the only place the
+    // answer is known.
     let processId: string | null = null;
+    for (const entry of entries) {
+      const mapped = (entry.source as { process_id?: string | null }).process_id ?? null;
+      if (mapped) { processId = mapped; break; }
+    }
+
+    // Asking to compute one process must not silently recompute every other one.
+    // Beyond the wasted scan, a targeted rerun would rewrite another client's
+    // figures from whatever their source happens to return at that moment — so a
+    // source that is briefly unreadable would replace good numbers with none.
+    if (options.processId && processId && processId !== options.processId) continue;
 
     for (const entry of entries) {
       const source = entry.source as any;
-      processId = processId ?? (source.process_id ?? null);
       const read = await readProcessGrainValues(source, entry.fields, options.date, options.date);
       if (read.error) {
         result.source_failures.push({ source_code: source.source_code, error: read.error });
