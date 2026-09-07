@@ -5,6 +5,7 @@ import { startAccessExpiryScheduler, stopAccessExpiryScheduler } from "./access-
 import { startMobilityTransferWorker, stopMobilityTransferWorker } from "./mobility-transfer.worker.js";
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./integration-scheduler.worker.js";
 import { startKpiDailySyncWorker, stopKpiDailySyncWorker } from "./kpi-daily-sync.worker.js";
+import { startKpiStudioComputeWorker, stopKpiStudioComputeWorker } from "./kpi-studio-compute.worker.js";
 import { startAnnualLeaveWorker, stopAnnualLeaveWorker } from "./leave-annual-el-credit.worker.js";
 import { startLeaveMonthlyWorker, stopLeaveMonthlyWorker } from "./leave-monthly-credit.worker.js";
 import { startOfficialEmailComplianceScheduler, stopOfficialEmailComplianceScheduler } from "./official-email-compliance.worker.js";
@@ -208,6 +209,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "kpi-daily-sync",
     start: startKpiDailySyncWorker,
+  },
+  {
+    // Off unless KPI_STUDIO_COMPUTE_ENABLED=true, and dry-run until
+    // KPI_STUDIO_COMPUTE_DRY_RUN=false. It writes to kpi_daily_actual, so it
+    // does not start computing on its own the night it is deployed.
+    name: "kpi-studio-compute",
+    start: () => { startKpiStudioComputeWorker(); return Promise.resolve(); },
   },
   {
     name: "sla-breach",
