@@ -912,6 +912,7 @@
     "1651_migrate_unmigrated_employees.sql",
     "1652_rename_duplicate_employees_to_db_bill_codes.sql",
     "1652_update_duplicate_employee_data.sql",
-    "1653_insert_hrms_employees_to_dbbill.sql"
+    "1653_insert_hrms_employees_to_dbbill.sql",
+    "revoke_salary_revision_employee_grant.sql"
   ]
 }
