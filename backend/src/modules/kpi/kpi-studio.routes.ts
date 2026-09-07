@@ -37,6 +37,8 @@ import {
   saveDataSource,
   saveSourceField,
   deleteSourceField,
+  deleteDataSource,
+  restoreDataSource,
   listDefinitions,
   saveDefinition,
   retireDefinition,
@@ -208,8 +210,11 @@ router.post(
 router.get(
   '/data-sources',
   requireRole(...VIEW_ROLES),
-  h(async (_req, res) => {
-    res.json({ success: true, data: await listDataSources() });
+  h(async (req, res) => {
+    // Retired sources are opt-in: the normal list stays clean, and the config
+    // screen can still offer a way back from a mistaken retirement.
+    const includeRetired = String(req.query.include_retired ?? '') === '1';
+    res.json({ success: true, data: await listDataSources(includeRetired) });
   }),
 );
 
@@ -252,6 +257,27 @@ router.post(
   h(async (req, res) => {
     const result = await saveSourceField({ ...(req.body ?? {}), data_source_id: req.params.id });
     res.json({ success: true, data: result });
+  }),
+);
+
+/**
+ * Retires a data source. Refuses while a live definition still reads it — see
+ * deleteDataSource for why that is louder than letting a KPI quietly stop.
+ */
+router.delete(
+  '/data-sources/:id',
+  requireRole(...CONFIG_ROLES),
+  h(async (req, res) => {
+    res.json({ success: true, data: await deleteDataSource(req.params.id) });
+  }),
+);
+
+/** The way back. Retiring is a soft flag precisely so this can exist. */
+router.post(
+  '/data-sources/:id/restore',
+  requireRole(...CONFIG_ROLES),
+  h(async (req, res) => {
+    res.json({ success: true, data: await restoreDataSource(req.params.id) });
   }),
 );
 

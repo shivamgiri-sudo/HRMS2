@@ -70,6 +70,8 @@ export interface DataSourceSummary {
   date_column: string | null;
   description: string | null;
   field_count: number;
+  /** 0 once retired. Only the list asked with includeRetired ever carries a 0. */
+  active_status?: number;
 }
 
 export type DataSourceDetail = DataSourceSummary & { fields: SourceField[] };
@@ -263,10 +265,17 @@ export function useScopeOptions() {
   });
 }
 
-export function useDataSources() {
+/**
+ * Retired sources are opt-in. Everywhere that picks a source for a KPI wants the
+ * live ones only; the config screen asks for the rest so a retirement is undoable.
+ */
+export function useDataSources(includeRetired = false) {
   return useQuery({
-    queryKey: KEY.dataSources,
-    queryFn: async () => (await hrmsApi.get<Envelope<DataSourceSummary[]>>("/api/kpi-studio/data-sources")).data ?? [],
+    queryKey: [...KEY.dataSources, includeRetired],
+    queryFn: async () =>
+      (await hrmsApi.get<Envelope<DataSourceSummary[]>>(
+        `/api/kpi-studio/data-sources${includeRetired ? "?include_retired=1" : ""}`,
+      )).data ?? [],
     staleTime: 60_000,
   });
 }
@@ -454,6 +463,24 @@ export function useSaveDataSource() {
   return useMutation({
     mutationFn: async (input: Record<string, unknown>) =>
       (await hrmsApi.post<Envelope<{ id: string }>>("/api/kpi-studio/data-sources", input)).data,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: KEY.dataSources }),
+  });
+}
+
+export function useDeleteDataSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await hrmsApi.delete<Envelope<{ removed: boolean }>>(`/api/kpi-studio/data-sources/${id}`)).data,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: KEY.dataSources }),
+  });
+}
+
+export function useRestoreDataSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await hrmsApi.post<Envelope<{ restored: boolean }>>(`/api/kpi-studio/data-sources/${id}/restore`, {})).data,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: KEY.dataSources }),
   });
 }

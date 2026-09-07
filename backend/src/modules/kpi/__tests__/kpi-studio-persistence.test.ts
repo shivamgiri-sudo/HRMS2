@@ -253,3 +253,129 @@ describe("resolveStudioForEmployee excludes process-grain definitions", () => {
     expect(String(call![0])).not.toContain("grain");
   });
 });
+
+describe("deleteDataSource refuses while a KPI still reads it", () => {
+  /** Capability probes, then whatever the caller says for the rest. */
+  function studio(rest: (sql: string) => unknown) {
+    execute.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("source_cols")) {
+        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+      }
+      return rest(text) as never;
+    });
+  }
+
+  it("names the KPIs using it rather than breaking them silently", async () => {
+    studio((text) => {
+      if (text.includes("FROM kpi_studio_definition d")) {
+        return Promise.resolve([[{ metric_code: "AHT" }, { metric_code: "QUALITY_SCORE" }], []]);
+      }
+      return Promise.resolve([[], []]);
+    });
+    await expect(svc.deleteDataSource("s1")).rejects.toThrow(/still used by 2 KPIs/i);
+    await expect(svc.deleteDataSource("s1")).rejects.toThrow(/AHT/);
+  });
+
+  it("counts a KPI that reads it as an EXTRA source too", async () => {
+    // The definition's primary source is something else, but its formula still
+    // reads this one. Missing that path would break exactly the cross-system
+    // metrics extra_source_ids exists to support.
+    studio((text) => {
+      if (text.includes("FROM kpi_studio_definition_source")) {
+        return Promise.resolve([[{ metric_code: "AL_PCT" }], []]);
+      }
+      return Promise.resolve([[], []]);
+    });
+    await expect(svc.deleteDataSource("s1")).rejects.toThrow(/AL_PCT/);
+  });
+
+  it("does not double-count a KPI that reads it both ways", async () => {
+    studio((text) => {
+      if (text.includes("FROM kpi_studio_definition d")) return Promise.resolve([[{ metric_code: "AHT" }], []]);
+      if (text.includes("FROM kpi_studio_definition_source")) return Promise.resolve([[{ metric_code: "AHT" }], []]);
+      return Promise.resolve([[], []]);
+    });
+    await expect(svc.deleteDataSource("s1")).rejects.toThrow("This source is still used by 1 KPI (AHT). Retire or repoint it first.");
+  });
+
+  it("retires the source when nothing uses it", async () => {
+    studio((text) => text.includes("UPDATE")
+      ? Promise.resolve([{ affectedRows: 1 }, []])
+      : Promise.resolve([[], []]));
+    await expect(svc.deleteDataSource("s1")).resolves.toEqual({ removed: true });
+    const updates = execute.mock.calls.filter(([sql]) => String(sql).includes("SET active_status = 0"));
+    expect(updates.some(([sql]) => String(sql).includes("kpi_studio_data_source"))).toBe(true);
+  });
+
+  // Retiring used to take the fields down too, which made restoring hand back an
+  // empty source and every field a retyping job. The source flag alone hides them.
+  it("leaves the fields alone so a restore returns the source whole", async () => {
+    studio((text) => text.includes("UPDATE")
+      ? Promise.resolve([{ affectedRows: 1 }, []])
+      : Promise.resolve([[], []]));
+    await svc.deleteDataSource("s1");
+    const touched = execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("kpi_studio_source_field") && String(sql).includes("active_status = 0"));
+    expect(touched).toHaveLength(0);
+  });
+
+  it("restores a retired source", async () => {
+    studio((text) => text.includes("UPDATE")
+      ? Promise.resolve([{ affectedRows: 1 }, []])
+      : Promise.resolve([[], []]));
+    await expect(svc.restoreDataSource("s1")).resolves.toEqual({ restored: true });
+    const call = execute.mock.calls.find(([sql]) => String(sql).includes("SET active_status = 1"));
+    expect(String(call?.[0])).toContain("kpi_studio_data_source");
+    expect(call?.[1]).toEqual(["s1"]);
+  });
+
+  it("reports restored:false for an id that is not there", async () => {
+    studio((text) => text.includes("UPDATE")
+      ? Promise.resolve([{ affectedRows: 0 }, []])
+      : Promise.resolve([[], []]));
+    await expect(svc.restoreDataSource("nope")).resolves.toEqual({ restored: false });
+  });
+
+  it("hides retired sources by default and shows them on request", async () => {
+    studio(() => Promise.resolve([[], []]));
+    await svc.listDataSources();
+    const normal = execute.mock.calls.find(([sql]) => String(sql).includes("FROM kpi_studio_data_source s"));
+    expect(String(normal?.[0])).toContain("s.active_status = 1");
+    execute.mockClear();
+    await svc.listDataSources(true);
+    const all = execute.mock.calls.find(([sql]) => String(sql).includes("FROM kpi_studio_data_source s"));
+    expect(String(all?.[0])).not.toContain("s.active_status = 1");
+  });
+
+  it("deactivates rather than deleting, so the numbers keep their explanation", async () => {
+    studio((text) => text.includes("UPDATE")
+      ? Promise.resolve([{ affectedRows: 1 }, []])
+      : Promise.resolve([[], []]));
+    await svc.deleteDataSource("s1");
+    expect(execute.mock.calls.some(([sql]) => /DELETE\s+FROM/i.test(String(sql)))).toBe(false);
+  });
+
+  it("reports not-removed for a source that was not there", async () => {
+    studio((text) => {
+      if (text.includes("UPDATE kpi_studio_data_source")) return Promise.resolve([{ affectedRows: 0 }, []]);
+      return Promise.resolve([[], []]);
+    });
+    await expect(svc.deleteDataSource("nope")).resolves.toEqual({ removed: false });
+  });
+
+  it("treats a missing extra-source table as no references, not as an error", async () => {
+    // kpi_studio_definition_source came in 1646 and is not in the capability
+    // probe, so it may legitimately be absent.
+    studio((text) => {
+      if (text.includes("FROM kpi_studio_definition_source")) {
+        return Promise.reject(new Error("Table 'kpi_studio_definition_source' doesn't exist"));
+      }
+      if (text.includes("UPDATE")) return Promise.resolve([{ affectedRows: 1 }, []]);
+      return Promise.resolve([[], []]);
+    });
+    await expect(svc.deleteDataSource("s1")).resolves.toEqual({ removed: true });
+  });
+});

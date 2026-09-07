@@ -423,7 +423,7 @@ async function requireStudioTables(): Promise<void> {
 
 // ─── Data sources ────────────────────────────────────────────────────────────────────────────
 
-export async function listDataSources(): Promise<RowDataPacket[]> {
+export async function listDataSources(includeRetired = false): Promise<RowDataPacket[]> {
   const cap = await getStudioCapability();
   if (!cap.tables) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -433,9 +433,9 @@ export async function listDataSources(): Promise<RowDataPacket[]> {
             COUNT(f.id) AS field_count
        FROM kpi_studio_data_source s
        LEFT JOIN kpi_studio_source_field f ON f.data_source_id = s.id AND f.active_status = 1
-      WHERE s.active_status = 1
+      ${includeRetired ? '' : 'WHERE s.active_status = 1'}
       GROUP BY s.id
-      ORDER BY s.source_name`,
+      ORDER BY s.active_status DESC, s.source_name`,
   );
   return rows;
 }
@@ -686,7 +686,7 @@ export async function saveSourceField(input: {
     await db.execute(
       `UPDATE kpi_studio_source_field
           SET field_name = ?, display_name = ?, source_column = ?, aggregate_fn = ?,
-              source_expression = ?, unit = ?, description = ?${filterSet}
+              source_expression = ?, unit = ?, description = ?, active_status = 1${filterSet}
         WHERE id = ?`,
       [
         fieldName,
@@ -744,6 +744,87 @@ export async function deleteSourceField(id: string) {
     [id],
   );
   return { removed: result.affectedRows > 0 };
+}
+
+/**
+ * Retires a data source.
+ *
+ * Refuses while any live definition still reads it, and names the metrics that
+ * do. Deactivating a source out from under a definition would leave that KPI
+ * computing nothing, with no error anywhere and nothing on screen to explain
+ * it — the silent-failure shape this module has produced too many times
+ * already. Better to say "three KPIs use this" and let somebody decide.
+ *
+ * Deactivated rather than deleted, like fields are: a source that has produced
+ * numbers is part of how those numbers came to exist, and destroying the row
+ * destroys the explanation.
+ */
+export async function deleteDataSource(id: string) {
+  await requireStudioTables();
+
+  const [primary] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT m.metric_code
+       FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+      WHERE d.data_source_id = ? AND d.active_status = 1
+        AND (d.effective_to IS NULL OR d.effective_to >= CURDATE())`,
+    [id],
+  );
+  const users = new Set((primary as any[]).map((r) => String(r.metric_code)));
+
+  // kpi_studio_definition_source arrived in 1646 and is NOT part of the
+  // six-table capability probe, so it may legitimately be absent. If the table
+  // does not exist there can be no extra-source references in it, which makes
+  // treating the error as "none" correct rather than a swallowed failure.
+  try {
+    const [extra] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT m.metric_code
+         FROM kpi_studio_definition_source ds
+         JOIN kpi_studio_definition d ON d.id = ds.definition_id AND d.active_status = 1
+         JOIN kpi_metric_master m ON m.id = d.metric_id
+        WHERE ds.data_source_id = ?
+          AND (d.effective_to IS NULL OR d.effective_to >= CURDATE())`,
+      [id],
+    );
+    for (const row of extra as any[]) users.add(String(row.metric_code));
+  } catch {
+    // Table absent: no extra-source links can exist.
+  }
+
+  if (users.size) {
+    const names = [...users].sort();
+    const shown = names.slice(0, 5).join(", ");
+    throw new Error(
+      `This source is still used by ${names.length} KPI${names.length > 1 ? "s" : ""} (${shown}${
+        names.length > 5 ? ", …" : ""
+      }). Retire or repoint ${names.length > 1 ? "them" : "it"} first.`,
+    );
+  }
+
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE kpi_studio_data_source SET active_status = 0 WHERE id = ?`,
+    [id],
+  );
+  if (!result.affectedRows) return { removed: false };
+
+  // The fields are deliberately left active. Deactivating them too made retiring
+  // one-way in practice: restoring the source brought back an empty shell, and
+  // every field had to be retyped from memory. The source flag alone hides them,
+  // because every reader joins through an active source.
+  return { removed: true };
+}
+
+/**
+ * Undo a retirement. The counterpart to deleteDataSource — without it, one
+ * mis-click permanently costs a source and everything configured on it.
+ */
+export async function restoreDataSource(id: string) {
+  await requireStudioTables();
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE kpi_studio_data_source SET active_status = 1 WHERE id = ?`,
+    [id],
+  );
+  return { restored: Boolean(result.affectedRows) };
 }
 
 /**

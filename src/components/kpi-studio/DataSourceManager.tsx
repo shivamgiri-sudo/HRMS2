@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { Check, Database, FileSpreadsheet, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
+import { Check, Database, FileSpreadsheet, Loader2, Plus, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   useDataSource,
   useDataSources,
+  useDeleteDataSource,
+  useRestoreDataSource,
   useDeleteSourceField,
   useSaveDataSource,
   useSaveSourceField,
@@ -46,7 +48,13 @@ export function DataSourceManager() {
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const sources = useDataSources();
+  // Retired sources are fetched here (and only here) so they can be brought back.
+  const sources = useDataSources(true);
+  const all = sources.data ?? [];
+  const live = all.filter((source) => source.active_status !== 0);
+  const retired = all.filter((source) => source.active_status === 0);
+  const [showRetired, setShowRetired] = useState(false);
+  const restoreSource = useRestoreDataSource();
   const detail = useDataSource(selectedId);
   const saveSource = useSaveDataSource();
   const capability = useStudioCapability();
@@ -368,7 +376,7 @@ export function DataSourceManager() {
           )}
 
           <div className="space-y-1">
-            {(sources.data ?? []).map((source) => (
+            {live.map((source) => (
               <button
                 key={source.id}
                 type="button"
@@ -400,6 +408,49 @@ export function DataSourceManager() {
               </p>
             )}
           </div>
+
+          {/* Retired sources stay listed, quietly. A retirement that hid the source
+              forever would make one mis-click cost every field configured on it. */}
+          {retired.length > 0 && (
+            <div className="space-y-1 border-t border-slate-200 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowRetired((open) => !open)}
+                className="w-full cursor-pointer text-left text-[11px] font-medium uppercase tracking-wide text-slate-400 hover:text-slate-600"
+              >
+                {showRetired ? "Hide" : "Show"} retired ({retired.length})
+              </button>
+              {showRetired &&
+                retired.map((source) => (
+                  <div
+                    key={source.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-slate-500 line-through">{source.source_name}</span>
+                      <span className="block text-[11px] text-slate-400">
+                        {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+                      </span>
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 shrink-0 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
+                      disabled={restoreSource.isPending}
+                      onClick={() =>
+                        restoreSource.mutate(source.id, {
+                          onSuccess: () =>
+                            setMessage({ ok: true, text: `${source.source_name} is back, with its fields.` }),
+                          onError: (error) => setMessage({ ok: false, text: (error as Error).message }),
+                        })
+                      }
+                    >
+                      <RotateCcw className="mr-1 h-3 w-3" /> Restore
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
 
         {/* ── Field editor ── */}
@@ -417,7 +468,7 @@ export function DataSourceManager() {
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </p>
           ) : detail.data ? (
-            <FieldEditor source={detail.data} />
+            <FieldEditor source={detail.data} onRetired={() => setSelectedId(null)} />
           ) : null}
         </div>
       </div>
@@ -425,7 +476,7 @@ export function DataSourceManager() {
   );
 }
 
-function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<any> } }) {
+function FieldEditor({ source, onRetired }: { source: DataSourceSummary & { fields: Array<any> }; onRetired: () => void }) {
   const columns = useSourceColumns(
     source.source_type === "manual" || source.source_type === "upload" ? null : source.id,
   );
@@ -434,6 +485,9 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
   // Its own capability read rather than a prop: a stale prop is how a form ends
   // up offering a control the database cannot store.
   const capability = useStudioCapability();
+  const retireSource = useDeleteDataSource();
+  const [confirmRetire, setConfirmRetire] = useState(false);
+  const [retireError, setRetireError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [draft, setDraft] = useState({ field_name: "", display_name: "", source_column: "", aggregate_fn: "SUM", unit: "" });
@@ -477,13 +531,48 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
 
   return (
     <div className="space-y-4">
-      <header>
-        <h3 className="text-base font-semibold text-slate-900">{source.source_name}</h3>
-        <p className="mt-0.5 text-xs text-slate-500">
-          {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
-          {source.source_object ? ` · ${source.source_object}` : ""}
-          {source.integration_key ? ` · ${source.integration_key}` : ""}
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">{source.source_name}</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+            {source.source_object ? ` · ${source.source_object}` : ""}
+            {source.integration_key ? ` · ${source.integration_key}` : ""}
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          {confirmRetire ? (
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"
+                      onClick={() => setConfirmRetire(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" className="h-7 bg-rose-600 px-2 text-[11px] hover:bg-rose-700"
+                      disabled={retireSource.isPending}
+                      onClick={() => {
+                        setRetireError(null);
+                        retireSource.mutate(source.id, {
+                          onSuccess: () => { setConfirmRetire(false); onRetired(); },
+                          onError: (e) => setRetireError((e as Error).message),
+                        });
+                      }}>
+                {retireSource.isPending ? "Retiring…" : "Yes, retire"}
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="ghost"
+                    className="h-7 px-2 text-[11px] text-slate-400 hover:text-rose-600"
+                    onClick={() => { setRetireError(null); setConfirmRetire(true); }}>
+              <Trash2 className="mr-1 h-3 w-3" />
+              Retire source
+            </Button>
+          )}
+          {/* The refusal names the KPIs still reading it, which is the whole
+              point of asking the server rather than hiding the button. */}
+          {retireError && (
+            <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-rose-600">{retireError}</p>
+          )}
+        </div>
       </header>
 
       {/* Existing fields */}
