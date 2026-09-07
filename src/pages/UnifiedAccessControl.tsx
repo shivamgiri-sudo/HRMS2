@@ -91,6 +91,11 @@ interface PageCatalogEntry {
   page_path?: string;
   module: string | null;
   description?: string | null;
+  /**
+   * 0 for a page switched off in page_catalog. Present only because this screen now asks for
+   * disabled rows — see the include_disabled note on the catalog query below.
+   */
+  active_status?: number | boolean | null;
 }
 
 interface PagePermission {
@@ -327,7 +332,15 @@ export default function UnifiedAccessControl() {
   const { data: pageCatalog = [], isLoading: pagesLoading } = useQuery<PageCatalogEntry[]>({
     queryKey: ["access-control", "page-catalog"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: PageCatalogEntry[] }>("/api/access/pages/catalog");
+      // include_disabled — without it listPageCatalog() filters to active_status = 1 and this
+      // screen showed 270 of the 285 catalog rows. The 15 it hid were the disabled ones
+      // (PAYROLL_DASHBOARD, HELPDESK, ADVANCED_REPORTS and 12 more), and an inactive
+      // page_catalog row is the single thing that locks a page away from everyone including
+      // super_admin. So the only screen that can switch a page back on was also the one screen
+      // that would not display it: disable a page and it became unrecoverable from the UI.
+      const res = await hrmsApi.get<{ data: PageCatalogEntry[] }>(
+        "/api/access/pages/catalog?include_disabled=true",
+      );
       return res.data ?? [];
     },
     enabled: activeTab === "permissions",
@@ -545,6 +558,10 @@ export default function UnifiedAccessControl() {
         permissions: mergePermissions(base, pendingPermissionEdits[page.page_code] ?? {}),
         hasGrant: !!existing,
         isDirty: !!pendingPermissionEdits[page.page_code],
+        // A disabled page ignores every grant below it — canViewPage() subtracts
+        // disabledPageCodes before it checks the grant set. Editing permissions here without
+        // that shown reads as "I granted it and nothing happened".
+        isDisabled: page.active_status === 0 || page.active_status === false,
       };
     });
   }, [pageCatalog, pendingPermissionEdits, rolePermissionMap]);
@@ -1262,7 +1279,17 @@ export default function UnifiedAccessControl() {
                                 {visiblePages.map((page) => (
                                   <tr key={page.page_code} className={`border-t ${page.isDirty ? "bg-amber-50" : "bg-white"}`}>
                                     <td className="px-4 py-3">
-                                      <div className="font-bold text-slate-950">{page.page_name ?? page.page_code}</div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-slate-950">{page.page_name ?? page.page_code}</span>
+                                        {page.isDisabled && (
+                                          <span
+                                            className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700"
+                                            title="This page is switched off in the page catalog. No role can open it, whatever is ticked below — including super_admin. Re-enable it before granting access."
+                                          >
+                                            Disabled
+                                          </span>
+                                        )}
+                                      </div>
                                       <div className="font-mono text-xs text-slate-500">{page.page_code}</div>
                                     </td>
                                     <td className="px-4 py-3">

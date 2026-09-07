@@ -84,7 +84,7 @@ export const workforceRouteElements = (
       <Route path="/attendance/disputes"        element={<ProtectedRoute><Gate pageCode="ATTENDANCE_DISPUTES"><NativeAttendanceDisputes /></Gate></ProtectedRoute>} />
       {/* Audit surface for reversed approvals. Discards themselves are performed
           inline on the Leaves / Regularization / Disputes pages. */}
-      <Route path="/admin/discard-center"       element={<ProtectedRoute roles={['super_admin','wfm']}><Gate pageCode="DISCARD_CENTER"><NativeDiscardCenter /></Gate></ProtectedRoute>} />
+      <Route path="/admin/discard-center"       element={<ProtectedRoute roles={['super_admin','wfm','payroll_hr']}><Gate pageCode="DISCARD_CENTER"><NativeDiscardCenter /></Gate></ProtectedRoute>} />
       {/*
         Attendance Integrity console — Exceptions, Mismatches, Biometric Sync and Billing
         Rules merged into one tabbed page (Task 6 of the WFM attendance-page merge plan).
@@ -107,9 +107,9 @@ export const workforceRouteElements = (
       <Route path="/attendance/billing-config"  element={<AttendanceIntegrityRedirect toTab="billing" />} />
       <Route path="/wfm/mismatch-queue"         element={<AttendanceIntegrityRedirect toTab="mismatches" />} />
       <Route path="/wfm/attendance-exceptions"  element={<AttendanceIntegrityRedirect toTab="exceptions" />} />
-      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
+      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr','payroll_hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={
-        <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm']}>
+        <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm','branch_hr','branch_payroll','branch_wfm','payroll']}>
           <Gate pageCode="ATTENDANCE_LOOKUP"><AdminAttendanceView /></Gate>
         </ProtectedRoute>
       } />
@@ -174,7 +174,7 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-analytics"  element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-analytics-panel" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsPanel /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager']}><Gate pageCode="WFM_ROSTER"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager','branch_wfm','manager','process_manager','team_leader','tl']}><Gate pageCode="WFM_ROSTER"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-command-center" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterCommandCenter /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-interventions" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInterventionDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
@@ -202,11 +202,11 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-rules"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRulesPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
       {/* Superseded by RosterBuilderPage — redirect */}
       <Route path="/wfm/auto-roster"   element={<Navigate to="/wfm/roster-builder" replace />} />
-      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
       {/* No Gate pageCode here (unlike siblings above): canViewPage() fails closed for any
           pageCode absent from the page-access catalog, and adding one is a production data
           seed outside what a code change should do unreviewed. roles={...} is the live

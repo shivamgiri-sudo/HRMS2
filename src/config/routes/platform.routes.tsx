@@ -142,7 +142,7 @@ export const platformRouteElements = (
       <Route path="/notification-preferences" element={<Navigate to="/communication/preferences" replace />} />
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
-      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
+      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr','branch_admin','payroll_head']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
       <Route path="/onfido-process/dashboard" element={<ProtectedRoute roles={['admin','super_admin','ceo','coo','manager','process_manager','team_leader','branch_head','qa','quality_analyst','wfm']}><Gate pageCode="ONFIDO_PROCESS_DASHBOARD"><OnfidoProcessDashboard /></Gate></ProtectedRoute>} />
       {/* Gated on BULK_UPLOAD_APPROVALS, not BULK_UPLOAD.
         * branch_head holds NO BULK_UPLOAD grant (live, 2026-09-03) — so the only role
@@ -155,7 +155,7 @@ export const platformRouteElements = (
         * kept as documentation of who the code is expected to admit. */}
       <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','branch_head','branch_admin','payroll_head','wfm','payroll_hr']}><Gate pageCode="BULK_UPLOAD_APPROVALS"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
       <Route path="/assets"          element={<ProtectedRoute><Assets /></ProtectedRoute>} />
-      <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
+      <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr','branch_head','branch_hr','payroll_hr']}><Onboarding /></ProtectedRoute>} />
       <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
 
       {/* Assets / documents */}
@@ -208,18 +208,18 @@ export const platformRouteElements = (
 
       {/* Integration / migration / audit */}
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
-      <Route path="/migration-console"            element={<ProtectedRoute roles={['admin']}><Gate pageCode="MIGRATION_CONSOLE"><NativeMigrationConsole /></Gate></ProtectedRoute>} />
+      <Route path="/migration-console"            element={<ProtectedRoute roles={['admin','branch_admin','payroll_head']}><Gate pageCode="MIGRATION_CONSOLE"><NativeMigrationConsole /></Gate></ProtectedRoute>} />
       <Route path="/audit-log"                    element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="AUDIT_LOG"><NativeAuditLog /></Gate></ProtectedRoute>} />
 
       {/* Configuration Control Center */}
-      <Route path="/admin/configuration" element={<ProtectedRoute roles={['super_admin','admin']}><Gate pageCode="CONFIGURATION_CENTER"><NativeConfigurationCenter /></Gate></ProtectedRoute>} />
+      <Route path="/admin/configuration" element={<ProtectedRoute roles={['super_admin','admin','branch_admin','payroll_head']}><Gate pageCode="CONFIGURATION_CENTER"><NativeConfigurationCenter /></Gate></ProtectedRoute>} />
 
       {/* Security / access */}
       <Route path="/security-center"             element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
       <Route path="/settings/access-control"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin','branch_admin','it_head','payroll_head']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin','branch_admin','payroll_head']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
       <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin','branch_head','hr_admin','operations_manager','process_manager']}><LiveLocationMap /></ProtectedRoute>} />
 
@@ -243,7 +243,7 @@ export const platformRouteElements = (
       <Route path="/jobs"                        element={<ProtectedRoute><Gate pageCode="JOBS"><NativeJobsPage /></Gate></ProtectedRoute>} />
 
       {/* Control tower */}
-      <Route path="/control-tower"               element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
+      <Route path="/control-tower"               element={<ProtectedRoute roles={['admin','super_admin','hr','manager','branch_head']}><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
 
       {/* Management dashboard */}
       <Route path="/management/dashboard"        element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
@@ -287,7 +287,7 @@ export const platformRouteElements = (
 
       {/* Communication */}
       <Route path="/communication/templates"     element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="COMM_TEMPLATES"><NativeTemplateManager /></Gate></ProtectedRoute>} />
-      <Route path="/settings/email-templates/bulk-import" element={<ProtectedRoute roles={['admin','super_admin']}><Suspense fallback={<PageLoader />}><NativeEmailTemplateBulkImport /></Suspense></ProtectedRoute>} />
+      <Route path="/settings/email-templates/bulk-import" element={<ProtectedRoute roles={['admin','super_admin','branch_admin','payroll_head']}><Suspense fallback={<PageLoader />}><NativeEmailTemplateBulkImport /></Suspense></ProtectedRoute>} />
       <Route path="/communication/dispatch"      element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="COMM_DISPATCH"><NativeDispatchCenter /></Gate></ProtectedRoute>} />
       <Route path="/communication/history"       element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="COMM_HISTORY"><NativeDispatchHistory /></Gate></ProtectedRoute>} />
       <Route path="/communication/preferences"   element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />

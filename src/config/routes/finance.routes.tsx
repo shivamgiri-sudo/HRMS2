@@ -53,7 +53,7 @@ export const financeRouteElements = (
   <>
       {/* ERP / Vendors / Procurement */}
       <Route path="/erp"        element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
-      <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','manager']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
+      <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','manager','accounts_head','finance_head']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
       {/* Payee bank accounts. finance_head/accounts_head only — deliberately NOT admin,
           since hasOrgWideScope() lets `admin` past org-wide checks with no scope row. */}
       <Route path="/finance/vendor-bank-details" element={<ProtectedRoute roles={['finance_head','accounts_head']}><Gate pageCode="VENDOR_BANK_DETAILS"><NativeVendorBankDetails /></Gate></ProtectedRoute>} />
