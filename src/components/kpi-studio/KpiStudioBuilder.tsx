@@ -23,6 +23,7 @@ import {
   useKpiMetrics,
   useSaveDefinition,
   useScopeOptions,
+  useStudioCapability,
   useValidateDefinition,
   type KpiMetricOption,
 } from "@/hooks/useKpiStudio";
@@ -58,6 +59,13 @@ interface BuilderState {
   data_source_id: string;
   /** Sources beyond the primary, for a KPI whose formula spans systems. */
   extra_source_ids: string[];
+  /**
+   * 'employee' produces one value per person per day; 'process' produces one
+   * value for the whole process. They are not interchangeable: a process ratio
+   * is SUM(numerator)/SUM(denominator) across the process, which is not the
+   * average of each person's ratio.
+   */
+  grain: string;
   formula_expression: string;
   aggregation_method: string;
   target_value: string;
@@ -77,6 +85,7 @@ const EMPTY: BuilderState = {
   metric_id: "",
   data_source_id: "",
   extra_source_ids: [],
+  grain: "employee",
   formula_expression: "",
   aggregation_method: "average",
   target_value: "",
@@ -110,6 +119,7 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
   const [saveMessage, setSaveMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const scopeOptions = useScopeOptions();
+  const capability = useStudioCapability();
   const metrics = useKpiMetrics();
   const dataSources = useDataSources();
   const selectedSourceIds = useMemo(
@@ -202,6 +212,7 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
       employee_id: state.employee_id || null,
       data_source_id: state.formula_expression.trim() ? state.data_source_id || null : null,
       extra_source_ids: state.formula_expression.trim() ? state.extra_source_ids : [],
+      grain: state.grain,
       formula_expression: state.formula_expression.trim() || null,
       aggregation_method: state.aggregation_method,
       scoring_type: state.scoring_type || null,
@@ -268,6 +279,7 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
       setState((previous) => ({
         ...previous,
         metric_id: "",
+        grain: "employee",
         formula_expression: "",
         extra_source_ids: [],
         target_value: "",
@@ -675,6 +687,25 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
                   testEmployeeLabel={testEmployee ? `${testEmployee.full_name ?? testEmployee.employee_code}` : null}
                   onValidityChange={setFormulaValid}
                 />
+              )}
+
+              {capability.data?.processGrain && (
+                <label className="block max-w-xl">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">Measure this per</span>
+                  <select
+                    value={state.grain}
+                    onChange={(event) => set("grain", event.target.value)}
+                    className="w-full cursor-pointer rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="employee">Each person (appears on their scorecard)</option>
+                    <option value="process">The process as a whole (appears on the process dashboard)</option>
+                  </select>
+                  <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                    {state.grain === "process"
+                      ? "Totals are added up across the process first, then the formula runs once — so a ratio is the process's real ratio, not the average of everyone's. Needs a data source that says which process its rows belong to."
+                      : "One value per person per day."}
+                  </span>
+                </label>
               )}
 
               <label className="block max-w-xs">

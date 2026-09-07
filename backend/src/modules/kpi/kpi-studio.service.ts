@@ -62,6 +62,8 @@ export interface StudioDefinitionInput extends StudioScope {
    * resolving unchanged.
    */
   extra_source_ids?: string[] | null;
+  /** 'employee' (default) or 'process'. Decides the output table. */
+  grain?: string | null;
   formula_expression?: string | null;
   aggregation_method?: string | null;
   scoring_type?: string | null;
@@ -515,6 +517,33 @@ export async function saveDataSource(
     configJson = JSON.stringify({ csv_url: url, tab: input.sheet_tab?.trim() || null });
   }
 
+  // Process mapping. Written only when the schema carries it, so this code runs
+  // unchanged on a database that has not had 1680 applied yet.
+  const cap = await getStudioCapability();
+  const processKind = String((input as any).process_key_kind ?? 'none');
+  if (cap.processGrain && processKind !== 'none') {
+    if (!['constant', 'column'].includes(processKind)) {
+      throw new Error(`Unknown process mapping "${processKind}"`);
+    }
+    if (!(input as any).process_id) {
+      throw new Error('Pick the process this source belongs to');
+    }
+    if (processKind === 'column' && !String((input as any).process_key_column ?? '').trim()) {
+      throw new Error('Name the column that identifies the client');
+    }
+  }
+  const processCols = cap.processGrain
+    ? ', process_key_kind = ?, process_key_column = ?, process_key_value = ?, process_id = ?'
+    : '';
+  const processValues = cap.processGrain
+    ? [
+        processKind,
+        String((input as any).process_key_column ?? '').trim() || null,
+        String((input as any).process_key_value ?? '').trim() || null,
+        (input as any).process_id || null,
+      ]
+    : [];
+
   if (input.id) {
     // COALESCE, not a plain overwrite: an edit that does not resend the sheet link must not wipe it,
     // which would silently detach a working source from its data.
@@ -522,7 +551,7 @@ export async function saveDataSource(
       `UPDATE kpi_studio_data_source
           SET source_name = ?, source_type = ?, integration_key = ?, source_object = ?,
               employee_key_column = ?, employee_key_kind = ?, date_column = ?, description = ?,
-              config_json = COALESCE(?, config_json)
+              config_json = COALESCE(?, config_json)${processCols}
         WHERE id = ?`,
       [
         input.source_name.trim(),
@@ -534,6 +563,7 @@ export async function saveDataSource(
         input.date_column?.trim() || null,
         input.description?.trim() || null,
         configJson,
+        ...processValues,
         input.id,
       ],
     );
@@ -546,8 +576,10 @@ export async function saveDataSource(
   await db.execute(
     `INSERT INTO kpi_studio_data_source
        (id, source_code, source_name, source_type, integration_key, source_object,
-        employee_key_column, employee_key_kind, date_column, description, config_json, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        employee_key_column, employee_key_kind, date_column, description, config_json, created_by${
+          cap.processGrain ? ', process_key_kind, process_key_column, process_key_value, process_id' : ''
+        })
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${cap.processGrain ? ', ?, ?, ?, ?' : ''})`,
     [
       id,
       code,
@@ -561,6 +593,7 @@ export async function saveDataSource(
       input.description?.trim() || null,
       configJson,
       userId ?? null,
+      ...processValues,
     ],
   );
   return { id };
@@ -577,6 +610,8 @@ export async function saveSourceField(input: {
   aggregate_fn?: string | null;
   unit?: string | null;
   description?: string | null;
+  /** Conditions narrowing which rows THIS field counts. */
+  filter_json?: Array<{ column: string; op: string; value?: unknown }> | null;
 }) {
   await requireStudioTables();
 
@@ -610,11 +645,48 @@ export async function saveSourceField(input: {
       : `${aggregate}(\`${column}\`)`
     : null;
 
+  // Filters are validated HERE as well as at query-build time. Storing a filter
+  // the builder will later refuse produces a field that looks configured and
+  // silently never yields a value — the failure mode this module keeps hitting.
+  const cap = await getStudioCapability();
+  const FILTER_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'is_not_null'];
+  let filterJson: string | null = null;
+  if (cap.fieldFilters && Array.isArray(input.filter_json) && input.filter_json.length) {
+    if (!column) throw new Error('A filter needs a column to aggregate — pick one first');
+    if (aggregate === 'NONE') throw new Error('A filter needs an aggregate to apply it inside');
+    for (const filter of input.filter_json) {
+      const filterColumn = String(filter?.column ?? '').trim();
+      if (!IDENTIFIER.test(filterColumn)) throw new Error(`"${filterColumn}" is not a valid column name`);
+      if (!FILTER_OPS.includes(String(filter?.op))) {
+        throw new Error(`Unsupported condition "${String(filter?.op)}". Use one of ${FILTER_OPS.join(', ')}.`);
+      }
+      const needsValue = filter.op !== 'is_null' && filter.op !== 'is_not_null';
+      if (needsValue && (filter.value === undefined || filter.value === null || String(filter.value).trim() === '')) {
+        throw new Error(`The "${String(filter.op)}" condition on ${filterColumn} needs a value`);
+      }
+    }
+    filterJson = JSON.stringify(
+      input.filter_json.map((filter) => ({
+        column: String(filter.column).trim(),
+        op: String(filter.op),
+        // "is one of" is typed as a comma list; everything else is a single value.
+        value:
+          filter.op === 'in'
+            ? String(filter.value ?? '').split(',').map((part) => part.trim()).filter(Boolean)
+            : filter.op === 'is_null' || filter.op === 'is_not_null'
+              ? null
+              : String(filter.value),
+      })),
+    );
+  }
+  const filterSet = cap.fieldFilters ? ', filter_json = ?' : '';
+  const filterValues = cap.fieldFilters ? [filterJson] : [];
+
   if (input.id) {
     await db.execute(
       `UPDATE kpi_studio_source_field
           SET field_name = ?, display_name = ?, source_column = ?, aggregate_fn = ?,
-              source_expression = ?, unit = ?, description = ?
+              source_expression = ?, unit = ?, description = ?${filterSet}
         WHERE id = ?`,
       [
         fieldName,
@@ -624,6 +696,7 @@ export async function saveSourceField(input: {
         expression,
         input.unit?.trim() || null,
         input.description?.trim() || null,
+        ...filterValues,
         input.id,
       ],
     );
@@ -635,9 +708,10 @@ export async function saveSourceField(input: {
   await db.execute(
     `INSERT INTO kpi_studio_source_field
        (id, data_source_id, field_name, display_name, source_column, aggregate_fn,
-        source_expression, unit, description)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_expression, unit, description${cap.fieldFilters ? ', filter_json' : ''})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${cap.fieldFilters ? ', ?' : ''})
      ON DUPLICATE KEY UPDATE
+       ${cap.fieldFilters ? 'filter_json       = VALUES(filter_json),' : ''}
        display_name      = VALUES(display_name),
        source_column     = VALUES(source_column),
        aggregate_fn      = VALUES(aggregate_fn),
@@ -655,6 +729,7 @@ export async function saveSourceField(input: {
       expression,
       input.unit?.trim() || null,
       input.description?.trim() || null,
+      ...filterValues,
     ],
   );
   return { id };
@@ -839,6 +914,14 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
  * A change closes the current row at the day before the new start date and inserts a new one.
  */
 export async function saveDefinition(input: StudioDefinitionInput, userId?: string) {
+  // Grain decides which table the computed value lands in, so it is validated
+  // here rather than trusted: an unknown value would silently fall back to
+  // employee grain and the process dashboard would stay empty with no error.
+  const defCap = await getStudioCapability();
+  const definitionGrain = String((input as any).grain ?? 'employee');
+  if (defCap.processGrain && !['employee', 'process'].includes(definitionGrain)) {
+    throw new Error(`Unknown grain "${definitionGrain}" — use employee or process`);
+  }
   await requireStudioTables();
 
   const [metricRows] = await db.execute<RowDataPacket[]>(
@@ -912,9 +995,10 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
          (id, metric_id, branch_id, process_id, designation_id, employee_id,
           data_source_id, formula_expression, aggregation_method, scoring_type,
           target_value, min_threshold, max_achievement, weightage, target_source,
-          effective_from, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          effective_from, notes, created_by${defCap.processGrain ? ', grain' : ''})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${defCap.processGrain ? ', ?' : ''})
        ON DUPLICATE KEY UPDATE
+         ${defCap.processGrain ? 'grain              = VALUES(grain),' : ''}
          data_source_id     = VALUES(data_source_id),
          formula_expression = VALUES(formula_expression),
          aggregation_method = VALUES(aggregation_method),
@@ -947,6 +1031,7 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
         effectiveFrom,
         input.notes?.trim() || null,
         userId ?? null,
+        ...(defCap.processGrain ? [definitionGrain] : []),
       ],
     );
 
@@ -1117,7 +1202,11 @@ export async function resolveStudioForEmployee(
   employeeId: string,
   asOf?: string,
 ): Promise<ResolvedStudioKpi[]> {
-  if (!(await getStudioCapability()).tables) return [];
+  // A process-grain definition measures the whole process, so it must never be
+  // resolved onto one person: it would show a process-wide figure on their
+  // personal scorecard as though it were theirs — on an appraisal surface.
+  const resolveCap = await getStudioCapability();
+  if (!resolveCap.tables) return [];
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_id, process_id, designation_id FROM employees WHERE id = ? LIMIT 1`,
@@ -1134,6 +1223,7 @@ export async function resolveStudioForEmployee(
             target_value, min_threshold, max_achievement, weightage, effective_from
        FROM kpi_studio_definition
       WHERE active_status = 1
+        ${resolveCap.processGrain ? "AND COALESCE(grain, 'employee') = 'employee'" : ''}
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
         AND (employee_id = ?
