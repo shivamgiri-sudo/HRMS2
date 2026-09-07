@@ -20,6 +20,7 @@ const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
 const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
 const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
+const DashboardBuilderPage = lazy(() => import("@/pages/DashboardBuilderPage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
@@ -121,6 +122,7 @@ export const performanceRouteElements = (
       <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
       {/* Roles mirror kpi-studio.routes.ts's VIEW_ROLES; the router re-checks server-side. */}
       <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
+      <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardBuilderPage /></Gate></ProtectedRoute>} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
       <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />

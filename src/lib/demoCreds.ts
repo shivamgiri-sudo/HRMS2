@@ -63,6 +63,7 @@ const ALL_PAGES = [
   "PROCESS_KPI_DASHBOARD",
   "PROCESS_DATA_SOURCE",
   "KPI_STUDIO",
+  "DASHBOARD_BUILDER",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);
