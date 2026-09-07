@@ -84,6 +84,13 @@ const INSERT_CHUNK_SIZE = 300;
  */
 const SELECT_CHUNK_SIZE = 2000;
 
+/**
+ * Upper bound on a single day's net login minutes (18h). A sanity ceiling against a mistyped or
+ * mis-unit'd cell, not a shift rule — the attendance classification of these minutes is
+ * classifyOperationsNetLogin's job and is untouched by this constant.
+ */
+const MAX_NET_LOGIN_MINUTES = 1080;
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
@@ -192,9 +199,11 @@ function parseCsv(content: string): { rows: CsvRow[]; errors: RowError[] } {
     if (dateVal > today) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date cannot be in the future' }); continue; }
     if (dateVal < ninetyDaysAgo) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date is older than 90 days' }); continue; }
 
+    // Upper bound raised 600 -> MAX_NET_LOGIN_MINUTES (1080 = 18h). 600 (10h) rejected genuine
+    // long/double-shift dialler days outright, which the uploader could then not record at all.
     const net_login_minutes = parseInt(minsRaw, 10);
-    if (isNaN(net_login_minutes) || net_login_minutes < 0 || net_login_minutes > 600) {
-      errors.push({ row: rowNum, employee_code, reason: 'net_login_minutes must be an integer 0–600' }); continue;
+    if (isNaN(net_login_minutes) || net_login_minutes < 0 || net_login_minutes > MAX_NET_LOGIN_MINUTES) {
+      errors.push({ row: rowNum, employee_code, reason: `net_login_minutes must be an integer 0–${MAX_NET_LOGIN_MINUTES}` }); continue;
     }
 
     rows.push({ rowNum, employee_code, attendance_date: normalised_date, net_login_minutes });
@@ -392,6 +401,11 @@ router.post(
     let uploaded = 0;
     let skippedLocked = 0;
     let evidenceRecorded = 0;
+    // Counted where the write actually lands, not where the row is queued: a row that never
+    // reached `apr` was not stored, and reporting it as stored would be untrue. Rows withheld
+    // because the feed already reports that day are counted by evidence_skipped_already_synced,
+    // and rows whose evidence write failed are named individually in `errors`.
+    let storedWithoutAttendance = 0;
     let evidenceSkippedAlreadySynced = 0;
     const failedRows: RowError[] = [];
 
@@ -417,19 +431,22 @@ router.post(
       // at all.
       branch_id: string | null;
       process_id: string | null;
-      params: [string, string, unknown, unknown, number, number, string, number, string];
+      net_login_minutes: number;
+      // False for a non-Operations-Executive row: it is recorded as dialler EVIDENCE only and
+      // never reaches phase 2, so no attendance_daily_record is written for it and its attendance
+      // keeps coming from whatever source the engine already uses for that employee. Phase 3 reads
+      // this to word its per-row failures truthfully ("Attendance saved, but ..." is false here).
+      attendanceWritten: boolean;
+      params: [string, string, unknown, unknown, number, number, string, number, string] | null;
     }
     const toInsert: InsertCandidate[] = [];
+    // Non-Operations-Executive rows. Stored as evidence in phase 3, skipped by phase 2.
+    const evidenceOnly: InsertCandidate[] = [];
 
     for (const row of csvRows) {
       const emp = empMap.get(row.employee_code);
       if (!emp) {
         rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: 'Employee not found or inactive' });
-        continue;
-      }
-
-      if (!isOperationsExecutive(emp.dept_name, emp.designation_name)) {
-        rowErrors.push({ row: row.rowNum, employee_code: row.employee_code, reason: 'Employee is not an APR/Operations Executive' });
         continue;
       }
 
@@ -444,6 +461,32 @@ router.post(
         continue;
       }
 
+      // A non-Operations-Executive row used to be REJECTED here, so the minutes were lost
+      // entirely and the uploader had nowhere to record them. It is now kept, but only as
+      // evidence: the attendance verdict for these employees is deliberately left alone.
+      //
+      // Why the split rather than simply dropping the check: this route's phase-2 write is not a
+      // neutral record of minutes, it is an attendance DECISION — it sets attendance_status and
+      // lwp_value from classifyOperationsNetLogin (the net-login rule, which only applies to
+      // Operations Executives) and stamps is_locked=1 so the nightly engine cannot recompute it.
+      // Running that on a biometric/COSEC-judged employee would silently replace their real
+      // attendance source with a dialler verdict and lock it in. Evidence-only writes the same
+      // minutes to `apr` under the same attributed batch, which is what "store it in the database"
+      // asks for, and changes no attendance logic for anybody.
+      if (!isOperationsExecutive(emp.dept_name, emp.designation_name)) {
+        evidenceOnly.push({
+          rowNum: row.rowNum,
+          employee_code: row.employee_code,
+          attendance_date: row.attendance_date,
+          branch_id: emp.branch_id ?? null,
+          process_id: emp.process_id ?? null,
+          net_login_minutes: row.net_login_minutes,
+          attendanceWritten: false,
+          params: null,
+        });
+        continue;
+      }
+
       const { status, lwpValue } = classifyOperationsNetLogin(row.net_login_minutes, netLoginHalfDayFloor);
 
       toInsert.push({
@@ -452,6 +495,8 @@ router.post(
         attendance_date: row.attendance_date,
         branch_id: emp.branch_id ?? null,
         process_id: emp.process_id ?? null,
+        net_login_minutes: row.net_login_minutes,
+        attendanceWritten: true,
         params: [
           emp.employee_id, row.attendance_date, emp.branch_id, emp.process_id,
           row.net_login_minutes, row.net_login_minutes,
@@ -489,7 +534,9 @@ router.post(
     const succeededInsertRows: InsertCandidate[] = [];
     for (const insertChunk of chunkArray(toInsert, INSERT_CHUNK_SIZE)) {
       const valuesSql = insertChunk.map(() => '(UUID(), ?, ?, ?, ?, \'dialler\', \'apr_bulk\', ?, ?, ?, ?, 0, 0, 1, NOW(), ?)').join(',\n           ');
-      const flatParams = insertChunk.flatMap(c => c.params);
+      // Non-null asserted: only phase-1's Operations-Executive branch reaches toInsert, and it
+      // always builds params. Evidence-only candidates (params: null) never enter this list.
+      const flatParams = insertChunk.flatMap(c => c.params!);
       try {
         await db.execute(
           `INSERT INTO attendance_daily_record
@@ -552,13 +599,25 @@ router.post(
     // never fails the attendance write already committed, and never throws — but
     // it is never silent either, or coverage would quietly stay wrong with the
     // upload reporting success.
-    const toEvidence = succeededInsertRows.filter(c => {
+    //
+    // Two kinds of row reach this phase: rows whose attendance record was written in phase 2, and
+    // non-Operations-Executive rows that deliberately skipped phase 2 and exist ONLY as evidence.
+    // Both are evidenced identically - same campaign, same attributed batch, same `apr` write - so
+    // that the minutes are on record either way. They differ only in what a failure here means,
+    // which is why `attendanceWritten` is carried through to the message wording below.
+    const toEvidence = [...succeededInsertRows, ...evidenceOnly].filter(c => {
       if (aprAlreadySynced.has(`${c.employee_code}:${c.attendance_date}`)) {
         evidenceSkippedAlreadySynced++;
         return false;
       }
       return true;
     });
+
+    // "Attendance saved, but ..." is true of a phase-2 row and false of an evidence-only row - for
+    // the latter, no attendance record was ever meant to be written, so saying one was saved would
+    // misreport the outcome to the uploader.
+    const evidenceFailurePrefix = (c: InsertCandidate) =>
+      c.attendanceWritten ? 'Attendance saved, but ' : 'This row was stored as dialler evidence only (no attendance record is written for a non-Operations-Executive employee), but ';
 
     // Resolved once per request, before any evidence row is written, and never per row: it is two
     // reads plus at most two inserts, and it is the same answer for every row in the file. A
@@ -569,10 +628,10 @@ router.post(
       try {
         attribution = await resolveAprBulkUploadAttribution((req.authUser as any).id ?? null);
       } catch (err) {
-        const reason = `Attendance saved, but the dialler evidence row was not recorded: this upload could not be attributed to a registered dialler source, and an unattributed evidence row is no longer written. Retry the upload. (${
+        const detail = `the dialler evidence row was not recorded: this upload could not be attributed to a registered dialler source, and an unattributed evidence row is no longer written. Retry the upload. (${
           err instanceof Error ? err.message : String(err)})`;
         for (const c of toEvidence) {
-          rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+          rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason: evidenceFailurePrefix(c) + detail });
         }
       }
     }
@@ -632,7 +691,7 @@ router.post(
         rowErrors.push({
           row: c.rowNum,
           employee_code: c.employee_code,
-          reason: 'Attendance saved, but no dialler evidence row was recorded: this employee has no branch and/or no process mapping, so the upload batch that every evidence row must reference cannot be created. Set the employee\'s branch and process, then re-upload this row.',
+          reason: evidenceFailurePrefix(c) + 'no dialler evidence row was recorded: this employee has no branch and/or no process mapping, so the upload batch that every evidence row must reference cannot be created. Set the employee\'s branch and process, then re-upload this row.',
         });
       }
 
@@ -654,10 +713,10 @@ router.post(
           // Fail closed for this group only, exactly as a failed insert chunk does. Other groups
           // are independent and still write; the attendance rows already committed in phase 2 are
           // never rolled back.
-          const reason = `Attendance saved, but the dialler evidence row was not recorded: the upload batch record it must reference could not be created, and an unattributed evidence row is no longer written. Retry the upload. (${
+          const detail = `the dialler evidence row was not recorded: the upload batch record it must reference could not be created, and an unattributed evidence row is no longer written. Retry the upload. (${
             err instanceof Error ? err.message : String(err)})`;
           for (const c of group) {
-            rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+            rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason: evidenceFailurePrefix(c) + detail });
           }
           continue;
         }
@@ -668,7 +727,7 @@ router.post(
         for (const evidenceChunk of chunkArray(group, INSERT_CHUNK_SIZE)) {
           const valuesSql = evidenceChunk.map(() => `(?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?, ?)`).join(',\n           ');
           const flatParams = evidenceChunk.flatMap(c => [
-            c.attendance_date, c.employee_code, attribution!.campaignCode, c.params[4],
+            c.attendance_date, c.employee_code, attribution!.campaignCode, c.net_login_minutes,
             (req.authUser as any).id, batchId,
           ]);
           try {
@@ -689,14 +748,15 @@ router.post(
               flatParams,
             );
             evidenceRecorded += evidenceChunk.length;
+            storedWithoutAttendance += evidenceChunk.filter(c => !c.attendanceWritten).length;
             groupAccepted += evidenceChunk.length;
           } catch (err) {
             groupRejected += evidenceChunk.length;
-            const reason = `Attendance saved, but the dialler evidence row could not be recorded (batch rows ${
+            const detail = `the dialler evidence row could not be recorded (batch rows ${
               evidenceChunk[0]!.rowNum}-${evidenceChunk[evidenceChunk.length - 1]!.rowNum} of this file): ${
               err instanceof Error ? err.message : String(err)}`;
             for (const c of evidenceChunk) {
-              rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+              rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason: evidenceFailurePrefix(c) + detail });
             }
           }
         }
@@ -719,6 +779,11 @@ router.post(
     return res.json({
       success: true,
       uploaded,
+      // Rows accepted and stored as dialler evidence WITHOUT an attendance record, because the
+      // employee is not an Operations Executive. Not part of `uploaded` (nothing was written to
+      // attendance_daily_record for them) and not part of `errors` (they were not rejected), so
+      // they are their own bucket in the file-level identity documented below.
+      stored_without_attendance: storedWithoutAttendance,
       skipped_locked: skippedLocked,
       evidence_recorded: evidenceRecorded,
       evidence_skipped_already_synced: evidenceSkippedAlreadySynced,
@@ -735,9 +800,14 @@ router.post(
       // roll back or block any other chunk, and never crashes the request. `errors`
       // lists every row that did NOT land, by row number, with the real reason,
       // including any chunk-level DB failure. The real invariant is
-      // `uploaded + errors.length === (total rows in the file)`: `errors` is where
-      // every non-uploaded row is accounted for, including parse-stage failures
-      // and locked rows — `skipped_locked` is a count of how many of those `errors`
+      // `uploaded + stored_without_attendance + errors.length === (total rows in the file)`:
+      // `errors` is where every non-uploaded row is accounted for, including parse-stage failures
+      // and locked rows, and `stored_without_attendance` is the one bucket that is neither — a
+      // non-Operations-Executive row that was accepted and stored as evidence but deliberately
+      // given no attendance record. The identity holds for a file whose evidence phase fully
+      // succeeded; where it did not, the difference is exactly the rows counted by
+      // `evidence_skipped_already_synced` (withheld because the feed already reports that day)
+      // plus the evidence failures, which are named row by row in `errors` — `skipped_locked` is a count of how many of those `errors`
       // rows were locked, not a fourth bucket disjoint from `errors`, so it is not
       // additive with `uploaded` and `errors.length`.
       failed: failedRows.length,
