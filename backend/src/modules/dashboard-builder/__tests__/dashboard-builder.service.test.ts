@@ -163,7 +163,12 @@ describe("saveDashboard", () => {
 
 describe("renderDashboard resolves against the READER's scope", () => {
   /** dashboard row, widgets, then the scope query. */
-  function mockRender(widgets: Array<Record<string, unknown>>, allowedProcessIds: string[]) {
+  function mockRender(
+    widgets: Array<Record<string, unknown>>,
+    allowedProcessIds: string[],
+    /** What kpi_metric_master reports for the widget's metric, if anything. */
+    unit?: string,
+  ) {
     installed((text: string) => {
       if (text.includes("FROM builder_dashboard\n") || text.includes("FROM builder_dashboard ")) {
         return Promise.resolve([[DASHBOARD], []]);
@@ -171,6 +176,9 @@ describe("renderDashboard resolves against the READER's scope", () => {
       if (text.includes("FROM builder_dashboard_widget")) return Promise.resolve([widgets, []]);
       if (text.includes("FROM process_master")) {
         return Promise.resolve([allowedProcessIds.map((id) => ({ id })), []]);
+      }
+      if (text.includes("FROM kpi_metric_master")) {
+        return Promise.resolve([unit ? [{ unit }] : [], []]);
       }
       return Promise.resolve([[], []]);
     });
@@ -233,8 +241,39 @@ describe("renderDashboard resolves against the READER's scope", () => {
     );
     await svc.renderDashboard("u1", "manager", "d1");
     expect(fetchProcessMetricValues).toHaveBeenCalledWith(
-      "p-other", ["gs1_email_tat_sec"], expect.any(String), expect.any(String),
+      "p-other", ["gs1_email_tat_sec"], expect.any(String), expect.any(String), expect.any(Array),
     );
+  });
+
+  /**
+   * How a period rolls up depends on what the metric measures, and the unit is
+   * the only signal available. A month of a COUNT is the month's total; summing
+   * a rate would be meaningless, and averaging a volume reports a typical day as
+   * though it were the month — which is the quieter of the two errors and so the
+   * one worth a test.
+   */
+  it("sums a volume metric over the period and says so", async () => {
+    mockRender([widget({ metric_key: "pan_submission_count" })], ["p-gs1"], "count");
+    fetchProcessMetricValues.mockResolvedValue(
+      new Map([["pan_submission_count", { value: 120, count: 3, trend: [] }]]),
+    );
+    const out = await svc.renderDashboard("u1", "manager", "d1");
+    // The 5th argument is sumKeys: naming the metric there switches it to SUM.
+    expect(fetchProcessMetricValues.mock.calls[0][4]).toEqual(["pan_submission_count"]);
+    expect(out!.widgets[0].note).toMatch(/sum of daily values/i);
+  });
+
+  it("averages a rate, and labels it so it is not read as the period's own ratio", async () => {
+    mockRender([widget({ metric_key: "inbound_al_pct" })], ["p-gs1"], "percent");
+    fetchProcessMetricValues.mockResolvedValue(
+      new Map([["inbound_al_pct", { value: 98.2, count: 6, trend: [] }]]),
+    );
+    const out = await svc.renderDashboard("u1", "manager", "d1");
+    expect(fetchProcessMetricValues.mock.calls[0][4]).toEqual([]);
+    // process_metric_actual keeps only the daily rate, so the true period ratio
+    // is unrecoverable here. Saying which number this is beats implying it is
+    // the other one.
+    expect(out!.widgets[0].note).toMatch(/mean of daily values/i);
   });
 
   it("returns null for a dashboard not shared with the reader", async () => {

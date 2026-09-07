@@ -396,6 +396,31 @@ async function readableProcessIds(userId: string): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.id)));
 }
 
+/**
+ * A metric's unit, cached for the life of the process.
+ *
+ * Only used to decide how a period rolls up. Unknown units fall through to the
+ * averaging default, which is what this did for everything before.
+ */
+const unitCache = new Map<string, string | null>();
+async function metricUnit(metricKey: string): Promise<string | null> {
+  if (unitCache.has(metricKey)) return unitCache.get(metricKey) ?? null;
+  let unit: string | null = null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT unit FROM kpi_metric_master WHERE metric_code = ? AND active_status = 1 LIMIT 1`,
+      [metricKey],
+    );
+    unit = (rows as any[])[0]?.unit ?? null;
+  } catch {
+    // A missing catalogue row is not an error here: plenty of process metrics are
+    // keyed by the registry's own metricKey and never appear in kpi_metric_master.
+    unit = null;
+  }
+  unitCache.set(metricKey, unit);
+  return unit;
+}
+
 export async function renderDashboard(
   userId: string, role: string, id: string,
 ): Promise<{ dashboard: DashboardRow; widgets: RenderedWidget[] } | null> {
@@ -428,14 +453,43 @@ export async function renderDashboard(
     }
 
     if (widget.metricSource === "process_metric_actual") {
-      const readings = await fetchProcessMetricValues(processId, [widget.metricKey], from, to);
+      // How a period's figure is derived depends on what the metric MEASURES,
+      // and getting it from the unit is the only signal available here.
+      //
+      // A volume must be summed: a month of "PAN submissions" is the total for
+      // the month, and averaging it reports a typical day as though it were the
+      // month. Everything else is averaged, which is right for a duration and
+      // is the closest available answer for a rate — see the caveat below.
+      const unit = (await metricUnit(widget.metricKey)) ?? "";
+      const isVolume = ["count", "currency", "number", "volume"].includes(unit.toLowerCase());
+      const readings = await fetchProcessMetricValues(
+        processId,
+        [widget.metricKey],
+        from,
+        to,
+        isVolume ? [widget.metricKey] : [],
+      );
       const reading = readings.get(widget.metricKey);
+      const isRate = ["percent", "percentage", "ratio"].includes(unit.toLowerCase());
       rendered.push({
         ...widget,
         availability: reading && reading.count > 0 ? "ok" : "no_data",
         value: reading?.value ?? null,
         series: reading?.trend ?? [],
-        note: reading && reading.count > 0 ? undefined : "Nothing supplied for this window yet.",
+        note:
+          !reading || reading.count === 0
+            ? "Nothing supplied for this window yet."
+            : isRate
+              // Stated rather than hidden. process_metric_actual keeps only the
+              // computed daily rate, so the numerator and denominator that would
+              // give a true period rate are already gone by the time this reads
+              // them. The mean of daily rates is close but not the same number,
+              // and the gap widens as daily volumes diverge — so the label says
+              // which of the two this is.
+              ? "Period figure is the mean of daily values, not the period's own ratio."
+              : isVolume
+                ? "Period figure is the sum of daily values."
+                : undefined,
       });
       continue;
     }
