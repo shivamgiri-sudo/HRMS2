@@ -62,6 +62,7 @@ const ALL_PAGES = [
   // without it here the Process KPI Dashboard is unreachable under demo mode.
   "PROCESS_KPI_DASHBOARD",
   "PROCESS_DATA_SOURCE",
+  "KPI_STUDIO",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);

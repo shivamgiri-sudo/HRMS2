@@ -1,6 +1,6 @@
 import type { FC, SVGProps } from "react";
 import {
-  Activity, BarChart3, Bell, Briefcase, Building2, Calendar, Database,
+  Activity, BarChart3, Bell, Briefcase, Building2, Calendar, Database, FlaskConical,
   CalendarClock, CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
   FileText, GitBranch, Gauge, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
@@ -315,6 +315,7 @@ export const navGroups: NavGroup[] = [
           { label: "Process Performance", href: "/performance/process-performance", icon: ic(Activity),  roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "OPERATIONS_DASHBOARD", description: "Process health card: headcount, shrinkage, attrition, late comers" },
           { label: "Process KPI Dashboard", href: "/performance/process-kpi-dashboard", icon: ic(Building2), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "PROCESS_KPI_DASHBOARD", description: "Client/process SLA targets vs actuals, with drilldown" },
           { label: "Process Data Sources", href: "/performance/process-data-sources", icon: ic(Database), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "PROCESS_DATA_SOURCE", description: "Supply metrics HRMS cannot measure: upload, or connect the client's database" },
+          { label: "KPI Studio", href: "/kpi-studio", icon: ic(FlaskConical), roles: ["admin","hr","process_manager","qa","tq_head","manager","branch_head","ceo","team_leader","super_admin"], pageCode: "KPI_STUDIO", description: "Build a KPI without a code change: source, formula, preview, compute" },
           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "KPI Targets", href: "/kpi-targets", icon: ic(Target), pageCode: "KPI_MASTER", description: "Targets by process & designation" },
