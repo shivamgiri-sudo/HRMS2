@@ -639,11 +639,22 @@ export async function saveSourceField(input: {
 
   // Built here rather than accepted from the client: a client-supplied SQL fragment reaching a
   // query is an injection point no amount of downstream validation reliably closes.
-  const expression = column
-    ? aggregate === 'NONE'
-      ? `\`${column}\``
-      : `${aggregate}(\`${column}\`)`
-    : null;
+  //
+  // Deliberately NOT stored when the field carries filters. buildFieldSelect only
+  // applies filters to a field it is deriving itself, and refuses outright when an
+  // expression and filters both arrive — so storing this convenience copy alongside
+  // filters made every filtered field unusable the moment it was saved, with the
+  // failure surfacing only later, at read time. Column + aggregate + filters is the
+  // source of truth; the expression is a derived shorthand for the unfiltered case.
+  const hasFilters =
+    Array.isArray((input as { filter_json?: unknown[] }).filter_json) &&
+    ((input as { filter_json?: unknown[] }).filter_json as unknown[]).length > 0;
+  const expression =
+    column && !hasFilters
+      ? aggregate === 'NONE'
+        ? `\`${column}\``
+        : `${aggregate}(\`${column}\`)`
+      : null;
 
   // Filters are validated HERE as well as at query-build time. Storing a filter
   // the builder will later refuse produces a field that looks configured and

@@ -254,6 +254,58 @@ describe("resolveStudioForEmployee excludes process-grain definitions", () => {
   });
 });
 
+describe("a filtered field stores no source_expression", () => {
+  /** Capability probes report the migrated schema; the rest answers a bare row. */
+  function studio(rest: (sql: string) => unknown) {
+    execute.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("source_cols")) {
+        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+      }
+      return rest(text) as never;
+    });
+  }
+
+  // Regression: saveSourceField used to store COUNT(`col`) alongside the filters.
+  // buildFieldSelect refuses a field that carries both ("use one or the other"),
+  // so every filtered field saved through the API or the UI failed at READ time,
+  // long after the save reported success. Proven live against dialer_db, where
+  // it made AL% unreadable.
+  it("leaves source_expression null so the filters can be compiled in", async () => {
+    studio(() => Promise.resolve([[{ id: "s1" }], []]));
+    await svc.saveSourceField({
+      id: "f1",
+      data_source_id: "s1",
+      field_name: "answered",
+      source_column: "CallDate",
+      aggregate_fn: "COUNT",
+      filter_json: [{ column: "AgentId", op: "ne", value: "VDCL" }],
+    } as never);
+    const write = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("kpi_studio_source_field") && String(sql).includes("source_expression"));
+    expect(write).toBeTruthy();
+    // Param order follows the SET list: field_name, display_name, source_column,
+    // aggregate_fn, source_expression, ...
+    expect((write?.[1] as unknown[])[4]).toBeNull();
+  });
+
+  it("still stores the expression when there are no filters", async () => {
+    studio(() => Promise.resolve([[{ id: "s1" }], []]));
+    await svc.saveSourceField({
+      id: "f1",
+      data_source_id: "s1",
+      field_name: "total",
+      source_column: "CallDate",
+      aggregate_fn: "COUNT",
+    } as never);
+    const write = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("kpi_studio_source_field") && String(sql).includes("source_expression"));
+    expect((write?.[1] as unknown[])[4]).toBe("COUNT(`CallDate`)");
+  });
+});
+
 describe("deleteDataSource refuses while a KPI still reads it", () => {
   /** Capability probes, then whatever the caller says for the rest. */
   function studio(rest: (sql: string) => unknown) {
