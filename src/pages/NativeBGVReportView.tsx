@@ -279,7 +279,8 @@ export default function NativeBGVReportView() {
 
             {/* Address */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">Address</h3>
-            <table className="w-full text-sm border-collapse border border-slate-300 mb-6">
+            <div className="overflow-x-auto mb-6">
+            <table className="w-full min-w-[42rem] text-sm border-collapse border border-slate-300">
               <thead>
                 <tr className="bg-slate-800 text-white">
                   <th className="py-2 px-3 text-left">Type</th>
@@ -306,6 +307,7 @@ export default function NativeBGVReportView() {
                 </tr>
               </tbody>
             </table>
+            </div>
 
             {/* KYC & Identification */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">KYC & Identification</h3>
@@ -337,7 +339,8 @@ export default function NativeBGVReportView() {
 
             {/* Qualifications */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">Educational Qualifications</h3>
-            <table className="w-full text-sm border-collapse border border-slate-300 mb-6">
+            <div className="overflow-x-auto mb-6">
+            <table className="w-full min-w-[48rem] text-sm border-collapse border border-slate-300">
               <thead>
                 <tr className="bg-slate-800 text-white">
                   <th className="py-2 px-3 text-left">Degree</th>
@@ -366,6 +369,7 @@ export default function NativeBGVReportView() {
                 )}
               </tbody>
             </table>
+            </div>
 
             {/* Employment History */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">Employment History</h3>
@@ -484,7 +488,8 @@ export default function NativeBGVReportView() {
 
             {/* Nominees */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">Nominees</h3>
-            <table className="w-full text-sm border-collapse border border-slate-300">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[38rem] text-sm border-collapse border border-slate-300">
               <thead>
                 <tr className="bg-slate-800 text-white">
                   <th className="py-2 px-3 text-left">Nominee</th>
@@ -518,6 +523,7 @@ export default function NativeBGVReportView() {
                 ) : null}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* PAGE 5: DOCUMENT CHECKLIST */}
@@ -527,7 +533,8 @@ export default function NativeBGVReportView() {
             </h2>
 
             <h3 className="text-lg font-bold text-slate-700 mb-3">Documents Received (Physical/Digital)</h3>
-            <table className="w-full text-sm border-collapse border border-slate-300 mb-6">
+            <div className="overflow-x-auto mb-6">
+            <table className="w-full min-w-[34rem] text-sm border-collapse border border-slate-300">
               <thead>
                 <tr className="bg-slate-800 text-white">
                   <th className="py-2 px-3 text-left">Document Type</th>
@@ -560,6 +567,7 @@ export default function NativeBGVReportView() {
                 })}
               </tbody>
             </table>
+            </div>
 
             {report.box_file_no && (
               <div className="text-sm">

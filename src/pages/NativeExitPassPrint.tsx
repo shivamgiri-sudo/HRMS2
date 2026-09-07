@@ -268,7 +268,8 @@ function PrintablePass({
         <div className="text-[10px] font-extrabold uppercase tracking-widest text-rose-700 mb-2 print:[print-color-adjust:exact]">
           Description of Materials
         </div>
-        <table className="w-full text-[11px] border-collapse border border-slate-800">
+        <div className="overflow-x-auto print:overflow-visible">
+        <table className="w-full min-w-[32rem] text-[11px] border-collapse border border-slate-800 print:min-w-0">
           <thead>
             <tr className="bg-slate-800 text-white print:[print-color-adjust:exact]">
               <th className="text-left px-2 py-1.5 font-bold uppercase text-[9px] tracking-wider border-r border-slate-600">Item</th>
@@ -296,6 +297,7 @@ function PrintablePass({
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
 
       {/* ── Approval signatures ── */}
