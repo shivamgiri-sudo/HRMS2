@@ -61,3 +61,48 @@ describe("fetchProcessMetricValues", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe("metric_code aliases", () => {
+  beforeEach(() => execute.mockReset());
+
+  it("finds a value stored under the Studio metric_code and reports it under the registry key", async () => {
+    // KPI Studio writes process_metric_actual keyed by kpi_metric_master.metric_code;
+    // a hand-entered figure is keyed by the registry's own metricKey. The caller
+    // asks for the registry key and must get an answer either way.
+    execute
+      .mockResolvedValueOnce([[{ metric_key: "GS1_EMAIL_TAT_SEC", value: "3100", n: 4 }], []])
+      .mockResolvedValueOnce([[{ metric_key: "GS1_EMAIL_TAT_SEC", period: "2026-08", value: "3100" }], []]);
+
+    const out = await src.fetchProcessMetricValues(
+      "p1", ["gs1_email_tat_sec"], "2026-08-01", "2026-08-31", [],
+      { gs1_email_tat_sec: "GS1_EMAIL_TAT_SEC" },
+    );
+
+    expect(out.get("gs1_email_tat_sec")).toEqual({
+      value: 3100,
+      count: 4,
+      trend: [{ period: "2026-08", value: 3100 }],
+    });
+    expect(out.get("GS1_EMAIL_TAT_SEC")).toBeUndefined();
+  });
+
+  it("queries for both spellings", async () => {
+    execute.mockResolvedValue([[], []]);
+    await src.fetchProcessMetricValues(
+      "p1", ["gs1_email_tat_sec"], "2026-08-01", "2026-08-31", [],
+      { gs1_email_tat_sec: "GS1_EMAIL_TAT_SEC" },
+    );
+    const params = execute.mock.calls[0][1] as unknown[];
+    expect(params).toContain("gs1_email_tat_sec");
+    expect(params).toContain("GS1_EMAIL_TAT_SEC");
+  });
+
+  it("ignores an alias identical to the key rather than double-listing it", async () => {
+    execute.mockResolvedValue([[], []]);
+    await src.fetchProcessMetricValues(
+      "p1", ["same_key"], "2026-08-01", "2026-08-31", [], { same_key: "same_key" },
+    );
+    const params = execute.mock.calls[0][1] as unknown[];
+    expect(params.filter((p) => p === "same_key")).toHaveLength(1);
+  });
+});

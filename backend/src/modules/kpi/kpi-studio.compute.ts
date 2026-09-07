@@ -36,6 +36,7 @@ import {
 import {
   readMergedSourceValues,
   readSourceValues,
+  readProcessGrainValues,
   type DataSourceConfig,
   type SourceField,
   type DailyFieldValues,
@@ -127,7 +128,8 @@ async function loadCandidateEmployees(options: ComputeOptions): Promise<
 async function loadFormulaDefinitions(date: string): Promise<DefinitionRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT d.id, d.metric_id, m.metric_code, d.branch_id, d.process_id, d.designation_id,
-            d.employee_id, d.data_source_id, d.formula_expression, d.effective_from
+            d.employee_id, d.data_source_id, d.formula_expression, d.effective_from,
+            COALESCE(d.grain, 'employee') AS grain
        FROM kpi_studio_definition d
        JOIN kpi_metric_master m ON m.id = d.metric_id AND m.active_status = 1
       WHERE d.active_status = 1
@@ -194,11 +196,34 @@ export async function computeStudioKpis(options: ComputeOptions): Promise<Comput
   };
   if (!capability.tables) return empty;
 
-  const definitions = await loadFormulaDefinitions(options.date);
-  if (!definitions.length) return empty;
+  const allDefinitions = await loadFormulaDefinitions(options.date);
+  if (!allDefinitions.length) return empty;
+
+  // Process-grain definitions are computed first and entirely separately: they
+  // have no employee dimension at all (a client's own database has no MAS
+  // employee IDs), so they must not be filtered by the employee candidate list
+  // and must survive the "no employees" early return below.
+  const processDefinitions = allDefinitions.filter((d) => String((d as any).grain) === 'process');
+  const definitions = allDefinitions.filter((d) => String((d as any).grain) !== 'process');
+
+  const processOutcome = processDefinitions.length
+    ? await computeProcessGrainDefinitions(processDefinitions, options)
+    : { written: 0, no_data: 0, errors: 0, source_failures: [] as ComputeOutcome['source_failures'], sample: [] as ComputeOutcome['sample'] };
+
+  const withProcess = (o: ComputeOutcome): ComputeOutcome => ({
+    ...o,
+    definitions_considered: allDefinitions.length,
+    written: o.written + processOutcome.written,
+    no_data: o.no_data + processOutcome.no_data,
+    errors: o.errors + processOutcome.errors,
+    source_failures: [...o.source_failures, ...processOutcome.source_failures],
+    sample: [...processOutcome.sample, ...o.sample].slice(0, 20),
+  });
+
+  if (!definitions.length) return withProcess(empty);
 
   const employees = await loadCandidateEmployees(options);
-  if (!employees.length) return { ...empty, definitions_considered: definitions.length };
+  if (!employees.length) return withProcess({ ...empty, definitions_considered: definitions.length });
 
   // Which definition wins for whom. Reuses the same pure function the resolver uses, so a
   // computed value can never be produced by a definition that would not have been resolved.
@@ -272,7 +297,152 @@ export async function computeStudioKpis(options: ComputeOptions): Promise<Comput
     await evaluateAndWrite(pairs, merged.values, [...new Set(fieldNames)], options, outcome);
   }
 
-  return outcome;
+  return withProcess(outcome);
+}
+
+/**
+ * Process-grain computation.
+ *
+ * One value per process per day, written to process_metric_actual rather than
+ * kpi_daily_actual. The aggregation happens inside the source query (see
+ * buildProcessQueryPlan), so the formula's inputs are already process totals —
+ * which is the whole reason this path exists. Rolling up the employee-grain
+ * output instead would average per-employee ratios and produce a different,
+ * wrong number whenever agents carry uneven volume.
+ *
+ * Values are keyed by the metric's metric_code. The dashboard's registry binds
+ * to that through processSource.metricCode, so a metric reads the same whether
+ * the number was typed in by hand or computed here.
+ */
+async function computeProcessGrainDefinitions(
+  definitions: DefinitionRow[],
+  options: ComputeOptions,
+): Promise<{
+  written: number;
+  no_data: number;
+  errors: number;
+  source_failures: ComputeOutcome['source_failures'];
+  sample: ComputeOutcome['sample'];
+}> {
+  const result = {
+    written: 0,
+    no_data: 0,
+    errors: 0,
+    source_failures: [] as ComputeOutcome['source_failures'],
+    sample: [] as ComputeOutcome['sample'],
+  };
+
+  const sourceIdsByDefinition = await getDefinitionSourceIds(definitions);
+  const allSourceIds = [...new Set([...sourceIdsByDefinition.values()].flat())];
+  const sources = await loadSourcesWithFields(allSourceIds);
+
+  for (const definition of definitions) {
+    const sourceIds = sourceIdsByDefinition.get(definition.id) ?? [];
+    const entries = sourceIds
+      .map((id) => sources.get(id))
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    if (!entries.length) {
+      result.source_failures.push({ source_code: definition.id, error: 'Data source is missing or inactive' });
+      result.errors++;
+      continue;
+    }
+
+    // A process-grain definition takes its process from the SOURCE's mapping,
+    // not from the definition's scope: the scope says which people a definition
+    // applies to, which is meaningless when there are no people involved.
+    const merged = new Map<string, Map<string, number | null>>();
+    const fieldNames: string[] = [];
+    let processId: string | null = null;
+
+    for (const entry of entries) {
+      const source = entry.source as any;
+      processId = processId ?? (source.process_id ?? null);
+      const read = await readProcessGrainValues(source, entry.fields, options.date, options.date);
+      if (read.error) {
+        result.source_failures.push({ source_code: source.source_code, error: read.error });
+        continue;
+      }
+      for (const [date, bucket] of read.values) {
+        const target = merged.get(date) ?? new Map<string, number | null>();
+        for (const [name, value] of bucket) target.set(name, value);
+        merged.set(date, target);
+      }
+      for (const field of entry.fields) fieldNames.push(field.field_name);
+    }
+
+    if (!processId) {
+      result.source_failures.push({
+        source_code: definition.metric_code,
+        error: 'No source for this definition is mapped to a process',
+      });
+      result.errors++;
+      continue;
+    }
+
+    for (const [date, bucket] of merged) {
+      const inputs: Record<string, number | null> = {};
+      for (const name of [...new Set(fieldNames)]) inputs[name] = bucket.get(name) ?? null;
+
+      const evaluated = evaluateFormula(definition.formula_expression as string, inputs);
+
+      // A broken formula and a formula that legitimately has nothing to say are
+      // different outcomes, counted separately — the same distinction the
+      // employee path makes. Collapsing them would hide a typo inside a pile of
+      // "no data".
+      if (evaluated.error) {
+        result.errors++;
+        if (result.sample.length < 20) {
+          result.sample.push({
+            employee_code: `process:${processId.slice(0, 8)}`,
+            metric_code: definition.metric_code,
+            value: null,
+            status: 'error',
+            reason: evaluated.error,
+          } as ComputeOutcome['sample'][number]);
+        }
+        continue;
+      }
+
+      if (evaluated.value === null || evaluated.value === undefined) {
+        result.no_data++;
+        if (result.sample.length < 20) {
+          result.sample.push({
+            employee_code: `process:${processId.slice(0, 8)}`,
+            metric_code: definition.metric_code,
+            value: null,
+            status: 'no_data',
+            reason: evaluated.nullReason ?? 'formula produced no value for this period',
+          } as ComputeOutcome['sample'][number]);
+        }
+        continue;
+      }
+
+      if (!options.dryRun) {
+        await db.execute(
+          `INSERT INTO process_metric_actual
+             (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note)
+           VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?)
+           ON DUPLICATE KEY UPDATE
+             actual_value = VALUES(actual_value),
+             source       = 'connector',
+             note         = VALUES(note)`,
+          [processId, definition.metric_code, date, evaluated.value, `KPI Studio definition ${definition.id}`],
+        );
+      }
+      result.written++;
+      if (result.sample.length < 20) {
+        result.sample.push({
+          employee_code: `process:${processId.slice(0, 8)}`,
+          metric_code: definition.metric_code,
+          value: evaluated.value,
+          status: 'computed',
+        } as ComputeOutcome['sample'][number]);
+      }
+    }
+  }
+
+  return result;
 }
 
 async function evaluateAndWrite(

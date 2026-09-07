@@ -63,6 +63,24 @@ export interface DataSourceConfig {
    * arrives on older drivers, so callers normalise via readConfigJson().
    */
   config_json?: Record<string, unknown> | string | null;
+  /**
+   * How this source's rows map to a process, for process-grain definitions.
+   *
+   *   'none'     — cannot back a process-grain metric (the default, so every
+   *                source that existed before this keeps its exact behaviour).
+   *   'constant' — the whole source belongs to process_id. This is a client's
+   *                own database: every row in it is theirs, and there is no
+   *                employee key to group by.
+   *   'column'   — process_key_column carries a client identifier that is NOT a
+   *                process_master.id (Shivamgiri keys on client_id='487', the
+   *                dialer on CampaignName='Blabliblu_IN'), so the source states
+   *                the translation outright: rows where that column equals
+   *                process_key_value belong to process_id.
+   */
+  process_key_kind?: 'none' | 'constant' | 'column' | null;
+  process_key_column?: string | null;
+  process_key_value?: string | null;
+  process_id?: string | null;
 }
 
 /** JSON columns arrive parsed or as text depending on driver version. Normalise once, here. */
@@ -263,6 +281,141 @@ function buildQueryPlan(
     fieldNames: names,
     keyKind: source.employee_key_kind ?? 'employee_code',
   };
+}
+
+/**
+ * The process-grain sibling of buildQueryPlan.
+ *
+ * The only structural difference is what it groups by: one row per DAY for the
+ * whole process, rather than one per employee per day. That difference is the
+ * entire point — a process ratio is SUM(numerator)/SUM(denominator) across the
+ * process, and averaging per-employee ratios gives a different, wrong number
+ * whenever agents carry uneven volume. Aggregating in the query is what makes
+ * the formula's inputs process totals.
+ *
+ * There is deliberately no employee column here. A client's own database has no
+ * MAS employee IDs in it, so requiring one would exclude exactly the sources
+ * this grain exists to serve.
+ */
+export function buildProcessQueryPlan(
+  source: DataSourceConfig,
+  fields: readonly SourceField[],
+  dateFrom: string,
+  dateTo: string,
+): { sql: string; params: unknown[]; fieldNames: string[] } {
+  if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
+  if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
+
+  const kind = source.process_key_kind ?? 'none';
+  if (kind === 'none') {
+    throw new Error(
+      `Data source ${source.source_code} is not mapped to a process. Set it to the client's own database (constant), or name the column that identifies the client (column), before using it for a process metric.`,
+    );
+  }
+  if (!source.process_id) {
+    throw new Error(`Data source ${source.source_code} has a process mapping but no process selected`);
+  }
+
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+  const { sql: fieldSelect, names } = buildFieldSelect(fields);
+  const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
+
+  const where = [`\`${dateColumn}\` >= ?`, `\`${dateColumn}\` < DATE_ADD(?, INTERVAL 1 DAY)`];
+  const params: unknown[] = [dateFrom, dateTo];
+
+  if (kind === 'column') {
+    if (!source.process_key_column) {
+      throw new Error(`Data source ${source.source_code} maps by column but no column is named`);
+    }
+    const keyColumn = assertSafeIdentifier(source.process_key_column, 'process key column');
+    // The identifier is validated; the VALUE is bound, because it comes from
+    // configuration a user typed and is data, not SQL.
+    where.push(`\`${keyColumn}\` = ?`);
+    params.push(source.process_key_value ?? '');
+  }
+
+  const sql = `
+    SELECT DATE(\`${dateColumn}\`) AS __score_date,
+           ${fieldSelect}
+      FROM ${quotedTable}
+     WHERE ${where.join(' AND ')}
+     GROUP BY DATE(\`${dateColumn}\`)
+  `;
+
+  return { sql, params, fieldNames: names };
+}
+
+/** date (YYYY-MM-DD) -> field name -> value, for one process. */
+export type ProcessFieldValues = Map<string, Map<string, number | null>>;
+
+export interface ProcessReadResult {
+  values: ProcessFieldValues;
+  rowsRead: number;
+  error?: string;
+}
+
+/**
+ * Runs a process-grain plan against either a mas_hrms table or an external
+ * connector. Both go through the same builder, so the two paths cannot drift
+ * into producing differently-shaped numbers.
+ *
+ * Reads stay read-only — a SELECT, on pools that already enforce it.
+ */
+export async function readProcessGrainValues(
+  source: DataSourceConfig,
+  fields: readonly SourceField[],
+  dateFrom: string,
+  dateTo: string,
+): Promise<ProcessReadResult> {
+  const values: ProcessFieldValues = new Map();
+  if (!fields.length) return { values, rowsRead: 0 };
+
+  let plan: ReturnType<typeof buildProcessQueryPlan>;
+  try {
+    plan = buildProcessQueryPlan(source, fields, dateFrom, dateTo);
+  } catch (err) {
+    return { values, rowsRead: 0, error: (err as Error).message };
+  }
+
+  let rows: Record<string, unknown>[];
+  try {
+    if (source.source_type === 'integration_connector') {
+      if (!source.integration_key) {
+        return { values, rowsRead: 0, error: `Data source ${source.source_code} has no connector selected` };
+      }
+      const pool = await getPoolForKey(source.integration_key);
+      // Same duck-type guard the employee path uses: the SQL above is MySQL
+      // dialect, and a SQL Server pool would fail deep in the driver instead of
+      // here with a message somebody can act on.
+      if (typeof (pool as MysqlPool).execute !== 'function') {
+        return {
+          values,
+          rowsRead: 0,
+          error: `Connector ${source.integration_key} is not a MySQL source. Only MySQL connectors can back a KPI data source today.`,
+        };
+      }
+      const [result] = await (pool as MysqlPool).query(plan.sql, plan.params);
+      rows = result as Record<string, unknown>[];
+    } else {
+      const [result] = await db.query(plan.sql, plan.params);
+      rows = result as Record<string, unknown>[];
+    }
+  } catch (err) {
+    return { values, rowsRead: 0, error: (err as Error).message };
+  }
+
+  for (const row of rows) {
+    const date = toDateString(row.__score_date);
+    if (!date) continue;
+    const bucket = values.get(date) ?? new Map<string, number | null>();
+    for (const name of plan.fieldNames) {
+      bucket.set(name, toNumberOrNull(row[name]));
+    }
+    values.set(date, bucket);
+  }
+
+  return { values, rowsRead: rows.length };
 }
 
 function collectQueryRows(

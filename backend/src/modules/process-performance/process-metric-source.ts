@@ -32,21 +32,37 @@ function aggregateExpr(sumKeys: string[]): string {
   return `CASE WHEN metric_key IN (${list}) THEN SUM(actual_value) ELSE AVG(actual_value) END`;
 }
 
+/**
+ * A metric can be stored under two different keys: the registry's own metricKey
+ * when a person typed the figure in, or a kpi_metric_master.metric_code when a
+ * KPI Studio process-grain definition computed it. `aliases` maps the second
+ * back to the first so a caller asks once and gets an answer either way.
+ */
 export async function fetchProcessMetricValues(
   processId: string,
   metricKeys: string[],
   from: string,
   to: string,
   sumKeys: string[] = [],
+  aliases: Record<string, string> = {},
 ): Promise<Map<string, ProcessMetricReading>> {
   const out = new Map<string, ProcessMetricReading>();
   if (!metricKeys.length) return out;
 
-  const keyList = metricKeys.map(() => "?").join(",");
+  // Query for both spellings, then fold the alias back onto the registry key so
+  // the caller never has to know which one produced the number.
+  const aliasToKey = new Map<string, string>();
+  for (const [key, alias] of Object.entries(aliases)) {
+    if (alias && alias !== key) aliasToKey.set(alias, key);
+  }
+  const queryKeys = [...new Set([...metricKeys, ...aliasToKey.keys()])];
+  const canonical = (k: string) => aliasToKey.get(k) ?? k;
+
+  const keyList = queryKeys.map(() => "?").join(",");
   const agg = aggregateExpr(sumKeys);
   // sumKeys are bound first because the CASE expression appears in the SELECT
   // list, ahead of the WHERE clause's own placeholders.
-  const params = [...sumKeys, processId, ...metricKeys, from, to];
+  const params = [...sumKeys, processId, ...queryKeys, from, to];
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT metric_key, ${agg} AS value, COUNT(actual_value) AS n
@@ -74,7 +90,7 @@ export async function fetchProcessMetricValues(
 
   const trendByKey = new Map<string, Array<{ period: string; value: number | null }>>();
   for (const r of trendRows) {
-    const key = String(r.metric_key);
+    const key = canonical(String(r.metric_key));
     const list = trendByKey.get(key) ?? [];
     list.push({ period: String(r.period), value: r.value == null ? null : Number(r.value) });
     trendByKey.set(key, list);
@@ -83,7 +99,7 @@ export async function fetchProcessMetricValues(
   for (const r of rows) {
     const n = Number(r.n ?? 0);
     if (n === 0) continue;
-    const key = String(r.metric_key);
+    const key = canonical(String(r.metric_key));
     out.set(key, {
       value: r.value == null ? null : Number(r.value),
       count: n,

@@ -386,6 +386,13 @@ async function computeScorecards(
         filters.from,
         filters.to,
         processMetrics.filter((m) => m.family === "volume").map((m) => m.metricKey),
+        // Where a KPI Studio definition feeds this metric, it stores under the
+        // metric_code rather than the registry key; the resolver matches either.
+        Object.fromEntries(
+          processMetrics
+            .filter((m) => m.processSource?.metricCode)
+            .map((m) => [m.metricKey, m.processSource!.metricCode as string]),
+        ),
       ),
     );
   }

@@ -62,7 +62,20 @@ export interface KpiMetricDef {
    * can measure this) to "no_data" (somewhere to supply it now exists, nothing
    * has been supplied yet) — a real change in meaning, not a cosmetic one.
    */
-  processSource?: { grain: "process" };
+  processSource?: {
+    grain: "process";
+    /**
+     * The kpi_metric_master.metric_code a KPI Studio process-grain definition
+     * writes under, when one feeds this metric.
+     *
+     * process_metric_actual.metric_key holds the registry's own metricKey for a
+     * hand-entered figure, but Studio knows its metric by metric_code — two
+     * namespaces for the same idea. Naming the code here lets the resolver match
+     * either, so a metric reads the same whether somebody typed the number in or
+     * Studio computed it, with no second storage path and no rename.
+     */
+    metricCode?: string;
+  };
 }
 
 export interface ProcessKpiSet {
