@@ -254,6 +254,121 @@ describe("resolveStudioForEmployee excludes process-grain definitions", () => {
   });
 });
 
+describe("saveDefinition returns the row that actually exists", () => {
+  // Regression: the id came from SELECT UUID() and was only correct when the
+  // INSERT actually inserted. Re-saving the same scope on the same start date
+  // takes the ON DUPLICATE KEY path, the surviving row keeps its original id,
+  // and the generated one names nothing. It was then used to rewrite the
+  // definition's extra sources — deleting no rows, so the old sources stayed
+  // attached, and inserting orphans against a phantom definition — and handed
+  // back to the caller.
+  it("re-reads the id after an upsert instead of trusting the generated one", async () => {
+    const generated = "11111111-1111-1111-1111-111111111111";
+    const surviving = "22222222-2222-2222-2222-222222222222";
+
+    const answer = (sql: string): unknown => {
+      const text = String(sql);
+      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("source_cols")) {
+        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+      }
+      if (text.includes("SELECT UUID()")) return Promise.resolve([[{ id: generated }], []]);
+      if (text.includes("FROM kpi_metric_master")) {
+        return Promise.resolve([[{ id: "m1", unit: "percentage", direction: "higher_better" }], []]);
+      }
+      if (text.includes("FROM kpi_studio_source_field")) {
+        return Promise.resolve([[{ field_name: "present" }], []]);
+      }
+      // The read-back that this test exists for.
+      if (text.includes("FROM kpi_studio_definition") && text.includes("effective_from = ?")) {
+        return Promise.resolve([[{ id: surviving }], []]);
+      }
+      return Promise.resolve([[], []]);
+    };
+
+    execute.mockImplementation(answer as never);
+    const connectionCalls: Array<[string, unknown[]]> = [];
+    const connection = {
+      beginTransaction: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockResolvedValue(undefined),
+      rollback: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn(),
+      execute: vi.fn((sql: string, params: unknown[] = []) => {
+        connectionCalls.push([String(sql), params]);
+        return answer(sql) as never;
+      }),
+    };
+    const dbModule = await import("../../../db/mysql.js");
+    (dbModule.db.getConnection as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(connection);
+
+    const result = await svc.saveDefinition({
+      metric_id: "m1",
+      data_source_id: "s1",
+      formula_expression: "present",
+      grain: "process",
+      process_id: "p1",
+      effective_from: "2026-08-01",
+    } as never);
+
+    expect(result.id).toBe(surviving);
+    expect(result.id).not.toBe(generated);
+
+    // And the extra-source rewrite must target the surviving row, not the phantom.
+    const extraWrites = connectionCalls.filter(([sql]) => sql.includes("kpi_studio_definition_source"));
+    for (const [, params] of extraWrites) {
+      expect(params).not.toContain(generated);
+    }
+  });
+});
+
+describe("a process-grain definition must carry a calculation", () => {
+  /** Capability probes report the migrated schema; the rest answers a bare row. */
+  function studio(rest: (sql: string) => unknown) {
+    execute.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes("INFORMATION_SCHEMA.TABLES")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("kpi_employee_resolved")) return Promise.resolve([[{ n: 6 }], []]);
+      if (text.includes("source_cols")) {
+        return Promise.resolve([[{ source_cols: 4, grain_col: 1, filter_col: 1 }], []]);
+      }
+      return rest(text) as never;
+    });
+  }
+
+  // Regression: this saved cleanly, reported success, stored the grain, and
+  // dropped the formula. computeProcessGrainDefinitions skips any definition
+  // with a NULL formula_expression, so the KPI appeared in the list and could
+  // never produce a number — with nothing anywhere explaining why.
+  it("refuses one with no formula, rather than saving something inert", async () => {
+    studio(() => Promise.resolve([[], []]));
+    await expect(
+      svc.saveDefinition({
+        metric_id: "m1",
+        data_source_id: "s1",
+        grain: "process",
+        process_id: "p1",
+      } as never),
+    ).rejects.toThrow(/needs a calculation/i);
+  });
+
+  it("says which field to send, so the fix is obvious", async () => {
+    studio(() => Promise.resolve([[], []]));
+    await expect(
+      svc.saveDefinition({ metric_id: "m1", data_source_id: "s1", grain: "process" } as never),
+    ).rejects.toThrow(/formula_expression/);
+  });
+
+  // An employee-grain definition may legitimately carry only a target and
+  // scoring, so the guard must not spread to it.
+  it("still allows an employee-grain definition with no formula", async () => {
+    studio(() => Promise.resolve([[], []]));
+    await expect(
+      svc.saveDefinition({ metric_id: "m1", data_source_id: "s1", grain: "employee" } as never),
+    ).rejects.not.toThrow(/needs a calculation/i);
+  });
+});
+
 describe("a filtered field stores no source_expression", () => {
   /** Capability probes report the migrated schema; the rest answers a bare row. */
   function studio(rest: (sql: string) => unknown) {

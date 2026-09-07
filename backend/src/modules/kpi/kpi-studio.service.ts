@@ -1014,6 +1014,20 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
   if (defCap.processGrain && !['employee', 'process'].includes(definitionGrain)) {
     throw new Error(`Unknown grain "${definitionGrain}" — use employee or process`);
   }
+
+  // A process-grain definition with no formula is inert and cannot say so.
+  // computeProcessGrainDefinitions is the only thing that writes
+  // process_metric_actual for the studio, and it skips any definition whose
+  // formula_expression is NULL — so such a row saves cleanly, appears in the
+  // list, and silently never produces a number. An employee-grain definition
+  // may legitimately carry only a target and scoring, which is why this is
+  // narrowed to process grain rather than applied to both.
+  if (definitionGrain === 'process' && !String(input.formula_expression ?? '').trim()) {
+    throw new Error(
+      'A process-level KPI needs a calculation — without one it would never produce a number. ' +
+        'Send it as formula_expression.',
+    );
+  }
   await requireStudioTables();
 
   const [metricRows] = await db.execute<RowDataPacket[]>(
@@ -1127,6 +1141,36 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
       ],
     );
 
+    // Which row actually exists now.
+    //
+    // `id` above is a UUID generated for the INSERT. When ON DUPLICATE KEY turns
+    // that into an UPDATE — re-saving the same scope on the same start date, the
+    // ordinary "fix a definition the day you made it" case — the surviving row
+    // keeps its ORIGINAL id and the generated one names nothing. Using it below
+    // silently attached the extra sources to a definition that does not exist:
+    // the DELETE matched no rows so the old sources stayed attached, and every
+    // insert created an orphan pointing at a phantom id. The caller was handed
+    // that phantom id too.
+    const [existingRows] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM kpi_studio_definition
+        WHERE metric_id = ?
+          AND COALESCE(branch_id, '~')      = COALESCE(?, '~')
+          AND COALESCE(process_id, '~')     = COALESCE(?, '~')
+          AND COALESCE(designation_id, '~') = COALESCE(?, '~')
+          AND COALESCE(employee_id, '~')    = COALESCE(?, '~')
+          AND effective_from = ?
+        LIMIT 1`,
+      [
+        input.metric_id,
+        scope.branch_id,
+        scope.process_id,
+        scope.designation_id,
+        scope.employee_id,
+        effectiveFrom,
+      ],
+    );
+    const definitionId = String((existingRows as any[])[0]?.id ?? id);
+
     // ── Extra sources ──
     //
     // Written inside the same transaction as the definition: a definition whose formula reads a
@@ -1141,13 +1185,16 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
     if (await multiSourceSupported()) {
       // Cleared and rewritten rather than merged: the submitted list is the complete intent, and a
       // source the author removed must actually stop being read.
-      await connection.execute(`DELETE FROM kpi_studio_definition_source WHERE definition_id = ?`, [id]);
+      await connection.execute(
+        `DELETE FROM kpi_studio_definition_source WHERE definition_id = ?`,
+        [definitionId],
+      );
       for (const [position, sourceId] of extras.entries()) {
         await connection.execute(
           `INSERT INTO kpi_studio_definition_source (id, definition_id, data_source_id, read_order)
            VALUES (UUID(), ?, ?, ?)
            ON DUPLICATE KEY UPDATE read_order = VALUES(read_order), active_status = 1`,
-          [id, sourceId, (position + 1) * 10],
+          [definitionId, sourceId, (position + 1) * 10],
         );
       }
     } else if (extras.length) {
@@ -1158,7 +1205,11 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
     }
 
     await connection.commit();
-    return { id, effective_from: effectiveFrom, scope_label: classifyScope(scope)?.label ?? null };
+    return {
+      id: definitionId,
+      effective_from: effectiveFrom,
+      scope_label: classifyScope(scope)?.label ?? null,
+    };
   } catch (error) {
     await connection.rollback();
     throw error;
