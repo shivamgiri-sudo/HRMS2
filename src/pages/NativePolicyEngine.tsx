@@ -121,7 +121,8 @@ function SlabTableEditor({
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-slate-200 overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[24rem] text-sm">
           <thead className="bg-slate-50">
             <tr>
               <th className="px-3 py-2 text-left font-medium text-slate-600">From (days)</th>
@@ -166,6 +167,7 @@ function SlabTableEditor({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
       <Button variant="outline" size="sm" onClick={addRow} className="h-7 text-xs gap-1">
         <Plus className="h-3 w-3" /> Add Slab

@@ -716,8 +716,8 @@ const Employees = () => {
 
             {bankQualityOpen && (
               <div className="border-t border-amber-200 px-5 pb-4">
-                <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-amber-200 bg-white">
-                  <table className="w-full text-xs">
+                <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-amber-200 bg-white">
+                  <table className="w-full min-w-[36rem] text-xs">
                     <thead className="sticky top-0 bg-amber-50">
                       <tr className="text-left text-amber-700">
                         <th className="px-3 py-2 font-semibold">Code</th>

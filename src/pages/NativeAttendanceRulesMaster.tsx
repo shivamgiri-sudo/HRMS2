@@ -474,7 +474,8 @@ export default function NativeAttendanceRulesMaster() {
               <p className="hrms-empty-body">Click "New Rule" to add the first rule</p>
             </div>
           ) : (
-            <table className="hrms-table w-full">
+            <div className="overflow-x-auto">
+            <table className="hrms-table w-full min-w-[64rem]">
               <thead>
                 <tr>
                   <th>Rule Name</th><th>Scope</th><th>Applies To</th>
@@ -529,6 +530,7 @@ export default function NativeAttendanceRulesMaster() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
