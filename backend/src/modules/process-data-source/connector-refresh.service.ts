@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { Pool as MysqlPool } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
-import { getPoolForKey } from "../external-db/external-db.service.js";
+import { getPoolForKey, getCredentialsForKey } from "../external-db/external-db.service.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
 
 /**
@@ -20,6 +21,15 @@ import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapte
  * This is another team's production database. The only statement issued here is
  * a SELECT, and external-db.service.ts's pools additionally enforce read-only
  * at the session level. Nothing here writes to a client's system.
+ *
+ * ── MySQL only, said out loud ──────────────────────────────────────────────
+ * getPoolForKey returns MySQL or SQL Server, and the connector form offers
+ * both. The query below is MySQL dialect throughout — backtick identifiers,
+ * DATE_FORMAT, DATE_ADD — none of which is valid T-SQL. Rather than cast the
+ * union and let an MSSQL connector fail deep inside the driver with an opaque
+ * message (which is what the existing KPI Studio reader does), this refuses
+ * MSSQL up front and names the reason. Supporting T-SQL means a second query
+ * builder, which is a deliberate follow-up, not a silent gap.
  */
 
 const AGGREGATES = ["SUM", "AVG", "COUNT", "MAX", "MIN"] as const;
@@ -45,7 +55,15 @@ export async function refreshConnectorMetric(input: {
     throw new Error(`Unsupported aggregate: ${String(input.aggregate)}. Use one of ${AGGREGATES.join(", ")}.`);
   }
 
-  const pool = await getPoolForKey(input.connectorKey);
+  const creds = await getCredentialsForKey(input.connectorKey);
+  if (!creds) throw new Error(`No credentials configured for connector: ${input.connectorKey}`);
+  if (creds.db_type === "mssql") {
+    throw new Error(
+      "SQL Server connectors are not supported for metric refresh yet — the query builder is MySQL dialect. Use a MySQL connector, or supply this metric by upload.",
+    );
+  }
+
+  const pool = (await getPoolForKey(input.connectorKey)) as MysqlPool;
 
   // DATE_FORMAT, not DATE(): mysql2 hands back a bare DATE column as a JS Date
   // whose toString is "Fri Aug 01 2026 ...". Formatting in SQL keeps it the

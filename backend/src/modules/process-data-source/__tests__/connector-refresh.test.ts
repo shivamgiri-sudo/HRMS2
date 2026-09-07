@@ -9,13 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * and the aggregate must come from a fixed whitelist, never straight from the
  * request. These tests fail if either guard is removed.
  */
-const { execute, getPoolForKey, poolQuery } = vi.hoisted(() => ({
+const { execute, getPoolForKey, getCredentialsForKey, poolQuery } = vi.hoisted(() => ({
   execute: vi.fn(),
   getPoolForKey: vi.fn(),
+  getCredentialsForKey: vi.fn(),
   poolQuery: vi.fn(),
 }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../external-db/external-db.service.js", () => ({ getPoolForKey }));
+vi.mock("../../external-db/external-db.service.js", () => ({ getPoolForKey, getCredentialsForKey }));
 
 const svc = await import("../connector-refresh.service.js");
 
@@ -27,9 +28,25 @@ const BASE = {
 
 describe("refreshConnectorMetric", () => {
   beforeEach(() => {
-    execute.mockReset(); poolQuery.mockReset(); getPoolForKey.mockReset();
+    execute.mockReset(); poolQuery.mockReset();
+    getPoolForKey.mockReset(); getCredentialsForKey.mockReset();
     getPoolForKey.mockResolvedValue({ query: poolQuery });
+    getCredentialsForKey.mockResolvedValue({ db_type: "mysql" });
     execute.mockResolvedValue([{ affectedRows: 1 }, []]);
+  });
+
+  it("refuses a SQL Server connector by name instead of failing inside the driver", async () => {
+    // The query builder is MySQL dialect throughout; T-SQL has no DATE_FORMAT
+    // and no backtick identifiers, so casting the pool union would produce an
+    // opaque driver error rather than an answerable one.
+    getCredentialsForKey.mockResolvedValue({ db_type: "mssql" });
+    await expect(svc.refreshConnectorMetric(BASE)).rejects.toThrow(/SQL Server .* not supported/i);
+    expect(poolQuery).not.toHaveBeenCalled();
+  });
+
+  it("fails clearly when the connector has no stored credentials", async () => {
+    getCredentialsForKey.mockResolvedValue(null);
+    await expect(svc.refreshConnectorMetric(BASE)).rejects.toThrow(/No credentials configured/);
   });
 
   it("rejects an identifier that is not a plain column name", async () => {
