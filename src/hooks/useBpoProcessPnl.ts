@@ -56,6 +56,7 @@ export interface BpoPnlRow {
   deferredRevenue: number;
   revenueLeakage: number;
   revenueAtRisk: number;
+  revenueAtRiskUnavailable: string | null;
   revenueBudget: number | null;
   revenueVariance: number | null;
   agentSalary: number;

@@ -68,6 +68,10 @@ export interface ProcessPnlRecord {
   budgetVariance: number | null;
   revenueLeakage: number;
   revenueAtRisk: number;
+  /** Set (non-null) when process_revenue_daily has no row for this process/period — the
+   *  0 above is a default, not a measured value, and callers that render revenueAtRisk
+   *  directly to a user should show this message instead of a false "₹0 at risk". */
+  revenueAtRiskUnavailable: string | null;
   monthEndProjectedProfit: number;
   reconciliationStatus: "matched" | "pending" | "exception";
   financialStatus: "actual" | "forecast" | "mixed";
