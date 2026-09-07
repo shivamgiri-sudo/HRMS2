@@ -18,6 +18,7 @@ const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPe
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
 const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage"));
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
+const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
@@ -116,6 +117,7 @@ export const performanceRouteElements = (
           4-level TL-pod/agent/raw-row drill-down. Sibling to Process Performance
           above; same viewer set, separate page_catalog code (migration 1676). */}
       <Route path="/performance/process-kpi-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_KPI_DASHBOARD"><ProcessKpiDashboardPage /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
       <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
