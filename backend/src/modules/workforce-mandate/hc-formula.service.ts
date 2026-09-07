@@ -56,7 +56,7 @@ interface HcFormulaResult {
 
 // ── Live counter queries ──────────────────────────────────────────────────────
 
-async function fetchActiveHc(processId: string, branchId: string | null): Promise<number> {
+export async function fetchActiveHc(processId: string, branchId: string | null): Promise<number> {
   const conds = ["e.process_id = ?", "e.active_status = 1"];
   const params: unknown[] = [processId];
   if (branchId) {
@@ -115,7 +115,7 @@ async function fetchInTrainingHc(processId: string): Promise<number> {
  * rolling_30d_attrition_rate:
  *   COUNT(exits in last 30 days in scope) / active_hc × 100
  */
-async function fetchRolling30dAttritionRate(
+export async function fetchRolling30dAttritionRate(
   processId: string,
   branchId: string | null,
   activeHc: number
@@ -143,7 +143,7 @@ async function fetchRolling30dAttritionRate(
  *
  * Falls back to the mandate's shrinkage_pct if no attendance data exists.
  */
-async function fetchRolling60dShrinkagePct(
+export async function fetchRolling60dShrinkagePct(
   processId: string,
   branchId: string | null,
   fallbackShrinkagePct: number

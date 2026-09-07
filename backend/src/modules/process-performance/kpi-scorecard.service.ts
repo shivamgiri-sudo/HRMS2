@@ -6,6 +6,7 @@ import {
   type KpiFamily, type KpiUnit, type KpiDirection, type ProcessKpiSet,
 } from "./kpi-metric-registry.js";
 import { resolveCdrScorecard, getCdrAgentBreakdown, getCdrAgentCalls } from "./kpi-cdr-source.js";
+import { fetchActiveHc, fetchRolling30dAttritionRate, fetchRolling60dShrinkagePct } from "../workforce-mandate/hc-formula.service.js";
 
 /**
  * Client Process KPI Dashboard — scorecards for the targets on the client-facing
@@ -103,12 +104,66 @@ function aggExprFor(family: KpiFamily): string {
   return family === "volume" ? "SUM(k.actual_value)" : "AVG(k.actual_value)";
 }
 
+export interface ProcessHealthSnapshot {
+  activeHc: number;
+  attrition30dPct: number | null;
+  attrition30dAvailability: Availability;
+  shrinkage60dPct: number | null;
+  shrinkage60dAvailability: Availability;
+  qualityScore: number | null;
+  qualityScoreAvailability: Availability;
+}
+
 export interface ProcessKpiHeader {
   processCode: string;
   processId: string;
   billingName: string;
   projectName: string;
   note: string | null;
+  health: ProcessHealthSnapshot;
+}
+
+/**
+ * Real QUALITY_SCORE, averaged over the trailing 30 days. Deliberately joins
+ * through the CURRENT employees.process_id, not kpi_daily_actual's own
+ * process_id_at_event -- that lineage column is only 2.9% populated (0% on
+ * quality rows specifically), verified live; quality-target.service.ts's
+ * listProcessesMissingTarget() uses this same employees.process_id join for
+ * exactly that reason, reused here rather than re-derived.
+ */
+async function fetchProcessQualityScore(processId: string): Promise<{ value: number | null; count: number }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT AVG(k.actual_value) AS value, COUNT(*) AS n
+       FROM employees e
+       JOIN kpi_daily_actual k ON k.employee_id = e.id
+       JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = 'QUALITY_SCORE'
+      WHERE e.process_id = ?
+        AND k.score_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+    [processId],
+  );
+  const r = rows[0];
+  const n = Number(r?.n ?? 0);
+  return { value: n > 0 && r?.value != null ? Number(r.value) : null, count: n };
+}
+
+/**
+ * `fetchRolling60dShrinkagePct`/`fetchRolling30dAttritionRate` in
+ * hc-formula.service.ts both fall back to a safe default (the mandate's
+ * configured shrinkage, or 0) when there is no underlying data -- correct for
+ * their own formula, where a missing input must not divide by zero, but
+ * wrong here: a 0% shown on this header would read as "verified good", not
+ * "no attendance/headcount data exists for this process". These two checks
+ * exist only to tell those two states apart honestly.
+ */
+async function hasAttendanceRows(processId: string, days: number): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+      WHERE e.process_id = ? AND adr.record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      LIMIT 1`,
+    [processId, days],
+  );
+  return rows.length > 0;
 }
 
 export async function getProcessKpiHeader(userId: string, processCode: string): Promise<ProcessKpiHeader | null> {
@@ -116,7 +171,33 @@ export async function getProcessKpiHeader(userId: string, processCode: string): 
   if (!set) return null;
   const processId = await resolveProcessId(userId, processCode);
   if (!processId) return null;
-  return { processCode, processId, billingName: set.billingName, projectName: set.projectName, note: set.note ?? null };
+
+  // Headcount / attrition / shrinkage reuse the exact live counters
+  // workforce-mandate's HC formula already computes and has proven --
+  // process-scoped, no workforce_mandate row required (unlike the full
+  // required-HC/coverage formula, which needs a mandate config these 4
+  // processes may not have).
+  const [activeHc, quality, hasAttendance60d] = await Promise.all([
+    fetchActiveHc(processId, null),
+    fetchProcessQualityScore(processId),
+    hasAttendanceRows(processId, 60),
+  ]);
+  const [attrition30dPctRaw, shrinkage60dPctRaw] = await Promise.all([
+    fetchRolling30dAttritionRate(processId, null, activeHc),
+    fetchRolling60dShrinkagePct(processId, null, 0),
+  ]);
+
+  const health: ProcessHealthSnapshot = {
+    activeHc,
+    attrition30dPct: activeHc > 0 ? attrition30dPctRaw : null,
+    attrition30dAvailability: activeHc > 0 ? "ok" : "no_data",
+    shrinkage60dPct: hasAttendance60d ? shrinkage60dPctRaw : null,
+    shrinkage60dAvailability: hasAttendance60d ? "ok" : "no_data",
+    qualityScore: quality.value,
+    qualityScoreAvailability: quality.count > 0 ? "ok" : "no_data",
+  };
+
+  return { processCode, processId, billingName: set.billingName, projectName: set.projectName, note: set.note ?? null, health };
 }
 
 /** Every registered process, for the picker -- listing only what the sheet defines, not the whole org. */

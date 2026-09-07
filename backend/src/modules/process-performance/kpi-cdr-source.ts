@@ -34,6 +34,16 @@ export interface CdrSource {
 export type CdrField = "al_pct" | "sl_pct" | "abn_pct" | "repeat_pct" | "acht_sec";
 
 interface CdrDayRow extends RowDataPacket {
+  /**
+   * Pre-formatted by MySQL as a string (DATE_FORMAT, not DATE()/CAST): a
+   * plain `DATE(CallDate) AS date` comes back from mysql2 as a JS Date
+   * object, not a string, so `String(r.date).slice(0,7)` silently produced
+   * "Fri Aug" instead of "2026-08" (caught live 2026-09-07, see
+   * hrms2-host-timezone-date-bugs.md). DATE_FORMAT returns a real VARCHAR,
+   * sidestepping that trap, and grouping by the same expression the SELECT
+   * uses (rather than DATE(CallDate)) also satisfies this server's
+   * sql_mode=only_full_group_by, which rejected the two-expression version.
+   */
   date: string;
   offered: number;
   answered: number;
@@ -47,7 +57,7 @@ function buildDayQuery(source: CdrSource): string {
   if (source.pattern === "A") {
     return `
       SELECT
-        DATE(CallDate) AS date,
+        DATE_FORMAT(CallDate, '%Y-%m-%d') AS date,
         SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
         SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
                  OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
@@ -58,12 +68,12 @@ function buildDayQuery(source: CdrSource): string {
       FROM ${source.table}
       WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
         AND CampaignName IN (${placeholders})
-      GROUP BY DATE(CallDate)
+      GROUP BY DATE_FORMAT(CallDate, '%Y-%m-%d')
       ORDER BY date ASC`;
   }
   return `
     SELECT
-      DATE(CallDate) AS date,
+      DATE_FORMAT(CallDate, '%Y-%m-%d') AS date,
       COUNT(*) AS offered,
       SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num,
@@ -72,7 +82,7 @@ function buildDayQuery(source: CdrSource): string {
     FROM ${source.table}
     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
       AND CampaignName IN (${placeholders})
-    GROUP BY DATE(CallDate)
+    GROUP BY DATE_FORMAT(CallDate, '%Y-%m-%d')
     ORDER BY date ASC`;
 }
 
@@ -120,7 +130,7 @@ export async function resolveCdrScorecard(source: CdrSource, field: CdrField, fr
 
   const byMonth = new Map<string, CdrDayRow[]>();
   for (const r of rows) {
-    const period = String(r.date).slice(0, 7);
+    const period = r.date.slice(0, 7); // "2026-08-05" -> "2026-08"; r.date is a real string here, see CdrDayRow's comment
     const list = byMonth.get(period) ?? [];
     list.push(r);
     byMonth.set(period, list);
