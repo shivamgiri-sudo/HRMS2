@@ -24,6 +24,20 @@ export type KpiFamily = "rate" | "volume" | "duration" | "roi";
 export type KpiUnit = "percent" | "count" | "currency" | "seconds" | "ratio";
 export type KpiDirection = "higher_is_better" | "lower_is_better";
 
+/**
+ * A second real data source, alongside kpi_daily_actual: a live call-center
+ * campaign in dialer_db.cdr_in_* (verified live 2026-09-06 for BLA_BLI_BLU's
+ * Inbound LOB — see kpi-cdr-source.ts for the query and the verification
+ * notes). Only set on a metric when kpiMetricCode is null but a real CDR feed
+ * covers the concept instead.
+ */
+export interface KpiCdrSource {
+  table: string;
+  campaigns: string[];
+  pattern: "A" | "B";
+  field: "al_pct" | "sl_pct" | "abn_pct" | "repeat_pct" | "acht_sec";
+}
+
 export interface KpiMetricDef {
   metricKey: string;
   label: string;
@@ -36,6 +50,8 @@ export interface KpiMetricDef {
   kpiMetricCode: string | null;
   /** Why kpiMetricCode is null, shown in place of a fabricated number. */
   notTrackedNote?: string;
+  /** Set only when a real dialer_db campaign covers this concept instead of kpi_daily_actual. */
+  cdrSource?: KpiCdrSource;
 }
 
 export interface ProcessKpiSet {
@@ -48,6 +64,16 @@ export interface ProcessKpiSet {
 }
 
 const NO_METRIC_CODE = "No metric in kpi_metric_master captures this yet — needs a data-source decision before it can be measured, not a dashboard change.";
+
+/**
+ * BLA_BLI_BLU's Inbound LOB, live in dialer_db as CampaignName='Blabliblu_IN'
+ * on cdr_in_10_4 — verified live 2026-09-06 (40,560 rows, through today).
+ * Pattern A: this table's AgentId carries the same 'VDCL' queue/no-agent
+ * sentinel the 7 already-onboarded Pattern-A clients use; DisconnBy never
+ * contains 'HOLDTIME' here (0/40,560 rows), so that exclusion is a no-op on
+ * this campaign, not a mismatch — Pattern A is a verified fit, not a guess.
+ */
+const BLABLIBLU_INBOUND_CDR = { table: "cdr_in_10_4", campaigns: ["Blabliblu_IN"], pattern: "A" as const };
 
 export const PROCESS_KPI_REGISTRY: ProcessKpiSet[] = [
   {
@@ -65,11 +91,11 @@ export const PROCESS_KPI_REGISTRY: ProcessKpiSet[] = [
       { metricKey: "abc_net_revenue", label: "Net Revenue", family: "volume", unit: "currency", target: 1651748, direction: "higher_is_better", lobLabel: "ABC", kpiMetricCode: null, notTrackedNote: NO_METRIC_CODE },
       { metricKey: "abc_roi", label: "ROI", family: "roi", unit: "ratio", target: 5, direction: "higher_is_better", lobLabel: "ABC", kpiMetricCode: null, notTrackedNote: NO_METRIC_CODE + " (no cost-vs-revenue figure exists per process; process_lob_monthly_plan, the table meant to carry this, has zero rows)." },
 
-      { metricKey: "inbound_al_pct", label: "AL %", family: "rate", unit: "percent", target: 95, direction: "higher_is_better", lobLabel: "Inbound", kpiMetricCode: null, notTrackedNote: NO_METRIC_CODE + " (answer-level is computed live for 7 other named clients in inbound-ops.service.ts; this process isn't one of them)." },
-      { metricKey: "inbound_abn_pct", label: "Abn %", family: "rate", unit: "percent", target: 5, direction: "lower_is_better", lobLabel: "Inbound", kpiMetricCode: null, notTrackedNote: NO_METRIC_CODE },
-      { metricKey: "inbound_sl_pct", label: "SL %", family: "rate", unit: "percent", target: 90, direction: "higher_is_better", lobLabel: "Inbound", kpiMetricCode: null, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "inbound_al_pct", label: "AL %", family: "rate", unit: "percent", target: 95, direction: "higher_is_better", lobLabel: "Inbound", kpiMetricCode: null, cdrSource: { ...BLABLIBLU_INBOUND_CDR, field: "al_pct" } },
+      { metricKey: "inbound_abn_pct", label: "Abn %", family: "rate", unit: "percent", target: 5, direction: "lower_is_better", lobLabel: "Inbound", kpiMetricCode: null, cdrSource: { ...BLABLIBLU_INBOUND_CDR, field: "abn_pct" } },
+      { metricKey: "inbound_sl_pct", label: "SL %", family: "rate", unit: "percent", target: 90, direction: "higher_is_better", lobLabel: "Inbound", kpiMetricCode: null, cdrSource: { ...BLABLIBLU_INBOUND_CDR, field: "sl_pct" } },
       { metricKey: "inbound_acht_sec", label: "ACHT (In Sec)", family: "duration", unit: "seconds", target: 240, direction: "lower_is_better", lobLabel: "Inbound", kpiMetricCode: "AHT" },
-      { metricKey: "inbound_repeat_pct", label: "Repeat Calls", family: "rate", unit: "percent", target: 10, direction: "lower_is_better", lobLabel: "Inbound", kpiMetricCode: null, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "inbound_repeat_pct", label: "Repeat Calls", family: "rate", unit: "percent", target: 10, direction: "lower_is_better", lobLabel: "Inbound", kpiMetricCode: null, cdrSource: { ...BLABLIBLU_INBOUND_CDR, field: "repeat_pct" } },
 
       { metricKey: "upgrade_conversion_pct", label: "Conversion Target %", family: "rate", unit: "percent", target: 12, direction: "higher_is_better", lobLabel: "Upgrade", kpiMetricCode: "CONVERSION_RATE" },
       { metricKey: "upgrade_sale_target", label: "Sale Target", family: "volume", unit: "count", target: 647.22, direction: "higher_is_better", lobLabel: "Upgrade", kpiMetricCode: "SALES_COUNT" },

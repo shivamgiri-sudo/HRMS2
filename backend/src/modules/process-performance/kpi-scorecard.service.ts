@@ -5,6 +5,7 @@ import {
   PROCESS_KPI_REGISTRY, findProcessKpiSet, findMetricDef,
   type KpiFamily, type KpiUnit, type KpiDirection, type ProcessKpiSet,
 } from "./kpi-metric-registry.js";
+import { resolveCdrScorecard, getCdrAgentBreakdown, getCdrAgentCalls } from "./kpi-cdr-source.js";
 
 /**
  * Client Process KPI Dashboard — scorecards for the targets on the client-facing
@@ -222,7 +223,34 @@ async function computeScorecards(
     }
   }
 
+  // CDR-sourced metrics (dialer_db) — a handful of the sheet's Inbound metrics
+  // have no kpi_daily_actual code but do have a real call-center feed. Fetched
+  // in parallel, one dialer_db round trip per distinct metric.
+  const cdrMetrics = set.metrics.filter((m) => !m.kpiMetricCode && m.cdrSource);
+  const cdrByMetricKey = new Map<string, Awaited<ReturnType<typeof resolveCdrScorecard>>>();
+  // Gated on processId exactly like the kpi_daily_actual path above: a null
+  // processId means this process is unresolved or outside the caller's scope,
+  // and a real campaign feed must not leak data past that boundary either.
+  if (processId && cdrMetrics.length) {
+    const results = await Promise.all(
+      cdrMetrics.map((m) => resolveCdrScorecard(m.cdrSource!, m.cdrSource!.field, filters.from, filters.to)),
+    );
+    cdrMetrics.forEach((m, i) => cdrByMetricKey.set(m.metricKey, results[i]));
+  }
+
   return set.metrics.map((m): KpiScorecardRow => {
+    if (m.cdrSource) {
+      const cdr = cdrByMetricKey.get(m.metricKey);
+      const availability: Availability = cdr && cdr.count > 0 ? "ok" : "no_data";
+      return {
+        metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+        target: m.target, direction: m.direction, availability,
+        actual: availability === "ok" ? cdr!.value : null,
+        rag: availability === "ok" && cdr!.value != null ? ragFor(cdr!.value, m.target, m.direction) : null,
+        trend: cdr?.trend ?? [],
+        note: availability === "no_data" ? "No calls recorded on this campaign for this window." : undefined,
+      };
+    }
     if (!m.kpiMetricCode) {
       return {
         metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
@@ -282,6 +310,15 @@ export async function getKpiMetricDetail(
     metricKey, label, availability: "not_tracked", unit: def.unit,
     trend: [], recordsLabel: "Team leaders", records: [], note: def.notTrackedNote,
   };
+
+  if (def.cdrSource) {
+    // Scope check first -- same boundary the kpi_daily_actual path enforces,
+    // even though the campaign query itself doesn't need a processId.
+    const scopedProcessId = await resolveProcessId(userId, processCode);
+    if (!scopedProcessId) return { ...base, availability: "no_data", note: "This process is outside your scope or has no id on file." };
+    return getCdrMetricDetail(def.cdrSource, metricKey, label, def.unit, filters, employeeId);
+  }
+
   if (!def.kpiMetricCode) return base;
 
   const processId = await resolveProcessId(userId, processCode);
@@ -365,5 +402,54 @@ export async function getKpiMetricDetail(
       drillAs: teamLeaderId ? "employee" : "team_leader",
     })),
     note: tr.length || recs.length ? undefined : "No rows in this window at this level.",
+  };
+}
+
+/**
+ * CDR-sourced drilldown (dialer_db) -- two real levels, honestly shorter than
+ * the kpi_daily_actual path's three: by agent (as dialer_db names them, no
+ * fabricated TL layer -- see kpi-cdr-source.ts's header comment), then that
+ * agent's raw calls. `employeeId` here is a dialer AgentId string (e.g.
+ * 'MAS60390'), passed straight through by KpiScorecardDetail.tsx's existing
+ * drillAs:"employee" contract -- no frontend change needed.
+ */
+async function getCdrMetricDetail(
+  source: import("./kpi-metric-registry.js").KpiCdrSource,
+  metricKey: string, label: string, unit: KpiUnit, filters: KpiFilters, agentId: string | null,
+): Promise<KpiMetricDetail> {
+  const overall = await resolveCdrScorecard(source, source.field, filters.from, filters.to);
+
+  if (agentId) {
+    const calls = await getCdrAgentCalls(source, agentId, filters.from, filters.to);
+    return {
+      metricKey, label, unit,
+      availability: calls.length ? "ok" : "no_data",
+      trend: overall.trend,
+      recordsLabel: "Calls",
+      records: calls.map((c) => ({
+        id: String(c.id),
+        name: new Date(c.CallDate).toLocaleString("en-IN"),
+        subtitle: `${c.Disposition ?? "—"} · ${c.DisconnBy ?? "—"} · queue ${c.QueueDuration ?? "0"}`,
+        value: c.CallDurationSecond == null ? null : Number(c.CallDurationSecond),
+        drillAs: null,
+      })),
+      note: calls.length ? undefined : "No calls recorded for this agent in this window.",
+    };
+  }
+
+  const agents = await getCdrAgentBreakdown(source, source.field, filters.from, filters.to);
+  return {
+    metricKey, label, unit,
+    availability: agents.length ? "ok" : "no_data",
+    trend: overall.trend,
+    recordsLabel: "Agents",
+    records: agents.map((a) => ({
+      id: a.agentId,
+      name: a.agentName,
+      subtitle: `${a.offered} calls`,
+      value: a.value,
+      drillAs: "employee",
+    })),
+    note: agents.length ? undefined : "No calls recorded on this campaign for this window.",
   };
 }
