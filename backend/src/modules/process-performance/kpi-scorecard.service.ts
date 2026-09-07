@@ -7,6 +7,7 @@ import {
 } from "./kpi-metric-registry.js";
 import { resolveCdrScorecard, getCdrAgentBreakdown, getCdrAgentCalls } from "./kpi-cdr-source.js";
 import { fetchActiveHc, fetchRolling30dAttritionRate, fetchRolling60dShrinkagePct } from "../workforce-mandate/hc-formula.service.js";
+import { SHIVAMGIRI_CLIENT_ID, fetchShivamgiriQualityScore } from "./kpi-shivamgiri-source.js";
 
 /**
  * Client Process KPI Dashboard — scorecards for the targets on the client-facing
@@ -112,6 +113,9 @@ export interface ProcessHealthSnapshot {
   shrinkage60dAvailability: Availability;
   qualityScore: number | null;
   qualityScoreAvailability: Availability;
+  /** Set only when qualityScore came from the Shivamgiri fallback below -- a
+   *  closed historical pilot, not a live feed, so the UI can show "as of". */
+  qualityScoreAsOf: string | null;
 }
 
 export interface ProcessKpiHeader {
@@ -131,7 +135,9 @@ export interface ProcessKpiHeader {
  * listProcessesMissingTarget() uses this same employees.process_id join for
  * exactly that reason, reused here rather than re-derived.
  */
-async function fetchProcessQualityScore(processId: string): Promise<{ value: number | null; count: number }> {
+async function fetchProcessQualityScore(
+  processId: string, processCode: string,
+): Promise<{ value: number | null; count: number; asOf: string | null }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT AVG(k.actual_value) AS value, COUNT(*) AS n
        FROM employees e
@@ -143,7 +149,15 @@ async function fetchProcessQualityScore(processId: string): Promise<{ value: num
   );
   const r = rows[0];
   const n = Number(r?.n ?? 0);
-  return { value: n > 0 && r?.value != null ? Number(r.value) : null, count: n };
+  if (n > 0 && r?.value != null) return { value: Number(r.value), count: n, asOf: null };
+
+  // Fall back to Shivamgiri's call-audit pilot -- real for only 2 of the 4
+  // registered processes (see kpi-shivamgiri-source.ts's header comment for
+  // why FINNABLE/GS1 are deliberately not mapped here).
+  const clientId = SHIVAMGIRI_CLIENT_ID[processCode];
+  if (!clientId) return { value: null, count: 0, asOf: null };
+  const shivamgiri = await fetchShivamgiriQualityScore(clientId);
+  return { value: shivamgiri.value, count: shivamgiri.count, asOf: shivamgiri.asOfDate };
 }
 
 /**
@@ -179,7 +193,7 @@ export async function getProcessKpiHeader(userId: string, processCode: string): 
   // processes may not have).
   const [activeHc, quality, hasAttendance60d] = await Promise.all([
     fetchActiveHc(processId, null),
-    fetchProcessQualityScore(processId),
+    fetchProcessQualityScore(processId, processCode),
     hasAttendanceRows(processId, 60),
   ]);
   const [attrition30dPctRaw, shrinkage60dPctRaw] = await Promise.all([
@@ -195,6 +209,7 @@ export async function getProcessKpiHeader(userId: string, processCode: string): 
     shrinkage60dAvailability: hasAttendance60d ? "ok" : "no_data",
     qualityScore: quality.value,
     qualityScoreAvailability: quality.count > 0 ? "ok" : "no_data",
+    qualityScoreAsOf: quality.asOf,
   };
 
   return { processCode, processId, billingName: set.billingName, projectName: set.projectName, note: set.note ?? null, health };
