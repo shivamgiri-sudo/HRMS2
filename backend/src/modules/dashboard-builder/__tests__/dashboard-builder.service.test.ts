@@ -37,10 +37,24 @@ const widget = (over: Record<string, unknown> = {}) => ({
   position: 0, config_json: null, active_status: 1, ...over,
 });
 
+/** Makes the INFORMATION_SCHEMA probe report the tables as present. */
+function installed(rest: (sql: string) => unknown) {
+  execute.mockImplementation((sql: string) => {
+    if (String(sql).includes("INFORMATION_SCHEMA.TABLES")) {
+      return Promise.resolve([[{ n: 2 }], []]);
+    }
+    return rest(String(sql)) as never;
+  });
+}
+
 beforeEach(() => {
   execute.mockReset();
   buildScopeWhereClause.mockReset().mockResolvedValue({ sql: "1=1", params: [] });
   fetchProcessMetricValues.mockReset().mockResolvedValue(new Map());
+  svc.resetDashboardBuilderCapability();
+  // Default: installed, and every other query answers empty. Individual tests
+  // override with their own mockImplementation.
+  installed(() => Promise.resolve([[], []]));
 });
 
 describe("resolveDateRange", () => {
@@ -78,7 +92,7 @@ describe("saveWidget rejects anything outside the closed sets", () => {
     userId: "u1", dashboardId: "d1", metricSource: "process_metric_actual",
     metricKey: "m1", widgetType: "line",
   };
-  const ownsDashboard = () => execute.mockResolvedValue([[{ id: "d1" }], []]);
+  const ownsDashboard = () => installed(() => Promise.resolve([[{ id: "d1" }], []]));
 
   it("refuses an unknown chart type by name", async () => {
     ownsDashboard();
@@ -105,7 +119,7 @@ describe("saveWidget rejects anything outside the closed sets", () => {
   });
 
   it("refuses to edit a dashboard the caller does not own", async () => {
-    execute.mockResolvedValue([[], []]);
+    installed(() => Promise.resolve([[], []]));
     await expect(svc.saveWidget(base as never)).rejects.toThrow(/not yours to edit/i);
   });
 
@@ -131,7 +145,7 @@ describe("saveDashboard", () => {
   });
 
   it("stores shared roles as a comma list", async () => {
-    execute.mockResolvedValue([{ affectedRows: 1 }, []]);
+    installed(() => Promise.resolve([{ affectedRows: 1 }, []]));
     await svc.saveDashboard({ userId: "u1", name: "Ops", visibleRoles: ["manager", "qa"] });
     const insert = execute.mock.calls.find(([sql]) =>
       String(sql).includes("INSERT INTO builder_dashboard"));
@@ -139,7 +153,7 @@ describe("saveDashboard", () => {
   });
 
   it("leaves an unshared dashboard private rather than defaulting it open", async () => {
-    execute.mockResolvedValue([{ affectedRows: 1 }, []]);
+    installed(() => Promise.resolve([{ affectedRows: 1 }, []]));
     await svc.saveDashboard({ userId: "u1", name: "Private" });
     const insert = execute.mock.calls.find(([sql]) =>
       String(sql).includes("INSERT INTO builder_dashboard"));
@@ -150,9 +164,7 @@ describe("saveDashboard", () => {
 describe("renderDashboard resolves against the READER's scope", () => {
   /** dashboard row, widgets, then the scope query. */
   function mockRender(widgets: Array<Record<string, unknown>>, allowedProcessIds: string[]) {
-    let call = 0;
-    execute.mockImplementation((sql: string) => {
-      const text = String(sql);
+    installed((text: string) => {
       if (text.includes("FROM builder_dashboard\n") || text.includes("FROM builder_dashboard ")) {
         return Promise.resolve([[DASHBOARD], []]);
       }
@@ -160,10 +172,8 @@ describe("renderDashboard resolves against the READER's scope", () => {
       if (text.includes("FROM process_master")) {
         return Promise.resolve([allowedProcessIds.map((id) => ({ id })), []]);
       }
-      call++;
       return Promise.resolve([[], []]);
     });
-    void call;
   }
 
   it("refuses a widget aimed at a process the reader cannot see", async () => {
@@ -201,8 +211,7 @@ describe("renderDashboard resolves against the READER's scope", () => {
   it("explains a widget that names no process at all", async () => {
     mockRender([widget({ process_id: null })], ["p-gs1"]);
     // Dashboard-level process is also absent for this one.
-    execute.mockImplementation((sql: string) => {
-      const text = String(sql);
+    installed((text: string) => {
       if (text.includes("FROM builder_dashboard_widget")) {
         return Promise.resolve([[widget({ process_id: null })], []]);
       }
@@ -229,7 +238,60 @@ describe("renderDashboard resolves against the READER's scope", () => {
   });
 
   it("returns null for a dashboard not shared with the reader", async () => {
-    execute.mockResolvedValue([[], []]);
+    installed(() => Promise.resolve([[], []]));
     await expect(svc.renderDashboard("u9", "hr", "d1")).resolves.toBeNull();
+  });
+});
+
+describe("degrades when migration 1683 has not been applied", () => {
+  /** The probe reports the tables as absent. */
+  function notInstalled() {
+    svc.resetDashboardBuilderCapability();
+    execute.mockImplementation((sql: string) => {
+      if (String(sql).includes("INFORMATION_SCHEMA.TABLES")) {
+        return Promise.resolve([[{ n: 0 }], []]);
+      }
+      // Anything reaching the real tables would be the bug this guards against.
+      return Promise.reject(new Error("Table 'mas_hrms.builder_dashboard' doesn't exist"));
+    });
+  }
+
+  it("lists nothing instead of 500ing, so the page says 'no dashboards yet'", async () => {
+    notInstalled();
+    await expect(svc.listDashboards("u1", "manager")).resolves.toEqual([]);
+  });
+
+  it("returns null for a single dashboard rather than throwing", async () => {
+    notInstalled();
+    await expect(svc.getDashboard("u1", "manager", "d1")).resolves.toBeNull();
+  });
+
+  it("returns null when rendering rather than throwing", async () => {
+    notInstalled();
+    await expect(svc.renderDashboard("u1", "manager", "d1")).resolves.toBeNull();
+  });
+
+  it("refuses a write with a message naming the migration, not a driver error", async () => {
+    notInstalled();
+    await expect(svc.saveDashboard({ userId: "u1", name: "X" }))
+      .rejects.toThrow(/1683_dashboard_builder\.sql/);
+  });
+
+  it("refuses a widget write the same way", async () => {
+    notInstalled();
+    await expect(
+      svc.saveWidget({
+        userId: "u1", dashboardId: "d1", widgetType: "line",
+        metricSource: "process_metric_actual", metricKey: "m1",
+      } as never),
+    ).rejects.toThrow(/not installed/i);
+  });
+
+  it("never touches the real tables while uninstalled", async () => {
+    notInstalled();
+    await svc.listDashboards("u1", "manager");
+    const touched = execute.mock.calls.filter(([sql]) =>
+      String(sql).includes("FROM builder_dashboard"));
+    expect(touched).toHaveLength(0);
   });
 });

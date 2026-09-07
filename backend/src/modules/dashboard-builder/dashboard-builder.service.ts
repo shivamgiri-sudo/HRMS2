@@ -145,9 +145,54 @@ function safeParse(text: string): Record<string, unknown> | null {
   }
 }
 
+// ─── Installed? ──────────────────────────────────────────────────────────────
+
+/**
+ * Whether 1683 has been applied.
+ *
+ * Asked before every read, because this branch is shared and a migration may
+ * not have reached a given database yet. Without it the list endpoint 500s and
+ * the page white-screens, which reads as a broken feature rather than an
+ * un-migrated one — the same mistake this repo has now made three times with
+ * three different tables. kpi-studio.service.ts carries the identical guard for
+ * identical reasons.
+ */
+let installedCache: boolean | null = null;
+
+export function resetDashboardBuilderCapability(): void {
+  installedCache = null;
+}
+
+export async function isInstalled(): Promise<boolean> {
+  if (installedCache !== null) return installedCache;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('builder_dashboard','builder_dashboard_widget')`,
+    );
+    installedCache = Number(rows[0]?.n ?? 0) === 2;
+  } catch {
+    // A failed probe is not a reason to take the page down. Treat it as absent.
+    installedCache = false;
+  }
+  return installedCache;
+}
+
+export class DashboardBuilderNotInstalledError extends Error {
+  readonly statusCode = 503;
+  constructor() {
+    super("Dashboard Builder schema is not installed. Apply migration 1683_dashboard_builder.sql.");
+    this.name = "DashboardBuilderNotInstalledError";
+  }
+}
+
 // ─── Dashboards ──────────────────────────────────────────────────────────────
 
 export async function listDashboards(userId: string, role: string): Promise<DashboardRow[]> {
+  // An empty list, not an error: somebody opening the page before the migration
+  // lands should see "no dashboards yet", not a crash.
+  if (!(await isInstalled())) return [];
   // Own it, or hold a role it was shared with. A dashboard with no roles named
   // is private to its author — sharing is opt-in, not the default.
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -167,6 +212,7 @@ export async function listDashboards(userId: string, role: string): Promise<Dash
 export async function getDashboard(
   userId: string, role: string, id: string,
 ): Promise<{ dashboard: DashboardRow; widgets: WidgetRow[] } | null> {
+  if (!(await isInstalled())) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM builder_dashboard
       WHERE id = ? AND active_status = 1
@@ -193,6 +239,7 @@ export async function saveDashboard(input: {
   processId?: string | null;
   visibleRoles?: string[] | null;
 }): Promise<{ id: string }> {
+  if (!(await isInstalled())) throw new DashboardBuilderNotInstalledError();
   const name = input.name?.trim();
   if (!name) throw new Error("Give the dashboard a name");
 
@@ -238,6 +285,7 @@ export async function deleteDashboard(userId: string, id: string): Promise<{ ok:
 // ─── Widgets ─────────────────────────────────────────────────────────────────
 
 async function assertOwnsDashboard(userId: string, dashboardId: string): Promise<void> {
+  if (!(await isInstalled())) throw new DashboardBuilderNotInstalledError();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM builder_dashboard WHERE id = ? AND owner_user_id = ? AND active_status = 1 LIMIT 1`,
     [dashboardId, userId],
