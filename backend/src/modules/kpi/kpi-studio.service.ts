@@ -439,7 +439,8 @@ export async function listDataSources(): Promise<RowDataPacket[]> {
 }
 
 export async function getDataSourceWithFields(id: string) {
-  if (!(await getStudioCapability()).tables) return null;
+  const cap = await getStudioCapability();
+  if (!cap.tables) return null;
   const [sourceRows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM kpi_studio_data_source WHERE id = ? LIMIT 1`,
     [id],
@@ -448,7 +449,7 @@ export async function getDataSourceWithFields(id: string) {
   if (!source) return null;
 
   const [fieldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, field_name, display_name, source_column, aggregate_fn, source_expression, filter_json, unit, description
+    `SELECT id, field_name, display_name, source_column, aggregate_fn, source_expression${cap.fieldFilters ? ', filter_json' : ''}, unit, description
        FROM kpi_studio_source_field
       WHERE data_source_id = ? AND active_status = 1
       ORDER BY field_name`,
