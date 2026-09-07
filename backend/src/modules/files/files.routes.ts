@@ -92,12 +92,17 @@ const storage = multer.diskStorage({
 
 const ALLOWED_EXTENSIONS = new Set([
   ".pdf", ".jpg", ".jpeg", ".png", ".webp",
-  ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt",
+  ".doc", ".docx", ".xls", ".xlsx", ".xlsb", ".csv", ".txt",
 ]);
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  // Bumped from 10MB: Onfido's monthly raw-data exports (bulk-uploaded through this
+  // same shared endpoint, category=bulk-uploads) run up to ~19MB today and are
+  // uploaded whole-month, daily, per the owner's stated process — confirmed live,
+  // "External Dashboard" is 18.7MB. Every other category (documents, photos) stays
+  // far under this ceiling; raising it does not loosen anything for them.
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (ALLOWED_EXTENSIONS.has(ext)) {

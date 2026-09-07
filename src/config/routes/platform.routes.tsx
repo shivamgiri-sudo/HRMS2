@@ -76,6 +76,7 @@ const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboa
 const ReportsHub                    = lazy(() => import("@/pages/ReportsHub"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
+const OnfidoProcessDashboard         = lazy(() => import("@/pages/onfido-process/OnfidoProcessDashboard"));
 const BulkUploadApprovals           = lazy(() => import("@/pages/BulkUploadApprovals"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
 const CompanyCalendar               = lazy(() => import("@/pages/CompanyCalendar"));
@@ -142,6 +143,7 @@ export const platformRouteElements = (
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
       <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
+      <Route path="/onfido-process/dashboard" element={<ProtectedRoute roles={['admin','super_admin','ceo','coo','manager','process_manager','team_leader','branch_head','qa','quality_analyst','wfm']}><Gate pageCode="ONFIDO_PROCESS_DASHBOARD"><OnfidoProcessDashboard /></Gate></ProtectedRoute>} />
       {/* Gated on BULK_UPLOAD_APPROVALS, not BULK_UPLOAD.
         * branch_head holds NO BULK_UPLOAD grant (live, 2026-09-03) — so the only role
         * allowed to approve a gated batch was being turned away by the gate on the very

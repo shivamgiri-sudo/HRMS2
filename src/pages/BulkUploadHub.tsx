@@ -96,6 +96,14 @@ type CsvRow = Record<string, string>;
 
 const BULK_UPLOAD_BUCKET = "hrms-bulk-uploads";
 
+// Rows are staged to the server in slices of this size rather than one request for the
+// whole file. High-volume raw-data uploads (Onfido process reports run ~1 lakh rows/day
+// per file, wide-column ones up to 86 columns) blow past both the request body limit and
+// practical request size long before that — one file this size in a single POST is
+// megabytes of JSON and risks the same silent-timeout failure the comment below already
+// worked around once for smaller files.
+const STAGE_CHUNK_SIZE = 2000;
+
 const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   EMPLOYEE_MASTER: "import_upload_batch",
   PROCESS_MASTER: "import_process_upload_batch",
@@ -126,6 +134,21 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ATTENDANCE_REGULARIZATION_BULK: "import_attendance_regularization_batch",
   INCENTIVE_BULK: "import_incentive_bulk_batch",
   DEDUCTION_BULK: "import_deduction_bulk_batch",
+  // Onfido process raw-data reports — DOC/POA volume, quality-audit and
+  // client-escalation exports, imported into onfido_db (see backend's
+  // onfido-report-configs.ts, the single source of truth for these seven).
+  ONFIDO_DOC_RAW: "import_onfido_doc_raw_batch",
+  ONFIDO_DOC_QUALITY: "import_onfido_doc_quality_batch",
+  ONFIDO_DOC_ESCALATION_CRE: "import_onfido_cre_batch",
+  ONFIDO_DOC_ESCALATION_CRQ: "import_onfido_crq_batch",
+  ONFIDO_POA_RAW: "import_onfido_poa_raw_batch",
+  ONFIDO_POA_TRIAL_RAW: "import_onfido_poa_trial_batch",
+  ONFIDO_POA_QUALITY: "import_onfido_poa_quality_batch",
+  ONFIDO_DOC_EXTERNAL_AUDIT: "import_onfido_external_audit_batch",
+  ONFIDO_DOC_ETM: "import_onfido_doc_etm_batch",
+  ONFIDO_POA_ETM: "import_onfido_poa_etm_batch",
+  ONFIDO_TASK_SKIP: "import_onfido_task_skip_batch",
+  ONFIDO_AGENT_DAILY: "import_onfido_agent_daily_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {
@@ -157,11 +180,7 @@ function normalizeHeader(value: string) {
 }
 
 function parseCsv(text: string): CsvRow[] {
-  const lines = text
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .filter((line) => line.trim().length > 0);
+  const lines = splitIntoLogicalRows(text).filter((line) => line.trim().length > 0);
 
   if (lines.length < 2) return [];
 
@@ -285,34 +304,114 @@ function getTemplateHeaders(template: UploadTemplate) {
   return headers;
 }
 
+/**
+ * Drops only TRAILING blank entries (a genuinely blank header/value in the middle stays,
+ * since that is a real structural problem worth surfacing). Excel's used-range can declare
+ * more columns "in use" than actually hold data (same cause as the blank-row artifact
+ * below), and sheet_to_csv emits a trailing comma per phantom column for the header row and
+ * — inconsistently across rows — for data rows too. Confirmed live: "CRE Dashboard" has 50
+ * real columns but a used-range of 54; comparing raw (unequal, inconsistently-padded)
+ * lengths flagged every row as a width mismatch and blocked the whole upload.
+ */
+function trimTrailingBlanks(values: string[]): string[] {
+  let end = values.length;
+  while (end > 0 && values[end - 1].trim() === "") end -= 1;
+  return values.slice(0, end);
+}
+
+/**
+ * Splits raw CSV text into logical rows, respecting quotes — a plain `.split("\n")`
+ * breaks the moment a quoted field contains a literal embedded newline (a multi-line
+ * Excel cell, e.g. a "Comments" field), turning one real record into two garbage
+ * fragments: a truncated first half and an orphaned second half whose leading columns
+ * are actually the tail of the field that got split. Confirmed live: "CRE Dashboard"
+ * had 220 of 730 rows corrupted this way (730 physical lines from 510 real records),
+ * "CRQ Dashboard" had 185 of 2,436 — both files carry free-text columns
+ * ("Reason", "Report List of Consider Sub-Breakdowns") that legitimately contain
+ * newlines. splitCsvLine below already leaves a literal \n inside quotes untouched
+ * once it reaches it as ordinary content, so the only fix needed is not breaking a
+ * row on a newline that is still inside an open quote.
+ */
+function splitIntoLogicalRows(text: string): string[] {
+  const rows: string[] = [];
+  let current = "";
+  let insideQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        current += '""';
+        i += 1;
+        continue;
+      }
+      insideQuotes = !insideQuotes;
+      current += char;
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !insideQuotes) {
+      if (char === "\r" && nextChar === "\n") i += 1;
+      rows.push(current);
+      current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && insideQuotes) {
+      if (char === "\r" && nextChar === "\n") i += 1;
+      current += "\n";
+      continue;
+    }
+
+    current += char;
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+
 function parseCsvDetailed(text: string): CsvParseResult {
-  const lines = text
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .filter((line) => line.trim().length > 0);
+  const lines = splitIntoLogicalRows(text);
 
   if (lines.length < 1) return { headers: [], rows: [], rowWidthWarnings: [] };
 
-  const headers = splitCsvLine(lines[0]).map(normalizeHeader);
+  const headers = trimTrailingBlanks(splitCsvLine(lines[0]).map(normalizeHeader));
   const rowWidthWarnings: string[] = [];
 
-  const rows = lines.slice(1).map((line, index) => {
+  const rows: CsvRow[] = [];
+  let rowNumber = 0;
+  for (const line of lines.slice(1)) {
+    if (line.trim().length === 0) continue;
     const values = splitCsvLine(line);
-    const row: CsvRow = {};
+    // A row where every cell is blank is a formatting artifact from Excel's used-range
+    // (a workbook can declare far more rows "in use" than actually hold data — e.g. from a
+    // cell-format paste), not real data. sheet_to_csv still emits a comma-only line for it
+    // (",,,,,,,...") and line.trim().length > 0 above does not catch that, since commas are
+    // not whitespace — confirmed live: "DOC Raw Data SQL Format..xlsx" has 20 real rows but
+    // a used-range of 1,048,576, and staged 1,048,575 blank rows before this guard.
+    if (values.every((v) => v.trim() === "")) continue;
 
-    if (values.length !== headers.length) {
+    rowNumber += 1;
+    // Only warn when a row has MORE real columns than the header — genuinely misaligned
+    // data (an unescaped comma, a shifted column). FEWER is normal for a wide, sparse
+    // export: which trailing columns are blank varies row to row (row.forEach below
+    // already reads a missing trailing value as "", same as an explicit blank cell), so
+    // comparing for exact equality flagged the majority of real CRE Dashboard rows —
+    // confirmed live, 295 of 730 rows tripped this before the check was narrowed.
+    const trimmedValues = trimTrailingBlanks(values);
+    if (trimmedValues.length > headers.length) {
       rowWidthWarnings.push(
-        `Row ${index + 1}: expected ${headers.length} column(s), found ${values.length}. Keep blank commas for optional columns and wrap comma values in quotes.`
+        `Row ${rowNumber}: expected at most ${headers.length} column(s), found ${trimmedValues.length}. Keep blank commas for optional columns and wrap comma values in quotes.`
       );
     }
 
+    const row: CsvRow = {};
     headers.forEach((header, headerIndex) => {
       row[header] = values[headerIndex]?.trim() || "";
     });
-
-    return row;
-  });
+    rows.push(row);
+  }
 
   return { headers, rows, rowWidthWarnings };
 }
@@ -775,11 +874,15 @@ function buildTemplateGuide(template: UploadTemplate) {
 
 function csvHealthHasBlockingError(health: CsvHealth | null) {
   if (!health) return false;
-  return (
-    health.missingHeaders.length > 0 ||
-    health.unknownHeaders.length > 0 ||
-    health.rowWidthWarnings.length > 0
-  );
+  // rowWidthWarnings is deliberately informational only, not blocking: a wide export
+  // with many optional trailing columns (Onfido's process reports run up to 86 columns,
+  // ~1 lakh rows/day/file) legitimately varies row to row in how many trailing columns
+  // carry a value versus sit beyond the last labelled header. Confirmed live on the CRE
+  // Dashboard export — 2 rows out of 730 carry real data in unlabelled trailing cells
+  // beyond the 50 declared columns. Blocking the whole file on that would mean a single
+  // odd row loses an entire day's upload; the row itself still stages and imports
+  // correctly (headers.forEach only ever reads the columns it knows about).
+  return health.missingHeaders.length > 0 || health.unknownHeaders.length > 0;
 }
 
 // ── Deduction Types Management ────────────────────────────────────────────────
@@ -1458,11 +1561,47 @@ export default function BulkUploadHub() {
    * emits each cell's *formatted* value, so a date shows up as the sheet
    * displayed it rather than as an Excel serial number.
    */
-  async function excelFileToCsvText(file: File): Promise<string> {
+  async function excelFileToCsvText(file: File, template: UploadTemplate | null): Promise<string> {
     const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) throw new Error("The workbook has no sheets.");
-    return XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName]!, { blankrows: false });
+    if (workbook.SheetNames.length === 0) throw new Error("The workbook has no sheets.");
+
+    // Pick the sheet whose header row best matches this template's expected columns,
+    // rather than always the first — a workbook can ship its real data sheet anywhere
+    // in the tab order. Confirmed live: Onfido's "External Dashboard" file lists the
+    // real "Audit Data" sheet LAST, after six person-specific pivot/scratch tabs
+    // ("Extraction Only", "AM TL Wise", "Rohit Only", ...) — blindly reading
+    // SheetNames[0] would have staged one of those instead.
+    const expected = new Set([
+      ...(template?.required_columns || []), ...(template?.optional_columns || []),
+    ].map((c) => c.trim()));
+    let bestSheetName = workbook.SheetNames[0]!;
+    let bestScore = -1;
+    // Tie-break on fewest extra/unknown columns, not just first-sheet-wins: two
+    // sheets in the same workbook can share every header of a smaller template
+    // (one a strict superset of the other's columns) and tie on raw match count —
+    // confirmed live with the ETM Tracker workbook's "DOC ETM" (32 cols) and
+    // "POA ETM" (28 cols) sheets, where DOC ETM's headers are POA ETM's plus 4
+    // more: both score 28/28 against the POA ETM template, and DOC ETM (appearing
+    // first in the workbook) always won under a bare `score > bestScore` check —
+    // silently staging the wrong sheet regardless of which template was selected.
+    let bestExtra = Infinity;
+    if (expected.size > 0) {
+      for (const name of workbook.SheetNames) {
+        const sheet = workbook.Sheets[name];
+        if (!sheet) continue;
+        const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
+        if (!firstRow) continue;
+        const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
+        const score = headerCells.filter((c) => expected.has(c)).length;
+        const extra = headerCells.filter((c) => !expected.has(c)).length;
+        if (score > bestScore || (score === bestScore && extra < bestExtra)) {
+          bestScore = score;
+          bestExtra = extra;
+          bestSheetName = name;
+        }
+      }
+    }
+    return XLSX.utils.sheet_to_csv(workbook.Sheets[bestSheetName]!, { blankrows: false });
   }
 
   async function createUploadBatch() {
@@ -1501,11 +1640,15 @@ export default function BulkUploadHub() {
       let stagedRows: ReturnType<typeof validateRows> = [];
 
       const lowerName = selectedFile.name.toLowerCase();
-      const isExcel = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls");
+      // .xlsb (Excel binary) included alongside .xlsx/.xls — SheetJS reads it the same
+      // way, and Onfido's DOC quality-audit export ("Internal Dashboard Format") ships
+      // in this format. Previously only .xlsx/.xls matched, so an .xlsb file fell through
+      // to "nothing to stage" with no hint that the format itself was the problem.
+      const isExcel = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || lowerName.endsWith(".xlsb");
 
       if (lowerName.endsWith(".csv") || isExcel) {
         const text = isExcel
-          ? await excelFileToCsvText(selectedFile)
+          ? await excelFileToCsvText(selectedFile, selectedTemplate)
           : await selectedFile.text();
         const parsed = parseCsvDetailed(text);
         const health = buildCsvHealth(selectedTemplate, parsed);
@@ -1531,7 +1674,7 @@ export default function BulkUploadHub() {
         throw new Error(
           lowerName.endsWith(".csv") || isExcel
             ? "This file has no data rows below the header — nothing would be uploaded. Fill in the template under the header row and try again."
-            : "Only .csv, .xlsx and .xls files can be read here. Save the file in one of those formats and upload it again."
+            : "Only .csv, .xlsx, .xls and .xlsb files can be read here. Save the file in one of those formats and upload it again."
         );
       }
 
@@ -1564,20 +1707,24 @@ export default function BulkUploadHub() {
       const batch = batchRes.data;
 
       if (stagedRows.length > 0) {
-        // Staging is now a single bulk INSERT server-side, but large files still
-        // deserve more room than the 30s default — that default is what produced
-        // "batch didn't upload" reports for files the server actually finished
-        // staging successfully a little after the client gave up.
-        await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`,
-          stagedRows.map((row) => ({
-            row_no: row.rowNo,
-            raw_data: row.rawData,
-            normalized_data: row.normalizedData,
-            row_status: row.status,
-            error_messages: row.errors,
-          })),
-          180000
-        );
+        // Staging is a bulk INSERT server-side per call, but a whole file in one request
+        // does not scale to high-volume raw-data uploads (Onfido process reports run
+        // ~1 lakh rows/day/file) — the request body limit and plain request size both
+        // give out first. Slice into STAGE_CHUNK_SIZE-row requests instead, same as the
+        // 30s-default fix below already reasons about for a single large request.
+        for (let offset = 0; offset < stagedRows.length; offset += STAGE_CHUNK_SIZE) {
+          const slice = stagedRows.slice(offset, offset + STAGE_CHUNK_SIZE);
+          await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`,
+            slice.map((row) => ({
+              row_no: row.rowNo,
+              raw_data: row.rawData,
+              normalized_data: row.normalizedData,
+              row_status: row.status,
+              error_messages: row.errors,
+            })),
+            180000
+          );
+        }
       }
 
       setMessage("Upload batch created successfully.");
@@ -1977,7 +2124,7 @@ export default function BulkUploadHub() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    accept=".csv,.xls,.xlsx,.xlsb,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     onChange={(event) =>
                       handleFileChange(event.target.files?.[0] || null)
                     }

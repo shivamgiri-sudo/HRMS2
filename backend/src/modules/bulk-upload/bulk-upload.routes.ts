@@ -277,6 +277,20 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_leave_application_batch",
   "import_incentive_bulk_batch",
   "import_deduction_bulk_batch",
+  // Onfido process raw-data reports (DOC/POA volume, quality-audit, client-escalation) —
+  // all seven share one generic import service; see onfido-report-configs.ts.
+  "import_onfido_doc_raw_batch",
+  "import_onfido_doc_quality_batch",
+  "import_onfido_cre_batch",
+  "import_onfido_crq_batch",
+  "import_onfido_poa_raw_batch",
+  "import_onfido_poa_trial_batch",
+  "import_onfido_poa_quality_batch",
+  "import_onfido_external_audit_batch",
+  "import_onfido_doc_etm_batch",
+  "import_onfido_poa_etm_batch",
+  "import_onfido_task_skip_batch",
+  "import_onfido_agent_daily_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -640,6 +654,18 @@ async function dispatchImport(
       "../bulk-upload/designation-master-bulk.service.js"
     );
     const data = await importDesignationMasterBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name.startsWith("import_onfido_")) {
+    const { importOnfidoRawBatch, findOnfidoConfig } = await import(
+      "../bulk-upload/onfido-raw-bulk.service.js"
+    );
+    const config = findOnfidoConfig(rpc_name);
+    if (!config) {
+      throw new Error(`No Onfido report config registered for rpc_name '${rpc_name}'.`);
+    }
+    const data = await importOnfidoRawBatch(config, id, userId);
     return { success: true, data };
   }
 

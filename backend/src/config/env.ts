@@ -212,6 +212,14 @@ const envSchema = z.object({
   BILL_DB_PASSWORD: z.string().default(""),
   BILL_DB_NAME:     z.string().default("db_bill"),
 
+  // Onfido process raw-data DB — task/report exports bulk-uploaded from HRMS,
+  // feeding the Onfido process KPI/Quality/Operations dashboard.
+  ONFIDO_DB_HOST:     z.string().default(""),
+  ONFIDO_DB_PORT:     z.coerce.number().default(3306),
+  ONFIDO_DB_USER:     z.string().default(""),
+  ONFIDO_DB_PASSWORD: z.string().default(""),
+  ONFIDO_DB_NAME:     z.string().default("onfido_db"),
+
   // Shivamgiri quality/APR database (shared by quality-dashboard module)
   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
 

@@ -1,0 +1,393 @@
+/**
+ * Faithful visual clone of the "Central Dashboard" reference tool
+ * (onfido-central-dashboard.vercel.app) — colors, card recipe, KPI tile
+ * anatomy (top+bottom glow bar, blurred corner blob), section-header glow
+ * dot, and hover behaviour were read directly off that page's computed
+ * styles/stylesheet rules, not eyeballed from a screenshot.
+ *
+ * Scoped under .onfido-central-theme so none of this leaks into the rest
+ * of HRMS2 — this page keeps its own local custom-property set instead of
+ * touching the app's global --background/--card tokens.
+ */
+
+.onfido-central-theme {
+  --bg: #050811;
+  --bg2: rgba(8, 13, 28, 0.92);
+  --bg3: rgba(13, 21, 42, 0.86);
+  --card: rgba(17, 27, 50, 0.82);
+  --panel: linear-gradient(160deg, rgba(17, 27, 50, 0.84), rgba(8, 13, 28, 0.72));
+  --border: rgba(119, 146, 196, 0.2);
+  --text: #eef5ff;
+  --muted: #8fa4c6;
+  --muted-strong: #a8b9d7;
+  --blue: #60a5fa;
+  --purple: #c084fc;
+  --teal: #22d3ee;
+  --green: #34d399;
+  --orange: #fb923c;
+  --pink: #f472b6;
+  --yellow: #facc15;
+  --red: #fb7185;
+  --shadow: 0 22px 55px rgba(0, 0, 0, 0.35);
+  --softshadow: 0 14px 34px rgba(2, 8, 23, 0.28);
+
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(96, 165, 250, 0.18), rgba(0, 0, 0, 0) 28%),
+    radial-gradient(circle at 85% 12%, rgba(192, 132, 252, 0.16), rgba(0, 0, 0, 0) 28%),
+    radial-gradient(circle at 35% 92%, rgba(45, 212, 191, 0.12), rgba(0, 0, 0, 0) 30%),
+    linear-gradient(135deg, #050811 0%, #0a1020 42%, #10172a 100%);
+  border-radius: 20px;
+  padding: 20px;
+}
+
+.onfido-central-theme ::selection { background: rgba(96, 165, 250, 0.3); color: #fff; }
+
+/* ── Card panel (chart containers, tables, filter bar) ─────────────── */
+
+.onfido-central-theme .oc-card {
+  position: relative;
+  background: var(--panel);
+  border: 0.8px solid var(--border);
+  border-radius: 22px;
+  box-shadow: var(--softshadow);
+  padding: 18px;
+}
+
+.onfido-central-theme .oc-card h2,
+.onfido-central-theme .oc-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 13px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--muted-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.onfido-central-theme .oc-card h2::before,
+.onfido-central-theme .oc-card h3::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--hc, var(--blue));
+  box-shadow: 0 0 18px var(--hc, var(--blue));
+}
+
+.onfido-central-theme .oc-card-sub {
+  margin: -8px 0 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── KPI tile ─────────────────────────────────────────────────────── */
+
+.onfido-central-theme .kr {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 640px) { .onfido-central-theme .kr { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1280px) { .onfido-central-theme .kr.k5 { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1280px) { .onfido-central-theme .kr.k6 { grid-template-columns: repeat(6, 1fr); } }
+
+.onfido-central-theme .kpi {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--card);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border-top: 3px solid var(--kc, var(--blue));
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+.onfido-central-theme .kpi::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  background: var(--kc, var(--blue));
+  box-shadow: 0 0 24px var(--kc, var(--blue));
+}
+.onfido-central-theme .kpi::after {
+  content: "";
+  position: absolute;
+  right: -34px;
+  top: -36px;
+  width: 92px;
+  height: 92px;
+  border-radius: 999px;
+  background: var(--kc, var(--blue));
+  opacity: 0.11;
+  filter: blur(1px);
+  pointer-events: none;
+}
+.onfido-central-theme .kpi:hover,
+.onfido-central-theme .kpi:focus-visible {
+  transform: translateY(-3px);
+  border-color: rgba(96, 165, 250, 0.32);
+  box-shadow: 0 22px 48px rgba(2, 8, 23, 0.34);
+  outline: none;
+}
+.onfido-central-theme .kpi label {
+  position: relative;
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+.onfido-central-theme .kpi .kv {
+  position: relative;
+  margin: 7px 0 1px;
+  font-size: 21px;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.onfido-central-theme .kpi .kv.empty { color: var(--muted); font-size: 15px; font-weight: 700; }
+.onfido-central-theme .kpi .ks {
+  position: relative;
+  margin-top: 3px;
+  font-size: 9px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Filter bar ───────────────────────────────────────────────────── */
+
+.onfido-central-theme .oc-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  background: var(--panel);
+  border: 0.8px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--softshadow);
+}
+.onfido-central-theme .oc-field label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.onfido-central-theme .oc-input,
+.onfido-central-theme .oc-select {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+  color-scheme: dark;
+}
+.onfido-central-theme .oc-input:focus,
+.onfido-central-theme .oc-select:focus {
+  border-color: var(--blue);
+}
+.onfido-central-theme .oc-input::placeholder { color: var(--muted); }
+
+.onfido-central-theme .oc-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+
+.onfido-central-theme table.oc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.onfido-central-theme table.oc-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+.onfido-central-theme table.oc-table th.oc-right,
+.onfido-central-theme table.oc-table td.oc-right { text-align: right; }
+.onfido-central-theme table.oc-table td {
+  padding: 9px 12px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  font-variant-numeric: tabular-nums;
+}
+.onfido-central-theme table.oc-table tr.oc-row-click { cursor: pointer; transition: background 0.15s; }
+.onfido-central-theme table.oc-table tr.oc-row-click:hover { background: rgba(96, 165, 250, 0.08); }
+.onfido-central-theme .oc-empty-row td { text-align: center; color: var(--muted); padding: 22px 12px; }
+
+/* ── Avatar chip, badges, buttons ─────────────────────────────────── */
+
+.onfido-central-theme .oc-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+.onfido-central-theme .oc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(96, 165, 250, 0.14);
+  color: #cfe1ff;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+}
+.onfido-central-theme .oc-badge button {
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.onfido-central-theme .oc-badge button:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+
+.onfido-central-theme .oc-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-strong);
+  padding: 6px 4px;
+  border-radius: 8px;
+  transition: color 0.15s, background 0.15s;
+}
+.onfido-central-theme .oc-btn-ghost:hover { color: #fff; background: rgba(96, 165, 250, 0.1); }
+
+.onfido-central-theme .oc-pill-outline {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted-strong);
+}
+
+/* ── Section heading (used above KPI rows, not inside an oc-card) ─── */
+
+.onfido-central-theme .oc-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.onfido-central-theme .oc-section-head .oc-eyebrow::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hc, var(--blue));
+  box-shadow: 0 0 18px var(--hc, var(--blue));
+}
+
+/* ── View tab bar (Overview / Analyst Performance / Trends / Alerts) ─ */
+
+.onfido-central-theme .oc-tabbar { display: flex; flex-wrap: wrap; gap: 4px; }
+.onfido-central-theme .oc-tab {
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.onfido-central-theme .oc-tab:hover { background: rgba(96, 165, 250, 0.09); border-color: rgba(96, 165, 250, 0.18); color: #fff; }
+.onfido-central-theme .oc-tab.active {
+  color: #fff;
+  border-color: rgba(96, 165, 250, 0.34);
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.22), rgba(34, 211, 238, 0.09));
+  box-shadow: inset 0 -3px 0 var(--blue), 0 6px 16px rgba(37, 99, 235, 0.14);
+}
+
+/* ── Granularity pills (Trends view) ─────────────────────────────── */
+.onfido-central-theme .oc-pillbar { display: flex; gap: 6px; }
+.onfido-central-theme .oc-pill-btn {
+  padding: 5px 12px; font-size: 11px; font-weight: 700; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted); cursor: pointer; transition: 0.15s;
+}
+.onfido-central-theme .oc-pill-btn:hover { color: #fff; border-color: rgba(96, 165, 250, 0.4); }
+.onfido-central-theme .oc-pill-btn.active { color: #fff; background: var(--blue); border-color: var(--blue); }
+
+/* ── Severity / result badges ─────────────────────────────────────── */
+.onfido-central-theme .oc-badge-pill {
+  display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.onfido-central-theme .oc-severity-high { color: #fff; background: rgba(251, 113, 133, 0.18); border: 1px solid rgba(251, 113, 133, 0.45); }
+.onfido-central-theme .oc-severity-medium { color: #fff; background: rgba(250, 204, 21, 0.15); border: 1px solid rgba(250, 204, 21, 0.4); }
+
+/* ── Analyst search ────────────────────────────────────────────────── */
+.onfido-central-theme .oc-search-wrap { position: relative; flex: 1; min-width: 260px; }
+.onfido-central-theme .oc-suggest {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 260px; overflow-y: auto; background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+}
+.onfido-central-theme .oc-suggest-item { padding: 8px 12px; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; }
+.onfido-central-theme .oc-suggest-item:hover { background: rgba(96, 165, 250, 0.1); }
+.onfido-central-theme .oc-rank-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; font-size: 11px; font-weight: 800;
+  background: var(--bg3); color: var(--muted-strong); margin-right: 8px; flex-shrink: 0;
+}
+.onfido-central-theme table.oc-table tr.oc-row-self { background: rgba(96, 165, 250, 0.12) !important; }
+
+/* ── Sheet / drawer content re-skin ───────────────────────────────── */
+
+.onfido-central-theme.oc-sheet {
+  background: linear-gradient(160deg, #0a1020, #050811) !important;
+  border-left: 0.8px solid var(--border) !important;
+  color: var(--text);
+}
+.onfido-central-theme.oc-sheet [data-slot="sheet-close"] { color: var(--muted-strong); }
+.onfido-central-theme .oc-field-box {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  padding: 8px 10px;
+}
+.onfido-central-theme .oc-kv-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
