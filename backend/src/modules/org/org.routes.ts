@@ -141,26 +141,26 @@ function buildCrud(
 
 // Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
 router.get("/filter-options", h(async (_req: Request, res: Response) => {
-  const [managers] = await db.execute<any[]>(
-    `SELECT e.id, e.employee_code,
-            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
-       FROM employees e
-      WHERE e.active_status = 1
-        AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-        AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
-      ORDER BY full_name ASC`
-  );
+  const [[managers], branches, departments, processes, costCentres, designations, locations] = await Promise.all([
+    db.execute<any[]>(
+      `SELECT e.id, e.employee_code,
+              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
+         FROM employees e
+        WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+          AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
+        ORDER BY full_name ASC`
+    ),
+    branchService.list(),
+    departmentService.list(),
+    processService.list(),
+    costCentreService.list(),
+    designationService.list(),
+    locationService.list(),
+  ]);
   res.json({
     success: true,
-    data: {
-      branches: await branchService.list(),
-      departments: await departmentService.list(),
-      processes: await processService.list(),
-      costCentres: await costCentreService.list(),
-      designations: await designationService.list(),
-      locations: await locationService.list(),
-      managers,
-    },
+    data: { branches, departments, processes, costCentres, designations, locations, managers },
     meta: { activeOnly: true },
   });
 }));

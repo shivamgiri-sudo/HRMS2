@@ -153,7 +153,7 @@ export default function LegacyHrmsReportsView() {
       return hrmsApi.get(`/api/legacy-reports/${selected}${qs ? `?${qs}` : ""}`);
     },
     enabled: !!selected && runKey > 0,
-    staleTime: 0,
+    staleTime: 30_000,
   });
 
   const result: LegacyResult | null =
