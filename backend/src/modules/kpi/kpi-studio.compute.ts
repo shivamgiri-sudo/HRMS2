@@ -152,13 +152,14 @@ async function loadSourcesWithFields(
     // config_json is required, not optional: it carries the published CSV link for a Google Sheet
     // source, so omitting it makes every sheet-backed KPI fail with "no published link".
     `SELECT id, source_code, source_name, source_type, integration_key, source_object,
-            employee_key_column, employee_key_kind, date_column, config_json
+            employee_key_column, employee_key_kind, date_column, config_json,
+            process_key_kind, process_key_column, process_key_value, process_id
        FROM kpi_studio_data_source
       WHERE id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],
   );
   const [fieldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT data_source_id, field_name, source_column, aggregate_fn, source_expression
+    `SELECT data_source_id, field_name, source_column, aggregate_fn, source_expression, filter_json
        FROM kpi_studio_source_field
       WHERE data_source_id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],

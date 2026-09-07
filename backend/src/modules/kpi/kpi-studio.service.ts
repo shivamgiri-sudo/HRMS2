@@ -404,7 +404,7 @@ export async function listDataSources(): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.id, s.source_code, s.source_name, s.source_type, s.integration_key, s.source_object,
             s.employee_key_column, s.employee_key_kind, s.date_column, s.description, s.active_status,
-            s.config_json,
+            s.config_json, s.process_key_kind, s.process_key_column, s.process_key_value, s.process_id,
             COUNT(f.id) AS field_count
        FROM kpi_studio_data_source s
        LEFT JOIN kpi_studio_source_field f ON f.data_source_id = s.id AND f.active_status = 1
@@ -425,7 +425,7 @@ export async function getDataSourceWithFields(id: string) {
   if (!source) return null;
 
   const [fieldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, field_name, display_name, source_column, aggregate_fn, source_expression, unit, description
+    `SELECT id, field_name, display_name, source_column, aggregate_fn, source_expression, filter_json, unit, description
        FROM kpi_studio_source_field
       WHERE data_source_id = ? AND active_status = 1
       ORDER BY field_name`,

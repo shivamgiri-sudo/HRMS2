@@ -99,3 +99,97 @@ describe("buildProcessQueryPlan", () => {
     expect(plan.sql).toContain("`dialer_db`.`cdr_in_10_4`");
   });
 });
+
+describe("field filters", () => {
+  // The pair that motivated filters: two differently-filtered numbers out of the
+  // SAME table in one query. Without this, AL% cannot be configured — which is
+  // why it had to be hand-written in TypeScript.
+  const AL_FIELDS = [
+    { field_name: "offered", source_column: "id", aggregate_fn: "COUNT", source_expression: null },
+    {
+      field_name: "answered", source_column: "id", aggregate_fn: "COUNT", source_expression: null,
+      filter_json: [{ column: "AgentId", op: "ne", value: "VDCL" }],
+    },
+  ] as never[];
+
+  it("compiles a filter into a CASE inside the aggregate", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, AL_FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.sql).toMatch(/COUNT\(`id`\) AS `offered`/);
+    expect(plan.sql).toMatch(/COUNT\(CASE WHEN `AgentId` <> \? THEN `id` END\) AS `answered`/);
+  });
+
+  it("binds the filter value and puts it BEFORE the date params", () => {
+    // Order matters: the CASE sits in the SELECT list, which MySQL binds ahead of
+    // the WHERE clause. A wrong order shifts every placeholder and yields a
+    // plausible but wrong number instead of an error.
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, AL_FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.params).toEqual(["VDCL", "2026-08-01", "2026-08-31"]);
+    expect(plan.sql).not.toContain("VDCL");
+  });
+
+  it("puts filter params before BOTH the dates and the process key value", () => {
+    const plan = buildProcessQueryPlan(
+      { ...CONSTANT_SOURCE, process_key_kind: "column", process_key_column: "CampaignName", process_key_value: "Blabliblu_IN" } as never,
+      AL_FIELDS, "2026-08-01", "2026-08-31",
+    );
+    expect(plan.params).toEqual(["VDCL", "2026-08-01", "2026-08-31", "Blabliblu_IN"]);
+  });
+
+  it("emits no ELSE, so nothing matching reads as null rather than zero", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, AL_FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.sql).not.toMatch(/ELSE 0/);
+  });
+
+  it("supports an IN filter with each value bound", () => {
+    const plan = buildProcessQueryPlan(
+      CONSTANT_SOURCE as never,
+      [{ field_name: "sales", source_column: "amount", aggregate_fn: "SUM",
+         filter_json: [{ column: "status", op: "in", value: ["won", "closed"] }] }] as never[],
+      "2026-08-01", "2026-08-31",
+    );
+    expect(plan.sql).toMatch(/`status` IN \(\?,\?\)/);
+    expect(plan.params.slice(0, 2)).toEqual(["won", "closed"]);
+  });
+
+  it("supports IS NULL without expecting a value", () => {
+    const plan = buildProcessQueryPlan(
+      CONSTANT_SOURCE as never,
+      [{ field_name: "unresolved", source_column: "id", aggregate_fn: "COUNT",
+         filter_json: [{ column: "closed_at", op: "is_null" }] }] as never[],
+      "2026-08-01", "2026-08-31",
+    );
+    expect(plan.sql).toMatch(/`closed_at` IS NULL/);
+  });
+
+  it("rejects an unknown operator by name", () => {
+    expect(() =>
+      buildProcessQueryPlan(
+        CONSTANT_SOURCE as never,
+        [{ field_name: "x", source_column: "id", aggregate_fn: "COUNT",
+           filter_json: [{ column: "a", op: "; DROP TABLE t" }] }] as never[],
+        "2026-08-01", "2026-08-31",
+      ),
+    ).toThrow(/Unsupported filter/i);
+  });
+
+  it("rejects an injected filter column", () => {
+    expect(() =>
+      buildProcessQueryPlan(
+        CONSTANT_SOURCE as never,
+        [{ field_name: "x", source_column: "id", aggregate_fn: "COUNT",
+           filter_json: [{ column: "a` = 1 OR `1", op: "eq", value: 1 }] }] as never[],
+        "2026-08-01", "2026-08-31",
+      ),
+    ).toThrow();
+  });
+
+  it("accepts filter_json arriving as a JSON string from the driver", () => {
+    const plan = buildProcessQueryPlan(
+      CONSTANT_SOURCE as never,
+      [{ field_name: "answered", source_column: "id", aggregate_fn: "COUNT",
+         filter_json: '[{"column":"AgentId","op":"ne","value":"VDCL"}]' }] as never[],
+      "2026-08-01", "2026-08-31",
+    );
+    expect(plan.params).toContain("VDCL");
+  });
+});

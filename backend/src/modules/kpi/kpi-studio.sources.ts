@@ -40,11 +40,30 @@ import { fetchSheetCsv, parseSheetDate, parseSheetNumber } from './kpi-studio.gs
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A condition narrowing which rows a single field counts.
+ *
+ * Filters live on the FIELD, not the source, because the metrics that need them
+ * need two differently-filtered numbers out of the SAME table in one query:
+ * offered is every call, answered is the calls that reached an agent. A
+ * source-level filter could not express that pair, which is why AL%, SL% and
+ * Abn% previously had to be hand-written in TypeScript instead of configured.
+ *
+ * The column is validated as an identifier; the value is always bound.
+ */
+export interface FieldFilter {
+  column: string;
+  op: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "is_null" | "is_not_null";
+  value?: string | number | Array<string | number> | null;
+}
+
 export interface SourceField {
   field_name: string;
   source_column?: string | null;
   aggregate_fn?: string | null;
   source_expression?: string | null;
+  /** Parsed from kpi_studio_source_field.filter_json; mysql2 may hand back a string. */
+  filter_json?: FieldFilter[] | string | null;
 }
 
 export interface DataSourceConfig {
@@ -139,13 +158,83 @@ function toDateString(raw: unknown): string | null {
  * a bare column is re-validated before falling back — belt and braces, because a row could have
  * been written by an older version of that function or edited directly in the database.
  */
-function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names: string[] } {
+const FILTER_OPS: Record<FieldFilter["op"], string> = {
+  eq: "=", ne: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=",
+  in: "IN", is_null: "IS NULL", is_not_null: "IS NOT NULL",
+};
+
+function parseFilters(raw: SourceField["filter_json"]): FieldFilter[] {
+  if (!raw) return [];
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error("Field filter is not readable JSON");
+    }
+  }
+  if (!Array.isArray(parsed)) throw new Error("Field filter must be a list of conditions");
+  return parsed as FieldFilter[];
+}
+
+/**
+ * Compiles a field's filters into a SQL condition plus its bound parameters.
+ *
+ * Columns go through assertSafeIdentifier — they cannot be bound, so they are
+ * validated. Every VALUE is bound, without exception: a filter value is
+ * configuration somebody typed, which makes it data, never SQL. The operator
+ * comes from a fixed map rather than the request, so an unknown one is refused
+ * by name instead of being interpolated.
+ */
+function compileFieldFilters(filters: readonly FieldFilter[], alias: string): { sql: string; params: unknown[] } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+
+  for (const filter of filters) {
+    if (!filter?.column) throw new Error(`A filter on field ${alias} names no column`);
+    const column = assertSafeIdentifier(filter.column, `filter column on ${alias}`);
+    const op = FILTER_OPS[filter.op];
+    if (!op) {
+      throw new Error(
+        `Unsupported filter "${String(filter.op)}" on field ${alias}. Use one of ${Object.keys(FILTER_OPS).join(", ")}.`,
+      );
+    }
+
+    if (filter.op === "is_null" || filter.op === "is_not_null") {
+      conds.push(`\`${column}\` ${op}`);
+      continue;
+    }
+
+    if (filter.op === "in") {
+      const list = Array.isArray(filter.value) ? filter.value : [];
+      if (!list.length) throw new Error(`The "in" filter on field ${alias} has no values`);
+      conds.push(`\`${column}\` IN (${list.map(() => "?").join(",")})`);
+      params.push(...list);
+      continue;
+    }
+
+    if (filter.value === undefined || filter.value === null) {
+      throw new Error(`The "${filter.op}" filter on field ${alias} has no value`);
+    }
+    conds.push(`\`${column}\` ${op} ?`);
+    params.push(filter.value);
+  }
+
+  return { sql: conds.join(" AND "), params };
+}
+
+function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names: string[]; params: unknown[] } {
   const parts: string[] = [];
   const names: string[] = [];
+  const params: unknown[] = [];
 
   for (const field of fields) {
     const alias = assertSafeIdentifier(field.field_name, 'field name');
     let expression = field.source_expression?.trim();
+
+    const filters = parseFilters(field.filter_json);
 
     if (!expression) {
       if (!field.source_column) continue;
@@ -155,8 +244,25 @@ function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names:
       if (!allowed.includes(aggregate)) {
         throw new Error(`Unsupported aggregate "${aggregate}" on field ${alias}`);
       }
-      expression = aggregate === 'NONE' ? `\`${column}\`` : `${aggregate}(\`${column}\`)`;
+
+      if (filters.length && aggregate !== 'NONE') {
+        // AGG(CASE WHEN <filter> THEN col END) — the same shape the hand-written
+        // inbound-ops metrics use, which is how AL%/SL%/Abn% become configurable
+        // rather than code. No ELSE branch: when nothing matches the answer is
+        // NULL, not 0, so "no rows here" stays distinguishable from "measured
+        // zero". A formula that wants a zero says COALESCE(x, 0) and means it.
+        const compiled = compileFieldFilters(filters, alias);
+        expression = `${aggregate}(CASE WHEN ${compiled.sql} THEN \`${column}\` END)`;
+        params.push(...compiled.params);
+      } else if (filters.length) {
+        throw new Error(`Field ${alias} has filters but no aggregate to apply them inside`);
+      } else {
+        expression = aggregate === 'NONE' ? `\`${column}\`` : `${aggregate}(\`${column}\`)`;
+      }
     } else {
+      if (filters.length) {
+        throw new Error(`Field ${alias} has both a source expression and filters; use one or the other`);
+      }
       // An expression from the database is trusted only as far as its shape: aggregate over a
       // single backticked or bare identifier. Anything else is rejected rather than executed.
       const shape = /^(?:(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*`?[A-Za-z_][A-Za-z0-9_]*`?\s*\)|`?[A-Za-z_][A-Za-z0-9_]*`?)$/i;
@@ -170,7 +276,7 @@ function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names:
   }
 
   if (!parts.length) throw new Error('This data source has no usable fields configured yet');
-  return { sql: parts.join(', '), names };
+  return { sql: parts.join(', '), names, params };
 }
 
 /**
@@ -257,7 +363,7 @@ function buildQueryPlan(
   const table = assertSafeIdentifier(source.source_object, 'source table');
   const keyColumn = assertSafeIdentifier(source.employee_key_column, 'employee column');
   const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
-  const { sql: fieldSelect, names } = buildFieldSelect(fields);
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields);
 
   // Backtick each dotted part separately: a schema-qualified `db.table` must become
   // `` `db`.`table` ``, not `` `db.table` `` which MySQL reads as one table with a dot in its name.
@@ -277,7 +383,7 @@ function buildQueryPlan(
 
   return {
     sql,
-    params: [dateFrom, dateTo, ...keys],
+    params: [...fieldParams, dateFrom, dateTo, ...keys],
     fieldNames: names,
     keyKind: source.employee_key_kind ?? 'employee_code',
   };
@@ -318,11 +424,15 @@ export function buildProcessQueryPlan(
 
   const table = assertSafeIdentifier(source.source_object, 'source table');
   const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
-  const { sql: fieldSelect, names } = buildFieldSelect(fields);
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields);
   const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
   const where = [`\`${dateColumn}\` >= ?`, `\`${dateColumn}\` < DATE_ADD(?, INTERVAL 1 DAY)`];
-  const params: unknown[] = [dateFrom, dateTo];
+  // Field params come FIRST: a filtered field compiles to a CASE inside the
+  // SELECT list, which MySQL binds before the WHERE clause. Getting this order
+  // wrong silently shifts every placeholder and produces a plausible-looking
+  // wrong answer rather than an error.
+  const params: unknown[] = [...fieldParams, dateFrom, dateTo];
 
   if (kind === 'column') {
     if (!source.process_key_column) {
