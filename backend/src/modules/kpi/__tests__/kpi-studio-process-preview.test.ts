@@ -211,3 +211,49 @@ describe("computeStudioKpis honours a process filter", () => {
     expect(readProcessGrainValues).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Which formulas can have a period figure computed exactly.
+ *
+ * Summing a numerator and a denominator across days and dividing reconstructs the
+ * period's real ratio ONLY while both sides are linear in the inputs. A ratio of
+ * two sums qualifies; a CLAMP or a threshold does not, and claiming otherwise
+ * would produce a figure that looks exact and is not — worse than the average it
+ * would replace.
+ */
+describe("ratioParts", () => {
+  it("takes the two bare fields of a simple ratio", async () => {
+    const { ratioParts } = await import("../kpi-studio.compute.js");
+    expect(ratioParts("PCT(answered, offered)", { answered: 97, offered: 100 }))
+      .toEqual({ numerator: 9700, denominator: 100 });
+  });
+
+  it("handles a compound ratio, which is how occupancy is written", async () => {
+    const { ratioParts } = await import("../kpi-studio.compute.js");
+    // PCT(talk + dispo, talk + dispo + wait): both sides are sums of fields, so
+    // summing them over a month still divides to the month's real occupancy.
+    expect(ratioParts("PCT(talk + dispo, talk + dispo + wait)", { talk: 60, dispo: 20, wait: 20 }))
+      .toEqual({ numerator: 8000, denominator: 100 });
+  });
+
+  it("leaves SAFE_DIV unscaled, unlike PCT", async () => {
+    const { ratioParts } = await import("../kpi-studio.compute.js");
+    expect(ratioParts("SAFE_DIV(total_sec, calls)", { total_sec: 500, calls: 10 }))
+      .toEqual({ numerator: 500, denominator: 10 });
+  });
+
+  it("refuses a formula whose parts do not survive being summed", async () => {
+    const { ratioParts } = await import("../kpi-studio.compute.js");
+    const inputs = { a: 5, b: 10, c: 2 };
+    // A clamp, a banded IF and a multiplied term are all non-additive.
+    expect(ratioParts("CLAMP(PCT(a, b), 0, 100)", inputs)).toBeNull();
+    expect(ratioParts("IF(a > 3, PCT(a, b), 0)", inputs)).toBeNull();
+    expect(ratioParts("PCT(a * c, b)", inputs)).toBeNull();
+  });
+
+  it("refuses a day whose inputs are missing or whose denominator is zero", async () => {
+    const { ratioParts } = await import("../kpi-studio.compute.js");
+    expect(ratioParts("PCT(a, b)", { a: null, b: 10 })).toBeNull();
+    expect(ratioParts("PCT(a, b)", { a: 5, b: 0 })).toBeNull();
+  });
+});

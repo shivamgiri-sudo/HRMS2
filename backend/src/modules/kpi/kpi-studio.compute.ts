@@ -373,13 +373,46 @@ export function ratioParts(
   formula: string,
   inputs: Record<string, number | null>,
 ): { numerator: number; denominator: number } | null {
-  const match = /^\s*(PCT|SAFE_DIV)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$/i
-    .exec(String(formula ?? ''));
-  if (!match) return null;
+  const text = String(formula ?? '').trim();
+  const opened = /^(PCT|SAFE_DIV)\s*\(/i.exec(text);
+  if (!opened || !text.endsWith(')')) return null;
+  const fn = opened[1];
 
-  const [, fn, numeratorName, denominatorName] = match;
-  const numerator = inputs[numeratorName];
-  const denominator = inputs[denominatorName];
+  // The two arguments of the top-level call, split at the comma that is not
+  // inside a nested call. Anything richer than one ratio -- a CLAMP wrapped
+  // around it, an IF choosing between two -- is refused below, because summing
+  // the parts of those does not reconstruct the whole.
+  const inner = text.slice(opened[0].length, -1);
+  let depth = 0;
+  let split = -1;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
+      if (split !== -1) return null; // three arguments: not a ratio
+      split = i;
+    }
+  }
+  if (split === -1) return null;
+
+  // Each side is evaluated as a formula in its own right, so a compound
+  // numerator works: occupancy is PCT(talk + dispo, talk + dispo + wait), and
+  // summing those two sides across days still gives the period's real ratio
+  // because both are linear in the inputs. Restricted to + and the field names
+  // themselves for exactly that reason -- an expression that is not additive
+  // (a CLAMP, a threshold) would not survive being summed.
+  const numeratorExpr = inner.slice(0, split);
+  const denominatorExpr = inner.slice(split + 1);
+  const additive = /^[\s()]*[A-Za-z_][A-Za-z0-9_]*(\s*\+\s*[A-Za-z_][A-Za-z0-9_]*)*[\s()]*$/;
+  if (!additive.test(numeratorExpr) || !additive.test(denominatorExpr)) return null;
+
+  const numeratorResult = evaluateFormula(numeratorExpr, inputs);
+  const denominatorResult = evaluateFormula(denominatorExpr, inputs);
+  if (numeratorResult.error || denominatorResult.error) return null;
+
+  const numerator = numeratorResult.value;
+  const denominator = denominatorResult.value;
   if (typeof numerator !== 'number' || typeof denominator !== 'number') return null;
   // A zero denominator has no ratio to contribute. Storing it would make a later
   // SUM/SUM correct anyway, but storing the pair for a day that produced no value
