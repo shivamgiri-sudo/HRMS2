@@ -81,14 +81,21 @@ router.post("/:processId/import", requireAuth, requireRole(...WRITER_ROLES), h(a
   if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
     return res.status(403).json(OUT_OF_SCOPE);
   }
-  const rows = (req.body as { rows?: svc.ImportRow[] }).rows;
+  const body = req.body as { rows?: svc.ImportRow[]; dry_run?: boolean };
+  const rows = body.rows;
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ success: false, code: "NO_ROWS", message: "Send a non-empty rows array." });
   }
   if (rows.length > 2000) {
     return res.status(400).json({ success: false, code: "TOO_MANY_ROWS", message: "Import at most 2000 rows at a time." });
   }
-  res.json({ success: true, data: await svc.importMetricRows({ userId: req.authUser!.id, processId, rows }) });
+  // dry_run must be asked for explicitly. Defaulting to a preview would make an
+  // import that quietly did nothing look identical to one that worked.
+  const dryRun = body.dry_run === true;
+  res.json({
+    success: true,
+    data: await svc.importMetricRows({ userId: req.authUser!.id, processId, rows, dryRun }),
+  });
 }));
 
 router.post("/:processId/connector-refresh", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {

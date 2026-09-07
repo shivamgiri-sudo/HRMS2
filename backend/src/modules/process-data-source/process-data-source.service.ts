@@ -49,14 +49,18 @@ async function processCodeFor(processId: string): Promise<string | null> {
   return rows.length ? String(rows[0].process_code) : null;
 }
 
-export async function saveManualMetricValue(input: {
-  userId: string;
+/**
+ * Every check the write performs, minus the write.
+ *
+ * Extracted so a dry run and the real import cannot drift: a preview that
+ * validated separately would eventually approve a row the write then rejects,
+ * which is worse than no preview because it is believed.
+ */
+export async function assertManualMetricValueValid(input: {
   processId: string;
   metricKey: string;
   scoreDate: string;
-  value: number | null;
-  note?: string | null;
-}): Promise<{ ok: true }> {
+}): Promise<void> {
   if (!ISO_DATE.test(input.scoreDate)) throw new Error("Date must be YYYY-MM-DD");
 
   const processCode = await processCodeFor(input.processId);
@@ -66,6 +70,17 @@ export async function saveManualMetricValue(input: {
   // DIFFERENT client is rejected here too, not just a nonsense one.
   const def = findMetricDef(processCode, input.metricKey);
   if (!def) throw new Error(`${input.metricKey} is not a registered metric for ${processCode}`);
+}
+
+export async function saveManualMetricValue(input: {
+  userId: string;
+  processId: string;
+  metricKey: string;
+  scoreDate: string;
+  value: number | null;
+  note?: string | null;
+}): Promise<{ ok: true }> {
+  await assertManualMetricValueValid(input);
 
   await db.execute(
     `INSERT INTO process_metric_actual
@@ -133,13 +148,61 @@ export interface ImportRow {
  * reason single entry does it: 0 would be indistinguishable from a measured
  * zero on the dashboard.
  */
+/** What one row of an upload would do, without doing it. */
+export interface ImportRowOutcome {
+  row: number;
+  metricKey: string;
+  scoreDate: string;
+  /** Null means "no reading", which is a legitimate value and not an error. */
+  value: number | null;
+  ok: boolean;
+  message?: string;
+  /** Set when this row would replace a figure already stored for that day. */
+  replaces?: number | null;
+}
+
 export async function importMetricRows(input: {
   userId: string;
   processId: string;
   rows: ImportRow[];
-}): Promise<{ imported: number; errors: Array<{ row: number; message: string }> }> {
+  /**
+   * Validate and report without writing.
+   *
+   * A spreadsheet is pasted or uploaded in one go, and the failure that matters
+   * is the one nobody sees: half the rows land, half are rejected for a reason
+   * only visible after the fact, and the dashboard is then a blend of new and
+   * stale figures that looks complete. A dry run answers "what will this do"
+   * against the same registry and the same date rules the real write uses, so
+   * the preview cannot pass where the write would fail.
+   */
+  dryRun?: boolean;
+}): Promise<{
+  imported: number;
+  errors: Array<{ row: number; message: string }>;
+  outcomes: ImportRowOutcome[];
+  dryRun: boolean;
+}> {
   const errors: Array<{ row: number; message: string }> = [];
+  const outcomes: ImportRowOutcome[] = [];
   let imported = 0;
+
+  // Only needed to report what a row would overwrite, so a failure to read it
+  // must not stop the import. An empty map simply means no "replaces" hints.
+  const existing = new Map<string, number | null>();
+  if (input.dryRun) {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT metric_key, DATE_FORMAT(score_date, '%Y-%m-%d') AS d, actual_value
+           FROM process_metric_actual WHERE process_id = ?`,
+        [input.processId],
+      );
+      for (const row of rows as any[]) {
+        existing.set(`${row.metric_key}|${row.d}`, row.actual_value === null ? null : Number(row.actual_value));
+      }
+    } catch {
+      /* hints only */
+    }
+  }
 
   for (let index = 0; index < input.rows.length; index++) {
     const row = input.rows[index];
@@ -149,19 +212,42 @@ export async function importMetricRows(input: {
       trimmed === "" || trimmed === null || trimmed === undefined || Number.isNaN(Number(trimmed))
         ? null
         : Number(trimmed);
+    const metricKey = String(row?.metricKey ?? "").trim();
+    const scoreDate = String(row?.scoreDate ?? "").trim();
+
     try {
-      await saveManualMetricValue({
-        userId: input.userId,
-        processId: input.processId,
-        metricKey: String(row?.metricKey ?? "").trim(),
-        scoreDate: String(row?.scoreDate ?? "").trim(),
-        value,
-        note: row?.note ?? null,
-      });
+      if (input.dryRun) {
+        await assertManualMetricValueValid({
+          processId: input.processId,
+          metricKey,
+          scoreDate,
+        });
+        const key = `${metricKey}|${scoreDate}`;
+        outcomes.push({
+          row: index + 1,
+          metricKey,
+          scoreDate,
+          value,
+          ok: true,
+          replaces: existing.has(key) ? existing.get(key) ?? null : undefined,
+        });
+      } else {
+        await saveManualMetricValue({
+          userId: input.userId,
+          processId: input.processId,
+          metricKey,
+          scoreDate,
+          value,
+          note: row?.note ?? null,
+        });
+        outcomes.push({ row: index + 1, metricKey, scoreDate, value, ok: true });
+      }
       imported++;
     } catch (err) {
-      errors.push({ row: index + 1, message: (err as Error).message });
+      const message = (err as Error).message;
+      errors.push({ row: index + 1, message });
+      outcomes.push({ row: index + 1, metricKey, scoreDate, value, ok: false, message });
     }
   }
-  return { imported, errors };
+  return { imported: input.dryRun ? 0 : imported, errors, outcomes, dryRun: Boolean(input.dryRun) };
 }
