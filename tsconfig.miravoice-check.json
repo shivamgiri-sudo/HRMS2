@@ -1,0 +1,11 @@
+{
+  // Scoped typecheck for the Mira microphone-failure messaging change.
+  //   npx tsc -p tsconfig.miravoice-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/hooks/useMiraVoice.ts",
+    "src/components/ai/CommandPalette.tsx",
+    "src/pages/PeopleOSCopilot.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

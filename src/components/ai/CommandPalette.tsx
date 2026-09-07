@@ -443,7 +443,7 @@ export function CommandPalette({
         </div>
 
         {(error || voice.voiceError) && (
-          <div className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">{voice.voiceError ?? error}</div>
+          <div role="alert" className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs leading-relaxed text-rose-700">{voice.voiceError ?? error}</div>
         )}
 
         {voice.interimTranscript && (
