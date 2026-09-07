@@ -499,9 +499,42 @@ export async function renderDashboard(
     // kpi_daily_actual, joined through the employee's CURRENT process — the
     // same join quality-target.service.ts uses, because process_id_at_event is
     // only sparsely populated.
+    //
+    // How a period is aggregated follows the same rule as the process-grain path
+    // above, and matters more here because this table is bigger and busier. This
+    // branch used to average everything, which on real data reports:
+    //   AHT              62.22s shown against 49.40s actual  (+26%)
+    //   CONVERSION_RATE   9.35% shown against  8.26% actual  (+13%)
+    //   FATAL_RATE        3.74% shown against  4.68% actual  (understated by a fifth)
+    // A lower-is-better metric reading a fifth better than reality is the worst
+    // of those, because nothing about it looks wrong.
+    //
+    // No migration was needed: kpi_daily_actual has carried numerator_value and
+    // denominator_value all along, populated for every row of AHT,
+    // CONVERSION_RATE, FATAL_RATE and QUALITY_SCORE. Unlike process_metric_actual
+    // they are stored RAW, so a percent has to be scaled back up by 100 while a
+    // duration is already in its own unit.
+    const empUnit = ((await metricUnit(widget.metricKey)) ?? "").toLowerCase();
+    const empIsVolume = ["count", "currency", "number", "volume"].includes(empUnit);
+    const empScale = ["percent", "percentage"].includes(empUnit) ? 100 : 1;
+
+    // Guarded on EVERY counted row having a denominator: mixing rows that carry
+    // parts with rows that do not divides a partial numerator by a partial
+    // denominator and yields a number belonging to neither method. ATTENDANCE_PCT
+    // is exactly that case — 24,240 of its 54,766 rows have parts — so it
+    // correctly keeps averaging.
+    const exactExpr =
+      `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
+             THEN SUM(k.numerator_value) / SUM(k.denominator_value) * ${empScale}
+             ELSE AVG(k.actual_value) END`;
+    const valueExpr = empIsVolume ? "SUM(k.actual_value)" : exactExpr;
+    const exactFlag =
+      `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
+             THEN 1 ELSE 0 END`;
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period,
-              AVG(k.actual_value) AS value, COUNT(k.actual_value) AS n
+              ${valueExpr} AS value, COUNT(k.actual_value) AS n
          FROM employees e
          JOIN kpi_daily_actual k ON k.employee_id = e.id
          JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
@@ -512,15 +545,35 @@ export async function renderDashboard(
     const series = rows
       .filter((r) => Number(r.n) > 0)
       .map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) }));
-    const readings = series.map((s) => s.value).filter((v): v is number => v != null);
+
+    // The headline is computed over the WHOLE window in one aggregate, not as the
+    // mean of the periods above. Averaging monthly ratios would reintroduce the
+    // very error this branch just fixed, one level up.
+    const [totalRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${valueExpr} AS value, COUNT(k.actual_value) AS n, ${exactFlag} AS exact_ratio
+         FROM employees e
+         JOIN kpi_daily_actual k ON k.employee_id = e.id
+         JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
+        WHERE e.process_id = ? AND k.score_date BETWEEN ? AND ?`,
+      [widget.metricKey, processId, from, to],
+    );
+    const total = (totalRows as any[])[0];
+    const hasReadings = Number(total?.n ?? 0) > 0;
+    const empExact = Number(total?.exact_ratio ?? 0) === 1;
+
     rendered.push({
       ...widget,
-      availability: readings.length ? "ok" : "no_data",
-      // The headline is the mean of the periods shown, so it agrees with the
-      // chart beside it rather than being computed a second, different way.
-      value: readings.length ? readings.reduce((a, b) => a + b, 0) / readings.length : null,
+      availability: hasReadings ? "ok" : "no_data",
+      value: hasReadings && total?.value != null ? Number(total.value) : null,
       series,
-      note: readings.length ? undefined : "No readings for this metric in this window.",
+      note: !hasReadings
+        ? "No readings for this metric in this window."
+        : empIsVolume
+          ? "Period figure is the sum of daily values."
+          : empExact
+            ? undefined
+            : "Period figure is the mean of daily values, not the period's own ratio — " +
+              "some rows did not record the numbers behind their rate.",
     });
   }
 

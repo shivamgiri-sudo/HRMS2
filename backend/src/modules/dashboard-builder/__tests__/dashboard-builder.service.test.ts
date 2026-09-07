@@ -334,3 +334,84 @@ describe("degrades when migration 1683 has not been applied", () => {
     expect(touched).toHaveLength(0);
   });
 });
+
+/**
+ * kpi_daily_actual widgets.
+ *
+ * This branch averaged everything, which on real data reported AHT 26% high and
+ * FATAL_RATE a fifth LOW — the second being the dangerous one, because a
+ * lower-is-better metric reading better than reality looks like good news. The
+ * table has carried numerator_value and denominator_value all along, so the
+ * exact figure needed no migration, only asking for it.
+ */
+describe("employee-grain rollup", () => {
+  /** dashboard row, widgets, scope, metric unit, then the two aggregate reads. */
+  function mockEmployeeWidget(metricKey: string, unit: string) {
+    installed((text: string) => {
+      if (text.includes("FROM builder_dashboard_widget")) {
+        return Promise.resolve([
+          [widget({ metric_key: metricKey, metric_source: "kpi_daily_actual" })],
+          [],
+        ]);
+      }
+      if (text.includes("FROM builder_dashboard")) return Promise.resolve([[DASHBOARD], []]);
+      if (text.includes("FROM process_master")) return Promise.resolve([[{ id: "p-gs1" }], []]);
+      if (text.includes("FROM kpi_metric_master")) return Promise.resolve([[{ unit }], []]);
+      if (text.includes("DATE_FORMAT")) {
+        return Promise.resolve([[{ period: "2026-08", value: 49.4, n: 10 }], []]);
+      }
+      return Promise.resolve([[{ value: 49.4, n: 10, exact_ratio: 1 }], []]);
+    });
+  }
+
+  function issuedSql() {
+    return execute.mock.calls.map(([sql]) => String(sql)).join("\n---\n");
+  }
+
+  it("divides the summed parts for a rate, scaled back into percent", async () => {
+    mockEmployeeWidget("conversion_rate", "percent");
+    await svc.renderDashboard("u1", "manager", "d1");
+    const sql = issuedSql();
+    expect(sql).toContain("SUM(k.numerator_value) / SUM(k.denominator_value)");
+    // Stored raw, so a percent has to be scaled back up.
+    expect(sql).toContain("* 100");
+  });
+
+  it("does not scale a duration, whose parts are already in its own unit", async () => {
+    mockEmployeeWidget("aht", "seconds");
+    await svc.renderDashboard("u1", "manager", "d1");
+    const sql = issuedSql();
+    expect(sql).toContain("SUM(k.numerator_value) / SUM(k.denominator_value)");
+    expect(sql).toContain("* 1");
+    expect(sql).not.toContain("* 100");
+  });
+
+  it("sums a volume rather than dividing anything", async () => {
+    mockEmployeeWidget("dials", "count");
+    await svc.renderDashboard("u1", "manager", "d1");
+    const sql = issuedSql();
+    expect(sql).toContain("SUM(k.actual_value)");
+    expect(sql).not.toContain("SUM(k.numerator_value)");
+  });
+
+  it("only divides when every counted row carries a denominator", async () => {
+    mockEmployeeWidget("attendance_pct", "percent");
+    await svc.renderDashboard("u1", "manager", "d1");
+    // ATTENDANCE_PCT has parts on 24,240 of 54,766 rows. Mixing them would divide
+    // a partial numerator by a partial denominator, so the guard is not optional.
+    expect(issuedSql()).toContain("COUNT(k.denominator_value) = COUNT(k.actual_value)");
+  });
+
+  it("computes the headline over the whole window, not as a mean of months", async () => {
+    mockEmployeeWidget("conversion_rate", "percent");
+    const out = await svc.renderDashboard("u1", "manager", "d1");
+    // Averaging monthly ratios would reintroduce the same error one level up, so
+    // there must be a second aggregate with no GROUP BY at all.
+    const ungrouped = execute.mock.calls
+      .map(([sql]) => String(sql))
+      .filter((sql) => sql.includes("kpi_daily_actual") && !sql.includes("GROUP BY"));
+    expect(ungrouped.length).toBe(1);
+    expect(out!.widgets[0].value).toBeCloseTo(49.4);
+    expect(out!.widgets[0].note).toBeUndefined();
+  });
+});
