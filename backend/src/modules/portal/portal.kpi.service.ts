@@ -81,19 +81,17 @@ export const portalKpiService = {
     // Sheet-registered processes (BLABLIBLU/Reginald/Finnable/GS1 today) read from the
     // real kpi_daily_actual pipeline instead of the legacy kpi_template/kpi_score path
     // below -- null means "not one of these", so every other process's existing
-    // behaviour is untouched. Same honesty rule as the internal dashboard: a metric
-    // this pipeline has no real code for comes back with actual: null, which this
-    // type has no room to explain further (no availability field on KpiScorecard),
-    // so it reads the same as "0% achievement" the legacy path already shows for a
-    // null actual -- a real, pre-existing limitation of this type, not one this
-    // change introduces.
+    // behaviour is untouched.
     const registryRows = await getKpiScorecardsForProcessId(processId, periodToRange(period));
     if (registryRows) {
       return registryRows.map((r): KpiScorecard => {
-        const actual = r.actual;
-        const ach = actual != null
-          ? portalKpiService.computeAchievement(actual, r.target, r.direction)
-          : 0;
+        // availability !== 'ok' means no real reading -- rag "no_data" and a null
+        // achievement, never a fabricated 0%, which a client cannot tell apart
+        // from a metric that IS measured and IS failing badly.
+        const hasReading = r.availability === "ok" && r.actual != null;
+        const ach = hasReading
+          ? portalKpiService.computeAchievement(r.actual!, r.target, r.direction)
+          : null;
         return {
           metric_id: r.metricKey,
           metric_code: r.metricKey,
@@ -101,9 +99,9 @@ export const portalKpiService = {
           unit: UNIT_LABEL[r.unit] ?? "",
           direction: r.direction,
           target: r.target,
-          actual,
+          actual: r.actual,
           achievement_pct: ach,
-          rag: portalKpiService.ragFromAchievement(ach),
+          rag: ach == null ? "no_data" : portalKpiService.ragFromAchievement(ach),
           sparkline: r.trend
             .filter((p): p is { period: string; value: number } => p.value != null),
         };
@@ -157,9 +155,11 @@ export const portalKpiService = {
       const actual = row.actual_value as number | null ?? null;
       const target = row.target_value as number;
       const direction = row.direction as string;
+      // null, not 0: this process has a KPI template assigned but no kpi_score
+      // row for this period yet -- that is "not scored", not "scored at zero".
       const ach = actual != null
         ? portalKpiService.computeAchievement(actual, target, direction)
-        : 0;
+        : null;
       const scorecard: KpiScorecard = {
         metric_id: row.metric_id as string,
         metric_code: row.metric_code as string,
@@ -169,7 +169,7 @@ export const portalKpiService = {
         target,
         actual,
         achievement_pct: ach,
-        rag: portalKpiService.ragFromAchievement(ach),
+        rag: ach == null ? "no_data" : portalKpiService.ragFromAchievement(ach),
         sparkline: sparkMap.get(row.metric_id as string) ?? [],
       };
       return scorecard;

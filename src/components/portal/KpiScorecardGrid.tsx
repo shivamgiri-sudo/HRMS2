@@ -3,19 +3,22 @@ import { Award, Zap, Clock, TrendingUp, TrendingDown, Target } from "lucide-reac
 const RAG_BORDER_SHADOW = {
   green: "border-l-green-500 shadow-green-950/20 shadow-lg border border-slate-800/80 hover:border-green-500/30",
   amber: "border-l-amber-500 shadow-amber-950/20 shadow-lg border border-slate-800/80 hover:border-amber-500/30",
-  red: "border-l-red-500 shadow-red-950/20 shadow-lg border border-slate-800/80 hover:border-red-500/30"
+  red: "border-l-red-500 shadow-red-950/20 shadow-lg border border-slate-800/80 hover:border-red-500/30",
+  no_data: "border-l-slate-600 shadow-slate-950/20 shadow-lg border border-slate-800/80"
 };
 
 const RAG_TEXT = {
   green: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
   amber: "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  red: "text-rose-400 bg-rose-500/10 border-rose-500/20"
+  red: "text-rose-400 bg-rose-500/10 border-rose-500/20",
+  no_data: "text-slate-400 bg-slate-500/10 border-slate-500/20"
 };
 
 const RAG_ICON_BG = {
   green: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
   amber: "bg-amber-500/10 text-amber-400 border border-amber-500/20",
-  red: "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+  red: "bg-rose-500/10 text-rose-400 border border-rose-500/20",
+  no_data: "bg-slate-500/10 text-slate-400 border border-slate-500/20"
 };
 
 function MetricIcon({ code }: { code: string }) {
@@ -43,7 +46,7 @@ function Sparkline({ points, rag, metricId }: { points: Array<{ value: number }>
 
   const fillPointsString = `${padding},${h} ` + pointsString + ` ${w - padding},${h}`;
 
-  const strokeColor = rag === "green" ? "#10b981" : rag === "amber" ? "#f59e0b" : "#f43f5e";
+  const strokeColor = rag === "green" ? "#10b981" : rag === "amber" ? "#f59e0b" : rag === "red" ? "#f43f5e" : "#64748b";
   // Stable ID derived from metricId — avoids Math.random() breaking React reconciliation
   const gradientId = `spark-grad-${metricId.replace(/[^a-z0-9]/gi, "_")}`;
 
@@ -81,7 +84,7 @@ export function KpiScorecardGrid({ scorecards }: { scorecards: any[] }) {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
       {scorecards.map(m => {
         const hasHistory = m.sparkline && m.sparkline.length > 1;
-        const trend = hasHistory ? m.sparkline[m.sparkline.length - 1].value >= m.sparkline[m.sparkline.length - 2].value : true;
+        const trend = hasHistory ? m.sparkline[m.sparkline.length - 1].value >= m.sparkline[m.sparkline.length - 2].value : null;
 
         return (
           <div
@@ -98,17 +101,17 @@ export function KpiScorecardGrid({ scorecards }: { scorecards: any[] }) {
                 <div>
                   <div className="flex items-center gap-1.5">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{m.metric_code}</p>
-                    {trend ? (
+                    {trend === true ? (
                       <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
+                    ) : trend === false ? (
                       <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
-                    )}
+                    ) : null}
                   </div>
                   <h3 className="text-sm font-bold text-slate-100 mt-0.5 line-clamp-1">{m.metric_name}</h3>
                 </div>
               </div>
               <span className={`text-[11px] font-extrabold px-2 py-0.5 rounded-full border ${RAG_TEXT[m.rag as keyof typeof RAG_TEXT]}`}>
-                {m.achievement_pct.toFixed(0)}% Target
+                {m.achievement_pct == null ? "Not Tracked" : `${m.achievement_pct.toFixed(0)}% Target`}
               </span>
             </div>
 

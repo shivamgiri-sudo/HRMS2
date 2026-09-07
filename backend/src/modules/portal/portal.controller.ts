@@ -103,9 +103,9 @@ export const portalController = {
   async getGlidePaths(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
-    const paths = await portalGlideService.getGlidePaths(req.params.id, period);
+    const result = await portalGlideService.getGlidePaths(req.params.id, period);
     await logAccess(req, `/portal/processes/${req.params.id}/glide-paths`);
-    res.json({ data: paths });
+    res.json({ data: result });
   },
 
   // ── Action Plans ──────────────────────────────────────────────────────────

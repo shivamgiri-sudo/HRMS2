@@ -29,7 +29,10 @@ export interface ProcessCard {
   process_id: string;
   process_name: string;
   client_name: string;
-  rag: "green" | "amber" | "red";
+  // "no_data" means no headline metric on this process has a real reading from
+  // ANY pipeline -- not "green", which is what an unconfigured process used to
+  // default to (see portal.overview.service.ts's fix history).
+  rag: PortalRag;
   headline_metrics: HeadlineMetric[];
   last_updated: string | null;
 }
@@ -40,8 +43,8 @@ export interface HeadlineMetric {
   unit: string;
   actual: number | null;
   target: number;
-  achievement_pct: number;
-  rag: "green" | "amber" | "red";
+  achievement_pct: number | null;
+  rag: PortalRag;
 }
 
 export interface KpiScorecard {
@@ -52,8 +55,11 @@ export interface KpiScorecard {
   direction: "higher_is_better" | "lower_is_better";
   target: number;
   actual: number | null;
-  achievement_pct: number;
-  rag: "green" | "amber" | "red";
+  // null, not 0, when the metric has no real reading -- a fabricated 0% read as
+  // "failing badly" to a client, indistinguishable from genuinely poor
+  // performance. See rag: "no_data" on the same row.
+  achievement_pct: number | null;
+  rag: PortalRag;
   sparkline: Array<{ period: string; value: number }>;
 }
 
@@ -73,6 +79,17 @@ export interface GlidePath {
   target: number;
   points: GlidePoint[];
   behind_commitment: boolean;
+}
+
+/**
+ * `paths` empty means two different things the UI must not conflate:
+ * everything genuinely within target (real excellence), or no KPI metric was
+ * ever configured for this process at all. `hasConfiguredMetrics` is what lets
+ * the empty state tell them apart instead of always claiming "excellence".
+ */
+export interface GlidePathsResult {
+  hasConfiguredMetrics: boolean;
+  paths: GlidePath[];
 }
 
 export interface ActionPlanItem {

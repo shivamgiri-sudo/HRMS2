@@ -89,7 +89,7 @@ export const portalApi = {
   getKpis: (processId: string, period?: string) =>
     portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/kpis${period ? `?period=${period}` : ""}`),
   getGlidePaths: (processId: string, period?: string) =>
-    portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/glide-paths${period ? `?period=${period}` : ""}`),
+    portalRequest<{ data: { hasConfiguredMetrics: boolean; paths: any[] } }>("GET", `/api/portal/processes/${processId}/glide-paths${period ? `?period=${period}` : ""}`),
   getActionPlans: (processId: string, params?: { metricId?: string; status?: string }) => {
     const q = new URLSearchParams(params as Record<string, string>).toString();
     return portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/action-plans${q ? `?${q}` : ""}`);

@@ -125,11 +125,16 @@ export default function PortalProcessDashboard() {
 
           <div className="flex items-center gap-3 flex-wrap">
             <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl flex items-center gap-3">
-              <div className={`w-2 h-2 rounded-full shadow-md ${ragStatus === "green" ? "bg-emerald-500 shadow-emerald-500/50" : ragStatus === "amber" ? "bg-amber-500 shadow-amber-500/50" : "bg-red-500 shadow-red-500/50"}`} />
+              <div className={`w-2 h-2 rounded-full shadow-md ${
+                ragStatus === "green" ? "bg-emerald-500 shadow-emerald-500/50"
+                : ragStatus === "amber" ? "bg-amber-500 shadow-amber-500/50"
+                : ragStatus === "red" ? "bg-red-500 shadow-red-500/50"
+                : "bg-slate-600"
+              }`} />
               <div>
                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wide">Overall RAG</p>
                 <p className={`text-xs font-bold ${ragStatus === "green" ? "text-emerald-400" : ragStatus === "amber" ? "text-amber-400" : ragStatus === "red" ? "text-red-400" : "text-slate-400"}`}>
-                  {ragStatus === "green" ? "Green (On Track)" : ragStatus === "amber" ? "Amber (Monitor)" : ragStatus === "red" ? "Red (At Risk)" : "—"}
+                  {ragStatus === "green" ? "Green (On Track)" : ragStatus === "amber" ? "Amber (Monitor)" : ragStatus === "red" ? "Red (At Risk)" : "Not Tracked"}
                 </p>
               </div>
             </div>
@@ -194,15 +199,23 @@ export default function PortalProcessDashboard() {
             <div className="py-20 flex items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
             </div>
-          ) : (glide.data?.data ?? []).length === 0 ? (
-            <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-8 text-center">
-              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-              <p className="font-bold text-slate-200">Continuous Operational Excellence</p>
-              <p className="text-slate-500 text-xs mt-1">All metrics are currently exceeding targets — no active Glide Paths required.</p>
-            </div>
+          ) : (glide.data?.data?.paths ?? []).length === 0 ? (
+            glide.data?.data?.hasConfiguredMetrics ? (
+              <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-8 text-center">
+                <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+                <p className="font-bold text-slate-200">Continuous Operational Excellence</p>
+                <p className="text-slate-500 text-xs mt-1">All metrics are currently exceeding targets — no active Glide Paths required.</p>
+              </div>
+            ) : (
+              <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-8 text-center">
+                <TrendingUp className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="font-bold text-slate-200">Not Tracked Yet</p>
+                <p className="text-slate-500 text-xs mt-1">No KPI targets are configured for this process, so there is nothing to plot a Glide Path against.</p>
+              </div>
+            )
           ) : (
             <div className="grid gap-6">
-              {(glide.data?.data ?? []).map((p: any) => (
+              {(glide.data?.data?.paths ?? []).map((p: any) => (
                 <GlidePathChart key={p.metric_id} path={p} />
               ))}
             </div>
@@ -361,13 +374,15 @@ function GovernanceTab({ data, loading }: { data: any[]; loading: boolean }) {
   const RAG_BAR_COLOR = {
     green: "bg-emerald-500",
     amber: "bg-amber-500",
-    red: "bg-rose-500"
+    red: "bg-rose-500",
+    no_data: "bg-slate-600"
   };
 
   const RAG_TEXT_COLOR = {
     green: "text-emerald-400",
     amber: "text-amber-400",
-    red: "text-rose-400"
+    red: "text-rose-400",
+    no_data: "text-slate-400"
   };
 
   const byLevel = LEVELS.reduce((acc, l) => {
@@ -379,11 +394,17 @@ function GovernanceTab({ data, loading }: { data: any[]; loading: boolean }) {
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
       {LEVELS.map(level => {
         const activities = byLevel[level];
-        const overall = activities.length
+        // No activities configured at all is not the same claim as "0% done" --
+        // that used to compute overall=0 -> rag="red" -> "Critical" for every
+        // process on the platform that has no governance_activity_master rows
+        // matched to it yet, indistinguishable from a process actively failing
+        // its scheduled audits.
+        const hasActivities = activities.length > 0;
+        const overall = hasActivities
           ? Math.round(activities.reduce((s: number, a: any) => s + a.completion_pct, 0) / activities.length)
-          : 0;
-        
-        const rag = overall >= 90 ? "green" : overall >= 75 ? "amber" : "red";
+          : null;
+
+        const rag: keyof typeof RAG_TEXT_COLOR = !hasActivities ? "no_data" : overall! >= 90 ? "green" : overall! >= 75 ? "amber" : "red";
 
         return (
           <div key={level} className="bg-slate-900/60 border border-slate-800/80 rounded-xl overflow-hidden shadow-lg flex flex-col justify-between">
@@ -393,7 +414,7 @@ function GovernanceTab({ data, loading }: { data: any[]; loading: boolean }) {
                   {LEVEL_TITLE[level].split(" ")[0]} Check
                 </p>
                 <span className={`text-sm font-extrabold ${RAG_TEXT_COLOR[rag]}`}>
-                  {overall}%
+                  {overall == null ? "—" : `${overall}%`}
                 </span>
               </div>
 
@@ -430,7 +451,9 @@ function GovernanceTab({ data, loading }: { data: any[]; loading: boolean }) {
             <div className="p-4 bg-slate-950/20 border-t border-slate-800/40">
               <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 <span>Overall Status</span>
-                <span className={RAG_TEXT_COLOR[rag]}>{rag === "green" ? "Exceeding" : rag === "amber" ? "Warning" : "Critical"}</span>
+                <span className={RAG_TEXT_COLOR[rag]}>
+                  {rag === "green" ? "Exceeding" : rag === "amber" ? "Warning" : rag === "red" ? "Critical" : "Not Scheduled"}
+                </span>
               </div>
             </div>
           </div>

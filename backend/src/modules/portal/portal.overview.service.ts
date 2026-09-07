@@ -1,13 +1,33 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type { ProcessCard, HeadlineMetric } from "./portal.types.js";
+import type { ProcessCard, HeadlineMetric, PortalRag } from "./portal.types.js";
+import { getKpiScorecardsForProcessId } from "../process-performance/kpi-scorecard.service.js";
 
 const HEADLINE_METRICS = ["CSAT", "AHT", "FCR"];
+
+// Lower is more urgent -- an unrated process sorts after every rated one, real
+// or not: "we don't know yet" is not the same claim as "green", and should not
+// look calmer than an amber process that is at least being measured.
+const RAG_PRIORITY: Record<PortalRag, number> = { red: 0, amber: 1, no_data: 2, green: 3 };
 
 function computeRag(achievementPct: number): "green" | "amber" | "red" {
   if (achievementPct >= 100) return "green";
   if (achievementPct >= 85) return "amber";
   return "red";
+}
+
+/** kpi-scorecard.service.ts's good/warn/crit vocabulary -> this file's green/amber/red. */
+function mapScorecardRag(rag: "good" | "warn" | "crit" | null): "green" | "amber" | "red" | null {
+  if (rag === "good") return "green";
+  if (rag === "warn") return "amber";
+  if (rag === "crit") return "red";
+  return null;
+}
+
+/** Only a REAL reading (red/amber/green) may move a card off "no_data" -- and only toward
+ *  something more urgent than what it already holds, never back toward calm. */
+function escalate(card: ProcessCard, rag: "green" | "amber" | "red"): void {
+  if (RAG_PRIORITY[rag] < RAG_PRIORITY[card.rag]) card.rag = rag;
 }
 
 function computeAchievement(actual: number, target: number, direction: string): number {
@@ -54,7 +74,11 @@ export const portalOverviewService = {
         process_id: row.process_id,
         process_name: row.process_name,
         client_name: row.client_name,
-        rag: "green",
+        // Default is "no_data", not "green": a process nothing has ever measured
+        // is not the same claim as "on track", and every process on this
+        // platform used to default to a false "green" until at least one real
+        // reading (from either KPI pipeline below) said otherwise.
+        rag: "no_data",
         headline_metrics: [],
         last_updated: null,
       });
@@ -92,10 +116,13 @@ export const portalOverviewService = {
         if (row.last_updated && (!card.last_updated || row.last_updated > card.last_updated)) {
           card.last_updated = row.last_updated;
         }
-        if (HEADLINE_METRICS.includes(row.metric_code)) {
-          const ach = row.actual_value != null
-            ? computeAchievement(row.actual_value, row.target_value, row.direction)
-            : 0;
+        if (HEADLINE_METRICS.includes(row.metric_code) && row.actual_value != null) {
+          // Only a real actual_value is a real reading. A null one used to be
+          // scored as achievement 0 -> rag "red", which put every unconfigured
+          // process's legacy headline metrics in "red" rather than leaving them
+          // out -- indistinguishable from a process that IS measured and IS
+          // failing badly.
+          const ach = computeAchievement(row.actual_value, row.target_value, row.direction);
           const rag = computeRag(ach);
           card.headline_metrics.push({
             metric_code: row.metric_code,
@@ -106,16 +133,46 @@ export const portalOverviewService = {
             achievement_pct: ach,
             rag,
           });
-          if (rag === "red") card.rag = "red";
-          else if (rag === "amber" && card.rag !== "red") card.rag = "amber";
+          escalate(card, rag);
         }
       }
     } catch {
       // KPI data unavailable - processes still show without metrics
     }
 
+    // Third: enrich from the real kpi_daily_actual pipeline (kpi-metric-registry.ts's
+    // 4 registered processes) -- a second, newer source alongside the legacy
+    // kpi_assignment/kpi_score one above, never a replacement for it, since other
+    // processes may only ever have legacy data.
+    // '2026-09-31' is not a valid DATE literal for every month; day 0 of next
+    // month is always that month's real last day.
+    const [cpYear, cpMonth] = currentPeriod.split("-").map(Number);
+    const lastDayOfMonth = new Date(cpYear, cpMonth, 0).getDate();
+    const currentMonthRange = { from: `${currentPeriod}-01`, to: `${currentPeriod}-${String(lastDayOfMonth).padStart(2, "0")}` };
+    for (const processId of processMap.keys()) {
+      const rows = await getKpiScorecardsForProcessId(processId, currentMonthRange).catch(() => null);
+      if (!rows) continue;
+      const card = processMap.get(processId)!;
+      for (const r of rows) {
+        if (r.availability !== "ok") continue; // no real reading -- must not move the card
+        const rag = mapScorecardRag(r.rag);
+        if (!rag) continue;
+        card.headline_metrics.push({
+          metric_code: r.metricKey,
+          metric_name: r.label,
+          unit: r.unit,
+          actual: r.actual,
+          target: r.target,
+          achievement_pct: r.actual == null ? null
+            : Math.min(Math.round((r.direction === "higher_is_better" ? r.actual / r.target : r.target / r.actual) * 10000) / 100, 120),
+          rag,
+        });
+        escalate(card, rag);
+      }
+    }
+
     const cards = Array.from(processMap.values());
-    const order = { red: 0, amber: 1, green: 2 };
+    const order: Record<PortalRag, number> = { red: 0, amber: 1, no_data: 2, green: 3 };
     return cards.sort((a, b) => order[a.rag] - order[b.rag]);
   },
 };

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type { GlidePath, GlidePoint } from "./portal.types.js";
+import type { GlidePath, GlidePathsResult, GlidePoint } from "./portal.types.js";
 import type { SetGlideInput } from "./portal.validation.js";
 
 function offsetMonth(period: string, months: number): string {
@@ -24,24 +24,27 @@ function buildMonthRange(from: string, to: string): string[] {
 }
 
 export const portalGlideService = {
-  async getGlidePaths(processId: string, period: string): Promise<GlidePath[]> {
+  async getGlidePaths(processId: string, period: string): Promise<GlidePathsResult> {
     if (!/^\d{4}-\d{2}$/.test(period)) throw new Error(`Invalid period format: ${period}`);
 
     if (processId === "p-demo-1") {
-      return [
-        {
-          metric_id: "m-csat", metric_code: "CSAT", metric_name: "Customer Satisfaction", unit: "%", direction: "higher_is_better", target: 90,
-          points: [
-            { month: "2026-02", actual: 88, committed: 87.5, target: 90 },
-            { month: "2026-03", actual: 91.2, committed: 88.0, target: 90 },
-            { month: "2026-04", actual: 90.5, committed: 89.0, target: 90 },
-            { month: "2026-05", actual: 88.5, committed: 89.5, target: 90 },
-            { month: "2026-06", actual: null, committed: 90.0, target: 90 },
-            { month: "2026-07", actual: null, committed: 90.0, target: 90 },
-          ],
-          behind_commitment: true
-        }
-      ];
+      return {
+        hasConfiguredMetrics: true,
+        paths: [
+          {
+            metric_id: "m-csat", metric_code: "CSAT", metric_name: "Customer Satisfaction", unit: "%", direction: "higher_is_better", target: 90,
+            points: [
+              { month: "2026-02", actual: 88, committed: 87.5, target: 90 },
+              { month: "2026-03", actual: 91.2, committed: 88.0, target: 90 },
+              { month: "2026-04", actual: 90.5, committed: 89.0, target: 90 },
+              { month: "2026-05", actual: 88.5, committed: 89.5, target: 90 },
+              { month: "2026-06", actual: null, committed: 90.0, target: 90 },
+              { month: "2026-07", actual: null, committed: 90.0, target: 90 },
+            ],
+            behind_commitment: true
+          }
+        ],
+      };
     }
 
     const [procRows] = await db.execute<RowDataPacket[]>(
@@ -49,7 +52,22 @@ export const portalGlideService = {
       [processId]
     );
     const procName = (procRows as RowDataPacket[])[0]?.process_name as string | undefined;
-    if (!procName) return [];
+    if (!procName) return { hasConfiguredMetrics: false, paths: [] };
+
+    // Existence check, independent of behind/ahead status: does this process have
+    // ANY KPI template metric assigned at all? An empty `paths` below means one of
+    // two very different things -- "everything is within target" (real excellence)
+    // or "nothing was ever configured to measure" -- and only this flag tells them
+    // apart. Without it, an unconfigured process showed the same "Continuous
+    // Operational Excellence" banner as a process with a genuinely clean record.
+    const [[configRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n
+         FROM kpi_template kt
+         JOIN kpi_template_metric tm ON tm.template_id = kt.id
+        WHERE kt.template_name LIKE ?`,
+      [`%${procName.replace(/[%_\\]/g, "\\$&")}%`],
+    );
+    const hasConfiguredMetrics = Number(configRow?.n ?? 0) > 0;
 
     const [metricRows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -68,7 +86,7 @@ export const portalGlideService = {
       [period, `%${procName.replace(/[%_\\]/g, "\\$&")}%`]
     );
 
-    if ((metricRows as RowDataPacket[]).length === 0) return [];
+    if ((metricRows as RowDataPacket[]).length === 0) return { hasConfiguredMetrics, paths: [] };
 
     const metricIds = (metricRows as RowDataPacket[]).map(r => r.metric_id);
     const placeholders = metricIds.map(() => "?").join(",");
@@ -90,7 +108,7 @@ export const portalGlideService = {
       [processId, ...metricIds, period, threeMonthsAhead]
     );
 
-    return (metricRows as RowDataPacket[]).map(metric => {
+    const paths: GlidePath[] = (metricRows as RowDataPacket[]).map(metric => {
       const actuals = (actualRows as RowDataPacket[]).filter(r => r.metric_id === metric.metric_id);
       const commits = (commitRows as RowDataPacket[]).filter(r => r.metric_id === metric.metric_id);
 
@@ -119,6 +137,7 @@ export const portalGlideService = {
         behind_commitment: behind,
       };
     });
+    return { hasConfiguredMetrics, paths };
   },
 
   async setCommitment(input: SetGlideInput, userId: string): Promise<void> {
