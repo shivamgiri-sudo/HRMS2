@@ -105,7 +105,7 @@ Expected: `All migrations applied successfully` or `No pending migrations`
 - [ ] **Step 4: Verify columns exist in DB**
 
 ```bash
-"/c/Program Files/MySQL/MySQL Server 8.4/bin/mysql" -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms 2>/dev/null \
+"/c/Program Files/MySQL/MySQL Server 8.4/bin/mysql" -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" mas_hrms 2>/dev/null \
   -e "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_NAME='salary_component_assignments' AND COLUMN_NAME IN ('bonus','portfolio','medical_allowance','lta','other_allowance','pli','mobile_deduction','insurance_deduction') ORDER BY ORDINAL_POSITION;"
 ```
 
@@ -154,8 +154,8 @@ Create `backend/scripts/migrate-salary-structures-from-dbbill.mjs`:
  */
 import mysql from 'mysql2/promise';
 
-const HRMS = { host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' };
-const BILL = { host:'192.168.10.22', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'db_bill' };
+const HRMS = { host: process.env.DB_HOST, port: 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: 'mas_hrms' };
+const BILL = { host: process.env.BILL_DB_HOST, port: 3306, user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: 'db_bill' };
 const BATCH = 200;
 
 async function run() {
@@ -298,7 +298,7 @@ Expected output: Updated + Inserted counts > 0, skipped count is small (new hire
 - [ ] **Step 3: Verify data loaded**
 
 ```bash
-"/c/Program Files/MySQL/MySQL Server 8.4/bin/mysql" -h 192.168.10.6 -u shivam_user -p'qwersdfg!@#hjk' mas_hrms 2>/dev/null \
+"/c/Program Files/MySQL/MySQL Server 8.4/bin/mysql" -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" mas_hrms 2>/dev/null \
   -e "SELECT COUNT(*) total, SUM(CASE WHEN bonus>0 THEN 1 ELSE 0 END) has_bonus, SUM(CASE WHEN portfolio>0 THEN 1 ELSE 0 END) has_portfolio, SUM(CASE WHEN medical_allowance>0 THEN 1 ELSE 0 END) has_medical FROM salary_component_assignments WHERE status='active';"
 ```
 
@@ -609,8 +609,8 @@ import ExcelJS from 'exceljs';
 import path    from 'path';
 import os      from 'os';
 
-const HRMS = { host:'192.168.10.6', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'mas_hrms' };
-const BILL = { host:'192.168.10.22', port:3306, user:'shivam_user', password:'qwersdfg!@#hjk', database:'db_bill' };
+const HRMS = { host: process.env.DB_HOST, port: 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: 'mas_hrms' };
+const BILL = { host: process.env.BILL_DB_HOST, port: 3306, user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: 'db_bill' };
 
 const [,, yearMonth, explicitRunId] = process.argv;
 if (!yearMonth || !/^\d{4}-\d{2}$/.test(yearMonth)) {
