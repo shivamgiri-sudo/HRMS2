@@ -23,13 +23,67 @@ export interface ProcessMetricReading {
   value: number | null;
   count: number;
   trend: Array<{ period: string; value: number | null }>;
+  /**
+   * True when `value` is the period's own ratio — SUM(numerator)/SUM(denominator)
+   * across every counted day — rather than the mean of the daily rates. False
+   * when any day lacked its parts, which is when the two numbers differ and the
+   * caller should say which one it is showing.
+   */
+  exactRatio?: boolean;
 }
 
-/** SUM for the volume family, AVG for everything else, decided per row. */
-function aggregateExpr(sumKeys: string[]): string {
-  if (!sumKeys.length) return "AVG(actual_value)";
+/**
+ * How a group of days becomes one figure.
+ *
+ * SUM for the volume family, because a month of a count is the month's total.
+ * For everything else the default is AVG — but where a day recorded the two
+ * numbers its ratio was built from, SUM(numerator)/SUM(denominator) is used
+ * instead, which is the period's real rate rather than the mean of the daily
+ * ones. Those differ whenever daily volumes differ, and the mean is the wrong
+ * one: 864 answered of 882 offered is 97.96%, while the mean of the six daily
+ * rates behind it is 98.20%.
+ *
+ * The COALESCE ordering matters. SUM over a group where some days have parts and
+ * some do not would divide a partial numerator by a partial denominator and
+ * produce a number belonging to neither method, so the exact form applies only
+ * when EVERY counted day in the group carries both — that is what the
+ * COUNT comparison enforces.
+ */
+function aggregateExpr(sumKeys: string[], exactRatio: boolean): string {
+  const average = exactRatio
+    ? "CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0 " +
+      "THEN SUM(rollup_numerator) / SUM(rollup_denominator) ELSE AVG(actual_value) END"
+    : "AVG(actual_value)";
+  if (!sumKeys.length) return average;
   const list = sumKeys.map(() => "?").join(",");
-  return `CASE WHEN metric_key IN (${list}) THEN SUM(actual_value) ELSE AVG(actual_value) END`;
+  return `CASE WHEN metric_key IN (${list}) THEN SUM(actual_value) ELSE ${average} END`;
+}
+
+/**
+ * Whether 1685 has landed, so the exact form can be asked for at all. Cached,
+ * like every other capability probe here: this file ships before its migration
+ * is guaranteed to be applied, and naming a missing column turns a working
+ * dashboard into a 500.
+ */
+let rollupColumnsPresent: boolean | null = null;
+async function exactRatioSupported(): Promise<boolean> {
+  if (rollupColumnsPresent !== null) return rollupColumnsPresent;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_metric_actual'
+          AND COLUMN_NAME IN ('rollup_numerator', 'rollup_denominator')`,
+    );
+    rollupColumnsPresent = Number((rows as any[])[0]?.n ?? 0) === 2;
+  } catch {
+    rollupColumnsPresent = false;
+  }
+  return rollupColumnsPresent;
+}
+
+/** Exposed so a test, or a process that has just run 1685, can re-probe. */
+export function resetExactRatioProbe(): void {
+  rollupColumnsPresent = null;
 }
 
 /**
@@ -59,13 +113,21 @@ export async function fetchProcessMetricValues(
   const canonical = (k: string) => aliasToKey.get(k) ?? k;
 
   const keyList = queryKeys.map(() => "?").join(",");
-  const agg = aggregateExpr(sumKeys);
+  const agg = aggregateExpr(sumKeys, await exactRatioSupported());
   // sumKeys are bound first because the CASE expression appears in the SELECT
   // list, ahead of the WHERE clause's own placeholders.
   const params = [...sumKeys, processId, ...queryKeys, from, to];
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT metric_key, ${agg} AS value, COUNT(actual_value) AS n
+    `SELECT metric_key, ${agg} AS value, COUNT(actual_value) AS n${
+      (await exactRatioSupported())
+        // Whether every counted day carried its parts, which is exactly the
+        // condition the exact form above requires. Reported so a caller can say
+        // which of the two numbers it is showing instead of guessing.
+        ? `, CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
+                  THEN 1 ELSE 0 END AS exact_ratio`
+        : ", 0 AS exact_ratio"
+    }
        FROM process_metric_actual
       WHERE process_id = ?
         AND metric_key IN (${keyList})
@@ -104,6 +166,7 @@ export async function fetchProcessMetricValues(
       value: r.value == null ? null : Number(r.value),
       count: n,
       trend: trendByKey.get(key) ?? [],
+      exactRatio: Number(r.exact_ratio ?? 0) === 1,
     });
   }
   return out;

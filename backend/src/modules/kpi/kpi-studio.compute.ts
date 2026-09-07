@@ -324,6 +324,74 @@ export async function computeStudioKpis(options: ComputeOptions): Promise<Comput
  * to that through processSource.metricCode, so a metric reads the same whether
  * the number was typed in by hand or computed here.
  */
+/**
+ * The two numbers a plain ratio was built from, ready to be summed over a period.
+ *
+ * A stored daily rate is a completed division, and the parts are gone. Averaging
+ * those rates over a month is not the month's rate whenever daily volumes differ
+ * — the same "mean of ratios is not the ratio of sums" error process grain
+ * exists to avoid a level down. Keeping the parts lets a reader compute
+ * SUM(numerator)/SUM(denominator) and get the real figure.
+ *
+ * Returned ALREADY SCALED into the metric's own unit, so a reader divides one by
+ * the other and needs to know nothing about which function produced them:
+ * PCT(a, b) yields a*100 and b, SAFE_DIV(a, b) yields a and b.
+ *
+ * Deliberately narrow. Only a formula that is nothing but one ratio call over two
+ * bare field names qualifies; a banded IF or a CLAMP has no numerator to speak of,
+ * and guessing one would produce a period figure that looks exact and is not.
+ * Anything else returns null, which is the signal that the average is the best
+ * available answer and should be labelled as such.
+ */
+/**
+ * Whether 1685 has landed. Cached like the other capability probes, and for the
+ * same reason: this file ships before its migration is guaranteed to be applied,
+ * and naming a column that does not exist turns a working compute into a crash.
+ */
+let rollupColumnsPresent: boolean | null = null;
+async function processMetricRollupSupported(): Promise<boolean> {
+  if (rollupColumnsPresent !== null) return rollupColumnsPresent;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_metric_actual'
+          AND COLUMN_NAME IN ('rollup_numerator', 'rollup_denominator')`,
+    );
+    rollupColumnsPresent = Number((rows as any[])[0]?.n ?? 0) === 2;
+  } catch {
+    rollupColumnsPresent = false;
+  }
+  return rollupColumnsPresent;
+}
+
+/** Exposed so a test, or a process that has just run 1685, can re-probe. */
+export function resetProcessMetricRollupProbe(): void {
+  rollupColumnsPresent = null;
+}
+
+export function ratioParts(
+  formula: string,
+  inputs: Record<string, number | null>,
+): { numerator: number; denominator: number } | null {
+  const match = /^\s*(PCT|SAFE_DIV)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$/i
+    .exec(String(formula ?? ''));
+  if (!match) return null;
+
+  const [, fn, numeratorName, denominatorName] = match;
+  const numerator = inputs[numeratorName];
+  const denominator = inputs[denominatorName];
+  if (typeof numerator !== 'number' || typeof denominator !== 'number') return null;
+  // A zero denominator has no ratio to contribute. Storing it would make a later
+  // SUM/SUM correct anyway, but storing the pair for a day that produced no value
+  // is misleading, and SAFE_DIV already resolved that day to null.
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null;
+
+  return {
+    numerator: fn.toUpperCase() === 'PCT' ? numerator * 100 : numerator,
+    denominator,
+  };
+}
+
 async function computeProcessGrainDefinitions(
   definitions: DefinitionRow[],
   options: ComputeOptions,
@@ -429,15 +497,39 @@ async function computeProcessGrainDefinitions(
       }
 
       if (!options.dryRun) {
+        // Written only where the schema carries the columns, so this runs
+        // unchanged on a database that has not had 1685 applied — the same rule
+        // every other capability-gated write in this module follows.
+        const parts = (await processMetricRollupSupported())
+          ? ratioParts(definition.formula_expression as string, inputs)
+          : null;
+        const rollupCols = (await processMetricRollupSupported())
+          ? ', rollup_numerator, rollup_denominator'
+          : '';
+        const rollupValues = (await processMetricRollupSupported())
+          ? ', ?, ?'
+          : '';
+        const rollupUpdate = (await processMetricRollupSupported())
+          ? `
+             rollup_numerator   = VALUES(rollup_numerator),
+             rollup_denominator = VALUES(rollup_denominator),`
+          : '';
         await db.execute(
           `INSERT INTO process_metric_actual
-             (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note)
-           VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?)
+             (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note${rollupCols})
+           VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?${rollupValues})
            ON DUPLICATE KEY UPDATE
-             actual_value = VALUES(actual_value),
+             actual_value = VALUES(actual_value),${rollupUpdate}
              source       = 'connector',
              note         = VALUES(note)`,
-          [processId, definition.metric_code, date, evaluated.value, `KPI Studio definition ${definition.id}`],
+          [
+            processId,
+            definition.metric_code,
+            date,
+            evaluated.value,
+            `KPI Studio definition ${definition.id}`,
+            ...(rollupCols ? [parts?.numerator ?? null, parts?.denominator ?? null] : []),
+          ],
         );
       }
       result.written++;

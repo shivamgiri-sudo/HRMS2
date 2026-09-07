@@ -480,13 +480,15 @@ export async function renderDashboard(
           !reading || reading.count === 0
             ? "Nothing supplied for this window yet."
             : isRate
-              // Stated rather than hidden. process_metric_actual keeps only the
-              // computed daily rate, so the numerator and denominator that would
-              // give a true period rate are already gone by the time this reads
-              // them. The mean of daily rates is close but not the same number,
-              // and the gap widens as daily volumes diverge — so the label says
-              // which of the two this is.
-              ? "Period figure is the mean of daily values, not the period's own ratio."
+              // Which of the two numbers this is, stated rather than left to be
+              // assumed. Where every counted day recorded the parts its ratio was
+              // built from, the figure is the period's real rate; where any day
+              // did not, it falls back to the mean of the daily rates, and those
+              // differ whenever daily volumes differ.
+              ? reading.exactRatio
+                ? undefined
+                : "Period figure is the mean of daily values, not the period's own ratio — " +
+                  "some days did not record the numbers behind their rate."
               : isVolume
                 ? "Period figure is the sum of daily values."
                 : undefined,

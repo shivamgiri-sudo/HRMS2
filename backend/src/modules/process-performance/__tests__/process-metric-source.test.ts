@@ -13,8 +13,26 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 const src = await import("../process-metric-source.js");
 
+/**
+ * The first query that reads DATA, skipping the INFORMATION_SCHEMA probe
+ * fetchProcessMetricValues runs to see whether 1685's columns are present.
+ * Index-based assertions would otherwise be inspecting the probe.
+ */
+function firstDataQuery(): [string, unknown[]] {
+  const call = execute.mock.calls.find(([sql]) => !String(sql).includes("INFORMATION_SCHEMA"));
+  if (!call) throw new Error("no data query was issued");
+  return call as [string, unknown[]];
+}
+
 describe("fetchProcessMetricValues", () => {
-  beforeEach(() => execute.mockReset());
+  beforeEach(() => {
+    execute.mockReset();
+    // fetchProcessMetricValues probes for 1685's columns before its own queries.
+    // Answering "absent" here keeps these tests on the averaging path they were
+    // written for, and leaves each test's own mocks in the order it queued them.
+    src.resetExactRatioProbe();
+    execute.mockResolvedValueOnce([[{ n: 0 }], []]);
+  });
 
   it("returns no entry for a metric with no rows, rather than a zero", async () => {
     execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[], []]);
@@ -33,6 +51,9 @@ describe("fetchProcessMetricValues", () => {
       value: 82.5,
       count: 3,
       trend: [{ period: "2026-08", value: 82.5 }],
+      // No day carried the numbers behind its rate, so this is the mean of the
+      // daily values and says so. See the exact-ratio tests below.
+      exactRatio: false,
     });
   });
 
@@ -49,8 +70,13 @@ describe("fetchProcessMetricValues", () => {
   it("scopes every query to the process it was asked for", async () => {
     execute.mockResolvedValue([[], []]);
     await src.fetchProcessMetricValues("p-target", ["m1"], "2026-08-01", "2026-08-31");
-    expect(execute.mock.calls.length).toBeGreaterThan(0);
-    for (const call of execute.mock.calls) {
+    // The 1685 capability probe reads INFORMATION_SCHEMA and takes no
+    // parameters, so it is excluded — every query that touches DATA must scope.
+    const dataQueries = execute.mock.calls.filter(
+      ([sql]) => !String(sql).includes("INFORMATION_SCHEMA"),
+    );
+    expect(dataQueries.length).toBeGreaterThan(0);
+    for (const call of dataQueries) {
       expect(call[1]).toContain("p-target");
     }
   });
@@ -63,7 +89,12 @@ describe("fetchProcessMetricValues", () => {
 });
 
 describe("metric_code aliases", () => {
-  beforeEach(() => execute.mockReset());
+  beforeEach(() => {
+    execute.mockReset();
+    // Same as above: answer the 1685 capability probe before each test's own mocks.
+    src.resetExactRatioProbe();
+    execute.mockResolvedValueOnce([[{ n: 0 }], []]);
+  });
 
   it("finds a value stored under the Studio metric_code and reports it under the registry key", async () => {
     // KPI Studio writes process_metric_actual keyed by kpi_metric_master.metric_code;
@@ -82,6 +113,7 @@ describe("metric_code aliases", () => {
       value: 3100,
       count: 4,
       trend: [{ period: "2026-08", value: 3100 }],
+      exactRatio: false,
     });
     expect(out.get("GS1_EMAIL_TAT_SEC")).toBeUndefined();
   });
@@ -92,7 +124,7 @@ describe("metric_code aliases", () => {
       "p1", ["gs1_email_tat_sec"], "2026-08-01", "2026-08-31", [],
       { gs1_email_tat_sec: "GS1_EMAIL_TAT_SEC" },
     );
-    const params = execute.mock.calls[0][1] as unknown[];
+    const params = firstDataQuery()[1] as unknown[];
     expect(params).toContain("gs1_email_tat_sec");
     expect(params).toContain("GS1_EMAIL_TAT_SEC");
   });
@@ -102,7 +134,59 @@ describe("metric_code aliases", () => {
     await src.fetchProcessMetricValues(
       "p1", ["same_key"], "2026-08-01", "2026-08-31", [], { same_key: "same_key" },
     );
-    const params = execute.mock.calls[0][1] as unknown[];
+    const params = firstDataQuery()[1] as unknown[];
     expect(params.filter((p) => p === "same_key")).toHaveLength(1);
+  });
+});
+
+/**
+ * A period's rate, done properly.
+ *
+ * The mean of daily rates is not the period's rate whenever daily volumes
+ * differ. Where each day recorded the two numbers its ratio was built from,
+ * SUM(numerator)/SUM(denominator) recovers the real figure — and where any day
+ * did not, the average stands and must be labelled as such rather than passed
+ * off as exact.
+ */
+describe("exact period ratio", () => {
+  beforeEach(() => {
+    execute.mockReset();
+    src.resetExactRatioProbe();
+  });
+
+  /** The capability probe, then the headline row, then the trend row. */
+  function withColumns(present: boolean, headline: Record<string, unknown>) {
+    execute
+      .mockResolvedValueOnce([[{ n: present ? 2 : 0 }], []])
+      .mockResolvedValueOnce([[headline], []])
+      .mockResolvedValueOnce([[], []]);
+  }
+
+  it("asks for SUM(numerator)/SUM(denominator) when the columns exist", async () => {
+    withColumns(true, { metric_key: "inbound_al_pct", value: "97.96", n: 6, exact_ratio: 1 });
+    const out = await src.fetchProcessMetricValues("p1", ["inbound_al_pct"], "2026-08-01", "2026-08-31");
+    const sql = String(execute.mock.calls[1][0]);
+    expect(sql).toContain("SUM(rollup_numerator) / SUM(rollup_denominator)");
+    // Only when EVERY counted day has parts — a partial numerator over a partial
+    // denominator is a number belonging to neither method.
+    expect(sql).toContain("COUNT(rollup_denominator) = COUNT(actual_value)");
+    expect(out.get("inbound_al_pct")?.exactRatio).toBe(true);
+    expect(out.get("inbound_al_pct")?.value).toBeCloseTo(97.96);
+  });
+
+  it("falls back to the average, and says it is not exact, when a day lacks its parts", async () => {
+    withColumns(true, { metric_key: "inbound_al_pct", value: "98.20", n: 6, exact_ratio: 0 });
+    const out = await src.fetchProcessMetricValues("p1", ["inbound_al_pct"], "2026-08-01", "2026-08-31");
+    expect(out.get("inbound_al_pct")?.exactRatio).toBe(false);
+    expect(out.get("inbound_al_pct")?.value).toBeCloseTo(98.2);
+  });
+
+  it("never names the columns on a database that does not have them", async () => {
+    withColumns(false, { metric_key: "inbound_al_pct", value: "98.20", n: 6 });
+    const out = await src.fetchProcessMetricValues("p1", ["inbound_al_pct"], "2026-08-01", "2026-08-31");
+    const sql = String(execute.mock.calls[1][0]);
+    expect(sql).not.toContain("rollup_numerator");
+    expect(sql).not.toContain("rollup_denominator");
+    expect(out.get("inbound_al_pct")?.exactRatio).toBe(false);
   });
 });
