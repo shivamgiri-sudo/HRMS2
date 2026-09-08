@@ -533,7 +533,7 @@ export async function saveDataSource(
   const cap = await getStudioCapability();
   const processKind = String((input as any).process_key_kind ?? 'none');
   if (cap.processGrain && processKind !== 'none') {
-    if (!['constant', 'column'].includes(processKind)) {
+    if (!['constant', 'column', 'employee'].includes(processKind)) {
       throw new Error(`Unknown process mapping "${processKind}"`);
     }
     if (!(input as any).process_id) {
@@ -541,6 +541,21 @@ export async function saveDataSource(
     }
     if (processKind === 'column' && !String((input as any).process_key_column ?? '').trim()) {
       throw new Error('Name the column that identifies the client');
+    }
+    // Refused on save rather than at read time. The join reaches the employees
+    // table in THIS database; a connector pool points at somebody else's server,
+    // where it would simply not resolve — and a source that only reveals that
+    // when a nightly job runs is one nobody can debug.
+    if (processKind === 'employee') {
+      if (input.source_type === 'integration_connector') {
+        throw new Error(
+          'Looking the process up from the employee only works for a table inside this ' +
+            'application database. Map this source by a constant or a column instead.',
+        );
+      }
+      if (!input.employee_key_column?.trim()) {
+        throw new Error('Name the column that holds the employee, so the process can be looked up from it');
+      }
     }
   }
   // Validated here as well as at query-build time. A format outside the list is

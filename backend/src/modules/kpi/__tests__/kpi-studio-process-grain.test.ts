@@ -244,3 +244,64 @@ describe("date stored as text", () => {
     expect(plan.params).toContain("2026-08-31");
   });
 });
+
+/**
+ * Finding the process through the employee.
+ *
+ * Almost none of this system's own operational tables carries a process column:
+ * cosec_daily_agg, wfm_roster_assignment, biometric_attendance_log and the WFH
+ * snapshot are keyed by employee alone. Without a join they cannot back a process
+ * metric at all, which is roughly 1.1M rows of roster and punctuality data out of
+ * reach.
+ *
+ * The join brings a second table into the query, and from that moment every
+ * column has to say which table it came from — `status` and `created_at` exist on
+ * both sides of plenty of these.
+ */
+describe("process looked up from the employee", () => {
+  const EMPLOYEE_SOURCE = {
+    ...CONSTANT_SOURCE,
+    source_type: "local_query",
+    source_object: "cosec_daily_agg",
+    date_column: "first_punch_in",
+    employee_key_column: "employee_code",
+    employee_key_kind: "employee_code",
+    process_key_kind: "employee" as const,
+    process_id: "p-bella",
+  };
+
+  it("joins employees and filters on their process", () => {
+    const plan = buildProcessQueryPlan(EMPLOYEE_SOURCE as never, FIELDS, "2026-09-01", "2026-09-05");
+    expect(plan.sql).toContain("JOIN employees e ON e.`employee_code` = s.`employee_code`");
+    expect(plan.sql).toContain("e.process_id = ?");
+    expect(plan.params).toContain("p-bella");
+  });
+
+  it("qualifies every source column, so nothing is ambiguous across the join", () => {
+    const plan = buildProcessQueryPlan(EMPLOYEE_SOURCE as never, FIELDS, "2026-09-01", "2026-09-05");
+    // The date and both aggregates must name the source table explicitly.
+    expect(plan.sql).toContain("s.`first_punch_in`");
+    expect(plan.sql).toContain("SUM(s.`prepaid_flag`)");
+    expect(plan.sql).toContain("COUNT(s.`id`)");
+    // A bare backticked column would be the ambiguity this guards against.
+    expect(plan.sql).not.toMatch(/[^.]`first_punch_in`/);
+  });
+
+  it("joins on the id when the source is keyed by employee id", () => {
+    const byId = { ...EMPLOYEE_SOURCE, employee_key_column: "employee_id", employee_key_kind: "employee_id" };
+    const plan = buildProcessQueryPlan(byId as never, FIELDS, "2026-09-01", "2026-09-05");
+    expect(plan.sql).toContain("JOIN employees e ON e.`id` = s.`employee_id`");
+  });
+
+  it("refuses it for a connector, whose server has no employees table", () => {
+    const remote = { ...EMPLOYEE_SOURCE, source_type: "integration_connector", integration_key: "dialer_1" };
+    expect(() => buildProcessQueryPlan(remote as never, FIELDS, "2026-09-01", "2026-09-05"))
+      .toThrow(/only works for a table in this system/i);
+  });
+
+  it("leaves a constant-mapped source completely unqualified", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.sql).not.toContain("JOIN employees");
+    expect(plan.sql).not.toContain("s.`");
+  });
+});

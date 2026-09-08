@@ -361,7 +361,17 @@ export function DataSourceManager() {
                           <option value="none">Not a process source (per-employee only)</option>
                           <option value="constant">Every row here belongs to one process</option>
                           <option value="column">A column says which client each row is</option>
+                          <option value="employee">Look it up from the employee on each row</option>
                         </select>
+                        {/* The option most of this system's own tables need: they
+                            carry an employee and no process at all. */}
+                        {newSource.process_key_kind === "employee" && (
+                          <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+                            Joins the employee record to find their process. Needs the employee column
+                            above, and only works for a table in this system's own database — not a
+                            connector.
+                          </span>
+                        )}
                       </label>
 
                       {newSource.process_key_kind !== "none" && (

@@ -96,7 +96,15 @@ export interface DataSourceConfig {
    *                the translation outright: rows where that column equals
    *                process_key_value belong to process_id.
    */
-  process_key_kind?: 'none' | 'constant' | 'column' | null;
+  /**
+   * How a row is attributed to a process.
+   *   constant  every row belongs to one process (a client's own database)
+   *   column    a column in the table names the client
+   *   employee  the process is looked up from the employee — the only option for
+   *             this system's own operational tables, which are keyed by employee
+   *             and carry no process column
+   */
+  process_key_kind?: 'none' | 'constant' | 'column' | 'employee' | null;
   process_key_column?: string | null;
   process_key_value?: string | null;
   process_id?: string | null;
@@ -188,7 +196,18 @@ function parseFilters(raw: SourceField["filter_json"]): FieldFilter[] {
  * comes from a fixed map rather than the request, so an unknown one is refused
  * by name instead of being interpolated.
  */
-function compileFieldFilters(filters: readonly FieldFilter[], alias: string): { sql: string; params: unknown[] } {
+/**
+ * `q` qualifies every column with the source table's alias, e.g. "`t`.".
+ *
+ * Empty for a single-table query, which is every employee-grain read. It is only
+ * non-empty when the plan joins `employees` to discover the process, and then it
+ * is required: `status` would be ambiguous the moment both tables have one.
+ */
+function compileFieldFilters(
+  filters: readonly FieldFilter[],
+  alias: string,
+  q = '',
+): { sql: string; params: unknown[] } {
   const conds: string[] = [];
   const params: unknown[] = [];
 
@@ -203,14 +222,14 @@ function compileFieldFilters(filters: readonly FieldFilter[], alias: string): { 
     }
 
     if (filter.op === "is_null" || filter.op === "is_not_null") {
-      conds.push(`\`${column}\` ${op}`);
+      conds.push(`${q}\`${column}\` ${op}`);
       continue;
     }
 
     if (filter.op === "in") {
       const list = Array.isArray(filter.value) ? filter.value : [];
       if (!list.length) throw new Error(`The "in" filter on field ${alias} has no values`);
-      conds.push(`\`${column}\` IN (${list.map(() => "?").join(",")})`);
+      conds.push(`${q}\`${column}\` IN (${list.map(() => "?").join(",")})`);
       params.push(...list);
       continue;
     }
@@ -218,14 +237,17 @@ function compileFieldFilters(filters: readonly FieldFilter[], alias: string): { 
     if (filter.value === undefined || filter.value === null) {
       throw new Error(`The "${filter.op}" filter on field ${alias} has no value`);
     }
-    conds.push(`\`${column}\` ${op} ?`);
+    conds.push(`${q}\`${column}\` ${op} ?`);
     params.push(filter.value);
   }
 
   return { sql: conds.join(" AND "), params };
 }
 
-function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names: string[]; params: unknown[] } {
+function buildFieldSelect(
+  fields: readonly SourceField[],
+  q = '',
+): { sql: string; names: string[]; params: unknown[] } {
   const parts: string[] = [];
   const names: string[] = [];
   const params: unknown[] = [];
@@ -251,13 +273,13 @@ function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names:
         // rather than code. No ELSE branch: when nothing matches the answer is
         // NULL, not 0, so "no rows here" stays distinguishable from "measured
         // zero". A formula that wants a zero says COALESCE(x, 0) and means it.
-        const compiled = compileFieldFilters(filters, alias);
-        expression = `${aggregate}(CASE WHEN ${compiled.sql} THEN \`${column}\` END)`;
+        const compiled = compileFieldFilters(filters, alias, q);
+        expression = `${aggregate}(CASE WHEN ${compiled.sql} THEN ${q}\`${column}\` END)`;
         params.push(...compiled.params);
       } else if (filters.length) {
         throw new Error(`Field ${alias} has filters but no aggregate to apply them inside`);
       } else {
-        expression = aggregate === 'NONE' ? `\`${column}\`` : `${aggregate}(\`${column}\`)`;
+        expression = aggregate === 'NONE' ? `${q}\`${column}\`` : `${aggregate}(${q}\`${column}\`)`;
       }
     } else {
       if (filters.length) {
@@ -268,6 +290,15 @@ function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names:
       const shape = /^(?:(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*`?[A-Za-z_][A-Za-z0-9_]*`?\s*\)|`?[A-Za-z_][A-Za-z0-9_]*`?)$/i;
       if (!shape.test(expression)) {
         throw new Error(`Field ${alias} has an unsupported source expression`);
+      }
+      // Its shape is already proven above: an optional aggregate wrapping ONE
+      // identifier. That is what makes it safe to qualify by rewriting the
+      // identifier in place when the plan joins another table.
+      if (q) {
+        expression = expression.replace(
+          /`?([A-Za-z_][A-Za-z0-9_]*)`?(?![A-Za-z0-9_(])/,
+          (whole, name) => (/^(SUM|AVG|COUNT|MIN|MAX)$/i.test(name) ? whole : `${q}\`${name}\``),
+        );
       }
     }
 
@@ -442,8 +473,8 @@ export function isSupportedDateFormat(value: unknown): value is DateFormat {
  * The format is re-validated here, not trusted from the row, because this value
  * is interpolated. A stored value outside the list is refused rather than run.
  */
-export function dateExpression(dateColumn: string, dateFormat?: string | null): string {
-  const quoted = `\`${dateColumn}\``;
+export function dateExpression(dateColumn: string, dateFormat?: string | null, q = ''): string {
+  const quoted = `${q}\`${dateColumn}\``;
   if (!dateFormat) return quoted;
   if (!isSupportedDateFormat(dateFormat)) {
     throw new Error(`Unsupported date format "${dateFormat}"`);
@@ -463,7 +494,7 @@ export function buildProcessQueryPlan(
   const kind = source.process_key_kind ?? 'none';
   if (kind === 'none') {
     throw new Error(
-      `Data source ${source.source_code} is not mapped to a process. Set it to the client's own database (constant), or name the column that identifies the client (column), before using it for a process metric.`,
+      `Data source ${source.source_code} is not mapped to a process. Set it to the client's own database (constant), name the column that identifies the client (column), or look the process up from the employee (employee), before using it for a process metric.`,
     );
   }
   if (!source.process_id) {
@@ -472,11 +503,24 @@ export function buildProcessQueryPlan(
 
   const table = assertSafeIdentifier(source.source_object, 'source table');
   const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+
+  // Most of this system's operational tables carry no process column at all:
+  // cosec_daily_agg, wfm_roster_assignment, biometric_attendance_log and the WFH
+  // snapshot are all keyed by employee only. 'employee' joins the employees table
+  // to find the process, which is the difference between those tables being
+  // usable for a process metric and being unreachable.
+  //
+  // Once a second table is in the query every column has to say which one it came
+  // from — `status` exists on plenty of both — so the source's own columns are
+  // qualified throughout.
+  const joinsEmployees = kind === 'employee';
+  const q = joinsEmployees ? 's.' : '';
+
   // Everywhere the date is used must go through the SAME expression. Filtering on
   // a parsed date while grouping by the raw text would bucket rows under strings
   // like "01-01-2025" and silently produce one group per distinct spelling.
-  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format);
-  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields);
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format, q);
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields, q);
   const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
   const where = [`${dateExpr} >= ?`, `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`];
@@ -493,14 +537,39 @@ export function buildProcessQueryPlan(
     const keyColumn = assertSafeIdentifier(source.process_key_column, 'process key column');
     // The identifier is validated; the VALUE is bound, because it comes from
     // configuration a user typed and is data, not SQL.
-    where.push(`\`${keyColumn}\` = ?`);
+    where.push(`${q}\`${keyColumn}\` = ?`);
     params.push(source.process_key_value ?? '');
+  }
+
+  let join = '';
+  if (joinsEmployees) {
+    if (source.source_type === 'integration_connector') {
+      // employees lives in this application's database. A connector pool points
+      // at somebody else's server, where the join would simply not resolve.
+      throw new Error(
+        `Data source ${source.source_code} looks the process up from the employee, which only works ` +
+          `for a table in this system's own database. Map it by a constant or a column instead.`,
+      );
+    }
+    if (!source.employee_key_column) {
+      throw new Error(
+        `Data source ${source.source_code} looks the process up from the employee but names no employee column`,
+      );
+    }
+    const employeeColumn = assertSafeIdentifier(source.employee_key_column, 'employee key column');
+    // Only these two, and both are literals in this file — the join target is
+    // never taken from configuration.
+    const employeeSide = source.employee_key_kind === 'employee_id' ? 'id' : 'employee_code';
+    join = `JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\``;
+    where.push('e.process_id = ?');
+    params.push(source.process_id);
   }
 
   const sql = `
     SELECT DATE(${dateExpr}) AS __score_date,
            ${fieldSelect}
-      FROM ${quotedTable}
+      FROM ${quotedTable}${joinsEmployees ? ' s' : ''}
+      ${join}
      WHERE ${where.join(' AND ')}
      GROUP BY DATE(${dateExpr})
   `;
