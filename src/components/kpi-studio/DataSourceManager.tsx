@@ -61,6 +61,7 @@ const DATE_FORMAT_OPTIONS = [
   { value: "%d %b %Y", label: "Day Mon Year — 31 Aug 2026" },
   { value: "%Y-%m-%d %H:%i:%s", label: "Year-Month-Day with time — 2026-08-31 14:05:00" },
   { value: "%d-%m-%Y %H:%i:%s", label: "Day-Month-Year with time — 31-08-2026 14:05:00" },
+  { value: "excel_serial", label: "Excel serial number — 46174 (a spreadsheet exported as values)" },
 ] as const;
 
 export function DataSourceManager() {

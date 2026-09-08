@@ -455,6 +455,13 @@ export const DATE_FORMATS = [
   '%d %b %Y',
   '%Y-%m-%d %H:%i:%s',
   '%d-%m-%Y %H:%i:%s',
+  // Not a STR_TO_DATE pattern: a day count since the Excel epoch, which is what a
+  // spreadsheet exported "as values" leaves behind (db_masmis.neemans_sale_raw and
+  // neemans_allocation both store 46174-style numbers in a varchar `date`).
+  // dateExpression renders it with DATE_ADD instead. Without this the whole table
+  // is unusable as a source: STR_TO_DATE returns NULL for every row, so a month
+  // filter matches nothing and the KPI reads as a confident zero.
+  'excel_serial',
 ] as const;
 
 export type DateFormat = (typeof DATE_FORMATS)[number];
@@ -479,6 +486,15 @@ export function dateExpression(dateColumn: string, dateFormat?: string | null, q
   if (!dateFormat) return quoted;
   if (!isSupportedDateFormat(dateFormat)) {
     throw new Error(`Unsupported date format "${dateFormat}"`);
+  }
+  if (dateFormat === 'excel_serial') {
+    // Excel counts days from 1900-01-01 as serial 1 but also treats 1900 as a leap
+    // year, so the epoch that reproduces its arithmetic is 1899-12-30. CAST to
+    // SIGNED rather than trusting the column: a stray non-numeric yields 0, which
+    // lands on the epoch and therefore outside any real reporting range, instead of
+    // raising mid-query. The format string is compared to a constant here, never
+    // interpolated, so this branch adds no injection surface.
+    return `DATE_ADD('1899-12-30', INTERVAL CAST(${quoted} AS SIGNED) DAY)`;
   }
   return `STR_TO_DATE(${quoted}, '${dateFormat}')`;
 }
