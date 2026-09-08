@@ -722,10 +722,15 @@ const RAW_ROWS_LIMIT = 200;
  * GROUP BY and the aggregate functions — so what this returns is provably the
  * rows that were summed into the number on the tile, not a lookalike query.
  *
- * A metric with no configured source (most manual entries, the workforce
- * metrics derived from employees/attendance directly rather than a registered
- * source) returns available:false with a real reason — never a fabricated or
- * silently empty row list standing in for "nothing to show".
+ * A metric with no configured source returns available:false with a real
+ * reason — never a fabricated or silently empty row list standing in for
+ * "nothing to show". In practice this is rare: verified that EVERY active
+ * kpi_studio_definition (832/832) carries a data_source_id, including the
+ * workforce metrics computed from HRMS's own attendance/roster tables
+ * (SHRINKAGE_PCT traces to attendance_daily_record, ROSTER_ACK_PCT to
+ * wfm_roster_assignment) — those are automated too, just internally sourced
+ * rather than fed by an external client system. The processes genuinely
+ * without a source are the ones with a manual-only entry and nothing else.
  */
 export async function getMetricRawRows(
   userId: string, processId: string, metricKey: string, date: string,
