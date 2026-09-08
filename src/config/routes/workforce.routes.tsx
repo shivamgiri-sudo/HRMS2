@@ -180,7 +180,7 @@ export const workforceRouteElements = (
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-compliance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterComplianceMonitor /></Gate></ProtectedRoute>} />
       <Route path="/wfm/shift-effectiveness" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><ShiftEffectivenessDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_CAPACITY_DASHBOARD"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/team-comparison" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><TeamRosterComparison /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-audit" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAuditTrail /></Gate></ProtectedRoute>} />
       <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterNotificationHub /></Gate></ProtectedRoute>} />

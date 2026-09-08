@@ -52,7 +52,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/social-feed": "SOCIAL_FEED",
   "/super-admin/policy-engine": "SUPER_ADMIN_POLICY_ENGINE",
   "/wfm/break-desk-devices": "WFM_BREAK_DESK_DEVICES",
-  "/wfm/capacity-dashboard": "WFM_ROSTER",
+  "/wfm/capacity-dashboard": "WFM_CAPACITY_DASHBOARD",
   "/wfm/mobile-attendance": "WFM_ROSTER",
   "/wfm/mobile-roster": "WFM_ROSTER",
   "/wfm/notification-hub": "WFM_ROSTER",

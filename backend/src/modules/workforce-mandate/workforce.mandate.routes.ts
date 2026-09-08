@@ -142,11 +142,27 @@ router.get(
 /**
  * GET /api/workforce-mandate/capacity-summary
  * Aggregated capacity dashboard summary across all active mandates.
- * Roles: hr | admin | super_admin | wfm | ceo
+ *
+ * Read-only: this endpoint aggregates and returns, it writes nothing.
+ *
+ * The role list matches the grants on the WFM_CAPACITY_DASHBOARD page code exactly
+ * (migration 1688). The two MUST stay in step: a role granted the page but refused here gets a
+ * dashboard that loads and then errors, which reads as a broken product rather than as a denied
+ * permission. Widened from hr|admin|super_admin|wfm|ceo so branch and process leadership,
+ * Training & Quality and the WFM roles who are the page's actual audience can read their own
+ * capacity numbers, rather than only HR and the executive.
+ *
+ * Note this reaches people by ROLE only. Operations staff who hold just the 'employee' role -
+ * Team Leaders, Data Analysts, RTMs - cannot be admitted here without also admitting every
+ * Operations EXECUTIVE, since they share that role. Their access is a per-person grant.
  */
 router.get(
   "/capacity-summary",
-  requireRole("hr", "admin", "super_admin", "wfm", "ceo"),
+  requireRole(
+    "hr", "admin", "super_admin", "wfm", "ceo",
+    "branch_wfm", "branch_head", "process_manager", "manager", "assistant_manager",
+    "team_leader", "tl", "tq_head", "trainer", "qa",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
 
