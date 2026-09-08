@@ -141,26 +141,26 @@ function buildCrud(
 
 // Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
 router.get("/filter-options", h(async (_req: Request, res: Response) => {
-  const [[managers], branches, departments, processes, costCentres, designations, locations] = await Promise.all([
-    db.execute<any[]>(
-      `SELECT e.id, e.employee_code,
-              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
-         FROM employees e
-        WHERE e.active_status = 1
-          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-          AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
-        ORDER BY full_name ASC`
-    ),
-    branchService.list(),
-    departmentService.list(),
-    processService.list(),
-    costCentreService.list(),
-    designationService.list(),
-    locationService.list(),
-  ]);
+  const [managers] = await db.execute<any[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+        AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
+      ORDER BY full_name ASC`
+  );
   res.json({
     success: true,
-    data: { branches, departments, processes, costCentres, designations, locations, managers },
+    data: {
+      branches: await branchService.list(),
+      departments: await departmentService.list(),
+      processes: await processService.list(),
+      costCentres: await costCentreService.list(),
+      designations: await designationService.list(),
+      locations: await locationService.list(),
+      managers,
+    },
     meta: { activeOnly: true },
   });
 }));
@@ -233,15 +233,25 @@ buildCrud("/processes",     processService);
 
 // Cost-centres: migration status (must be before :id route)
 router.get("/cost-centres/migration-status", h(async (_req: Request, res: Response) => {
-  const { total, orphaned } = await costCentreService.countOrphanedRecords();
+  const counts = await costCentreService.countOrphanedRecords();
+  const { total, orphaned } = counts;
+  // Name only the fields that are actually missing. The old message always listed all four,
+  // so it told users to go and assign a Branch to 406 cost centres that already have one.
+  const gaps = [
+    counts.missingClient  ? `Client (${counts.missingClient})`   : null,
+    counts.missingLob     ? `LOB (${counts.missingLob})`         : null,
+    counts.missingBranch  ? `Branch (${counts.missingBranch})`   : null,
+    counts.missingProcess ? `Process (${counts.missingProcess})` : null,
+  ].filter(Boolean).join(", ");
   res.json({
     success: true,
     data: {
-      total,
-      orphaned,
+      ...counts,
       migrationComplete: orphaned === 0,
+      // Creating a cost centre is no longer blocked by this backlog — see costCentreService.create.
+      blocksCreate: false,
       message: orphaned > 0
-        ? `${orphaned} of ${total} cost centre(s) need Client, LOB, Branch, and Process assigned.`
+        ? `${orphaned} of ${total} cost centre(s) are missing a relationship — ${gaps}. New cost centres can still be created.`
         : "All cost centres have required relationships.",
     },
   });

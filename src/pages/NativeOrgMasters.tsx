@@ -1636,10 +1636,11 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => { void load(); }, [load]);
 
   const openAdd = () => {
-    if (migrationStatus && !migrationStatus.migrationComplete) {
-      setMessage(`Cannot create new cost centres: ${migrationStatus.orphaned} existing record(s) need migration first.`);
-      return;
-    }
+    // The legacy backlog no longer blocks this. client_id and lob_id are NULL on every one of
+    // the 406 active cost centres — nothing has ever populated them — so this check could never
+    // pass and the Add button was permanently dead; the only way a cost centre could enter HRMS
+    // was the db_bill importer. The API still enforces that the record BEING created carries
+    // Client, LOB, Branch and Process, which is the check that actually protects the data.
     setAddForm(emptyCostCentreForm());
     setShowAdd(true);
   };
@@ -1764,9 +1765,13 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
         <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
           <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold text-amber-800">Data Migration Required</p>
+            <p className="font-bold text-amber-800">Relationships Incomplete</p>
             <p className="text-sm text-amber-700 mt-1">
-              {migrationStatus.message} Click the <strong>Migrate</strong> button on each record to assign the required Client, LOB, Branch, and Process relationships.
+              {/* The message now names only the relationships actually missing, and says so
+                  without claiming creation is blocked — it is not. Titled "Data Migration
+                  Required" this read as a hard stop on a backlog nobody could clear. */}
+              {migrationStatus.message} Use the <strong>Migrate</strong> button on a record to
+              assign them.
             </p>
           </div>
         </div>

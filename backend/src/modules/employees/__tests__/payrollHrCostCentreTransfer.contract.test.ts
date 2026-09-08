@@ -28,8 +28,15 @@ const CC_NO_BRANCH = "cc-unassigned";
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
+// roles carries "payroll", not "payroll_hr" — this is what a real payroll_hr user's
+// req.authUser.roles actually contains (DASHBOARD_ROLE_ALIASES collapses payroll_hr -> payroll
+// before authMiddleware ever sets this array; see payrollHrCostCentreTransfer.aliasCollapse.
+// contract.test.ts, which proves that collapse against the real, unmocked resolver). requireRole
+// and scopeMiddleware are mocked away below, so this file exists to test the destination-branch
+// and destination-cost-centre logic in isolation — not role-name matching, which the alias-
+// collapse companion test covers against the real code path.
 let authUser: { id: string; role: string; roles: string[] } = {
-  id: USER_ID, role: "payroll_hr", roles: ["hr", "payroll_hr"],
+  id: USER_ID, role: "payroll", roles: ["hr", "payroll"],
 };
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
@@ -83,7 +90,7 @@ beforeEach(() => {
   updateEmployee.mockImplementation(async (_req: express.Request, res: express.Response) => {
     res.json({ success: true });
   });
-  authUser = { id: USER_ID, role: "payroll_hr", roles: ["hr", "payroll_hr"] };
+  authUser = { id: USER_ID, role: "payroll", roles: ["hr", "payroll"] };
 
   // The employee sits in the Payroll HR's own branch; the actor's scope covers that branch
   // and nothing else.

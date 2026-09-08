@@ -1535,10 +1535,22 @@ router.get("/:id", requireRole("super_admin", "admin", "hr", "manager", "branch_
   return c.getEmployee(req, res);
 }));
 router.patch("/:id",
-  requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_hr"),
-  // payroll_hr is listed as a SCOPED role, never a global one. Every payroll_hr grant in
-  // user_assignment_scope is scope_type='branch', so this is what keeps a branch Payroll HR
-  // inside their own branch when they edit an employee.
+  /**
+   * "payroll" here, not "payroll_hr" — see hrms2-payroll-hr-role-alias-breaks-rbac.
+   *
+   * DASHBOARD_ROLE_ALIASES (shared/dashboardAccessRegistry.ts) maps payroll_hr -> payroll, and
+   * getUserRoleKeys() runs every resolved role through that map before requireRole ever sees
+   * it. A payroll_hr user's req.authUser.roles therefore contains "payroll", never
+   * "payroll_hr" — naming "payroll_hr" in requireRole matches nobody, ever, and this route
+   * shipped that way for one deploy before being caught. The appointment-letter route hit the
+   * identical bug for the identical reason (fixed in 75bededc).
+   */
+  requireRole("super_admin", "admin", "hr", "payroll_head", "payroll"),
+  // "payroll_hr" IS the right name here, unlike requireRole above: requireScopedRole calls
+  // hasScopedAccess() from shared/scopeAccess.ts, which has its own LOCAL getUserRoleKeys()
+  // that reads user_roles raw and never imports roleResolver.ts's alias table. A payroll_hr
+  // user's own user_roles row really does say role_key='payroll_hr', so this check sees it
+  // untouched — the alias collapse is specific to authMiddleware.ts's req.authUser.roles.
   requireScopedRole(["hr", "payroll_hr"], async (req) => {
     // Resolve employee's branch/process from DB
     const [rows] = await db.execute(
@@ -1582,7 +1594,10 @@ router.patch("/:id",
 
     if (actorRoles.some((r: string) => r === "super_admin" || r === "payroll_head")) return next();
 
-    if (!actorRoles.includes("payroll_hr")) {
+    // req.authUser.roles is already alias-normalised (payroll_hr -> payroll) by the time it
+    // reaches here, so this checks "payroll", not "payroll_hr" — see the comment on
+    // requireRole above. Checking "payroll_hr" against this array can never be true.
+    if (!actorRoles.includes("payroll")) {
       return res.status(403).json({
         error: "Only Payroll Head or the branch Payroll HR can change an employee's branch or cost centre.",
       });
@@ -1603,6 +1618,9 @@ router.patch("/:id",
       });
     }
 
+    // "payroll_hr", not "payroll": hasScopedAccess reads shared/scopeAccess.ts's own raw,
+    // un-aliased role lookup (see the comment on requireScopedRole above), so the literal role
+    // key is what it needs here.
     const destinationInScope = await hasScopedAccess(
       req.authUser.id, ["payroll_hr"], { branchId: destinationBranchId }, {}
     );
