@@ -79,9 +79,14 @@ interface FeedRow {
   latestDate: string | null; staleDays: number | null; recentReadings: number;
   state: "ok" | "slowing" | "stopped";
 }
+interface NeverReportedGroup {
+  metricKey: string; metricName: string; sourceObject: string;
+  processCount: number; processNames: string[];
+}
 interface FeedHealth {
   checkedAt: string; warnAfterDays: number; stoppedAfterDays: number;
   counts: { ok: number; slowing: number; stopped: number }; feeds: FeedRow[];
+  neverReported: NeverReportedGroup[];
 }
 interface CatalogMetric { metricCode: string; metricName: string; unit: string | null; direction: string | null }
 interface ImportOutcome {
@@ -1183,6 +1188,56 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
   );
 }
 
+/**
+ * The gap StoppedFeeds cannot see: a metric with a real, active configuration
+ * that has never once produced a row, ever — not a feed that went quiet, one
+ * that never started. Grouped by (metric, source) rather than listed per
+ * process, because the dominant case here is one dead table wearing dozens of
+ * process names, not dozens of independent problems.
+ */
+function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
+  if (!groups.length) return null;
+  const totalConfigs = groups.reduce((s, g) => s + g.processCount, 0);
+  return (
+    <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/80 dark:bg-amber-950/30 p-4 shadow-sm">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-bold text-amber-800 dark:text-amber-300">
+            {totalConfigs} configured measurement{totalConfigs === 1 ? "" : "s"} across {groups.length} metric{groups.length === 1 ? "" : "s"} {groups.length === 1 ? "has" : "have"} never reported
+          </h2>
+          <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
+            A real configuration exists and a source table is named, but nothing has ever been written
+            there — not a feed that stopped, one that never started.
+          </p>
+          <div className="mt-2.5 space-y-1.5">
+            {groups.slice(0, 6).map((g) => (
+              <div key={`${g.metricKey}|${g.sourceObject}`}
+                className="rounded-lg bg-white/80 dark:bg-slate-900/60 border border-amber-100 dark:border-amber-900/60 px-2.5 py-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 truncate">{g.metricName}</span>
+                  <span className="text-[11px] text-amber-700 dark:text-amber-400 tabular-nums shrink-0">
+                    {g.processCount} process{g.processCount === 1 ? "" : "es"}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono truncate" title={g.sourceObject}>
+                  {g.sourceObject}
+                </div>
+                <div className="text-[10px] text-slate-400 truncate">
+                  {g.processNames.slice(0, 4).join(", ")}{g.processCount > g.processNames.length ? `, +${g.processCount - g.processNames.length} more` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+          {groups.length > 6 && (
+            <p className="text-[11px] text-amber-700/70 mt-1.5">and {groups.length - 6} more metric groups</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProcessOperationsPage() {
   const qc = useQueryClient();
   const [active, setActive] = useState<string | null>(null);
@@ -1313,6 +1368,7 @@ export default function ProcessOperationsPage() {
         ) : (
           <>
             {feedHealth && <StoppedFeeds health={feedHealth} />}
+            {feedHealth && <NeverReportedBanner groups={feedHealth.neverReported} />}
 
             <div className="flex flex-wrap gap-1.5">
               {processes.map((p) => {

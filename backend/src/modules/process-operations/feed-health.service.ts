@@ -60,6 +60,8 @@ export interface FeedHealth {
   counts: { ok: number; slowing: number; stopped: number };
   /** Worst first: a reader should meet the dead feeds before the healthy ones. */
   feeds: FeedRow[];
+  /** Configured, real data_source_id, but zero rows EVER — see getNeverReported. */
+  neverReported: NeverReportedGroup[];
 }
 
 /**
@@ -98,6 +100,66 @@ function daysSince(dateStr: string): number {
   return Math.round((today.getTime() - then.getTime()) / 86_400_000);
 }
 
+export interface NeverReportedGroup {
+  metricKey: string;
+  metricName: string;
+  sourceObject: string;
+  /** How many of the caller's own readable processes are configured for this pair. */
+  processCount: number;
+  /** Up to 8 real names for a reader to recognise; not every process when there are many. */
+  processNames: string[];
+}
+
+/**
+ * The blind spot this file's own doc comment names but does not close: a
+ * (process, metric) pair with a real kpi_studio_definition and a real
+ * data_source_id, that has NEVER written a single row to
+ * process_metric_actual. getFeedHealth's query is `FROM process_metric_actual
+ * ... GROUP BY`, which structurally cannot see a pair with zero rows — a feed
+ * that never started is invisible to a monitor built to catch a feed that
+ * stopped. Found by checking, not assumed: 162 such pairs exist right now,
+ * 116 of them (PROCESS_DELIVERED_UNITS / PROCESS_DELIVERY_QUALITY, on nearly
+ * every process) pointing at process_delivery_actual, which has zero rows at
+ * all — not a per-process gap, a table nothing has ever written to.
+ *
+ * Grouped by (metric, source) rather than listed per process: the 116 above
+ * are one root cause wearing 116 faces, and a reader needs to see that once,
+ * not scroll past it 116 times.
+ */
+export async function getNeverReported(allowedProcessIds: Set<string>): Promise<NeverReportedGroup[]> {
+  if (!allowedProcessIds.size) return [];
+  const [rows] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+    `SELECT d.process_id, p.process_name, m.metric_code, m.metric_name, ds.source_object
+       FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+       JOIN process_master p ON p.id = d.process_id AND p.active_status = 1
+       JOIN kpi_studio_data_source ds ON ds.id = d.data_source_id
+      WHERE d.active_status = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM process_metric_actual a
+           WHERE a.process_id = d.process_id AND a.metric_key = m.metric_code
+        )`,
+  ));
+
+  const groups = new Map<string, NeverReportedGroup>();
+  for (const r of rows as any[]) {
+    const processId = String(r.process_id);
+    if (!allowedProcessIds.has(processId)) continue;
+    const key = `${r.metric_code}|${r.source_object}`;
+    const g = groups.get(key) ?? {
+      metricKey: String(r.metric_code),
+      metricName: r.metric_name ? String(r.metric_name) : String(r.metric_code),
+      sourceObject: String(r.source_object),
+      processCount: 0,
+      processNames: [],
+    };
+    g.processCount++;
+    if (g.processNames.length < 8) g.processNames.push(String(r.process_name));
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => b.processCount - a.processCount);
+}
+
 /**
  * @param allowedProcessIds the caller's own readable set — feed health is still
  *        process data, and a stopped feed names a client.
@@ -107,7 +169,7 @@ export async function getFeedHealth(allowedProcessIds: Set<string>): Promise<Fee
     return {
       checkedAt: isoDate(new Date()), warnAfterDays: WARN_AFTER_DAYS,
       stoppedAfterDays: STOPPED_AFTER_DAYS,
-      counts: { ok: 0, slowing: 0, stopped: 0 }, feeds: [],
+      counts: { ok: 0, slowing: 0, stopped: 0 }, feeds: [], neverReported: [],
     };
   }
 
@@ -157,6 +219,8 @@ export async function getFeedHealth(allowedProcessIds: Set<string>): Promise<Fee
     || (b.staleDays ?? 0) - (a.staleDays ?? 0)
     || b.recentReadings - a.recentReadings);
 
+  const neverReported = await getNeverReported(allowedProcessIds);
+
   return {
     checkedAt: isoDate(new Date()),
     warnAfterDays: WARN_AFTER_DAYS,
@@ -167,5 +231,6 @@ export async function getFeedHealth(allowedProcessIds: Set<string>): Promise<Fee
       stopped: feeds.filter((f) => f.state === "stopped").length,
     },
     feeds,
+    neverReported,
   };
 }
