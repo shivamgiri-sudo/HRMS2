@@ -82,6 +82,11 @@ interface FeedHealth {
   counts: { ok: number; slowing: number; stopped: number }; feeds: FeedRow[];
 }
 interface CatalogMetric { metricCode: string; metricName: string; unit: string | null; direction: string | null }
+interface ImportOutcome {
+  row: number; metricKey: string; scoreDate: string; value: number | null;
+  ok: boolean; message?: string; replaces?: number | null;
+}
+interface ImportResult { imported: number; errors: Array<{ row: number; message: string }>; outcomes: ImportOutcome[]; dryRun: boolean }
 interface RawRows {
   date: string; available: boolean; reason: string | null;
   sourceCode: string | null; sourceObject: string | null;
@@ -770,6 +775,7 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
   open: boolean; processId: string | null; processName: string | null; onClose: () => void; onSaved: () => void;
 }) {
   const { toast } = useToast();
+  const [mode, setMode] = useState<"single" | "bulk">("single");
   const [metricKey, setMetricKey] = useState("");
   const [scoreDate, setScoreDate] = useState(todayIso());
   const [value, setValue] = useState("");
@@ -781,9 +787,61 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
     enabled: open,
     staleTime: 5 * 60 * 1000,
   });
-  const options: SearchableOption[] = (catalogData?.data ?? []).map((m) => ({
-    value: m.metricCode, label: m.metricName, hint: m.unit ?? undefined,
+  const catalog = catalogData?.data ?? [];
+  // The code is what a bulk paste actually needs to type, so it is shown
+  // alongside the name here too — this dropdown doubles as the lookup a
+  // pasted row's metric_key column is checked against.
+  const options: SearchableOption[] = catalog.map((m) => ({
+    value: m.metricCode, label: m.metricName, hint: m.metricCode,
   }));
+
+  // ── Bulk paste — the actual "upload" half of the mandate: many rows in one
+  // go, not one value at a time. Same four columns the single-entry form
+  // collects (metricKey,scoreDate,value[,note]), reusing the SAME import
+  // endpoint (and therefore the same registry/date validation) Process Data
+  // Sources already uses — a dry run cannot pass where the real write would
+  // fail, because it is the same check, not a lookalike.
+  const [pasted, setPasted] = useState("");
+  const [preview, setPreview] = useState<ImportOutcome[] | null>(null);
+  const parseBulkRows = (text: string) => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const body = lines.length && /^metric[_ ]?key\s*,/i.test(lines[0]) ? lines.slice(1) : lines;
+    return body.map((line) => {
+      const [mk, scoreDate, val, ...noteParts] = line.split(",").map((c) => c.trim());
+      return { metricKey: mk, scoreDate, value: val, note: noteParts.join(",") || undefined };
+    });
+  };
+  const runBulkImport = (dryRun: boolean) =>
+    hrmsApi.post<HrmsEnvelope<ImportResult>>(`/api/process-data-source/${processId}/import`, {
+      rows: parseBulkRows(pasted), dry_run: dryRun,
+    });
+  const checkBulk = useMutation({
+    mutationFn: () => runBulkImport(true),
+    onSuccess: (res) => setPreview(res.data.outcomes),
+    onError: (err: unknown) => toast({
+      title: "Could not check rows", variant: "destructive",
+      description: err instanceof Error ? err.message : "Request failed",
+    }),
+  });
+  const importBulk = useMutation({
+    mutationFn: () => runBulkImport(false),
+    onSuccess: (res) => {
+      setPreview(res.data.outcomes);
+      const failed = res.data.errors.length;
+      toast({
+        title: `${res.data.imported} row${res.data.imported === 1 ? "" : "s"} saved`,
+        description: failed ? `${failed} row${failed === 1 ? "" : "s"} rejected — see the list below.` : undefined,
+        variant: failed ? "destructive" : undefined,
+      });
+      onSaved();
+    },
+    onError: (err: unknown) => toast({
+      title: "Import failed", variant: "destructive",
+      description: err instanceof Error ? err.message : "Request failed",
+    }),
+  });
+  const readyCount = preview?.filter((o) => o.ok).length ?? 0;
+  const blockedCount = preview?.filter((o) => !o.ok).length ?? 0;
 
   const save = useMutation({
     mutationFn: () => hrmsApi.post(`/api/process-data-source/${processId}/values`, {
@@ -825,62 +883,148 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
-              Metric
-            </label>
-            <SearchableSelect
-              options={options}
-              value={metricKey}
-              onChange={setMetricKey}
-              loading={catalogLoading}
-              placeholder="Choose a metric…"
-              searchPlaceholder="Search metrics…"
-              emptyText="No matching metric"
-              aria-label="Metric"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
-                Date
-              </label>
-              <input type="date" value={scoreDate} max={todayIso()}
-                onChange={(e) => setScoreDate(e.target.value)}
-                className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400" />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
-                Value
-              </label>
-              <input type="number" inputMode="decimal" value={value} placeholder="e.g. 92.5"
-                onChange={(e) => setValue(e.target.value)}
-                className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-400" />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
-              Note <span className="normal-case font-normal text-slate-400">(optional, but where's this figure from?)</span>
-            </label>
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
-              placeholder="e.g. Manually counted from the client's own tracker, 8 Sep"
-              className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
-          </div>
-
-          <button type="button" disabled={!canSave} onClick={() => save.mutate()}
-            className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
-            style={{ background: NAVY }}>
-            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Save reading
-          </button>
-          <p className="text-[10px] text-slate-400">
-            Only enter a value you actually have — a guess stored here reads as real on every
-            chart that uses it.
-          </p>
+        <div role="tablist" aria-label="Entry mode" className="flex border-b border-slate-200 dark:border-slate-800 px-5 pt-2">
+          {([["single", "Single entry"], ["bulk", "Paste multiple"]] as const).map(([m, label]) => (
+            <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
+              className={`px-3 py-2 text-xs font-semibold cursor-pointer border-b-2 -mb-px transition-colors ${
+                mode === m ? "border-slate-800 text-slate-900 dark:border-slate-100 dark:text-slate-100"
+                  : "border-transparent text-slate-400 hover:text-slate-600"}`}>
+              {label}
+            </button>
+          ))}
         </div>
+
+        {mode === "single" ? (
+          <div className="p-5 space-y-4">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                Metric
+              </label>
+              <SearchableSelect
+                options={options}
+                value={metricKey}
+                onChange={setMetricKey}
+                loading={catalogLoading}
+                placeholder="Choose a metric…"
+                searchPlaceholder="Search metrics…"
+                emptyText="No matching metric"
+                aria-label="Metric"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                  Date
+                </label>
+                <input type="date" value={scoreDate} max={todayIso()}
+                  onChange={(e) => setScoreDate(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                  Value
+                </label>
+                <input type="number" inputMode="decimal" value={value} placeholder="e.g. 92.5"
+                  onChange={(e) => setValue(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-400" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                Note <span className="normal-case font-normal text-slate-400">(optional, but where's this figure from?)</span>
+              </label>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+                placeholder="e.g. Manually counted from the client's own tracker, 8 Sep"
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
+            </div>
+
+            <button type="button" disabled={!canSave} onClick={() => save.mutate()}
+              className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+              style={{ background: NAVY }}>
+              {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save reading
+            </button>
+            <p className="text-[10px] text-slate-400">
+              Only enter a value you actually have — a guess stored here reads as real on every
+              chart that uses it.
+            </p>
+          </div>
+        ) : (
+          <div className="p-5 space-y-3">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                Paste rows — one per line
+              </label>
+              <textarea value={pasted} rows={7}
+                onChange={(e) => { setPasted(e.target.value); setPreview(null); }}
+                placeholder={"metric_key,date,value,note\nACCURACY_RATE,2026-09-08,91.5,\nUTILIZATION,2026-09-08,84.3,from client tracker"}
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
+              <p className="text-[10px] text-slate-400 mt-1">
+                metric_key,date,value[,note] — the metric_key is the code shown next to each name in
+                the Single entry tab's dropdown. A header row is fine, it's dropped automatically.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <button type="button" disabled={!pasted.trim() || checkBulk.isPending}
+                onClick={() => checkBulk.mutate()}
+                className="flex-1 rounded-lg py-2 text-xs font-semibold border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5">
+                {checkBulk.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                Check rows
+              </button>
+              <button type="button" disabled={!preview || readyCount === 0 || importBulk.isPending}
+                onClick={() => importBulk.mutate()}
+                className="flex-1 rounded-lg py-2 text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5"
+                style={{ background: NAVY }}>
+                {importBulk.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                Import {readyCount ? `${readyCount} row${readyCount === 1 ? "" : "s"}` : ""}
+              </button>
+            </div>
+
+            {preview && (
+              <div>
+                <p className="text-[10px] text-slate-500 mb-1.5">
+                  {readyCount} ready{blockedCount ? `, ${blockedCount} blocked` : ""} — checked against
+                  the same rules the write uses, nothing is saved yet.
+                </p>
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-56 overflow-y-auto">
+                  <table className="w-full text-[10px]">
+                    <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1 font-semibold">#</th>
+                        <th className="text-left px-2 py-1 font-semibold">Metric</th>
+                        <th className="text-left px-2 py-1 font-semibold">Date</th>
+                        <th className="text-right px-2 py-1 font-semibold">Value</th>
+                        <th className="text-left px-2 py-1 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((o) => (
+                        <tr key={o.row} className={`border-t border-slate-100 dark:border-slate-800 ${o.ok ? "" : "bg-red-50/60 dark:bg-red-950/20"}`}>
+                          <td className="px-2 py-1 text-slate-400">{o.row}</td>
+                          <td className="px-2 py-1 font-mono text-slate-700 dark:text-slate-300">{o.metricKey}</td>
+                          <td className="px-2 py-1 text-slate-500">{o.scoreDate}</td>
+                          <td className="px-2 py-1 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                            {o.value === null ? "no data" : o.value}
+                          </td>
+                          <td className={`px-2 py-1 ${o.ok ? "text-emerald-600" : "text-red-600"}`}>
+                            {o.ok
+                              ? (o.replaces !== undefined
+                                  ? (o.replaces === null ? "new" : `replaces ${o.replaces}`)
+                                  : "saved")
+                              : (o.message ?? "error")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </SheetContent>
     </Sheet>
   );
