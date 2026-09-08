@@ -297,6 +297,9 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_bella_target_plan_batch",
   // Floor compliance audit - a Google Form export; see compliance-audit-bulk.service.ts.
   "import_compliance_audit_batch",
+  // Per-process delivery actuals into process_delivery_actual, which the P&L already
+  // reads but nothing has ever written. See process-delivery-bulk.service.ts.
+  "import_process_delivery_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -672,6 +675,14 @@ async function dispatchImport(
       throw new Error(`No Onfido report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importOnfidoRawBatch(config, id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_process_delivery_batch") {
+    const { importProcessDeliveryBatch } = await import(
+      "../bulk-upload/process-delivery-bulk.service.js"
+    );
+    const data = await importProcessDeliveryBatch(id, userId);
     return { success: true, data };
   }
 
