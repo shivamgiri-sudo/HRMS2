@@ -123,8 +123,11 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   // so `user?.role` was always undefined and the Salary Start Date field below
   // was hidden from everyone, including super admins.
   const canSetSalaryStartDate = useHasRole("super_admin", "admin", "hr");
-  // Branch and cost centre changes affect payroll allocation — restricted to Payroll Head.
-  const canChangeBranchCC = useHasRole("super_admin", "payroll_head");
+  // Branch and cost centre changes affect payroll allocation — restricted to Payroll Head and,
+  // since 2026-09-08, the branch Payroll HR. payroll_hr is branch-scoped, so the API additionally
+  // refuses a destination branch or a cost centre outside that scope (employee.routes.ts PATCH
+  // /:id); this flag only decides whether the two fields are editable at all.
+  const canChangeBranchCC = useHasRole("super_admin", "payroll_head", "payroll_hr");
   const queryClient = useQueryClient();
   // Deactivating from this form now needs a stated reason, and the API refuses
   // the save without one. Kept out of EditFormData because it is not a field on
@@ -836,7 +839,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                     <Label htmlFor="branch">
                       Branch
                       {!canChangeBranchCC && (
-                        <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head only)</span>
+                        <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head / Payroll HR only)</span>
                       )}
                     </Label>
                     <Select
@@ -880,7 +883,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                   <Label htmlFor="cost_centre">
                     Cost Centre
                     {!canChangeBranchCC && (
-                      <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head only)</span>
+                      <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head / Payroll HR only)</span>
                     )}
                   </Label>
                   <Select

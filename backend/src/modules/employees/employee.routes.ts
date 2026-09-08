@@ -1535,8 +1535,11 @@ router.get("/:id", requireRole("super_admin", "admin", "hr", "manager", "branch_
   return c.getEmployee(req, res);
 }));
 router.patch("/:id",
-  requireRole("super_admin", "admin", "hr", "payroll_head"),
-  requireScopedRole(["hr"], async (req) => {
+  requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_hr"),
+  // payroll_hr is listed as a SCOPED role, never a global one. Every payroll_hr grant in
+  // user_assignment_scope is scope_type='branch', so this is what keeps a branch Payroll HR
+  // inside their own branch when they edit an employee.
+  requireScopedRole(["hr", "payroll_hr"], async (req) => {
     // Resolve employee's branch/process from DB
     const [rows] = await db.execute(
       'SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1',
@@ -1549,21 +1552,88 @@ router.patch("/:id",
       departmentId: emp?.department_id
     };
   }),
-  // Branch / cost-centre changes affect payroll allocation: only payroll_head or super_admin
-  // may include those fields. admin/hr can still update all other profile fields.
-  (req: any, res: any, next: any) => {
+  /**
+   * Branch / cost-centre changes affect payroll allocation, so they are gated separately from
+   * the rest of the profile: admin/hr can edit every other field and still not move an
+   * employee's payroll allocation.
+   *
+   * Two tiers, because they are answerable for different things:
+   *   super_admin, payroll_head  - transfer anywhere, organisation-wide.
+   *   payroll_hr                 - transfer WITHIN THEIR OWN BRANCH SCOPE only (extended
+   *                                2026-09-08 at the business's request; the branch Payroll HR
+   *                                is the person who actually knows which cost centre a hire
+   *                                belongs to, and routing it through Payroll Head was the
+   *                                bottleneck).
+   *
+   * The destination is checked, not just the source. requireScopedRole above already proved
+   * the actor may touch this employee WHERE THEY ARE NOW; without the check below a
+   * branch-scoped Payroll HR could move someone into a branch they have no scope over - a
+   * one-way transfer out of their own reach, which reads as data loss to whoever inherits it.
+   */
+  // Not wrapped in h(): that helper calls fn(req, res) and drops `next`, so a middleware
+  // written through it can never hand control on. This one catches its own errors instead.
+  (req: any, res: any, next: any) => { void (async () => {
     const body = req.body ?? {};
-    if (body.branchId !== undefined || body.costCentreId !== undefined) {
-      const actorRoles: string[] = req.authUser?.roles?.length
-        ? req.authUser.roles
-        : req.authUser?.role ? [req.authUser.role] : [];
-      const canTransfer = actorRoles.some((r: string) => r === "super_admin" || r === "payroll_head");
-      if (!canTransfer) {
-        return res.status(403).json({ error: "Only Payroll Head can change an employee's branch or cost centre." });
+    if (body.branchId === undefined && body.costCentreId === undefined) return next();
+
+    const actorRoles: string[] = req.authUser?.roles?.length
+      ? req.authUser.roles
+      : req.authUser?.role ? [req.authUser.role] : [];
+
+    if (actorRoles.some((r: string) => r === "super_admin" || r === "payroll_head")) return next();
+
+    if (!actorRoles.includes("payroll_hr")) {
+      return res.status(403).json({
+        error: "Only Payroll Head or the branch Payroll HR can change an employee's branch or cost centre.",
+      });
+    }
+
+    const [empRows] = await db.execute(
+      "SELECT branch_id FROM employees WHERE id = ? LIMIT 1",
+      [req.params.id]
+    ) as any[];
+    // An unset branchId in the payload means "leave the branch alone", so the destination is
+    // the branch the employee already sits in.
+    const destinationBranchId: string | null =
+      body.branchId !== undefined ? (body.branchId ?? null) : (empRows[0]?.branch_id ?? null);
+
+    if (!destinationBranchId) {
+      return res.status(403).json({
+        error: "A branch Payroll HR cannot move an employee to an unassigned branch.",
+      });
+    }
+
+    const destinationInScope = await hasScopedAccess(
+      req.authUser.id, ["payroll_hr"], { branchId: destinationBranchId }, {}
+    );
+    if (!destinationInScope) {
+      return res.status(403).json({
+        error: "Forbidden: the destination branch is outside your assigned scope.",
+      });
+    }
+
+    // A cost centre carries its own branch. Allowing one from another branch would move the
+    // employee's payroll cost across a boundary the branch check just enforced, without the
+    // branch field ever changing. Cost centres with no branch_id (3 of 937) are left to the
+    // branch check alone rather than blocked.
+    if (body.costCentreId) {
+      const [ccRows] = await db.execute(
+        "SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1",
+        [body.costCentreId]
+      ) as any[];
+      if (ccRows.length === 0) {
+        return res.status(400).json({ error: "Unknown cost centre." });
+      }
+      const ccBranchId = ccRows[0].branch_id;
+      if (ccBranchId && ccBranchId !== destinationBranchId) {
+        return res.status(403).json({
+          error: "Forbidden: that cost centre belongs to another branch.",
+        });
       }
     }
-    next();
-  },
+
+    return next();
+  })().catch(next); },
   h(c.updateEmployee)
 );
 // Despite the verb this deactivates rather than deletes: it clears active_status

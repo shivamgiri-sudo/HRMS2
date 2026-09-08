@@ -257,6 +257,40 @@ function checkELSingleGoCap(requestedDays: number): { exceeded: boolean; cap: nu
 // business policy that was never asked for.
 
 // ---------------------------------------------------------------------------
+// isAccruingInMonth
+// ---------------------------------------------------------------------------
+/**
+ * Whether an employee is entitled to the month's SCHEDULED CL/ML credit at all.
+ *
+ * The scheduled credit is a whole day or nothing — a joiner who is on the payroll for any
+ * part of the credit month receives the full day. This is deliberately NOT prorateMonthlyCredit:
+ * that function was being applied to the schedule, so someone who joined on 24 August received
+ * 8/31 of a day and their Casual Leave balance read 0.3 on the Employee Stat Card. Confirmed
+ * with the business on 2026-09-08 as wrong — the entitlement is 1 CL or 1 ML in the month the
+ * schedule credits it, not a fraction of one. Live at the time: 459 CL and 220 ML rows for 2026
+ * carried fractional balances.
+ *
+ * A fraction of a Casual Leave day is also unusable in practice: leave is applied for in whole
+ * or half days, so 0.3 is a balance no one can ever spend.
+ *
+ * prorateMonthlyCredit is retained below and still governs EL, which accrues 1.5 days a month
+ * as an EARNED entitlement — pro-rating that one is correct and was not part of this decision.
+ */
+function isAccruingInMonth(
+  joinDate: string,
+  creditMonth: number,
+  creditYear: number
+): boolean {
+  const parsed = new Date(joinDate);
+  const joinYear = parsed.getFullYear();
+  const joinMonth = parsed.getMonth() + 1; // 1-indexed
+
+  if (joinYear < creditYear) return true;
+  if (joinYear > creditYear) return false;
+  return joinMonth <= creditMonth;
+}
+
+// ---------------------------------------------------------------------------
 // prorateMonthlyCredit
 // ---------------------------------------------------------------------------
 function prorateMonthlyCredit(
@@ -392,6 +426,7 @@ export const leavePolicyService = {
   checkELInSameMonth,
   checkELOccurrences,
   checkELSingleGoCap,
+  isAccruingInMonth,
   prorateMonthlyCredit,
   prorateAnnualCredit,
   getCombinedCLMLBalance,
