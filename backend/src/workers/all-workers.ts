@@ -5,6 +5,7 @@ import { startAccessExpiryScheduler, stopAccessExpiryScheduler } from "./access-
 import { startMobilityTransferWorker, stopMobilityTransferWorker } from "./mobility-transfer.worker.js";
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./integration-scheduler.worker.js";
 import { startKpiDailySyncWorker, stopKpiDailySyncWorker } from "./kpi-daily-sync.worker.js";
+import { startKpiStudioComputeWorker, stopKpiStudioComputeWorker } from "./kpi-studio-compute.worker.js";
 import { startAnnualLeaveWorker, stopAnnualLeaveWorker } from "./leave-annual-el-credit.worker.js";
 import { startLeaveMonthlyWorker, stopLeaveMonthlyWorker } from "./leave-monthly-credit.worker.js";
 import { startOfficialEmailComplianceScheduler, stopOfficialEmailComplianceScheduler } from "./official-email-compliance.worker.js";
@@ -76,6 +77,7 @@ import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat
 import { registerUatJobHandlers } from "../modules/uat-pipeline/uat-jobs.handlers.js";
 import { startMiraTriageScheduler } from "../modules/ai/mira-triage-scheduler.js";
 import { startHcGapAlertScheduler, stopHcGapAlertScheduler } from "../modules/workforce-mandate/hc-gap-alert.cron.js";
+import { startCostCentreDriftAlertScheduler, stopCostCentreDriftAlertScheduler } from "../modules/workforce-mandate/cost-centre-drift-alert.cron.js";
 import { registerRosterIntelligenceCrons } from "../modules/wfm/roster-intelligence.cron.js";
 import { clearAllTimers } from "./worker-utils.js";
 
@@ -207,6 +209,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "kpi-daily-sync",
     start: startKpiDailySyncWorker,
+  },
+  {
+    // Off unless KPI_STUDIO_COMPUTE_ENABLED=true, and dry-run until
+    // KPI_STUDIO_COMPUTE_DRY_RUN=false. It writes to kpi_daily_actual, so it
+    // does not start computing on its own the night it is deployed.
+    name: "kpi-studio-compute",
+    start: () => { startKpiStudioComputeWorker(); return Promise.resolve(); },
   },
   {
     name: "sla-breach",
@@ -395,6 +404,15 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startHcGapAlertScheduler(); return Promise.resolve(); },
   },
   {
+    // Daily at 07:15 IST: diffs employees.cost_center_code against db_bill.masjclrentry.CostCenter
+    // (by EmpCode) for anyone active 15+ days, and raises a grouped work item to Finance/super_admin
+    // per drifted cost centre. Read-only against db_bill (billQuery blocks writes) — Finance still
+    // keys the correction into db_bill themselves; this only makes the drift visible instead of
+    // silently persisting the way the Onfido/NOIDA-2 audit found it doing (2026-09-07).
+    name: "cost-centre-drift-alert",
+    start: () => { startCostCentreDriftAlertScheduler(); return Promise.resolve(); },
+  },
+  {
     // Roster Intelligence: Manager daily digest (7 AM), branch dashboard (8 AM), and
     // unplanned absence alerts (every 30 min 8 AM - 8 PM). Controlled via
     // ROSTER_INTELLIGENCE_CRON env var (default enabled).
@@ -489,6 +507,7 @@ function shutdown(): void {
   stopAutoRosterSchedulerWorker();
   stopUatJobRunner();
   stopHcGapAlertScheduler();
+  stopCostCentreDriftAlertScheduler();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

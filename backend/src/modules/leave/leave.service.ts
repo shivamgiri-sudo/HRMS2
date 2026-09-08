@@ -349,27 +349,24 @@ export const leaveService = {
       input.employeeId, submitScope, input.fromDate, input.toDate
     );
     const chargeableCount = chargeableDates(submitClassification).length;
-    // What actually gets stored. A half day is half of ONE chargeable day; every other
-    // request stores the authoritative chargeable count (#18). Declared here so the INSERT
-    // and the audit row can never record different numbers.
-    const storedDays = isHalfDay ? 0.5 : chargeableCount;
-    if (chargeableCount === 0) {
-      // Carries a code so callers can tell "nothing to do here" apart from "this request is
-      // wrong". A person submitting one request still gets the error — they picked a date and
-      // deserve to be told it needs no leave. A bulk file is different: the row is a no-op, and
-      // failing it reports a broken upload when nothing is broken. See markRowSkipped.
-      throw Object.assign(
-        new Error(
-          `Every date in ${input.fromDate} – ${input.toDate} is a Week Off or company holiday for this employee — there are no working days to charge leave against.`
-        ),
-        { code: NO_CHARGEABLE_DAYS },
-      );
-    }
+    // Applying leave is NOT roster-validated. A range falling entirely on the employee's
+    // Week Off or a company holiday used to be refused here — and silently skipped by the
+    // bulk importer — so a leave the employee actually applied for never reached the record
+    // at all. The roster governs what gets CHARGED against the balance and what gets written
+    // to attendance; it does not govern whether the application is allowed. The request is
+    // therefore always accepted, and when no date in the range is chargeable the applied
+    // calendar days stand as the stored count rather than the row being refused or stored
+    // as a zero-day ghost.
+    const effectiveDayCount = chargeableCount > 0 ? chargeableCount : submitClassification.size;
+    // What actually gets stored. A half day is half of ONE day; every other request stores
+    // the authoritative count. Declared here so the INSERT and the audit row can never
+    // record different numbers.
+    const storedDays = isHalfDay ? 0.5 : effectiveDayCount;
 
     // ── CL / ML policy enforcement ────────────────────────────────────────
     if (leaveCode === 'CL' || leaveCode === 'ML') {
       // More than 2 continuous days must be applied as EL
-      if (chargeableCount > 2) {
+      if (effectiveDayCount > 2) {
         throw new Error(
           `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`
         );
@@ -377,7 +374,7 @@ export const leaveService = {
 
       // Combined CL+ML monthly cap (policy engine: leave → cl_ml_policy → monthly_cap_days, default 2)
       const capCheck = await leavePolicyService.checkMonthlyCapExceeded(
-        input.employeeId, input.fromDate, input.toDate, chargeableCount
+        input.employeeId, input.fromDate, input.toDate, effectiveDayCount
       );
       if (capCheck.exceeded) {
         throw new Error(
@@ -392,7 +389,7 @@ export const leaveService = {
     let elOccurrenceCount: number | null = null;
     if (leaveCode === 'EL') {
       // Single-application cap: max 12 days
-      const singleGo = leavePolicyService.checkELSingleGoCap(chargeableCount);
+      const singleGo = leavePolicyService.checkELSingleGoCap(effectiveDayCount);
       if (singleGo.exceeded) {
         throw new Error(
           `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`
@@ -525,7 +522,7 @@ export const leaveService = {
             user_id: approverUserId,
             type: 'leave_request',
             title: `[ACTION REQUIRED] Escalated Leave Request: ${emp?.full_name ?? input.employeeId}`,
-            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${chargeableCount} day${chargeableCount === 1 ? '' : 's'}) — this is EL occurrence #${(elOccurrenceCount ?? 0)} this year and requires ${approverRole.replace(/_/g, ' ')} approval.${input.reason ? ` Reason: ${input.reason}` : ''}`,
+            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${effectiveDayCount} day${effectiveDayCount === 1 ? '' : 's'}) — this is EL occurrence #${(elOccurrenceCount ?? 0)} this year and requires ${approverRole.replace(/_/g, ' ')} approval.${input.reason ? ` Reason: ${input.reason}` : ''}`,
             entity_type: 'leave',
             entity_id: id,
             action_url: `/leave/requests`,
@@ -545,7 +542,7 @@ export const leaveService = {
               user_id: managerUserId,
               type: 'leave_request',
               title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
-              description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${chargeableCount} day${chargeableCount === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+              description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${effectiveDayCount} day${effectiveDayCount === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
               // The leave request, not the employee. Keyed on the employee this
               // collapsed every request a person raised onto one alert, so a
               // second application never reached the manager and approving one
@@ -719,11 +716,13 @@ export const leaveService = {
           employeeId, approvalScope, String(request.from_date), String(request.to_date)
         );
         const chargeable = chargeableDates(approvalClassification);
-        if (chargeable.length === 0) {
-          throw new Error(
-            "This leave request has no chargeable working days — every date falls on a Week Off or company holiday. Nothing to approve."
-          );
-        }
+        // A request whose every date is a Week Off or company holiday is still approvable.
+        // Refusing it here stranded a leave the employee had already applied for: the submit
+        // path now accepts such a request (the roster does not gate the application), so the
+        // approval path must be able to close it. There is simply nothing to charge — the
+        // per-year deduction loop below iterates `chargeable` and therefore deducts nothing,
+        // and the attendance write likewise touches no Week Off/holiday date. Whether those
+        // days are PAID remains payroll's Week Off logic, exactly as before.
 
         // Year-bucketed balance deduction (#12, policy sign-off 2026-08-13):
         // a request crossing a calendar-year boundary (e.g. 30-Dec to 03-Jan)

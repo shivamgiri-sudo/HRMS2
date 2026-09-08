@@ -1,0 +1,13 @@
+{
+  // Typecheck for the Access Control catalog fix: the page now requests disabled catalog rows
+  // (include_disabled=true) and marks them, so a switched-off page can be seen and re-enabled.
+  // Scoped per the pattern in tsconfig.phase2rbac-check.json — the root tsconfig has
+  // `"files": []` and exits 0 regardless.
+  //
+  //     npx tsc -p tsconfig.accesscontrol-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/UnifiedAccessControl.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

@@ -201,6 +201,7 @@ import { magicalScriptRouter } from "./modules/quality-dashboard/magical-script.
 import { performanceDashboardRouter } from "./modules/performance-dashboard/performance-dashboard.routes.js";
 import { performanceIntelligenceRouter } from "./modules/performance-intelligence/performance-intelligence.routes.js";
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
+import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
@@ -231,6 +232,8 @@ import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-
 import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-head-review.routes.js";
 import { processPerformanceRouter } from "./modules/process-performance/process-performance.routes.js";
 import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
+import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
+import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
 import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-process-dashboard.routes.js";
 import { salaryRevisionRouter } from "./modules/salary-revision/salary-revision.routes.js";
 import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes.js";
@@ -477,6 +480,12 @@ app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/statutory-change-requests", statutoryApprovalRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
+// Mounted 2026-09-07. The module and its UI arrived on 2026-09-02 inside a broad
+// merge titled "async bulk approval + attendance diagnostics" and the mount was
+// lost in it, so every /api/kpi-studio/* path 401'd (this app 401s on missing
+// routes, which reads as a permissions bug and hid it). Its migrations were
+// applied on 2026-09-03; only the mount was missing.
+app.use("/api/kpi-studio", kpiStudioRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
@@ -746,6 +755,8 @@ app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/payroll-head-review", payrollHeadReviewRouter);
 app.use("/api/process-performance", processPerformanceRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
+app.use("/api/process-data-source", processDataSourceRouter);
+app.use("/api/dashboard-builder", dashboardBuilderRouter);
 app.use("/api/onfido-process", onfidoProcessDashboardRouter);
 app.use("/api/salary-revision", salaryRevisionRouter);
 app.use("/api/salary-change", salaryChangeRouter);

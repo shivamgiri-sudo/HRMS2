@@ -61,6 +61,9 @@ const ALL_PAGES = [
   // page_catalog for real users, but a demo login never calls that API, so
   // without it here the Process KPI Dashboard is unreachable under demo mode.
   "PROCESS_KPI_DASHBOARD",
+  "PROCESS_DATA_SOURCE",
+  "KPI_STUDIO",
+  "DASHBOARD_BUILDER",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);

@@ -145,7 +145,7 @@ export function EmployeeListPanel({ open, metric, from, to, branchId, designatio
   // AonAnalyticsView.tsx (aon-bucket-shrinkage) -- a dead/slow query here shouldn't retry three
   // times over before the panel gives up.
   const q = useQuery({
-    queryKey: ["aon-drilldown-employees", JSON.stringify(filterParams)],
+    queryKey: ["aon-drilldown-employees", ...Object.entries(filterParams).flat()],
     enabled: open && showEmployeeList,
     retry: false,
     staleTime: 60_000,

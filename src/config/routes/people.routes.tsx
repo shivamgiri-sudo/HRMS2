@@ -43,12 +43,12 @@ export const peopleRouteElements = (
 
       {/* Joining documents */}
       <Route path="/employees/:employeeId/joining-documents" element={
-        <ProtectedRoute roles={['admin','super_admin','hr','manager','payroll_hr','payroll','employee']}>
+        <ProtectedRoute roles={['admin','super_admin','hr','manager','payroll_hr','payroll','employee','branch_hr','payroll_head']}>
           <EmployeeJoiningDocumentsPage />
         </ProtectedRoute>
       } />
       <Route path="/ats/joining-documents-tracker" element={
-        <ProtectedRoute roles={['admin','super_admin','hr','payroll_hr','branch_head']}>
+        <ProtectedRoute roles={['admin','super_admin','hr','payroll_hr','branch_head','branch_hr','recruitment_hr']}>
           <Gate pageCode="ATS_JOINING_DOCUMENTS_TRACKER"><JoiningDocumentsTrackerPage /></Gate>
         </ProtectedRoute>
       } />
@@ -110,7 +110,7 @@ export const peopleRouteElements = (
       <Route path="/exit-management" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitManagement /></Gate></ProtectedRoute>} />
       <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />
       <Route path="/exit/resignation-command-center" element={
-        <ProtectedRoute roles={['admin','hr','manager','finance','payroll','super_admin']}>
+        <ProtectedRoute roles={['admin','hr','manager','finance','payroll','super_admin','branch_hr','payroll_head']}>
           <Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativeExitCommandCenter /></Gate>
         </ProtectedRoute>
       } />
@@ -125,7 +125,7 @@ export const peopleRouteElements = (
 
       {/* Team */}
       <Route path="/my-team" element={
-        <ProtectedRoute roles={['super_admin','manager','process_manager','tl','team_leader','assistant_manager','branch_head','admin','hr']}>
+        <ProtectedRoute roles={['super_admin','manager','process_manager','tl','team_leader','assistant_manager','branch_head','admin','hr','branch_wfm','payroll_hr','wfm']}>
           <MyTeamPage />
         </ProtectedRoute>
       } />

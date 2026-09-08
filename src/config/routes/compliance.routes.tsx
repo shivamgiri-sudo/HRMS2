@@ -30,8 +30,8 @@ export const complianceRouteElements = (
       {/* IT Provisioning — role-scoped views */}
       <Route path="/it-provisioning"                     element={<ProtectedRoute><Gate pageCode="IT_PROVISIONING_TRACKER"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/wfm-alignment"          element={<ProtectedRoute roles={['wfm','admin','super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
-      <Route path="/provisioning/it"                     element={<ProtectedRoute roles={['it','admin','super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
-      <Route path="/provisioning/admin"                  element={<ProtectedRoute roles={['branch_admin','hr','admin','super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
+      <Route path="/provisioning/it"                     element={<ProtectedRoute roles={['it','admin','super_admin','branch_head','branch_it','it_admin','it_head','payroll_hr']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
+      <Route path="/provisioning/admin"                  element={<ProtectedRoute roles={['branch_admin','hr','admin','super_admin','branch_head','it_head','payroll_hr']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       {/* Was a redirect to the control room, which has no issuance UI. */}
       <Route path="/provisioning/appointment-letter"     element={<ProtectedRoute><NativeAppointmentLetterQueue /></ProtectedRoute>} />
   </>

@@ -532,33 +532,27 @@ export const attendanceEngineService = {
     const [holidayRows] = await db.execute<RowDataPacket[]>(holidaySql, holidayParams);
     if ((holidayRows as RowDataPacket[]).length > 0) return { status: 'holiday' };
 
-    // 3. Week off from roster — signal caller with isRosterWeekOff=true so it can
-    //    cross-validate against actual Cosec/APR data (G12).
+    // 3. NO week-off step. Attendance is not derived from the roster.
     //
-    // This tested roster_status = 'Week Off', a literal that matches ZERO of the 413,386 rows in
-    // wfm_roster_assignment — the column only ever holds 'Present' (412,032) or 'published'
-    // (1,354). Measured live 2026-08-09. The real marker is the dedicated `is_week_off` tinyint,
-    // set on 170 rows. Two engine outcomes were therefore unreachable, and attendance_daily_record
-    // holds 0 rows of either status across its whole history: `week_off` never applied, so a
-    // rostered day off was graded as an ordinary working day, and G12's `week_off_worked` could
-    // never fire.
+    // This used to read wfm_roster_assignment and, if the roster marked the date a week off,
+    // grade the day 'week_off' without ever looking at punches, dialler minutes or APR. That
+    // made payroll attendance and the attendance register a function of the roster, which is
+    // not what either is for: they record what an employee actually did, and the roster is a
+    // plan of what they were meant to do. The two are now fully decoupled - owner instruction,
+    // stated repeatedly.
     //
-    // THIS CHANGES PAY, which is why it is called out rather than slipped in. All 170
-    // is_week_off rows overlap an attendance record: 16 present, 22 half_day, 23 absent, 109
-    // missing_punch. Once the override applies, those 23 stop being absent on their own week-off
-    // and the 16 who genuinely worked one regain the flag WFM reviews. Only re-processed days are
-    // affected — rows already written are not rewritten by this change.
+    // It also could not work evenly. Measured live on August 2026, of 6,123 employee-Sundays
+    // only 1,135 (18.5%) carried a roster week off, while 2,065 read present, 1,721 absent and
+    // 1,021 missing_punch. The same calendar Sunday was a week off for one agent and an
+    // ordinary working day for the next, purely according to whether anyone had loaded a
+    // roster row for them. Grading now comes from attendance evidence alone, so every
+    // employee's Sunday is judged the same way.
     //
-    // Both predicates are kept. is_week_off is the column the roster actually populates;
-    // roster_status is retained so that if any future writer does use the string, it still
-    // registers rather than silently reverting to the bug this replaces.
-    const [woffRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM wfm_roster_assignment
-       WHERE employee_id = ? AND roster_date = ?
-         AND (is_week_off = 1 OR roster_status = 'Week Off') LIMIT 1`,
-      [employeeId, date]
-    );
-    if ((woffRows as RowDataPacket[]).length > 0) return { status: 'week_off', isRosterWeekOff: true };
+    // A day nobody worked therefore falls through to the ordinary absent/missing_punch
+    // grading below, which is the stated rule: a week off is treated as absent and shown
+    // as "A". Week-off ENTITLEMENT is untouched - calculateWeekoffEligibility() awards it
+    // from the days actually worked in the month, and never read this status.
+
 
     return null;
   },

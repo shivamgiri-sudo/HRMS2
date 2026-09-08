@@ -1,0 +1,16 @@
+{
+  // Typecheck for the route-RBAC reconciliation: ProtectedRoute now applies the route's own
+  // `roles` list alongside the page grant, and 58 route files had their lists widened to the
+  // access those pages already grant in role_page_access.
+  // Scoped per the pattern in tsconfig.phase2rbac-check.json — the root tsconfig has
+  // `"files": []` and exits 0 regardless.
+  //
+  //     npx tsc -p tsconfig.routerbac-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/auth/ProtectedRoute.tsx",
+    
+    "src/lib/pageRoutePageCodes.ts",
+    "src/vite-env.d.ts"
+  ]
+}

@@ -16,8 +16,17 @@
 import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 
-const HRMS  = { host: '192.168.10.6',  port: 3306, user: 'shivam_user', password: 'qwersdfg!@#hjk', database: 'mas_hrms', connectTimeout: 10000 };
-const DBBILL = { host: '192.168.10.22', port: 3306, user: 'shivam_user', password: 'qwersdfg!@#hjk', database: 'db_bill',  connectTimeout: 10000 };
+// Credentials come from the environment, never from this file. This repository is
+// public and the value that used to sit here is burned. Run with:
+//   node --env-file=backend/.env <script>
+if (!process.env.DB_PASSWORD) {
+  console.error('Set DB_PASSWORD first: node --env-file=backend/.env ' + process.argv[1]);
+  process.exit(1);
+}
+
+
+const HRMS = { host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: 'mas_hrms', connectTimeout: 10000  };
+const DBBILL = { host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT ?? 3306), user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: 'db_bill',  connectTimeout: 10000  };
 
 // db_bill head name → mas_hrms canonical head_name
 // Only entries that don't match by case-insensitive trim.

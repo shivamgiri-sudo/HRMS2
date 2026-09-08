@@ -18,6 +18,9 @@ const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPe
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
 const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage"));
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
+const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
+const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
+const DashboardBuilderPage = lazy(() => import("@/pages/DashboardBuilderPage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
@@ -86,7 +89,7 @@ export const performanceRouteElements = (
       {/* KPI Team Scorecard — manager sees all direct reports' KPIs vs target */}
       <Route path="/kpi/my-team"  element={<ProtectedRoute><Gate pageCode="TEAM_KPI_SCORECARD"><KpiTeamScorecard /></Gate></ProtectedRoute>} />
       <Route path="/agent-performance" element={<ProtectedRoute><Gate pageCode="AGENT_PERFORMANCE"><NativeAgentPerformanceDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
+      <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager','payroll_head','process_manager','tq_head']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
       <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
 
       {/* Quality — consolidated into one role-based drill-down page at /quality-dashboard.
@@ -116,20 +119,24 @@ export const performanceRouteElements = (
           4-level TL-pod/agent/raw-row drill-down. Sibling to Process Performance
           above; same viewer set, separate page_catalog code (migration 1676). */}
       <Route path="/performance/process-kpi-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_KPI_DASHBOARD"><ProcessKpiDashboardPage /></Gate></ProtectedRoute>} />
-      <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
-      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
+      {/* Roles mirror kpi-studio.routes.ts's VIEW_ROLES; the router re-checks server-side. */}
+      <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
+      <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardBuilderPage /></Gate></ProtectedRoute>} />
+      <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
+      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
 
       {/* Operations — consolidated into one role-based drill-down page at /operations-dashboard. */}
       <Route path="/operations/dashboard" element={<Navigate to="/operations-dashboard" replace />} />
-      <Route path="/ops/command-center"  element={<ProtectedRoute roles={['super_admin','admin','ceo','operations_manager','process_manager']}><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOpsCommandCenter /></Gate></ProtectedRoute>} />
-      <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER"><NativeCallMasterDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/ops/command-center"  element={<ProtectedRoute roles={['super_admin','admin','ceo','operations_manager','process_manager','branch_head','coo','manager','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOpsCommandCenter /></Gate></ProtectedRoute>} />
+      <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><NativeCallMasterDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
       <Route path="/call-master/inbound/:projectKey" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
       <Route path="/sales/brand-analytics" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager']}><Gate pageCode="SALES_BRAND_ANALYTICS"><NativeSalesDashboard /></Gate></ProtectedRoute>} />
 
       {/* TAT / Governance */}
-      <Route path="/governance/tat-matrix" element={<ProtectedRoute roles={['admin','hr','super_admin']}><Gate pageCode="TAT_MATRIX"><NativeTATMatrix /></Gate></ProtectedRoute>} />
+      <Route path="/governance/tat-matrix" element={<ProtectedRoute roles={['admin','hr','super_admin','tq_head']}><Gate pageCode="TAT_MATRIX"><NativeTATMatrix /></Gate></ProtectedRoute>} />
       <Route path="/governance/tat-dashboard" element={<ProtectedRoute><Gate pageCode="TAT_DASHBOARD"><NativeTATDashboard /></Gate></ProtectedRoute>} />
 
       {/* LMS Integration */}

@@ -22,7 +22,7 @@ router.get("/public/auto-logout-minutes", h(async (_req: any, res: Response) => 
 router.use(requireAuth);
 
 router.get("/", h(async (_req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM org_settings ORDER BY setting_key");
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM org_settings ORDER BY setting_key LIMIT 500");
   res.json({ success: true, data: rows });
 }));
 

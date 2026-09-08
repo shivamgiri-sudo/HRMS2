@@ -221,6 +221,9 @@ export interface BpoPnlRow {
   deferredRevenue: number;
   revenueLeakage: number;
   revenueAtRisk: number;
+  /** Set when process_revenue_daily has no row for this process/period — the row-level
+   *  mirror of resolveRevenueAtRisk's aggregate-KPI signal (canonical-pnl.service.ts). */
+  revenueAtRiskUnavailable: string | null;
   revenueBudget: number | null;
   revenueVariance: number | null;
   agentSalary: number;
@@ -1699,6 +1702,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
       deferredRevenue: Math.max(0, toNumber(base.invoicedRevenueMtd) - revenue.earnedRevenue),
       revenueLeakage: toNumber(base.revenueLeakage),
       revenueAtRisk: toNumber(base.revenueAtRisk),
+      revenueAtRiskUnavailable: base.revenueAtRiskUnavailable,
       revenueBudget: base.revenueBudget,
       revenueVariance: base.revenueBudget == null ? null : recognizedRevenue - base.revenueBudget,
       agentSalary: cost.agentSalary,

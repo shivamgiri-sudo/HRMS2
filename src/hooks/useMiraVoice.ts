@@ -36,6 +36,65 @@ export function pickRecorderMimeType(): string | undefined {
   return STT_FALLBACK_MIME_CANDIDATES.find((type) => window.MediaRecorder.isTypeSupported?.(type));
 }
 
+/**
+ * Browsers collapse several very different microphone problems into the same
+ * `not-allowed` / `NotAllowedError`: the site is blocked, the prompt was
+ * dismissed, no prompt can appear at all (automated or embedded window), no
+ * microphone exists, or another app holds it. A flat "permission was denied"
+ * banner is a dead end for the user, so probe the browser for which one it
+ * actually is and return something they can act on.
+ *
+ * `code` is either a SpeechRecognition error code (`not-allowed`,
+ * `no-speech`, …) or a DOMException name from getUserMedia
+ * (`NotAllowedError`, `NotFoundError`, …). Every probe is best-effort:
+ * Permissions API coverage for `microphone` is not universal, and this must
+ * never throw in place of showing a message.
+ *
+ * Exported for unit testing — the surrounding capture flow needs a real
+ * browser, which this repo's Node test harness cannot provide.
+ */
+export async function describeVoiceFailure(code: string): Promise<string> {
+  if (code === 'no-speech') return 'No speech was detected. Press the mic again and start speaking once it turns red.';
+  if (code === 'aborted') return 'Voice input stopped before anything was captured. Press the mic and try again.';
+  if (code === 'network') return 'Speech recognition needs an internet connection. Check your connection and try again.';
+  if (code === 'service-not-allowed') return "This browser's speech service is unavailable here. Try again in a normal Chrome or Edge window.";
+  if (code === 'audio-capture' || code === 'NotFoundError' || code === 'DevicesNotFoundError') {
+    return 'No microphone was found. Connect one (or enable it in your system sound settings) and try again.';
+  }
+  if (code === 'NotReadableError' || code === 'TrackStartError') {
+    return 'The microphone could not be opened — another app or browser tab is using it. Close that one and try again.';
+  }
+
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    return 'Voice input only works on a secure (https) connection. Open the site over https and try again.';
+  }
+
+  // A missing input device surfaces as a permission failure in some browsers,
+  // so rule that out before blaming permissions.
+  try {
+    const devices = await navigator.mediaDevices?.enumerateDevices?.();
+    if (devices && !devices.some((device) => device.kind === 'audioinput')) {
+      return 'No microphone was found. Connect one (or enable it in your system sound settings) and try again.';
+    }
+  } catch { /* best-effort — fall through to the permission probe */ }
+
+  let state: PermissionState | null = null;
+  try {
+    state = (await navigator.permissions?.query({ name: 'microphone' as PermissionName }))?.state ?? null;
+  } catch { /* Safari and Firefox may not expose this permission at all */ }
+
+  if (state === 'denied') {
+    return 'Microphone access is blocked for this site. Click the padlock in the address bar → Site settings → Microphone → Allow, then reload the page.';
+  }
+  if (state === 'prompt') {
+    return 'The microphone request was not granted, so voice input could not start. Press the mic again and choose Allow. An automated or embedded browser window never shows that prompt — open the site in your normal browser.';
+  }
+  if (state === 'granted') {
+    return 'The microphone is allowed but could not be opened — another app or browser tab may be using it. Close that one and try again.';
+  }
+  return 'Microphone access was not granted. Allow the microphone for this site in your browser settings, then try again.';
+}
+
 interface SpeechRecognitionAlternativeLike { transcript: string }
 interface SpeechRecognitionResultLike { isFinal: boolean; 0: SpeechRecognitionAlternativeLike }
 interface SpeechRecognitionEventLike extends Event { results: ArrayLike<SpeechRecognitionResultLike> }
@@ -130,6 +189,28 @@ export function useMiraVoice() {
   const listeningRef = useRef(false);
   const bargeInEnabledRef = useRef(bargeInEnabled);
 
+  /** describeVoiceFailure probes the browser asynchronously, so a message
+   *  resolved for an abandoned attempt must not repaint the banner after a
+   *  later attempt has already cleared it. Every clear and every report bumps
+   *  this; a resolved probe only writes if it still owns the latest sequence. */
+  const voiceErrorSeqRef = useRef(0);
+  const clearVoiceError = useCallback(() => {
+    voiceErrorSeqRef.current += 1;
+    setVoiceError(null);
+  }, []);
+  /** Set a message we already know, taking ownership of the banner so a probe
+   *  still in flight from an earlier attempt cannot overwrite it. */
+  const showVoiceError = useCallback((message: string) => {
+    voiceErrorSeqRef.current += 1;
+    setVoiceError(message);
+  }, []);
+  const reportVoiceFailure = useCallback((code: string) => {
+    const seq = (voiceErrorSeqRef.current += 1);
+    void describeVoiceFailure(code).then((message) => {
+      if (voiceErrorSeqRef.current === seq) setVoiceError(message);
+    });
+  }, []);
+
   const recognitionSupported = typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
   // Safari/iOS has no Web Speech API at all — recognitionSupported is false
@@ -207,7 +288,7 @@ export function useMiraVoice() {
     if (listening) return;
 
     if (sttFallbackSupported) {
-      setVoiceError(null);
+      clearVoiceError();
       if (speechSupported) {
         speechBufferRef.current = '';
         window.speechSynthesis.cancel();
@@ -224,7 +305,7 @@ export function useMiraVoice() {
             mediaStreamRef.current = null;
             mediaRecorderRef.current = null;
             setListening(false);
-            setVoiceError('Voice input could not be started.');
+            showVoiceError('Voice input could not be started.');
           };
           recorder.onstop = () => {
             stream.getTracks().forEach((track) => track.stop());
@@ -251,7 +332,7 @@ export function useMiraVoice() {
                 if (text) onFinal(text);
               } catch (error) {
                 if (error instanceof Error && error.name === 'AbortError') return;
-                setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed');
+                showVoiceError(error instanceof Error ? error.message : 'Voice transcription failed');
               } finally {
                 sttAbortControllerRef.current = null;
               }
@@ -262,7 +343,7 @@ export function useMiraVoice() {
           recorder.start();
           setListening(true);
         })
-        .catch(() => setVoiceError('Microphone permission was denied.'));
+        .catch((error: unknown) => reportVoiceFailure(error instanceof Error ? error.name : 'not-allowed'));
       return;
     }
 
@@ -276,7 +357,7 @@ export function useMiraVoice() {
       window.speechSynthesis.cancel();
       setSpeaking(false);
     }
-    setVoiceError(null);
+    clearVoiceError();
     const recognition = new Recognition();
     recognition.lang = language;
     recognition.continuous = false;
@@ -304,7 +385,7 @@ export function useMiraVoice() {
     };
     recognition.onerror = (event) => {
       const code = event.error || 'voice_error';
-      setVoiceError(code === 'not-allowed' ? 'Microphone permission was denied.' : code === 'no-speech' ? 'No speech was detected.' : 'Voice input could not be started.');
+      reportVoiceFailure(code);
       setListening(false);
       finalTextRef.current = ''; // don't leak a stale partial into the next session
     };
@@ -318,8 +399,8 @@ export function useMiraVoice() {
     };
     recognitionRef.current = recognition;
     setListening(true);
-    try { recognition.start(); } catch { setListening(false); setVoiceError('Voice input could not be started.'); }
-  }, [language, listening, recognitionSupported, speechSupported, sttFallbackSupported]);
+    try { recognition.start(); } catch { setListening(false); showVoiceError('Voice input could not be started.'); }
+  }, [clearVoiceError, language, listening, recognitionSupported, reportVoiceFailure, showVoiceError, speechSupported, sttFallbackSupported]);
 
   /** Release the ambient microphone stream. Safe to call whether or not one is open. */
   const stopAmbientMonitor = useCallback(() => {

@@ -37,6 +37,8 @@ import {
   saveDataSource,
   saveSourceField,
   deleteSourceField,
+  deleteDataSource,
+  restoreDataSource,
   listDefinitions,
   saveDefinition,
   retireDefinition,
@@ -57,7 +59,12 @@ import {
   commitUploadRows,
   saveManualValue,
 } from './kpi-studio.sources.js';
-import { computeStudioKpis, previewFormula, explainMetricForEmployee } from './kpi-studio.compute.js';
+import {
+  computeStudioKpis,
+  previewFormula,
+  previewProcessFormula,
+  explainMetricForEmployee,
+} from './kpi-studio.compute.js';
 import { validateFormula } from './kpi-formula.engine.js';
 
 const router = Router();
@@ -208,8 +215,11 @@ router.post(
 router.get(
   '/data-sources',
   requireRole(...VIEW_ROLES),
-  h(async (_req, res) => {
-    res.json({ success: true, data: await listDataSources() });
+  h(async (req, res) => {
+    // Retired sources are opt-in: the normal list stays clean, and the config
+    // screen can still offer a way back from a mistaken retirement.
+    const includeRetired = String(req.query.include_retired ?? '') === '1';
+    res.json({ success: true, data: await listDataSources(includeRetired) });
   }),
 );
 
@@ -252,6 +262,27 @@ router.post(
   h(async (req, res) => {
     const result = await saveSourceField({ ...(req.body ?? {}), data_source_id: req.params.id });
     res.json({ success: true, data: result });
+  }),
+);
+
+/**
+ * Retires a data source. Refuses while a live definition still reads it — see
+ * deleteDataSource for why that is louder than letting a KPI quietly stop.
+ */
+router.delete(
+  '/data-sources/:id',
+  requireRole(...CONFIG_ROLES),
+  h(async (req, res) => {
+    res.json({ success: true, data: await deleteDataSource(req.params.id) });
+  }),
+);
+
+/** The way back. Retiring is a soft flag precisely so this can exist. */
+router.post(
+  '/data-sources/:id/restore',
+  requireRole(...CONFIG_ROLES),
+  h(async (req, res) => {
+    res.json({ success: true, data: await restoreDataSource(req.params.id) });
   }),
 );
 
@@ -378,6 +409,37 @@ router.post(
       extraSourceIds: Array.isArray(body.extra_source_ids) ? body.extra_source_ids.map(String) : undefined,
       employeeId: String(body.employee_id),
       date: String(body.date ?? new Date().toISOString().slice(0, 10)),
+    });
+    res.json({ success: true, data: result });
+  }),
+);
+
+/**
+ * The same button, for a metric that has no employee.
+ *
+ * Kept as its own route rather than a flag on /preview: the inputs genuinely differ
+ * (a date range and a process instead of one person on one day) and so does the shape
+ * of the answer, and collapsing them would mean a request that silently means
+ * something else depending on one field.
+ */
+router.post(
+  '/preview-process',
+  requireRole(...CONFIG_ROLES),
+  h(async (req, res) => {
+    const body = req.body ?? {};
+    if (!body.formula || !body.data_source_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Need a formula and a data source to test against',
+      });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await previewProcessFormula({
+      formula: String(body.formula),
+      dataSourceId: String(body.data_source_id),
+      extraSourceIds: Array.isArray(body.extra_source_ids) ? body.extra_source_ids.map(String) : undefined,
+      from: String(body.from ?? today),
+      to: String(body.to ?? body.from ?? today),
     });
     res.json({ success: true, data: result });
   }),

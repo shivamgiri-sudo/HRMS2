@@ -35,7 +35,7 @@ export function SliceDetailPanel({ open, onClose, metric, reportCode, from, to }
   const filterParams = chipsToFilterParams(chips);
 
   const q = useQuery({
-    queryKey: [reportCode, "slice-detail", JSON.stringify(filterParams), from, to],
+    queryKey: [reportCode, "slice-detail", ...Object.entries(filterParams).flat(), from, to],
     enabled: open && chips.length > 0,
     queryFn: async () => {
       const qs = new URLSearchParams({ ...filterParams, from, to, limit: "500", offset: "0" });

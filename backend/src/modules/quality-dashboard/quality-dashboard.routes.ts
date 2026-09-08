@@ -352,11 +352,23 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
       LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User COLLATE utf8mb4_unicode_ci
       WHERE cqa.CallDate BETWEEN ? AND ?
         AND cqa.User IS NOT NULL AND cqa.User != ''
+        -- Exclude agents whose employee record is inactive, keeping those with no employee
+        -- record at all. This lived in HAVING as COALESCE(ANY_VALUE(e.active_status), 1) = 1,
+        -- which MySQL rejects outright: HAVING runs after grouping and can only see grouped
+        -- columns or SELECT aliases, and e.active_status is neither. Every request to this
+        -- endpoint failed with "Unknown column 'e.active_status' in 'having clause'" and the
+        -- route answered 500 - the try/catch turned a permanent SQL fault into what reads like
+        -- a transient "External DB unavailable".
+        --
+        -- Filtering here instead is equivalent and cheaper. The LEFT JOIN matches on
+        -- employee_code, so every row in a cqa.User group shares one employee row and one
+        -- active_status; testing it per row before grouping keeps the same agents and drops
+        -- them earlier. The NULL branch preserves the COALESCE default of 1.
+        AND (e.active_status IS NULL OR e.active_status = 1)
         ${clientCond}${scopeCond}
       GROUP BY cqa.User
       HAVING COUNT(*) >= 3
         AND agent_name NOT LIKE 'Codex E2E%'
-        AND COALESCE(ANY_VALUE(e.active_status), 1) = 1
       ORDER BY avg_score DESC
       ${sqlLimit(limit, { maxLimit: 100 })}
     `, params);

@@ -1,14 +1,18 @@
 import { useMemo, useState } from "react";
-import { Check, Database, FileSpreadsheet, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
+import { Check, Database, FileSpreadsheet, Loader2, Plus, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   useDataSource,
   useDataSources,
+  useDeleteDataSource,
+  useRestoreDataSource,
   useDeleteSourceField,
   useSaveDataSource,
   useSaveSourceField,
   useSourceColumns,
+  useStudioCapability,
+  useScopeOptions,
   useUploadCommit,
   useUploadPreview,
   type DataSourceSummary,
@@ -39,14 +43,42 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
 
 const AGGREGATES = ["SUM", "AVG", "COUNT", "MIN", "MAX", "NONE"] as const;
 
+/**
+ * The formats the backend will accept, with the shape spelled out.
+ *
+ * Kept in step with DATE_FORMATS in kpi-studio.sources.ts, which is where they are
+ * validated before reaching SQL. Showing an example rather than only the pattern
+ * matters: %d-%m-%Y and %m-%d-%Y are indistinguishable to most people until a
+ * date after the 12th of a month silently stops parsing.
+ */
+const DATE_FORMAT_OPTIONS = [
+  { value: "%d-%m-%Y", label: "Day-Month-Year — 31-08-2026" },
+  { value: "%d/%m/%Y", label: "Day/Month/Year — 31/08/2026" },
+  { value: "%m/%d/%Y", label: "Month/Day/Year — 08/31/2026" },
+  { value: "%Y-%m-%d", label: "Year-Month-Day — 2026-08-31" },
+  { value: "%Y/%m/%d", label: "Year/Month/Day — 2026/08/31" },
+  { value: "%d-%b-%Y", label: "Day-Mon-Year — 31-Aug-2026" },
+  { value: "%d %b %Y", label: "Day Mon Year — 31 Aug 2026" },
+  { value: "%Y-%m-%d %H:%i:%s", label: "Year-Month-Day with time — 2026-08-31 14:05:00" },
+  { value: "%d-%m-%Y %H:%i:%s", label: "Day-Month-Year with time — 31-08-2026 14:05:00" },
+] as const;
+
 export function DataSourceManager() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const sources = useDataSources();
+  // Retired sources are fetched here (and only here) so they can be brought back.
+  const sources = useDataSources(true);
+  const all = sources.data ?? [];
+  const live = all.filter((source) => source.active_status !== 0);
+  const retired = all.filter((source) => source.active_status === 0);
+  const [showRetired, setShowRetired] = useState(false);
+  const restoreSource = useRestoreDataSource();
   const detail = useDataSource(selectedId);
   const saveSource = useSaveDataSource();
+  const capability = useStudioCapability();
+  const scopeOptions = useScopeOptions();
 
   const [newSource, setNewSource] = useState({
     source_code: "",
@@ -57,8 +89,16 @@ export function DataSourceManager() {
     employee_key_column: "",
     employee_key_kind: "employee_code",
     date_column: "",
+    date_format: "",
     csv_url: "",
     sheet_tab: "",
+    // How this source's rows map to a process, for process-level metrics.
+    // 'none' keeps the source employee-grain, which is what every source was
+    // before this existed.
+    process_key_kind: "none",
+    process_key_column: "",
+    process_key_value: "",
+    process_id: "",
   });
 
   async function handleCreateSource() {
@@ -76,7 +116,12 @@ export function DataSourceManager() {
         employee_key_column: "",
         employee_key_kind: "employee_code",
         date_column: "",
+    date_format: "",
         csv_url: "",
+        process_key_kind: "none",
+        process_key_column: "",
+        process_key_value: "",
+        process_id: "",
         sheet_tab: "",
       });
       setMessage({ ok: true, text: "Data source created. Now add the fields a formula can read." });
@@ -262,6 +307,126 @@ export function DataSourceManager() {
                       className="font-mono text-xs"
                     />
                   </label>
+
+                  {/* Offered only where the schema carries it, so the form never
+                      collects something the backend would reject. A dropdown, not
+                      a text box: the set is closed, and a typed format that is
+                      subtly wrong parses to NULL for every row rather than
+                      erroring — the date filter then matches nothing and the
+                      source looks empty instead of misconfigured. */}
+                  {capability.data?.dateFormat && (
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-700">
+                        Is that column text rather than a date?
+                      </span>
+                      <select
+                        value={newSource.date_format}
+                        onChange={(event) =>
+                          setNewSource((previous) => ({ ...previous, date_format: event.target.value }))
+                        }
+                        className="w-full cursor-pointer rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                      >
+                        <option value="">No — it is a real date column</option>
+                        {DATE_FORMAT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+                        Only if the column stores dates as text. Left as a real date, a text column
+                        is compared as a STRING — a month filter then returns the wrong rows without
+                        any error. Parsing cannot use an index, so a large table is slow to read:
+                        3 million order rows take about 50 seconds, which is fine overnight and slow
+                        to sit and watch.
+                      </span>
+                    </label>
+                  )}
+
+                  {/* Process mapping. Only offered once the schema supports it, so
+                      the form never collects something the backend will reject. */}
+                  {capability.data?.processGrain && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5">
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-slate-700">
+                          Whose data is this?
+                        </span>
+                        <select
+                          value={newSource.process_key_kind}
+                          onChange={(event) =>
+                            setNewSource((previous) => ({ ...previous, process_key_kind: event.target.value }))
+                          }
+                          className="w-full cursor-pointer rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                        >
+                          <option value="none">Not a process source (per-employee only)</option>
+                          <option value="constant">Every row here belongs to one process</option>
+                          <option value="column">A column says which client each row is</option>
+                          <option value="employee">Look it up from the employee on each row</option>
+                        </select>
+                        {/* The option most of this system's own tables need: they
+                            carry an employee and no process at all. */}
+                        {newSource.process_key_kind === "employee" && (
+                          <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+                            Joins the employee record to find their process. Needs the employee column
+                            above, and only works for a table in this system's own database — not a
+                            connector.
+                          </span>
+                        )}
+                      </label>
+
+                      {newSource.process_key_kind !== "none" && (
+                        <label className="mt-2 block">
+                          <span className="mb-1 block text-xs font-medium text-slate-700">Process</span>
+                          <select
+                            value={newSource.process_id}
+                            onChange={(event) =>
+                              setNewSource((previous) => ({ ...previous, process_id: event.target.value }))
+                            }
+                            className="w-full cursor-pointer rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                          >
+                            <option value="">Select a process…</option>
+                            {(scopeOptions.data?.processes ?? []).map((process: { id: string; name: string }) => (
+                              <option key={process.id} value={process.id}>{process.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+
+                      {newSource.process_key_kind === "column" && (
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-medium text-slate-700">Column</span>
+                            <Input
+                              value={newSource.process_key_column}
+                              onChange={(event) =>
+                                setNewSource((previous) => ({ ...previous, process_key_column: event.target.value }))
+                              }
+                              placeholder="e.g. client_id"
+                              className="font-mono text-xs"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-medium text-slate-700">Equals</span>
+                            <Input
+                              value={newSource.process_key_value}
+                              onChange={(event) =>
+                                setNewSource((previous) => ({ ...previous, process_key_value: event.target.value }))
+                              }
+                              placeholder="e.g. 487"
+                              className="font-mono text-xs"
+                            />
+                          </label>
+                        </div>
+                      )}
+
+                      {newSource.process_key_kind === "column" && (
+                        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                          The client's own identifier, not this system's. Rows where that column
+                          matches count towards the process you picked.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
 
@@ -278,7 +443,7 @@ export function DataSourceManager() {
           )}
 
           <div className="space-y-1">
-            {(sources.data ?? []).map((source) => (
+            {live.map((source) => (
               <button
                 key={source.id}
                 type="button"
@@ -310,6 +475,49 @@ export function DataSourceManager() {
               </p>
             )}
           </div>
+
+          {/* Retired sources stay listed, quietly. A retirement that hid the source
+              forever would make one mis-click cost every field configured on it. */}
+          {retired.length > 0 && (
+            <div className="space-y-1 border-t border-slate-200 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowRetired((open) => !open)}
+                className="w-full cursor-pointer text-left text-[11px] font-medium uppercase tracking-wide text-slate-400 hover:text-slate-600"
+              >
+                {showRetired ? "Hide" : "Show"} retired ({retired.length})
+              </button>
+              {showRetired &&
+                retired.map((source) => (
+                  <div
+                    key={source.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-slate-500 line-through">{source.source_name}</span>
+                      <span className="block text-[11px] text-slate-400">
+                        {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+                      </span>
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 shrink-0 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
+                      disabled={restoreSource.isPending}
+                      onClick={() =>
+                        restoreSource.mutate(source.id, {
+                          onSuccess: () =>
+                            setMessage({ ok: true, text: `${source.source_name} is back, with its fields.` }),
+                          onError: (error) => setMessage({ ok: false, text: (error as Error).message }),
+                        })
+                      }
+                    >
+                      <RotateCcw className="mr-1 h-3 w-3" /> Restore
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
 
         {/* ── Field editor ── */}
@@ -327,7 +535,7 @@ export function DataSourceManager() {
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </p>
           ) : detail.data ? (
-            <FieldEditor source={detail.data} />
+            <FieldEditor source={detail.data} onRetired={() => setSelectedId(null)} />
           ) : null}
         </div>
       </div>
@@ -335,15 +543,28 @@ export function DataSourceManager() {
   );
 }
 
-function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<any> } }) {
+function FieldEditor({ source, onRetired }: { source: DataSourceSummary & { fields: Array<any> }; onRetired: () => void }) {
   const columns = useSourceColumns(
     source.source_type === "manual" || source.source_type === "upload" ? null : source.id,
   );
   const saveField = useSaveSourceField();
   const deleteField = useDeleteSourceField();
+  // Its own capability read rather than a prop: a stale prop is how a form ends
+  // up offering a control the database cannot store.
+  const capability = useStudioCapability();
+  const retireSource = useDeleteDataSource();
+  const [confirmRetire, setConfirmRetire] = useState(false);
+  const [retireError, setRetireError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [draft, setDraft] = useState({ field_name: "", display_name: "", source_column: "", aggregate_fn: "SUM", unit: "" });
+  /**
+   * Conditions narrowing which rows this ONE field counts. Two fields on the
+   * same source can be filtered differently, which is what makes a pair like
+   * answered/offered expressible: offered counts every call, answered only the
+   * calls that reached an agent.
+   */
+  const [filters, setFilters] = useState<Array<{ column: string; op: string; value: string }>>([]);
 
   const numericColumns = useMemo(() => (columns.data ?? []).filter((column) => column.is_numeric), [columns.data]);
   const isFileBacked = source.source_type === "manual" || source.source_type === "upload";
@@ -360,8 +581,16 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
         source_column: isFileBacked ? null : draft.source_column || null,
         aggregate_fn: isFileBacked ? "NONE" : draft.aggregate_fn,
         unit: draft.unit || null,
+        // Only send filters the schema can store, and only complete ones — a
+        // half-typed condition would be rejected by the server anyway, with a
+        // message about a value that the user is still in the middle of adding.
+        filter_json:
+          capability.data?.fieldFilters && filters.length
+            ? filters.filter((f) => f.column.trim() && (f.op === "is_null" || f.op === "is_not_null" || f.value.trim()))
+            : undefined,
       });
       setDraft({ field_name: "", display_name: "", source_column: "", aggregate_fn: "SUM", unit: "" });
+      setFilters([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not add the field");
     }
@@ -369,13 +598,48 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
 
   return (
     <div className="space-y-4">
-      <header>
-        <h3 className="text-base font-semibold text-slate-900">{source.source_name}</h3>
-        <p className="mt-0.5 text-xs text-slate-500">
-          {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
-          {source.source_object ? ` · ${source.source_object}` : ""}
-          {source.integration_key ? ` · ${source.integration_key}` : ""}
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">{source.source_name}</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+            {source.source_object ? ` · ${source.source_object}` : ""}
+            {source.integration_key ? ` · ${source.integration_key}` : ""}
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          {confirmRetire ? (
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"
+                      onClick={() => setConfirmRetire(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" className="h-7 bg-rose-600 px-2 text-[11px] hover:bg-rose-700"
+                      disabled={retireSource.isPending}
+                      onClick={() => {
+                        setRetireError(null);
+                        retireSource.mutate(source.id, {
+                          onSuccess: () => { setConfirmRetire(false); onRetired(); },
+                          onError: (e) => setRetireError((e as Error).message),
+                        });
+                      }}>
+                {retireSource.isPending ? "Retiring…" : "Yes, retire"}
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="ghost"
+                    className="h-7 px-2 text-[11px] text-slate-400 hover:text-rose-600"
+                    onClick={() => { setRetireError(null); setConfirmRetire(true); }}>
+              <Trash2 className="mr-1 h-3 w-3" />
+              Retire source
+            </Button>
+          )}
+          {/* The refusal names the KPIs still reading it, which is the whole
+              point of asking the server rather than hiding the button. */}
+          {retireError && (
+            <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-rose-600">{retireError}</p>
+          )}
+        </div>
       </header>
 
       {/* Existing fields */}
@@ -515,6 +779,93 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
             />
           </label>
         </div>
+
+        {/* Only for column-backed sources: a file-backed field has no rows to
+            filter, its value is already one number per employee per day. */}
+        {capability.data?.fieldFilters && !isFileBacked && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-700">Count only rows where…</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-[11px]"
+                onClick={() => setFilters((previous) => [...previous, { column: "", op: "eq", value: "" }])}
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Condition
+              </Button>
+            </div>
+
+            {filters.length === 0 ? (
+              <p className="mt-1 text-[11px] text-slate-500">
+                No conditions — this field counts every row. Add one to measure a subset, so two
+                fields on this source can count different things.
+              </p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {filters.map((filter, index) => (
+                  <div key={index} className="flex items-center gap-1.5">
+                    <Input
+                      value={filter.column}
+                      onChange={(event) =>
+                        setFilters((previous) =>
+                          previous.map((f, i) => (i === index ? { ...f, column: event.target.value } : f)),
+                        )
+                      }
+                      placeholder="column"
+                      className="h-7 flex-1 font-mono text-[11px]"
+                    />
+                    <select
+                      value={filter.op}
+                      onChange={(event) =>
+                        setFilters((previous) =>
+                          previous.map((f, i) => (i === index ? { ...f, op: event.target.value } : f)),
+                        )
+                      }
+                      className="h-7 cursor-pointer rounded-lg border border-slate-300 px-1.5 text-[11px]"
+                    >
+                      <option value="eq">is</option>
+                      <option value="ne">is not</option>
+                      <option value="gt">&gt;</option>
+                      <option value="gte">&ge;</option>
+                      <option value="lt">&lt;</option>
+                      <option value="lte">&le;</option>
+                      <option value="in">is one of</option>
+                      <option value="is_null">is empty</option>
+                      <option value="is_not_null">is not empty</option>
+                    </select>
+                    {filter.op !== "is_null" && filter.op !== "is_not_null" && (
+                      <Input
+                        value={filter.value}
+                        onChange={(event) =>
+                          setFilters((previous) =>
+                            previous.map((f, i) => (i === index ? { ...f, value: event.target.value } : f)),
+                          )
+                        }
+                        placeholder={filter.op === "in" ? "a, b, c" : "value"}
+                        className="h-7 flex-1 font-mono text-[11px]"
+                      />
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
+                      onClick={() => setFilters((previous) => previous.filter((_, i) => i !== index))}
+                      aria-label="Remove condition"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  When nothing matches, this field reads as no data rather than zero — so a quiet
+                  day stays visibly different from a measured zero.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {error && <p className="text-xs text-rose-700">{error}</p>}
 

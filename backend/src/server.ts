@@ -40,6 +40,7 @@ import { startOfficialEmailComplianceScheduler } from "./workers/official-email-
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
+import { startKpiStudioComputeWorker } from "./workers/kpi-studio-compute.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./workers/payroll-recalc-drainer.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
@@ -296,6 +297,9 @@ function startServer() {
         startKpiDailySyncWorker().catch((error) =>
           console.error("[kpi-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
+        // Registered here AND in all-workers.ts: that file's own note warns a job
+        // present in only one of the two topologies silently never runs in the other.
+        startKpiStudioComputeWorker();
         startSLABreachWorker().catch((error) =>
           console.error("[sla-breach] startup error:", error instanceof Error ? error.message : String(error)),
         );

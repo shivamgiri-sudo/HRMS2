@@ -55,6 +55,13 @@ export function ProcessPnlRowDrawer({
 }) {
   const processAlerts = alerts.filter((alert) => alert.processId === row.processId);
   const [drilldown, setDrilldown] = useState<PnlDrilldownParams | null>(null);
+  // process_revenue_daily (the source for this figure) has never been generated for any
+  // process in production — its writer is a manual, unscheduled route. Showing "Not
+  // generated" here rather than a formatted ₹0 is the row-level twin of the same fix already
+  // applied to the CEO dashboard's aggregate "Revenue at risk" tile.
+  const revenueAtRiskDisplay = row.revenueAtRiskUnavailable
+    ? "Not generated"
+    : formatCurrency(row.revenueAtRisk);
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -74,13 +81,18 @@ export function ProcessPnlRowDrawer({
                 ["Recognized revenue", formatCurrency(row.recognizedRevenue)],
                 ["EBITDA", formatCurrency(row.ebitda)],
                 ["EBITDA margin", formatPercent(row.ebitdaMarginPct)],
-                ["Revenue at risk", formatCurrency(row.revenueAtRisk)],
+                ["Revenue at risk", revenueAtRiskDisplay],
                 ["Budget utilization", formatPercent(row.budgetUtilizationPct)],
                 ["Active HC", row.activeHc.toLocaleString("en-IN")],
               ].map(([label, value]) => (
                 <div key={label} className="border border-slate-200 bg-slate-50 p-3">
                   <dt className="text-xs font-medium text-slate-500">{label}</dt>
-                  <dd className="mt-1 text-sm font-semibold text-slate-950">{value}</dd>
+                  <dd
+                    className="mt-1 text-sm font-semibold text-slate-950"
+                    title={label === "Revenue at risk" ? row.revenueAtRiskUnavailable ?? undefined : undefined}
+                  >
+                    {value}
+                  </dd>
                 </div>
               ))}
             </dl>

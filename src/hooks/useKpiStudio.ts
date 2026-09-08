@@ -17,6 +17,12 @@ export interface StudioCapability {
   tables: boolean;
   /** Definitions can drive live scores (migration 1645 applied). */
   resolution: boolean;
+  /** 1684: a KPI can be measured per process, and a source mapped to one. */
+  processGrain?: boolean;
+  /** 1681: a field can count only the rows matching a condition. */
+  fieldFilters?: boolean;
+  /** 1686: a source can read a date column that is stored as text. */
+  dateFormat?: boolean;
 }
 
 export interface KpiMetricOption {
@@ -68,8 +74,12 @@ export interface DataSourceSummary {
   employee_key_column: string | null;
   employee_key_kind: string | null;
   date_column: string | null;
+  /** STR_TO_DATE format when date_column is text. Null for a real DATE column. */
+  date_format?: string | null;
   description: string | null;
   field_count: number;
+  /** 0 once retired. Only the list asked with includeRetired ever carries a 0. */
+  active_status?: number;
 }
 
 export type DataSourceDetail = DataSourceSummary & { fields: SourceField[] };
@@ -175,6 +185,27 @@ export interface MetricExplanation {
   reason_summary: Array<{ reason: string; days: number }>;
 }
 
+export interface ProcessPreviewDay {
+  date: string;
+  inputs: Record<string, number | null>;
+  value: number | null;
+  status: "computed" | "no_data" | "error";
+  reason?: string;
+}
+
+export interface ProcessPreviewResult {
+  ok: boolean;
+  message?: string;
+  formula: string;
+  from: string;
+  to: string;
+  process_id: string | null;
+  days: ProcessPreviewDay[];
+  value: number | null;
+  rows_read: number;
+  source_error?: string;
+}
+
 export interface UploadPreview {
   file_name: string;
   headers: string[];
@@ -263,10 +294,17 @@ export function useScopeOptions() {
   });
 }
 
-export function useDataSources() {
+/**
+ * Retired sources are opt-in. Everywhere that picks a source for a KPI wants the
+ * live ones only; the config screen asks for the rest so a retirement is undoable.
+ */
+export function useDataSources(includeRetired = false) {
   return useQuery({
-    queryKey: KEY.dataSources,
-    queryFn: async () => (await hrmsApi.get<Envelope<DataSourceSummary[]>>("/api/kpi-studio/data-sources")).data ?? [],
+    queryKey: [...KEY.dataSources, includeRetired],
+    queryFn: async () =>
+      (await hrmsApi.get<Envelope<DataSourceSummary[]>>(
+        `/api/kpi-studio/data-sources${includeRetired ? "?include_retired=1" : ""}`,
+      )).data ?? [],
     staleTime: 60_000,
   });
 }
@@ -405,6 +443,22 @@ export function usePreviewFormula() {
   });
 }
 
+/**
+ * The process-grain counterpart. A process metric has no employee to test against,
+ * so it is tested over a date range and answers with one value per day.
+ */
+export function useProcessPreviewFormula() {
+  return useMutation({
+    mutationFn: async (input: {
+      formula: string;
+      data_source_id: string;
+      extra_source_ids?: string[];
+      from: string;
+      to: string;
+    }) => (await hrmsApi.post<Envelope<ProcessPreviewResult>>("/api/kpi-studio/preview-process", input)).data,
+  });
+}
+
 export function useSaveDefinition() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -454,6 +508,24 @@ export function useSaveDataSource() {
   return useMutation({
     mutationFn: async (input: Record<string, unknown>) =>
       (await hrmsApi.post<Envelope<{ id: string }>>("/api/kpi-studio/data-sources", input)).data,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: KEY.dataSources }),
+  });
+}
+
+export function useDeleteDataSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await hrmsApi.delete<Envelope<{ removed: boolean }>>(`/api/kpi-studio/data-sources/${id}`)).data,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: KEY.dataSources }),
+  });
+}
+
+export function useRestoreDataSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      (await hrmsApi.post<Envelope<{ restored: boolean }>>(`/api/kpi-studio/data-sources/${id}/restore`, {})).data,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: KEY.dataSources }),
   });
 }

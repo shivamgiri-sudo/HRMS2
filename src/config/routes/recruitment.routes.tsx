@@ -113,7 +113,7 @@ export const recruitmentRouteElements = (
 
       {/* Joining control room */}
       <Route path="/ats/joining-control-room" element={
-        <ProtectedRoute roles={['admin','hr','payroll_hr','super_admin']}>
+        <ProtectedRoute roles={['admin','hr','payroll_hr','super_admin','branch_head','branch_hr']}>
           <Gate pageCode="ATS_JOINING_CONTROL_ROOM"><NativeJoiningControlRoom /></Gate>
         </ProtectedRoute>
       } />
@@ -134,11 +134,11 @@ export const recruitmentRouteElements = (
       <Route path="/ats/form-config"  element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeATSFormConfig /></ProtectedRoute>} />
       <Route path="/ats/recruiter-portal" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_PORTAL"><NativeRecruiterPortal /></Gate></ProtectedRoute>} />
       <Route path="/ats/name-consistency" element={
-        <ProtectedRoute roles={['admin','hr','super_admin','recruiter']}>
+        <ProtectedRoute roles={['admin','hr','super_admin','recruiter','branch_head','payroll_hr']}>
           <Gate pageCode="NAME_CONSISTENCY_MATRIX"><DashboardLayout><NativeATSNameConsistency /></DashboardLayout></Gate>
         </ProtectedRoute>
       } />
-      <Route path="/ats/bulk-import" element={<ProtectedRoute roles={['admin','super_admin']}><Gate pageCode="ATS_BULK_IMPORT"><ATSBulkImportPage /></Gate></ProtectedRoute>} />
+      <Route path="/ats/bulk-import" element={<ProtectedRoute roles={['admin','super_admin','branch_head','payroll_hr','recruitment_hr']}><Gate pageCode="ATS_BULK_IMPORT"><ATSBulkImportPage /></Gate></ProtectedRoute>} />
 
       {/* Offer letter */}
       <Route path="/offer-letter" element={<ProtectedRoute><Gate pageCode="ATS_OFFER"><NativeOfferLetterGeneration /></Gate></ProtectedRoute>} />

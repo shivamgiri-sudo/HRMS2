@@ -179,7 +179,7 @@ async function checkHcGaps(): Promise<void> {
       const [[existing]] = await pool.execute<RowDataPacket[]>(
         `SELECT id FROM mas_hrms.audit_log
          WHERE action_type = 'HC_GAP_ALERT'
-           AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.mandate_id')) = ?
+           AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.mandate_id')) = ?
            AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
          LIMIT 1`,
         [gap.mandate_id]
@@ -195,8 +195,8 @@ async function checkHcGaps(): Promise<void> {
         : gap.process_name;
 
       await pool.execute(
-        `INSERT INTO mas_hrms.audit_log (id, action_type, entity_type, entity_id, payload, created_at)
-         VALUES (?, 'HC_GAP_ALERT', 'workforce_mandate', ?, ?, NOW())`,
+        `INSERT INTO mas_hrms.audit_log (id, action_type, module_key, entity_type, entity_id, metadata_json, created_at)
+         VALUES (?, 'HC_GAP_ALERT', 'workforce-mandate', 'workforce_mandate', ?, ?, NOW())`,
         [
           randomUUID(),
           gap.mandate_id,

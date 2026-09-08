@@ -6,6 +6,9 @@ import { Upload, Download, CheckCircle2, XCircle, AlertCircle } from "lucide-rea
 
 interface UploadResult {
   uploaded: number;
+  // Rows accepted and stored as dialler evidence but given NO attendance record, because the
+  // employee is not an Operations Executive. Optional: an older backend does not send it.
+  stored_without_attendance?: number;
   skipped_locked: number;
   errors: Array<{ row: number; employee_code: string; reason: string }>;
 }
@@ -215,7 +218,9 @@ export function AprBulkUpload() {
       </div>
 
       <p className="text-xs text-slate-500">
-        Use this to manually upload dialler login data for Operations Executive employees when APR auto-sync is missing.
+        Use this to manually upload dialler login data when APR auto-sync is missing.
+        For an Operations Executive the minutes also set that day's attendance. For anyone else the
+        minutes are stored as dialler data only — their attendance is not changed by this upload.
         CSV or Excel (.xlsx/.xls) — the header row must contain <strong>employee_code, attendance_date, net_login_minutes</strong> in any order.
         Date format: <strong>DD-MM-YYYY</strong> (e.g. 14-07-2026). Same classification rules apply: ≥480 min = Present, &gt;240 min = Half-Day, ≤240 min = Absent.
         Locked records are automatically skipped.
@@ -267,6 +272,11 @@ export function AprBulkUpload() {
             <Badge className="bg-green-100 text-green-700 gap-1">
               <CheckCircle2 className="w-3 h-3" /> {result.uploaded} uploaded
             </Badge>
+            {(result.stored_without_attendance ?? 0) > 0 && (
+              <Badge className="bg-blue-100 text-blue-700 gap-1">
+                <AlertCircle className="w-3 h-3" /> {result.stored_without_attendance} stored, attendance unchanged
+              </Badge>
+            )}
             {result.skipped_locked > 0 && (
               <Badge className="bg-amber-100 text-amber-700 gap-1">
                 <AlertCircle className="w-3 h-3" /> {result.skipped_locked} skipped (locked)

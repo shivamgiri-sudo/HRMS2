@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -1182,7 +1183,14 @@ function buildRecord(
   const contributionMargin = revenueMtd - directCost;
   const operatingProfit = revenueMtd - totalCost + (adjustments?.operatingProfit ?? 0);
   const operatingMarginPct = revenueMtd > 0 ? (operatingProfit / revenueMtd) * 100 : null;
-  const revenueLeakage = revenue?.revenueAtRisk ?? 0;
+  // process_revenue_daily holds 0 rows in production (its writer is a manual POST route,
+  // not scheduled — see resolveRevenueAtRisk's doc comment). `revenue` is undefined exactly
+  // when this process had no row there; reuse the same row-presence-vs-zero-value distinction
+  // the aggregate CEO-dashboard KPI already applies, so this row doesn't independently regress
+  // to the same false-₹0 problem that fix exists to prevent.
+  const { revenueAtRisk: resolvedRevenueAtRisk, revenueAtRiskUnavailable } =
+    resolveRevenueAtRisk(revenue?.revenueAtRisk ?? 0, revenue ? 1 : 0);
+  const revenueLeakage = resolvedRevenueAtRisk ?? 0;
   const receivableRisk = Math.max(0, invoice?.outstandingRevenue ?? 0);
   const revenueAtRisk = revenueLeakage;
   const monthEndProjectedProfit = revenueForecast - totalCost;
@@ -1261,6 +1269,7 @@ function buildRecord(
     budgetVariance: operatingProfitVariance,
     revenueLeakage,
     revenueAtRisk,
+    revenueAtRiskUnavailable,
     monthEndProjectedProfit,
     reconciliationStatus: reconciliationStatus({
       revenue: revenueMtd,

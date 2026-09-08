@@ -40,11 +40,30 @@ import { fetchSheetCsv, parseSheetDate, parseSheetNumber } from './kpi-studio.gs
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A condition narrowing which rows a single field counts.
+ *
+ * Filters live on the FIELD, not the source, because the metrics that need them
+ * need two differently-filtered numbers out of the SAME table in one query:
+ * offered is every call, answered is the calls that reached an agent. A
+ * source-level filter could not express that pair, which is why AL%, SL% and
+ * Abn% previously had to be hand-written in TypeScript instead of configured.
+ *
+ * The column is validated as an identifier; the value is always bound.
+ */
+export interface FieldFilter {
+  column: string;
+  op: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "is_null" | "is_not_null";
+  value?: string | number | Array<string | number> | null;
+}
+
 export interface SourceField {
   field_name: string;
   source_column?: string | null;
   aggregate_fn?: string | null;
   source_expression?: string | null;
+  /** Parsed from kpi_studio_source_field.filter_json; mysql2 may hand back a string. */
+  filter_json?: FieldFilter[] | string | null;
 }
 
 export interface DataSourceConfig {
@@ -63,6 +82,32 @@ export interface DataSourceConfig {
    * arrives on older drivers, so callers normalise via readConfigJson().
    */
   config_json?: Record<string, unknown> | string | null;
+  /**
+   * How this source's rows map to a process, for process-grain definitions.
+   *
+   *   'none'     — cannot back a process-grain metric (the default, so every
+   *                source that existed before this keeps its exact behaviour).
+   *   'constant' — the whole source belongs to process_id. This is a client's
+   *                own database: every row in it is theirs, and there is no
+   *                employee key to group by.
+   *   'column'   — process_key_column carries a client identifier that is NOT a
+   *                process_master.id (Shivamgiri keys on client_id='487', the
+   *                dialer on CampaignName='Blabliblu_IN'), so the source states
+   *                the translation outright: rows where that column equals
+   *                process_key_value belong to process_id.
+   */
+  /**
+   * How a row is attributed to a process.
+   *   constant  every row belongs to one process (a client's own database)
+   *   column    a column in the table names the client
+   *   employee  the process is looked up from the employee — the only option for
+   *             this system's own operational tables, which are keyed by employee
+   *             and carry no process column
+   */
+  process_key_kind?: 'none' | 'constant' | 'column' | 'employee' | null;
+  process_key_column?: string | null;
+  process_key_value?: string | null;
+  process_id?: string | null;
 }
 
 /** JSON columns arrive parsed or as text depending on driver version. Normalise once, here. */
@@ -121,13 +166,97 @@ function toDateString(raw: unknown): string | null {
  * a bare column is re-validated before falling back — belt and braces, because a row could have
  * been written by an older version of that function or edited directly in the database.
  */
-function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names: string[] } {
+const FILTER_OPS: Record<FieldFilter["op"], string> = {
+  eq: "=", ne: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=",
+  in: "IN", is_null: "IS NULL", is_not_null: "IS NOT NULL",
+};
+
+function parseFilters(raw: SourceField["filter_json"]): FieldFilter[] {
+  if (!raw) return [];
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error("Field filter is not readable JSON");
+    }
+  }
+  if (!Array.isArray(parsed)) throw new Error("Field filter must be a list of conditions");
+  return parsed as FieldFilter[];
+}
+
+/**
+ * Compiles a field's filters into a SQL condition plus its bound parameters.
+ *
+ * Columns go through assertSafeIdentifier — they cannot be bound, so they are
+ * validated. Every VALUE is bound, without exception: a filter value is
+ * configuration somebody typed, which makes it data, never SQL. The operator
+ * comes from a fixed map rather than the request, so an unknown one is refused
+ * by name instead of being interpolated.
+ */
+/**
+ * `q` qualifies every column with the source table's alias, e.g. "`t`.".
+ *
+ * Empty for a single-table query, which is every employee-grain read. It is only
+ * non-empty when the plan joins `employees` to discover the process, and then it
+ * is required: `status` would be ambiguous the moment both tables have one.
+ */
+function compileFieldFilters(
+  filters: readonly FieldFilter[],
+  alias: string,
+  q = '',
+): { sql: string; params: unknown[] } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+
+  for (const filter of filters) {
+    if (!filter?.column) throw new Error(`A filter on field ${alias} names no column`);
+    const column = assertSafeIdentifier(filter.column, `filter column on ${alias}`);
+    const op = FILTER_OPS[filter.op];
+    if (!op) {
+      throw new Error(
+        `Unsupported filter "${String(filter.op)}" on field ${alias}. Use one of ${Object.keys(FILTER_OPS).join(", ")}.`,
+      );
+    }
+
+    if (filter.op === "is_null" || filter.op === "is_not_null") {
+      conds.push(`${q}\`${column}\` ${op}`);
+      continue;
+    }
+
+    if (filter.op === "in") {
+      const list = Array.isArray(filter.value) ? filter.value : [];
+      if (!list.length) throw new Error(`The "in" filter on field ${alias} has no values`);
+      conds.push(`${q}\`${column}\` IN (${list.map(() => "?").join(",")})`);
+      params.push(...list);
+      continue;
+    }
+
+    if (filter.value === undefined || filter.value === null) {
+      throw new Error(`The "${filter.op}" filter on field ${alias} has no value`);
+    }
+    conds.push(`${q}\`${column}\` ${op} ?`);
+    params.push(filter.value);
+  }
+
+  return { sql: conds.join(" AND "), params };
+}
+
+function buildFieldSelect(
+  fields: readonly SourceField[],
+  q = '',
+): { sql: string; names: string[]; params: unknown[] } {
   const parts: string[] = [];
   const names: string[] = [];
+  const params: unknown[] = [];
 
   for (const field of fields) {
     const alias = assertSafeIdentifier(field.field_name, 'field name');
     let expression = field.source_expression?.trim();
+
+    const filters = parseFilters(field.filter_json);
 
     if (!expression) {
       if (!field.source_column) continue;
@@ -137,13 +266,39 @@ function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names:
       if (!allowed.includes(aggregate)) {
         throw new Error(`Unsupported aggregate "${aggregate}" on field ${alias}`);
       }
-      expression = aggregate === 'NONE' ? `\`${column}\`` : `${aggregate}(\`${column}\`)`;
+
+      if (filters.length && aggregate !== 'NONE') {
+        // AGG(CASE WHEN <filter> THEN col END) — the same shape the hand-written
+        // inbound-ops metrics use, which is how AL%/SL%/Abn% become configurable
+        // rather than code. No ELSE branch: when nothing matches the answer is
+        // NULL, not 0, so "no rows here" stays distinguishable from "measured
+        // zero". A formula that wants a zero says COALESCE(x, 0) and means it.
+        const compiled = compileFieldFilters(filters, alias, q);
+        expression = `${aggregate}(CASE WHEN ${compiled.sql} THEN ${q}\`${column}\` END)`;
+        params.push(...compiled.params);
+      } else if (filters.length) {
+        throw new Error(`Field ${alias} has filters but no aggregate to apply them inside`);
+      } else {
+        expression = aggregate === 'NONE' ? `${q}\`${column}\`` : `${aggregate}(${q}\`${column}\`)`;
+      }
     } else {
+      if (filters.length) {
+        throw new Error(`Field ${alias} has both a source expression and filters; use one or the other`);
+      }
       // An expression from the database is trusted only as far as its shape: aggregate over a
       // single backticked or bare identifier. Anything else is rejected rather than executed.
       const shape = /^(?:(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*`?[A-Za-z_][A-Za-z0-9_]*`?\s*\)|`?[A-Za-z_][A-Za-z0-9_]*`?)$/i;
       if (!shape.test(expression)) {
         throw new Error(`Field ${alias} has an unsupported source expression`);
+      }
+      // Its shape is already proven above: an optional aggregate wrapping ONE
+      // identifier. That is what makes it safe to qualify by rewriting the
+      // identifier in place when the plan joins another table.
+      if (q) {
+        expression = expression.replace(
+          /`?([A-Za-z_][A-Za-z0-9_]*)`?(?![A-Za-z0-9_(])/,
+          (whole, name) => (/^(SUM|AVG|COUNT|MIN|MAX)$/i.test(name) ? whole : `${q}\`${name}\``),
+        );
       }
     }
 
@@ -152,7 +307,7 @@ function buildFieldSelect(fields: readonly SourceField[]): { sql: string; names:
   }
 
   if (!parts.length) throw new Error('This data source has no usable fields configured yet');
-  return { sql: parts.join(', '), names };
+  return { sql: parts.join(', '), names, params };
 }
 
 /**
@@ -239,7 +394,7 @@ function buildQueryPlan(
   const table = assertSafeIdentifier(source.source_object, 'source table');
   const keyColumn = assertSafeIdentifier(source.employee_key_column, 'employee column');
   const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
-  const { sql: fieldSelect, names } = buildFieldSelect(fields);
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields);
 
   // Backtick each dotted part separately: a schema-qualified `db.table` must become
   // `` `db`.`table` ``, not `` `db.table` `` which MySQL reads as one table with a dot in its name.
@@ -259,10 +414,239 @@ function buildQueryPlan(
 
   return {
     sql,
-    params: [dateFrom, dateTo, ...keys],
+    params: [...fieldParams, dateFrom, dateTo, ...keys],
     fieldNames: names,
     keyKind: source.employee_key_kind ?? 'employee_code',
   };
+}
+
+/**
+ * The process-grain sibling of buildQueryPlan.
+ *
+ * The only structural difference is what it groups by: one row per DAY for the
+ * whole process, rather than one per employee per day. That difference is the
+ * entire point — a process ratio is SUM(numerator)/SUM(denominator) across the
+ * process, and averaging per-employee ratios gives a different, wrong number
+ * whenever agents carry uneven volume. Aggregating in the query is what makes
+ * the formula's inputs process totals.
+ *
+ * There is deliberately no employee column here. A client's own database has no
+ * MAS employee IDs in it, so requiring one would exclude exactly the sources
+ * this grain exists to serve.
+ */
+/**
+ * The date formats a source may declare.
+ *
+ * A fixed list, not free text, for two reasons. A format string is interpolated
+ * into SQL rather than bound -- STR_TO_DATE's second argument cannot be a
+ * parameter in every position this uses it -- so only a value from this list can
+ * ever reach the query. And it is a closed set, which this repository requires to
+ * be a dropdown rather than an Input, because a typed "%d-%m-%y" against
+ * four-digit years fails silently rather than loudly.
+ */
+export const DATE_FORMATS = [
+  '%Y-%m-%d',
+  '%d-%m-%Y',
+  '%d/%m/%Y',
+  '%m/%d/%Y',
+  '%Y/%m/%d',
+  '%d-%b-%Y',
+  '%d %b %Y',
+  '%Y-%m-%d %H:%i:%s',
+  '%d-%m-%Y %H:%i:%s',
+] as const;
+
+export type DateFormat = (typeof DATE_FORMATS)[number];
+
+export function isSupportedDateFormat(value: unknown): value is DateFormat {
+  return typeof value === 'string' && (DATE_FORMATS as readonly string[]).includes(value);
+}
+
+/**
+ * How the date column is referred to in SQL.
+ *
+ * A real DATE column is used directly. A text column is parsed with STR_TO_DATE
+ * so that comparisons are date comparisons -- without it `order_date >= '2026-08-01'`
+ * compares STRINGS, and "01-01-2025" sorts after that bound, so a month filter
+ * returns a confident and wrong set of rows rather than an error.
+ *
+ * The format is re-validated here, not trusted from the row, because this value
+ * is interpolated. A stored value outside the list is refused rather than run.
+ */
+export function dateExpression(dateColumn: string, dateFormat?: string | null, q = ''): string {
+  const quoted = `${q}\`${dateColumn}\``;
+  if (!dateFormat) return quoted;
+  if (!isSupportedDateFormat(dateFormat)) {
+    throw new Error(`Unsupported date format "${dateFormat}"`);
+  }
+  return `STR_TO_DATE(${quoted}, '${dateFormat}')`;
+}
+
+export function buildProcessQueryPlan(
+  source: DataSourceConfig,
+  fields: readonly SourceField[],
+  dateFrom: string,
+  dateTo: string,
+): { sql: string; params: unknown[]; fieldNames: string[] } {
+  if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
+  if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
+
+  const kind = source.process_key_kind ?? 'none';
+  if (kind === 'none') {
+    throw new Error(
+      `Data source ${source.source_code} is not mapped to a process. Set it to the client's own database (constant), name the column that identifies the client (column), or look the process up from the employee (employee), before using it for a process metric.`,
+    );
+  }
+  if (!source.process_id) {
+    throw new Error(`Data source ${source.source_code} has a process mapping but no process selected`);
+  }
+
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+
+  // Most of this system's operational tables carry no process column at all:
+  // cosec_daily_agg, wfm_roster_assignment, biometric_attendance_log and the WFH
+  // snapshot are all keyed by employee only. 'employee' joins the employees table
+  // to find the process, which is the difference between those tables being
+  // usable for a process metric and being unreachable.
+  //
+  // Once a second table is in the query every column has to say which one it came
+  // from — `status` exists on plenty of both — so the source's own columns are
+  // qualified throughout.
+  const joinsEmployees = kind === 'employee';
+  const q = joinsEmployees ? 's.' : '';
+
+  // Everywhere the date is used must go through the SAME expression. Filtering on
+  // a parsed date while grouping by the raw text would bucket rows under strings
+  // like "01-01-2025" and silently produce one group per distinct spelling.
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format, q);
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields, q);
+  const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
+
+  const where = [`${dateExpr} >= ?`, `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`];
+  // Field params come FIRST: a filtered field compiles to a CASE inside the
+  // SELECT list, which MySQL binds before the WHERE clause. Getting this order
+  // wrong silently shifts every placeholder and produces a plausible-looking
+  // wrong answer rather than an error.
+  const params: unknown[] = [...fieldParams, dateFrom, dateTo];
+
+  if (kind === 'column') {
+    if (!source.process_key_column) {
+      throw new Error(`Data source ${source.source_code} maps by column but no column is named`);
+    }
+    const keyColumn = assertSafeIdentifier(source.process_key_column, 'process key column');
+    // The identifier is validated; the VALUE is bound, because it comes from
+    // configuration a user typed and is data, not SQL.
+    where.push(`${q}\`${keyColumn}\` = ?`);
+    params.push(source.process_key_value ?? '');
+  }
+
+  let join = '';
+  if (joinsEmployees) {
+    if (source.source_type === 'integration_connector') {
+      // employees lives in this application's database. A connector pool points
+      // at somebody else's server, where the join would simply not resolve.
+      throw new Error(
+        `Data source ${source.source_code} looks the process up from the employee, which only works ` +
+          `for a table in this system's own database. Map it by a constant or a column instead.`,
+      );
+    }
+    if (!source.employee_key_column) {
+      throw new Error(
+        `Data source ${source.source_code} looks the process up from the employee but names no employee column`,
+      );
+    }
+    const employeeColumn = assertSafeIdentifier(source.employee_key_column, 'employee key column');
+    // Only these two, and both are literals in this file — the join target is
+    // never taken from configuration.
+    const employeeSide = source.employee_key_kind === 'employee_id' ? 'id' : 'employee_code';
+    join = `JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\``;
+    where.push('e.process_id = ?');
+    params.push(source.process_id);
+  }
+
+  const sql = `
+    SELECT DATE(${dateExpr}) AS __score_date,
+           ${fieldSelect}
+      FROM ${quotedTable}${joinsEmployees ? ' s' : ''}
+      ${join}
+     WHERE ${where.join(' AND ')}
+     GROUP BY DATE(${dateExpr})
+  `;
+
+  return { sql, params, fieldNames: names };
+}
+
+/** date (YYYY-MM-DD) -> field name -> value, for one process. */
+export type ProcessFieldValues = Map<string, Map<string, number | null>>;
+
+export interface ProcessReadResult {
+  values: ProcessFieldValues;
+  rowsRead: number;
+  error?: string;
+}
+
+/**
+ * Runs a process-grain plan against either a mas_hrms table or an external
+ * connector. Both go through the same builder, so the two paths cannot drift
+ * into producing differently-shaped numbers.
+ *
+ * Reads stay read-only — a SELECT, on pools that already enforce it.
+ */
+export async function readProcessGrainValues(
+  source: DataSourceConfig,
+  fields: readonly SourceField[],
+  dateFrom: string,
+  dateTo: string,
+): Promise<ProcessReadResult> {
+  const values: ProcessFieldValues = new Map();
+  if (!fields.length) return { values, rowsRead: 0 };
+
+  let plan: ReturnType<typeof buildProcessQueryPlan>;
+  try {
+    plan = buildProcessQueryPlan(source, fields, dateFrom, dateTo);
+  } catch (err) {
+    return { values, rowsRead: 0, error: (err as Error).message };
+  }
+
+  let rows: Record<string, unknown>[];
+  try {
+    if (source.source_type === 'integration_connector') {
+      if (!source.integration_key) {
+        return { values, rowsRead: 0, error: `Data source ${source.source_code} has no connector selected` };
+      }
+      const pool = await getPoolForKey(source.integration_key);
+      // Same duck-type guard the employee path uses: the SQL above is MySQL
+      // dialect, and a SQL Server pool would fail deep in the driver instead of
+      // here with a message somebody can act on.
+      if (typeof (pool as MysqlPool).execute !== 'function') {
+        return {
+          values,
+          rowsRead: 0,
+          error: `Connector ${source.integration_key} is not a MySQL source. Only MySQL connectors can back a KPI data source today.`,
+        };
+      }
+      const [result] = await (pool as MysqlPool).query(plan.sql, plan.params);
+      rows = result as Record<string, unknown>[];
+    } else {
+      const [result] = await db.query(plan.sql, plan.params);
+      rows = result as Record<string, unknown>[];
+    }
+  } catch (err) {
+    return { values, rowsRead: 0, error: (err as Error).message };
+  }
+
+  for (const row of rows) {
+    const date = toDateString(row.__score_date);
+    if (!date) continue;
+    const bucket = values.get(date) ?? new Map<string, number | null>();
+    for (const name of plan.fieldNames) {
+      bucket.set(name, toNumberOrNull(row[name]));
+    }
+    values.set(date, bucket);
+  }
+
+  return { values, rowsRead: rows.length };
 }
 
 function collectQueryRows(

@@ -12,12 +12,79 @@ import {
   type DbCredentials,
 } from './external-db.service.js';
 import { SaveDbConfigSchema } from './external-db.validation.js';
+import { randomUUID } from 'node:crypto';
+import { assertProcessWritable } from '../process-data-source/process-data-source.service.js';
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+// POST /api/external-db — register a NEW connector.
+//
+// Until this existed the routes below could only edit a row that was already
+// seeded, so connecting a genuinely new client database required shipping a
+// migration. A connector may belong to one process (process_id), which is
+// scope-checked here so a process manager can only register one against their
+// own process; an estate-wide connector (process_id null, e.g. COSEC, dialer,
+// db_bill) stays admin-only because it spans every client.
+router.post('/', requireRole('admin', 'super_admin', 'process_manager', 'operations_manager'), h(async (req, res) => {
+  const parsed = SaveDbConfigSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten().fieldErrors });
+  }
+  const input = parsed.data;
+  const processId = (req.body?.process_id as string | undefined) || null;
+  const name = String(req.body?.integration_name ?? '').trim();
+  if (!name) return res.status(400).json({ error: 'integration_name is required' });
+
+  const authUser = (req as any).authUser;
+  const isAdmin = authUser?.role === 'admin' || authUser?.role === 'super_admin';
+  if (processId) {
+    if (!(await assertProcessWritable(authUser?.id, processId))) {
+      return res.status(403).json({ error: 'That process is outside your scope' });
+    }
+  } else if (!isAdmin) {
+    return res.status(403).json({ error: 'Only an admin may create an estate-wide connector' });
+  }
+
+  const creds: DbCredentials = {
+    host: input.host,
+    port: input.port,
+    database: input.database,
+    username: input.username,
+    password: input.password ?? '',
+    date_column: input.date_column ?? 'event_time',
+    employee_code_column: input.employee_code_column ?? 'agent_user',
+    tables: input.tables ?? [],
+    db_type: input.db_type,
+    encrypt: input.encrypt ?? false,
+    trust_server_certificate: input.trust_server_certificate ?? true,
+  };
+
+  // The password goes only into encrypted_credentials. config_json is read back
+  // to the browser by the list and detail routes below, so a secret placed here
+  // would be handed to every screen that renders them.
+  const config = {
+    host: input.host, port: input.port, database: input.database,
+    username: input.username, date_column: creds.date_column,
+    employee_code_column: creds.employee_code_column, tables: creds.tables,
+    db_type: input.db_type, encrypt: creds.encrypt,
+    trust_server_certificate: creds.trust_server_certificate,
+  };
+
+  const key = `proc_${randomUUID().slice(0, 8)}`;
+  await db.execute(
+    `INSERT INTO integration_config
+       (id, integration_key, integration_name, integration_type, process_id,
+        config_json, encrypted_credentials, active_status, created_at, updated_at)
+     VALUES (UUID(), ?, ?, 'database', ?, ?, ?, 1, NOW(), NOW())`,
+    [key, name, processId, JSON.stringify(config), encryptCredentials(creds)],
+  );
+
+  return res.status(201).json({ success: true, data: { integration_key: key } });
+}));
 
 // GET /api/external-db — list all database connectors
 router.get('/', requireRole('admin'), h(async (_req, res) => {

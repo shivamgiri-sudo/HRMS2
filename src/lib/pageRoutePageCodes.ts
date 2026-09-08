@@ -41,6 +41,9 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/payroll/tds-certificate-part-a": "PAYROLL_TDS_PART_A",
   "/performance/process-performance": "OPERATIONS_DASHBOARD",
   "/performance/process-kpi-dashboard": "PROCESS_KPI_DASHBOARD",
+  "/performance/process-data-sources": "PROCESS_DATA_SOURCE",
+  "/kpi-studio": "KPI_STUDIO",
+  "/dashboard-builder": "DASHBOARD_BUILDER",
   "/process-config": "PROCESS_CONFIG",
   "/quality/file-audit": "QUALITY_DASHBOARD",
   "/roster-capacity-config": "ROSTER_MASTER",
@@ -328,9 +331,69 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/sales/brand-analytics": "SALES_BRAND_ANALYTICS",
   "/my-team": "TEAM_ROSTER",
   "/week-off-preferences": "WEEK_OFF_PREFERENCES",
+
+  // ── Added 2026-09-07 with migration 1682 ──────────────────────────────────────────
+  // These 37 routes had no page code at all, so they could never appear in
+  // /settings/access-control and no grant could be created for them — the "many pages are
+  // not showing" report. 39 of them had no role list either, so any authenticated user
+  // could open them. A mapping here is the whole gate: ProtectedRoute denies on
+  // `routePageCode && !hasRoutePageAccess`, so no Gate wrapper is needed in the route files.
+  //
+  // Their grants ship in 1682, which MUST be applied before this file deploys — a page code
+  // with no grant locks the page for everyone.
+  //
+  // The self-service pages below are granted to every role in role_page_access, so nobody's
+  // access changes; they simply become visible and editable in Access Control. The sensitive
+  // ones carry the role set their own API already enforces, so anyone now excluded was
+  // already receiving 403s from the backend.
+  //
+  // /dashboard is deliberately absent: ProtectedRoute special-cases it so non-employees can
+  // reach the onboarding request form, and gating it would lock every not-yet-onboarded user
+  // out of the only page they are allowed.
+  "/my-roster": "MY_ROSTER",
+  "/leaves": "MY_LEAVE",
+  "/notifications": "NOTIFICATIONS",
+  "/calendar": "CALENDAR",
+  "/changelog": "CHANGELOG",
+  "/performance": "PERFORMANCE_OVERVIEW",
+  "/performance-feedback/my-reports": "PERF_FEEDBACK_MY_REPORTS",
+  "/performance-feedback/development-plan": "PERF_FEEDBACK_DEV_PLAN",
+  "/performance-feedback/assignments": "PERF_FEEDBACK_ASSIGNMENTS",
+  "/communication/preferences": "COMM_PREFERENCES",
+  "/peopleos/copilot": "PEOPLEOS_COPILOT",
+  "/engagement": "ENGAGEMENT_HOME",
+  "/engagement/company-feed": "ENGAGEMENT_COMPANY_FEED",
+  "/engagement/badges": "ENGAGEMENT_BADGES",
+  "/engagement/kudos": "ENGAGEMENT_KUDOS",
+  "/engagement/surveys": "ENGAGEMENT_SURVEYS",
+  "/engagement/leaderboard": "ENGAGEMENT_LEADERBOARD",
+  "/settings": "USER_SETTINGS",
+  "/attendance": "MY_ATTENDANCE",
+  "/assets": "MY_ASSETS",
+  // Existing codes that already carry grants — mapping only, no new policy.
+  "/ats/onboarding": "ONBOARDING_REQUESTS",
+  "/wfm/attendance-integrity": "WFM_ATTENDANCE_EXCEPTIONS",
+  "/attendance/biometric-logs": "ATTENDANCE_LOOKUP",
+  // Sensitive — roles mirror each page's own API guard.
+  "/settings/signing-certificate": "SIGNING_CERTIFICATE",
+  "/settings/fraud-alerts": "FRAUD_ALERT_REVIEW",
+  "/settings/provisioning-recipients": "PROVISIONING_RECIPIENTS",
+  "/settings/branch-payroll-hr": "BRANCH_PAYROLL_HR_SIGNATORY",
+  "/departments": "DEPARTMENTS",
+  "/org-chart/settings": "ORG_CHART_SETTINGS",
+  "/employees/bgv-status": "EMPLOYEE_BGV_STATUS",
+  "/visitor-management": "VISITOR_MANAGEMENT",
+  "/visitor-management/approvals": "VISITOR_MANAGEMENT",
+  "/ats/registration-enhanced": "ATS_REGISTRATION_ENHANCED",
+  "/engagement/company-feed/create": "ENGAGEMENT_FEED_CREATE",
+  "/performance-feedback/team-reports": "PERF_FEEDBACK_TEAM_REPORTS",
 };
 
 export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
+  // Added 2026-09-07 with migration 1682 — see the block at the end of PAGE_CODE_BY_ROUTE.
+  "/performance-feedback/reports/:id": "PERF_FEEDBACK_MY_REPORTS",
+  "/performance-feedback/form/:id": "PERF_FEEDBACK_FORM",
+  "/attendance/biometric-logs/:employeeId": "ATTENDANCE_LOOKUP",
   "/employee-stat-card/:id": "EMPLOYEE_STAT_CARD",
   "/employees/:id": "EMPLOYEE_MANAGEMENT",
   "/employees/:id/360": "EMPLOYEE_MANAGEMENT",

@@ -146,9 +146,23 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
     }
   }
 
-  // For page-mapped routes, page access is the source of truth.
-  // Local role lists remain only as a fallback for pages that are not yet mapped.
-  if (!routePageCode && roles && roles.length > 0) {
+  // BOTH layers apply. A route's `roles` list is a ceiling, the page grant is the floor,
+  // and a user needs to clear both.
+  //
+  // This condition used to be negated on routePageCode, so the role list was skipped
+  // entirely the moment a path appeared in PAGE_CODE_BY_ROUTE, which is nearly every
+  // gated route. 95 routes carried a role list that nothing enforced, so the lists read
+  // as security while the DB grant was the only real check, and 60 of them admitted roles
+  // their own list excluded. The one that mattered: role_page_access grants SALARY_REVISION
+  // to `employee`, held by 1,440 of ~1,530 live users, so anyone who pasted /salary-revision
+  // rendered the Payroll Head revision console. (Its API is guarded by requireRole, so the
+  // screen came up empty rather than leaking pay data — but the page should never have
+  // opened, and nothing in the route file was stopping it.)
+  //
+  // Grants and lists were reconciled in the same change, so no live user loses a page they
+  // hold today; the lists now pin that surface in place, and a grant added later cannot
+  // silently widen a route past what its own file declares.
+  if (roles && roles.length > 0) {
     const hasRequiredRole = dashboardCode
       ? canAccessDashboard(dashboardCode, roleKeys)
       : roleKeys.includes("super_admin") || roles.some((r) => roleKeys.includes(r));

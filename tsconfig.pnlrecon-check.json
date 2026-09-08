@@ -1,0 +1,12 @@
+{
+  // Typecheck for the P&L live reconciliation panel (/finance/process-pnl → Reconciliation tab).
+  // Same reason as the other scoped checks: the root tsconfig has `"files": []` and
+  // tsconfig.app.json buries new errors under hundreds of pre-existing ones.
+  //
+  //     npx tsc -p tsconfig.pnlrecon-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/pnl/PnlReconciliationPanel.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

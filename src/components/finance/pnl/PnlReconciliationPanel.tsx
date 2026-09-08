@@ -64,6 +64,8 @@ export function PnlReconciliationPanel({
 }) {
   const query = usePnlLiveReconciliation(period, { branchIds: branchId ? [branchId] : [] });
   const data = query.data;
+  /* Declared above the loading/error early returns so the hook order stays stable across renders. */
+  const [drilldown, setDrilldown] = useState<{ params: PnlDrilldownParams; label: string } | null>(null);
 
   if (query.isLoading) {
     return (

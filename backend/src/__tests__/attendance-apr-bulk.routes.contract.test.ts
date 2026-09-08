@@ -51,11 +51,15 @@ function appFor(role: string) {
 
 const EMP = { employee_id: "emp-1", employee_code: "E001", dept_name: "operations", designation_name: "executive", branch_id: "b-1", process_id: "p-1" };
 
-function baseStub(opts: { insertShouldThrow?: boolean; insertError?: Error } = {}) {
+function baseStub(opts: { insertShouldThrow?: boolean; insertError?: Error; emp?: typeof EMP } = {}) {
   execute.mockReset();
   execute.mockImplementation(async (sql: string, _params: unknown[] = []) => {
     if (/FROM employees e/.test(sql)) {
-      return [[EMP], []];
+      // Overridable so a test can vary WHO the employee is (e.g. a non-Operations-Executive)
+      // without having to restate every other branch of this stub - the evidence phase needs the
+      // dialler-source, campaign and upload-batch branches below, and a row that is no longer
+      // rejected early now actually reaches them.
+      return [[opts.emp ?? EMP], []];
     }
     if (/FROM attendance_daily_record adr/.test(sql) && /LEFT JOIN attendance_regularization/.test(sql)) {
       return [[], []]; // nothing locked
@@ -198,22 +202,34 @@ describe("defect 3 — a small well-formed file still succeeds and classifies id
     );
   });
 
-  it("a non-Operations-Executive employee is still skipped with the unchanged reason", async () => {
-    execute.mockImplementation(async (sql: string) => {
-      if (/FROM employees e/.test(sql)) {
-        return [[{ ...EMP, dept_name: "finance", designation_name: "manager" }], []];
-      }
-      if (/FROM attendance_daily_record adr/.test(sql) && /LEFT JOIN attendance_regularization/.test(sql)) return [[], []];
-      if (/FROM apr\s+WHERE/.test(sql)) return [[], []];
-      if (/attendance_feature_config/i.test(sql)) return [[], []];
-      return [[], []];
-    });
+  it("a non-Operations-Executive employee is now STORED as evidence only, with no attendance record written", async () => {
+    baseStub({ emp: { ...EMP, dept_name: "finance", designation_name: "manager" } });
     const csv = csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]);
     const res = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(csv), "apr.csv");
     expect(res.status).toBe(200);
-    expect(res.body.errors).toEqual(
-      expect.arrayContaining([expect.objectContaining({ employee_code: "E001", reason: "Employee is not an APR/Operations Executive" })]),
+    // No longer rejected: the row is accepted and counted in its own bucket.
+    expect(res.body.stored_without_attendance).toBe(1);
+    expect(res.body.errors).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ reason: "Employee is not an APR/Operations Executive" })]),
     );
+    // And still counted as zero attendance rows written -- this is the half that must not change.
+    expect(res.body.uploaded).toBe(0);
+    expect(execute.mock.calls.filter(([sql]: [string]) => /INSERT INTO attendance_daily_record/.test(sql)).length).toBe(0);
+    // ...but the minutes ARE on record: one evidence row, under the same attributed batch an
+    // Operations-Executive row would use.
+    expect(execute.mock.calls.filter(([sql]: [string]) => /INSERT INTO apr /.test(sql)).length).toBe(1);
+  });
+
+  it("net_login_minutes above the raised 1080 cap is rejected, and 1080 itself is accepted", async () => {
+    const tooHigh = csvOf([{ code: "E001", date: "01-08-2026", mins: 1081 }]);
+    const overRes = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(tooHigh), "apr.csv");
+    expect(overRes.status).toBe(400);
+    expect(overRes.body.message).toContain("0–1080");
+
+    const atCap = csvOf([{ code: "E001", date: "01-08-2026", mins: 1080 }]);
+    const okRes = await request(appFor("wfm")).post("/api/wfm/attendance/apr-bulk-upload").attach("file", Buffer.from(atCap), "apr.csv");
+    expect(okRes.status).toBe(200);
+    expect(okRes.body.uploaded).toBe(1);
   });
 });
 
