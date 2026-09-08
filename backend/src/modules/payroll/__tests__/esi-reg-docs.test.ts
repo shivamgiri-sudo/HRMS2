@@ -22,23 +22,33 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
   },
 }));
 
+/**
+ * Mirrors archiver 8's REAL shape: a named `ZipArchive` class, no callable default.
+ *
+ * The previous mock exported `default: vi.fn(...)` — the archiver <=7 factory —
+ * and that is precisely why this suite stayed green while every download in
+ * production threw "archiverLib is not a function" on its first line. archiver
+ * 8.0.0 (installed) exports only classes: Archiver, ZipArchive, TarArchive,
+ * JsonArchive. A mock that invents an API the package does not have cannot fail
+ * when the code calls an API the package does not have.
+ *
+ * So this is a class now. If archiver's shape changes again, the mock has to be
+ * updated to match the installed package before the suite can pass — which is
+ * the property that was missing.
+ */
 vi.mock("archiver", () => {
-  return {
-    default: vi.fn(() => {
-      let _dest: any = null;
-      const archiveMock = {
-        append: vi.fn().mockReturnThis(),
-        file: vi.fn().mockReturnThis(),
-        pipe: vi.fn((dest: any) => { _dest = dest; return archiveMock; }),
-        on: vi.fn().mockReturnThis(),
-        finalize: vi.fn(() => {
-          if (_dest && typeof _dest.end === "function") _dest.end();
-          return Promise.resolve();
-        }),
-      };
-      return archiveMock;
-    }),
-  };
+  class ZipArchive {
+    private _dest: any = null;
+    append = vi.fn().mockReturnThis();
+    file = vi.fn().mockReturnThis();
+    on = vi.fn().mockReturnThis();
+    pipe = vi.fn((dest: any) => { this._dest = dest; return this; });
+    finalize = vi.fn(() => {
+      if (this._dest && typeof this._dest.end === "function") this._dest.end();
+      return Promise.resolve();
+    });
+  }
+  return { ZipArchive, Archiver: ZipArchive };
 });
 
 import { db } from "../../../db/mysql.js";
@@ -89,10 +99,16 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("streams a zip with manifest.txt when no files exist on disk", async () => {
+    // The employee row is queued; everything after it resolves EMPTY by default.
+    // appendEsiPack() looks up PAN, then Aadhaar, then identity, then the bank
+    // row, and finally writes an audit row — five reads and a write, where this
+    // test used to queue exactly three. Counting them here would pin the number
+    // of queries the pack makes, which is not the contract; "no documents exist"
+    // is. A trailing mockResolvedValue says that once, for however many lookups
+    // the pack grows to make.
     vi.mocked(db.execute)
       .mockResolvedValueOnce([[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
-      .mockResolvedValueOnce([[] as any, []]) // no pan doc
-      .mockResolvedValueOnce([[] as any, []]); // no bank detail for PDF
+      .mockResolvedValue([[] as any, []]);
 
     const res = await request(app)
       .get("/api/payroll/esi-reg-docs/emp-1/download")
@@ -133,10 +149,13 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
   });
 
   it("returns 200 zip when valid employee_ids supplied", async () => {
+    // Employee list queued; every per-employee lookup after it resolves empty.
+    // Same reason as the single-download test: appendEsiPack() makes several
+    // reads per employee and pinning the count would test the implementation
+    // rather than "this employee has no documents".
     vi.mocked(db.execute)
       .mockResolvedValueOnce([[{ id: "emp-1", emp_code: "EMP001", name: "Alice Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
-      .mockResolvedValueOnce([[] as any, []]) // no pan doc
-      .mockResolvedValueOnce([[] as any, []]); // no bank detail for PDF
+      .mockResolvedValue([[] as any, []]);
 
     const res = await request(app)
       .post("/api/payroll/esi-reg-docs/bulk-download")

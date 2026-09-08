@@ -2,9 +2,32 @@
  * Payroll HR issuance of appointment letters.
  *
  * A separate router from appointment-esign.routes.ts, which is admin/hr only and
- * sits on a table carrying two competing schemas. payroll_hr has no alias in the
- * role model, so it must be named explicitly on every route — requireRole('payroll')
- * does NOT admit a payroll_hr user.
+ * sits on a table carrying two competing schemas.
+ *
+ * ── The role note that used to sit here was backwards ────────────────────────
+ *
+ * It read: "payroll_hr has no alias in the role model, so it must be named
+ * explicitly on every route — requireRole('payroll') does NOT admit a payroll_hr
+ * user." The truth is the exact reverse, and it cost this module its main
+ * audience.
+ *
+ * DASHBOARD_ROLE_ALIASES in shared/dashboardAccessRegistry.ts maps
+ * `payroll_hr -> payroll`, and getUserRoleKeys() runs every resolved role
+ * through it. So a payroll_hr user arrives at requireRole ALREADY REWRITTEN to
+ * `payroll`, and naming "payroll_hr" on a route matches nobody. Proven live
+ * 2026-09-08 against the ESI module with a real token for a payroll_hr holder:
+ * refused, with her roles logged as [employee, hr, payroll, recruiter].
+ *
+ * The effect here was precise and easy to miss: `payroll` is in VIEW_ROLES but
+ * was not in ISSUE_ROLES, so Payroll HR could see the queue and open an
+ * employee, and every attempt to actually issue returned 403 — on the router
+ * whose own first line says it exists for Payroll HR issuance.
+ *
+ * `payroll` is therefore added to ISSUE_ROLES. That does also admit the holders
+ * of a plain `payroll` role, and that is not a choice this route can make
+ * differently: the alias makes the two the same principal to every RBAC check
+ * in the system. Separating them means removing the alias, which is a
+ * system-wide change and is deliberately not made from here.
  */
 import { Router, type NextFunction, type Response } from "express";
 import fs from "fs";
@@ -28,8 +51,11 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
-const ISSUE_ROLES = ["super_admin", "admin", "payroll_hr", "payroll_head", "hr"] as const;
-const VIEW_ROLES = [...ISSUE_ROLES, "payroll", "branch_head"] as const;
+// `payroll` is how a payroll_hr user actually presents (see the header above).
+// payroll_hr is kept alongside it: it is what this list MEANS, and it starts
+// working on its own the day the alias is removed.
+const ISSUE_ROLES = ["super_admin", "admin", "payroll", "payroll_hr", "payroll_head", "hr"] as const;
+const VIEW_ROLES = [...ISSUE_ROLES, "branch_head"] as const;
 
 router.use(requireAuth);
 

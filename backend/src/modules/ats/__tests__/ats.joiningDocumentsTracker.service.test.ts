@@ -726,17 +726,39 @@ describe('bulkVerifyDocuments', () => {
 
 // ─── Task 6: streamBulkDocumentsZip tests ────────────────────────────────────
 
+/**
+ * Mirrors archiver 8's REAL shape: a named `ZipArchive` class, no callable default.
+ *
+ * This mock previously exported `default: vi.fn()` — the archiver <=7 factory —
+ * so it stayed green while the production download threw "archiverLib is not a
+ * function" on its first line and, having no error wrapper, took the backend
+ * process down with it. archiver 8.0.0 (installed) exports only classes:
+ * Archiver, ZipArchive, TarArchive, JsonArchive.
+ *
+ * A mock that invents an API the package does not have cannot fail when the code
+ * calls an API the package does not have. Keep this matching the installed
+ * package, not the code's expectations of it.
+ */
+const { zipInstances } = vi.hoisted(() => ({ zipInstances: [] as any[] }));
+
 vi.mock('archiver', () => {
-  const mockArchive = {
-    pipe: vi.fn(),
-    file: vi.fn(),
-    finalize: vi.fn().mockResolvedValue(undefined),
-    on: vi.fn(),
-  };
-  return {
-    default: vi.fn().mockReturnValue(mockArchive),
-  };
+  // A constructor, not a factory: each `new ZipArchive()` records itself in
+  // zipInstances so a test can assert against the instance the code actually
+  // built. The old mock returned one shared object from a callable default,
+  // which no longer resembles the package.
+  const ZipArchive = vi.fn(function (this: any) {
+    this.pipe = vi.fn();
+    this.file = vi.fn();
+    this.append = vi.fn();
+    this.finalize = vi.fn().mockResolvedValue(undefined);
+    this.on = vi.fn();
+    zipInstances.push(this);
+  });
+  return { ZipArchive, Archiver: ZipArchive };
 });
+
+/** The archive the code under test just constructed. */
+const lastArchive = () => zipInstances[zipInstances.length - 1];
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -751,7 +773,6 @@ vi.mock('fs', async () => {
   };
 });
 
-import archiver from 'archiver';
 import * as fsModule from 'fs';
 
 describe('streamBulkDocumentsZip', () => {
@@ -775,6 +796,7 @@ describe('streamBulkDocumentsZip', () => {
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
 
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+    const archive = lastArchive();
 
     const [[sql, params]] = vi.mocked(db.execute).mock.calls;
     expect(sql).toMatch(/employee_joining_document_file/i);
@@ -790,6 +812,7 @@ describe('streamBulkDocumentsZip', () => {
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], ['APPOINTMENT_LETTER', 'ID_PROOF'], mockRes);
+    const archive = lastArchive();
 
     const [[sql, params]] = vi.mocked(db.execute).mock.calls;
     expect(sql).toMatch(/document_code IN/i);
@@ -802,6 +825,7 @@ describe('streamBulkDocumentsZip', () => {
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+    const archive = lastArchive();
 
     const [[sql]] = vi.mocked(db.execute).mock.calls;
     expect(sql).not.toMatch(/document_code IN/i);
@@ -820,21 +844,12 @@ describe('streamBulkDocumentsZip', () => {
     vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
     vi.mocked(fsModule.existsSync).mockReturnValue(true); // file exists
 
-    // After vi.clearAllMocks() in beforeEach the factory default mock is wiped;
-    // set up a fresh instance to be returned by archiver()
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
-
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+    const archive = lastArchive();
 
-    expect(freshMockArchive.file).toHaveBeenCalledTimes(1);
-    const fileCall = freshMockArchive.file.mock.calls[0];
+    expect(archive.file).toHaveBeenCalledTimes(1);
+    const fileCall = archive.file.mock.calls[0];
     // Archive path: EMP001-JohnDoe/APPOINTMENT_LETTER-appointment.pdf
     expect(fileCall[1]).toMatchObject({ name: 'EMP001-JohnDoe/APPOINTMENT_LETTER-appointment.pdf' });
   });
@@ -852,54 +867,33 @@ describe('streamBulkDocumentsZip', () => {
     vi.mocked(db.execute).mockResolvedValueOnce([mockFiles, []]);
     vi.mocked(fsModule.existsSync).mockReturnValue(false); // file does NOT exist
 
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
-
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+    const archive = lastArchive();
 
-    expect(freshMockArchive.file).not.toHaveBeenCalled();
+    expect(archive.file).not.toHaveBeenCalled();
   });
 
   it('should pipe archive to the response object', async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
     vi.mocked(fsModule.existsSync).mockReturnValue(false);
 
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
-
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+    const archive = lastArchive();
 
-    expect(freshMockArchive.pipe).toHaveBeenCalledWith(mockRes);
+    expect(archive.pipe).toHaveBeenCalledWith(mockRes);
   });
 
   it('should call archive.finalize() after adding all files', async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([[], []]);
     vi.mocked(fsModule.existsSync).mockReturnValue(false);
 
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
-
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1'], null, mockRes);
+    const archive = lastArchive();
 
-    expect(freshMockArchive.finalize).toHaveBeenCalledTimes(1);
+    expect(archive.finalize).toHaveBeenCalledTimes(1);
   });
 
   // ── Branch RBAC ──────────────────────────────────────────────────────────
@@ -911,13 +905,6 @@ describe('streamBulkDocumentsZip', () => {
 
   it('restricts employee_ids to the actor\'s branch scope before querying files', async () => {
     vi.mocked(fsModule.existsSync).mockReturnValue(false);
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     mocks.mockBuildScopeWhereClause.mockResolvedValueOnce({ sql: 'e.branch_id = ?', params: ['branch-A'] });
     vi.mocked(db.execute)
@@ -926,6 +913,7 @@ describe('streamBulkDocumentsZip', () => {
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1', 'emp-2'], null, mockRes, 'actor-user-1');
+    const archive = lastArchive();
 
     // The scope check asks which of the requested ids the actor may have.
     const scopeCall = vi.mocked(db.execute).mock.calls[0];
@@ -938,13 +926,6 @@ describe('streamBulkDocumentsZip', () => {
   });
 
   it('finalizes an empty archive when the actor holds no scope at all', async () => {
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     // 1=0 is what buildScopeWhereClause returns for a user whose roles carry no
     // assignment scope — fail closed, never fall through to an unrestricted query.
@@ -952,9 +933,10 @@ describe('streamBulkDocumentsZip', () => {
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1', 'emp-2'], null, mockRes, 'actor-user-1');
+    const archive = lastArchive();
 
-    expect(freshMockArchive.finalize).toHaveBeenCalledTimes(1);
-    expect(freshMockArchive.file).not.toHaveBeenCalled();
+    expect(archive.finalize).toHaveBeenCalledTimes(1);
+    expect(archive.file).not.toHaveBeenCalled();
     // No query ran at all — 1=0 needs no round trip to know the answer.
     expect(vi.mocked(db.execute)).not.toHaveBeenCalled();
   });
@@ -970,13 +952,6 @@ describe('streamBulkDocumentsZip', () => {
       },
     ];
     vi.mocked(fsModule.existsSync).mockReturnValue(false);
-    const freshMockArchive = {
-      pipe: vi.fn(),
-      file: vi.fn(),
-      finalize: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-    };
-    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
 
     // scope_type='all', or super_admin.
     mocks.mockBuildScopeWhereClause.mockResolvedValueOnce({ sql: '1=1', params: [] });
@@ -984,6 +959,7 @@ describe('streamBulkDocumentsZip', () => {
 
     const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
     await streamBulkDocumentsZip(['emp-1', 'emp-2'], null, mockRes, 'actor-user-1');
+    const archive = lastArchive();
 
     // 1=1 short-circuits the scope query, so the file query is the only one.
     expect(vi.mocked(db.execute)).toHaveBeenCalledTimes(1);

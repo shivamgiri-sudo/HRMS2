@@ -6,18 +6,37 @@ import { generateJoiningDocumentChecklist, recalculateDocumentProgress } from '.
 // Esign_State_Authority. The eSign counters below are GENERATED from it rather
 // than hand-written, so the query cannot drift from `classifyEsignState`.
 import { esignBucketCaseSql } from './esignState.js';
-// archiver ships a CJS default; @types/archiver only declares named exports so we
-// need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-import * as _archiverNs from 'archiver';
-import type { ArchiverOptions, Archiver as ArchiverInstance } from 'archiver';
+import { ZipArchive } from 'archiver';
+import type { Archiver as ArchiverInstance } from 'archiver';
 import fs from 'fs';
 import path from 'path';
 import type { Response } from 'express';
 
-// esModuleInterop wraps the CJS default as .default; fall back to the namespace itself.
-const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
-  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
+/**
+ * archiver 8 removed the callable factory.
+ *
+ * This was `archiver('zip', opts)` reached through a CJS-interop shim,
+ * `(ns.default ?? ns) as (format, options) => Archiver`. archiver 8.0.0 (the
+ * installed version) exports only classes — Archiver, ZipArchive, TarArchive,
+ * JsonArchive — and no `default`, so the shim resolved to the namespace OBJECT
+ * and calling it threw "archiverLib is not a function" at the first line of the
+ * download. The cast is what let it type-check: it asserted a call signature the
+ * package has not had since the upgrade.
+ *
+ * The route is a bare async handler, so that throw was an unhandled rejection
+ * and took the whole backend process down rather than failing one request.
+ *
+ * The unit test did not catch it because vi.mock('archiver') returned a callable
+ * `default` — the OLD API. A mock of an API the package does not have cannot
+ * fail when the code calls an API the package does not have; that mock is now a
+ * class, matching the installed package.
+ *
+ * Same fix already applied in payroll/esi-reg-docs.routes.ts, where this was
+ * first found.
+ */
+function newZipArchive(): ArchiverInstance {
+  return new ZipArchive({ zlib: { level: 9 } }) as unknown as ArchiverInstance;
+}
 
 const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-joining-documents');
 
@@ -1105,7 +1124,7 @@ export async function streamBulkDocumentsZip(
   res: Response,
   actorUserId?: string
 ): Promise<void> {
-  const archive = archiverLib('zip', { zlib: { level: 9 } });
+  const archive = newZipArchive();
 
   // Pipe archive data to Express response
   archive.pipe(res);
