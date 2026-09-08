@@ -164,8 +164,14 @@ async function loadSourcesWithFields(
   const [sourceRows] = await db.execute<RowDataPacket[]>(
     // config_json is required, not optional: it carries the published CSV link for a Google Sheet
     // source, so omitting it makes every sheet-backed KPI fail with "no published link".
+    // date_format has to be selected too, not just date_column. Without it every
+    // source object reaches buildProcessQueryPlan with date_format undefined, so
+    // dateExpression falls through to the bare column and a text date is compared
+    // as a STRING -- which is the precise failure its own comment warns about, and
+    // it returns a confident wrong row set rather than an error. An excel_serial
+    // source returns zero rows; a '%d-%m-%Y' source silently returns the wrong month.
     `SELECT id, source_code, source_name, source_type, integration_key, source_object,
-            employee_key_column, employee_key_kind, date_column, config_json${processCols}
+            employee_key_column, employee_key_kind, date_column, date_format, config_json${processCols}
        FROM kpi_studio_data_source
       WHERE id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],
