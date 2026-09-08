@@ -103,8 +103,10 @@ async function main() {
   // sharing one metric+process would each overwrite the last one's definition instead
   // of coexisting (Lawyer Panel is one process, all three CR_lp_* tables belong to it).
   for (const t of lpTables) {
-    const callsMetricId = await ensureMetric(`LP_${t.code}_TOTAL_CALLS`, `Lawyer Panel ${t.label} total calls`, "count", "higher_is_better");
-    const talkMinutesMetricId = await ensureMetric(`LP_${t.code}_TALK_MINUTES`, `Lawyer Panel ${t.label} total talk minutes`, "minutes", "higher_is_better");
+    // t.code is already "LP_FEEDBACK" etc — do not re-prefix with "LP_" (that produced
+    // "LP_LP_FEEDBACK_TOTAL_CALLS" live and was fixed with a direct rename afterward).
+    const callsMetricId = await ensureMetric(`${t.code}_TOTAL_CALLS`, `Lawyer Panel ${t.label} total calls`, "count", "higher_is_better");
+    const talkMinutesMetricId = await ensureMetric(`${t.code}_TALK_MINUTES`, `Lawyer Panel ${t.label} total talk minutes`, "minutes", "higher_is_better");
     const src = await saveDataSource({
       source_code: t.code,
       source_name: `Lawyer Panel — ${t.label}`,
