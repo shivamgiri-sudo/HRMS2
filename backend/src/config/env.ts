@@ -220,6 +220,12 @@ const envSchema = z.object({
   ONFIDO_DB_PASSWORD: z.string().default(""),
   ONFIDO_DB_NAME:     z.string().default("onfido_db"),
 
+  BELLA_DB_HOST:      z.string().default(""),
+  BELLA_DB_PORT:      z.coerce.number().default(3306),
+  BELLA_DB_USER:      z.string().default(""),
+  BELLA_DB_PASSWORD:  z.string().default(""),
+  BELLA_DB_NAME:      z.string().default("bella_db"),
+
   // Shivamgiri quality/APR database (shared by quality-dashboard module)
   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
 

@@ -291,6 +291,13 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_onfido_poa_etm_batch",
   "import_onfido_task_skip_batch",
   "import_onfido_agent_daily_batch",
+  // Bella Vita process raw-data reports (sales, lead allocation, daily target
+  // plan, cancellations/RTO) - see bella-report-configs.ts. Call detail and
+  // inbound SLA are NOT here: dialer_db already holds both, live.
+  "import_bella_sale_raw_batch",
+  "import_bella_lead_allocation_batch",
+  "import_bella_target_plan_batch",
+  "import_bella_cancelled_order_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -666,6 +673,18 @@ async function dispatchImport(
       throw new Error(`No Onfido report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importOnfidoRawBatch(config, id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name.startsWith("import_bella_")) {
+    const { importBellaRawBatch, findBellaConfig } = await import(
+      "../bulk-upload/bella-raw-bulk.service.js"
+    );
+    const config = findBellaConfig(rpc_name);
+    if (!config) {
+      throw new Error(`No Bella Vita report config registered for rpc_name '${rpc_name}'.`);
+    }
+    const data = await importBellaRawBatch(config, id, userId);
     return { success: true, data };
   }
 
