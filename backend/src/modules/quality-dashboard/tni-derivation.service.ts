@@ -397,3 +397,69 @@ export async function runTniScan(
   const { inserted, updated } = await persistFindings(all, createdBy);
   return { inserted, updated, findings: all };
 }
+
+// ─── Reachability: let an existing screen show a persisted finding ────────────
+
+/**
+ * Maps the 19 raw column names NativeTNIAnalysis.tsx already drills into onto
+ * the short parameter_key this module and tni_finding use. Only the six skill
+ * parameters this module derives findings for appear here — the other 13
+ * columns that page tracks (grammar, dead air, hold procedure, etc.) have no
+ * corresponding tni_finding rule and correctly return no match below.
+ */
+export const RAW_COLUMN_TO_PARAMETER_KEY: Partial<Record<string, string>> = Object.fromEntries(
+  PARAMETER_RULES.filter((r): r is SkillParameterRule => r.kind === "skill").map((r) => [r.column, r.key]),
+);
+
+export interface OpenFindingSummary {
+  id: string;
+  severity: Severity;
+  status: string;
+  sampleCount: number;
+  failCount: number;
+  evidenceNote: string;
+  raisedAt: string;
+}
+
+interface FindingRow extends RowDataPacket {
+  id: string;
+  severity: Severity;
+  status: string;
+  sample_count: number;
+  fail_count: number;
+  evidence_note: string;
+  raised_at: string;
+}
+
+/**
+ * The one persisted finding (if any) for this employee and parameter — read
+ * only, so an existing screen can show "this cell already has a tracked,
+ * assignable finding" without a new page. Deliberately not filtered to OPEN
+ * only: a manager looking at a specific cell should see a DISMISSED or
+ * COMPLETED finding too, so a resolved gap does not look identical to one
+ * nobody has ever raised.
+ */
+export async function getFindingForEmployeeParameter(
+  employeeCode: string,
+  parameterKey: string,
+): Promise<OpenFindingSummary | null> {
+  const [rows] = await db.execute<FindingRow[]>(
+    `SELECT id, severity, status, sample_count, fail_count, evidence_note, raised_at
+       FROM tni_finding
+      WHERE employee_code = ? AND parameter_key = ? AND subject_type = 'employee'
+      ORDER BY raised_at DESC
+      LIMIT 1`,
+    [employeeCode, parameterKey],
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    id: r.id,
+    severity: r.severity,
+    status: r.status,
+    sampleCount: Number(r.sample_count),
+    failCount: Number(r.fail_count),
+    evidenceNote: r.evidence_note,
+    raisedAt: String(r.raised_at),
+  };
+}

@@ -160,6 +160,28 @@ router.get("/tni-agent-params", requireRole(...ALLOWED_ROLES), h(async (req, res
   }
 }));
 
+// GET /api/quality-dashboard/tni-finding?agent_code=&param=
+//
+// Read-only lookup into tni_finding (see tni-derivation.service.ts), so the
+// existing TNI heatmap's per-agent drill-in can show "this cell already has a
+// tracked, assignable finding" without a separate page. `param` here is one of
+// the 19 raw column names the page already drills into; only six of them map
+// onto a tni_finding parameter_key, and the rest correctly return no match.
+router.get("/tni-finding", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
+  const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
+  if (!agentCode || !param) {
+    return res.status(400).json({ success: false, message: "agent_code and param are required" });
+  }
+  const { RAW_COLUMN_TO_PARAMETER_KEY, getFindingForEmployeeParameter } = await import(
+    "./tni-derivation.service.js"
+  );
+  const parameterKey = RAW_COLUMN_TO_PARAMETER_KEY[param];
+  if (!parameterKey) return res.json({ success: true, finding: null });
+  const finding = await getFindingForEmployeeParameter(agentCode, parameterKey);
+  return res.json({ success: true, finding });
+}));
+
 // GET /api/quality-dashboard/inbound-ops/summary
 router.get("/inbound-ops/summary", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
   const { from, to } = dateDefaults(req.query);

@@ -5,8 +5,32 @@
  * which agents need coaching on which of the 19 inbound quality parameters.
  *
  * Pass rate convention: each parameter column is TINYINT 0/1 (fail/pass).
- * pass_pct = AVG(param) * 100.  A pass_pct < 60 is a TNI flag.
+ * pass_pct = AVG(param) * 100.
+ *
+ * The threshold that flags a cell is RELATIVE to that parameter's own org-wide
+ * pass rate for the window queried, not a flat 60% for all 19. A flat bar was
+ * tried first and does the wrong thing: checked against live data
+ * (2026-08-09..2026-09-08), "correct_and_complete_information" and
+ * "express_empathy" run a org-wide PASS rate of roughly 50-55%, already below a
+ * flat 60% bar — so a flat threshold there does not find agents with a training
+ * gap, it flags almost every agent, because the org average alone fails to
+ * clear it. effectiveThreshold() computes, per parameter and per query, the
+ * audit-weighted org pass rate and requires a genuine margin below it, clamped
+ * so the bar can never become meaningless in either direction: never so high
+ * that a naturally-hard parameter flags everyone (MAX_THRESHOLD), and never so
+ * low that a catastrophic parameter stops flagging anyone at all (MIN_THRESHOLD).
  */
+
+/** Percentage points below a parameter's own baseline an agent must be to flag. */
+const MARGIN_BELOW_BASELINE = 15;
+/** Never flag someone whose pass rate is still at or above this, no matter how far above them the crowd sits. */
+const MAX_THRESHOLD = 60;
+/** Never require someone to be worse than this before flagging, no matter how bad the crowd already is — keeps a catastrophic parameter from silently stopping all individual flags. */
+const MIN_THRESHOLD = 20;
+
+export function effectiveThreshold(orgBaselinePassPct: number): number {
+  return Math.min(MAX_THRESHOLD, Math.max(MIN_THRESHOLD, orgBaselinePassPct - MARGIN_BELOW_BASELINE));
+}
 
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 import type { RowDataPacket } from "mysql2";
@@ -54,6 +78,10 @@ export interface TniSummary {
   avg_cq_score: number;
 }
 
+/** The per-parameter bar actually used this query, so a caller (or the page's
+ *  own heatmap coloring) never has to hardcode a threshold it cannot see. */
+export type TniThresholds = Record<TniParam, number>;
+
 export interface TniAgentCallRecord {
   lead_id: string;
   call_date: string;
@@ -62,8 +90,6 @@ export interface TniAgentCallRecord {
   scenario: string;
   client: string;
 }
-
-const TNI_THRESHOLD = 60; // pass % below this = needs training
 
 function buildSelectColumns(): string {
   return TNI_PARAMS.map(
@@ -75,7 +101,7 @@ export async function getTniAnalysis(
   startDate: string,
   endDate: string,
   clientId?: string | null
-): Promise<{ agents: TniAgentRow[]; summary: TniSummary }> {
+): Promise<{ agents: TniAgentRow[]; summary: TniSummary; thresholds: TniThresholds }> {
   const pool = getShivamgiriPool();
 
   const clientCond = clientId ? " AND q.ClientId = ?" : "";
@@ -100,22 +126,37 @@ export async function getTniAnalysis(
     baseParams
   );
 
-  const agents: TniAgentRow[] = (rows as RowDataPacket[]).map((row) => {
+  // First pass: pull each agent's own per-parameter pass rate, without flagging
+  // yet — flagging needs the org baseline, and the baseline needs every agent.
+  const rawAgents = (rows as RowDataPacket[]).map((row) => {
     const params = {} as Record<TniParam, number>;
-    let flagCount = 0;
-    for (const p of TNI_PARAMS) {
-      const val = Number(row[p] ?? 0);
-      params[p] = val;
-      if (val < TNI_THRESHOLD) flagCount++;
-    }
+    for (const p of TNI_PARAMS) params[p] = Number(row[p] ?? 0);
     return {
       agent_code: String(row.agent_code ?? ""),
       agent_name: String(row.agent_name ?? row.agent_code ?? "Unknown"),
       audit_count: Number(row.audit_count ?? 0),
       avg_cq_score: Number(row.avg_cq_score ?? 0),
       params,
-      tni_flag_count: flagCount,
     };
+  });
+
+  // Audit-weighted org baseline per parameter: sum(agent pass% * agent audits) /
+  // sum(audits) reconstructs the true population pass rate from the per-agent
+  // averages already fetched, without a second query. An unweighted average of
+  // per-agent percentages would let a 5-audit agent move the baseline as much as
+  // a 700-audit agent — exactly the kind of distortion this fix exists to avoid.
+  const totalAudits = rawAgents.reduce((s, a) => s + a.audit_count, 0);
+  const thresholds = {} as TniThresholds;
+  for (const p of TNI_PARAMS) {
+    const weightedSum = rawAgents.reduce((s, a) => s + a.params[p] * a.audit_count, 0);
+    const baseline = totalAudits > 0 ? weightedSum / totalAudits : 100;
+    thresholds[p] = effectiveThreshold(baseline);
+  }
+
+  const agents: TniAgentRow[] = rawAgents.map((a) => {
+    let flagCount = 0;
+    for (const p of TNI_PARAMS) if (a.params[p] < thresholds[p]) flagCount++;
+    return { ...a, tni_flag_count: flagCount };
   });
 
   // Sort: most failures first
@@ -151,6 +192,7 @@ export async function getTniAnalysis(
       most_failed_param_pass_pct: Math.round(lowestAvg * 10) / 10,
       avg_cq_score: avgCq,
     },
+    thresholds,
   };
 }
 

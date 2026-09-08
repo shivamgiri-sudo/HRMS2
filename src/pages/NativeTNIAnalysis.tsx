@@ -64,8 +64,18 @@ const PARAMS = [
 
 type ParamKey = (typeof PARAMS)[number]["key"];
 
-const TNI_THRESHOLD = 60;  // pass% below this = needs training
-const AMBER_THRESHOLD = 80; // pass% 60–79 = amber
+/**
+ * The red/needs-training line is per-parameter now, computed server-side from
+ * that parameter's own org-wide baseline for the window queried (see
+ * tni.service.ts effectiveThreshold) — a flat 60% for all 19 parameters flagged
+ * 57 of 63 agents (90%) in a live check, because several parameters run a
+ * lower natural pass rate than that. `thresholds[param]` from the API is the
+ * real bar; AMBER_SPAN is just how far above that bar "monitor" extends before
+ * a cell reads as a clean pass, so the three-band feel is kept without a second
+ * hardcoded flat number.
+ */
+const AMBER_SPAN = 20;
+const FALLBACK_THRESHOLD = 60; // used only if the API response is missing thresholds (older cache, etc.)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,15 +114,15 @@ interface SidePanelState {
 
 // ── Cell color helper ─────────────────────────────────────────────────────────
 
-function cellClass(pct: number): string {
-  if (pct >= AMBER_THRESHOLD) return "bg-emerald-50 text-emerald-700 font-medium";
-  if (pct >= TNI_THRESHOLD)   return "bg-amber-50 text-amber-700 font-semibold";
+function cellClass(pct: number, threshold: number): string {
+  if (pct >= threshold + AMBER_SPAN) return "bg-emerald-50 text-emerald-700 font-medium";
+  if (pct >= threshold)              return "bg-amber-50 text-amber-700 font-semibold";
   return "bg-red-100 text-red-700 font-bold cursor-pointer hover:bg-red-200 transition-colors";
 }
 
-function cellBg(pct: number): string {
-  if (pct >= AMBER_THRESHOLD) return "bg-emerald-100 text-emerald-800";
-  if (pct >= TNI_THRESHOLD)   return "bg-amber-100 text-amber-700";
+function cellBg(pct: number, threshold: number): string {
+  if (pct >= threshold + AMBER_SPAN) return "bg-emerald-100 text-emerald-800";
+  if (pct >= threshold)              return "bg-amber-100 text-amber-700";
   return "bg-red-100 text-red-700";
 }
 
@@ -178,6 +188,20 @@ function SidePanel({
         .then((r) => r.calls ?? []),
   });
 
+  // A persisted, trackable finding for this exact agent+parameter, if the
+  // scheduled TNI scan has already raised one. Read-only here — this drawer
+  // shows it, it does not create or edit it; that lifecycle lives in tni_finding.
+  const findingQ = useQuery({
+    queryKey: ["tni-finding", panel.agentCode, panel.param],
+    queryFn: () =>
+      hrmsApi.get<{ finding: {
+        id: string; severity: string; status: string;
+        sampleCount: number; failCount: number; evidenceNote: string; raisedAt: string;
+      } | null }>(
+        `/api/quality-dashboard/tni-finding?agent_code=${encodeURIComponent(panel.agentCode)}&param=${encodeURIComponent(panel.param)}`
+      ).then((r) => r.finding),
+  });
+
   const calls = data ?? [];
   const failCalls = calls.filter((c) => c.param_pass === 0);
 
@@ -204,6 +228,27 @@ function SidePanel({
           <span>{calls.length} total calls audited</span>
           <span>·</span>
           <span>{failCalls.length} fails ({calls.length > 0 ? Math.round(failCalls.length / calls.length * 100) : 0}% fail rate)</span>
+        </div>
+      )}
+
+      {/* Persisted TNI finding for this exact agent + parameter, if the scheduled
+          scan has already raised one — the tracked, assignable version of what
+          this heatmap cell shows live. Silent when there is none: most cells
+          will not have one yet, and that is not itself worth a message. */}
+      {findingQ.data && (
+        <div className={`mx-4 mt-3 rounded-xl border px-4 py-3 text-xs ${
+          findingQ.data.severity === "EXTREME_REVIEW"
+            ? "border-purple-200 bg-purple-50 text-purple-800"
+            : "border-orange-200 bg-orange-50 text-orange-800"
+        }`}>
+          <div className="flex items-center justify-between font-bold">
+            <span>
+              {findingQ.data.severity === "EXTREME_REVIEW" ? "⚠ Flagged for calibration review" : "Tracked training finding"}
+            </span>
+            <Badge className="bg-white/70 border-current text-current text-[10px]">{findingQ.data.status}</Badge>
+          </div>
+          <p className="mt-1">{findingQ.data.evidenceNote}</p>
+          <p className="mt-1 text-[10px] opacity-70">Raised {new Date(findingQ.data.raisedAt).toLocaleDateString()}</p>
         </div>
       )}
 
@@ -267,13 +312,18 @@ export default function NativeTNIAnalysis() {
   const tniQ = useQuery({
     queryKey: ["tni-analysis", from, to, clientId],
     queryFn: () =>
-      hrmsApi.get<{ agents: TniAgentRow[]; summary: TniSummary }>(
+      hrmsApi.get<{ agents: TniAgentRow[]; summary: TniSummary; thresholds?: Record<ParamKey, number> }>(
         `/api/quality-dashboard/tni-analysis?${qs}`
       ),
   });
 
   const agents: TniAgentRow[] = tniQ.data?.agents ?? [];
   const summary: TniSummary | null = tniQ.data?.summary ?? null;
+  const thresholds: Record<ParamKey, number> = tniQ.data?.thresholds ?? ({} as Record<ParamKey, number>);
+  const thresholdFor = useCallback(
+    (param: ParamKey) => thresholds[param] ?? FALLBACK_THRESHOLD,
+    [thresholds],
+  );
 
   // Param label lookup
   const paramLabelMap = useMemo(() => {
@@ -491,18 +541,18 @@ export default function NativeTNIAnalysis() {
 
             {/* ── Legend ──────────────────────────────────────────────────── */}
             <div className="flex items-center gap-4 text-xs font-medium">
-              <span className="text-slate-500">Legend:</span>
+              <span className="text-slate-500">Legend (bar is per-parameter — hover a cell to see it):</span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-4 h-4 rounded bg-emerald-100 border border-emerald-200" />
-                ≥80% — Pass (no action)
+                Pass (no action)
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-4 h-4 rounded bg-amber-100 border border-amber-200" />
-                60–79% — Monitor
+                Monitor
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-4 h-4 rounded bg-red-100 border border-red-200" />
-                &lt;60% — Needs Training (click to drill in)
+                Needs Training (click to drill in)
               </span>
             </div>
 
@@ -585,9 +635,11 @@ export default function NativeTNIAnalysis() {
                           <TableCell className="text-center text-xs text-slate-600">
                             {a.audit_count}
                           </TableCell>
-                          {/* CQ Score */}
+                          {/* CQ Score — an aggregate composite, not one of the 19 TNI
+                              parameters, so it has no per-parameter baseline of its
+                              own; kept on the flat convention deliberately. */}
                           <TableCell className="text-center">
-                            <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold ${cellBg(a.avg_cq_score)}`}>
+                            <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold ${cellBg(a.avg_cq_score, FALLBACK_THRESHOLD)}`}>
                               {a.avg_cq_score}%
                             </span>
                           </TableCell>
@@ -604,12 +656,13 @@ export default function NativeTNIAnalysis() {
                           {/* Param cells */}
                           {PARAMS.map((p) => {
                             const pct = a.params[p.key] ?? 0;
-                            const isRed = pct < TNI_THRESHOLD;
+                            const threshold = thresholdFor(p.key);
+                            const isRed = pct < threshold;
                             return (
                               <TableCell
                                 key={p.key}
-                                className={`text-center text-xs px-2 py-2 ${cellClass(pct)}`}
-                                title={`${a.agent_name} — ${friendlyParamName(p.key)}: ${pct}% pass`}
+                                className={`text-center text-xs px-2 py-2 ${cellClass(pct, threshold)}`}
+                                title={`${a.agent_name} — ${friendlyParamName(p.key)}: ${pct}% pass (needs-training line for this parameter: ${threshold}%)`}
                                 onClick={() => isRed && openPanel(a, p.key)}
                               >
                                 {pct}%
