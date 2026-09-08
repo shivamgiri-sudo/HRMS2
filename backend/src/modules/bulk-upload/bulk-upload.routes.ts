@@ -297,6 +297,9 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_bella_target_plan_batch",
   // Floor compliance audit - a Google Form export; see compliance-audit-bulk.service.ts.
   "import_compliance_audit_batch",
+  // Process-grain manual KPI feed - fills the gap left by db_masmis sales/allocation
+  // tables that stopped being uploaded; see process-manual-kpi-bulk.service.ts.
+  "import_process_manual_kpi_batch",
   // Per-process delivery actuals into process_delivery_actual, which the P&L already
   // reads but nothing has ever written. See process-delivery-bulk.service.ts.
   "import_process_delivery_batch",
@@ -691,6 +694,14 @@ async function dispatchImport(
       "../bulk-upload/compliance-audit-bulk.service.js"
     );
     const data = await importComplianceAuditBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_process_manual_kpi_batch") {
+    const { importProcessManualKpiBatch } = await import(
+      "../bulk-upload/process-manual-kpi-bulk.service.js"
+    );
+    const data = await importProcessManualKpiBatch(id, userId);
     return { success: true, data };
   }
 

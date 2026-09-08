@@ -647,6 +647,52 @@ export interface ProcessReadResult {
 }
 
 /**
+ * Reads kpi_studio_process_manual_value for one process — the process-grain
+ * counterpart to readManualValues (employee-grain, kpi_studio_manual_value).
+ *
+ * A process-grain definition can link this alongside a real table (via
+ * kpi_studio_definition_source) so an uploaded figure fills whichever days the
+ * real source has no row for. Built for the sales/allocation tables in
+ * db_masmis, which stopped being uploaded 58-101 days ago: the two sources never
+ * overlap in practice, because db_masmis stops exactly where an upload's
+ * coverage would begin, so this never doubles a day the real table already
+ * answered for.
+ */
+async function readProcessManualValues(
+  source: DataSourceConfig,
+  fields: readonly SourceField[],
+  dateFrom: string,
+  dateTo: string,
+  processIdOverride?: string | null,
+): Promise<ProcessReadResult> {
+  const values: ProcessFieldValues = new Map();
+  const processId = processIdOverride ?? source.process_id;
+  if (!fields.length || !processId) return { values, rowsRead: 0 };
+
+  const fieldNames = fields.map((f) => f.field_name);
+  const placeholders = fieldNames.map(() => '?').join(',');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT field_name, value_date, field_value' +
+      ' FROM kpi_studio_process_manual_value' +
+      ' WHERE process_id = ?' +
+      ' AND field_name IN (' + placeholders + ')' +
+      ' AND value_date BETWEEN ? AND ?' +
+      ' AND superseded_by_batch_id IS NULL',
+    [processId, ...fieldNames, dateFrom, dateTo],
+  );
+
+  for (const row of rows as any[]) {
+    const date = toDateString(row.value_date);
+    if (!date) continue;
+    const bucket = values.get(date) ?? new Map<string, number | null>();
+    bucket.set(String(row.field_name), toNumberOrNull(row.field_value));
+    values.set(date, bucket);
+  }
+
+  return { values, rowsRead: (rows as any[]).length };
+}
+
+/**
  * Runs a process-grain plan against either a mas_hrms table or an external
  * connector. Both go through the same builder, so the two paths cannot drift
  * into producing differently-shaped numbers.
@@ -663,6 +709,13 @@ export async function readProcessGrainValues(
 ): Promise<ProcessReadResult> {
   const values: ProcessFieldValues = new Map();
   if (!fields.length) return { values, rowsRead: 0 };
+
+  // Manual/upload sources have no table to build SQL against — buildProcessQueryPlan
+  // would reject them for naming no source_object. Read the upload table directly
+  // instead, same shape everything else here already returns.
+  if (source.source_type === 'manual' || source.source_type === 'upload') {
+    return readProcessManualValues(source, fields, dateFrom, dateTo, processIdOverride);
+  }
 
   let plan: ReturnType<typeof buildProcessQueryPlan>;
   try {
