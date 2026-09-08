@@ -7,8 +7,8 @@ import { SearchableSelect, type SearchableOption } from "@/components/ui/searcha
 import { useToast } from "@/hooks/use-toast";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Clock, Database,
-  Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles, Target,
-  Upload, Users, Users2, X,
+  Download, Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles,
+  Target, Upload, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -523,6 +523,30 @@ function formatCellValue(v: unknown): string {
   return String(v);
 }
 
+/** One field, RFC-4180 quoted only when it actually needs to be. */
+function csvField(v: unknown): string {
+  const s = v === null || v === undefined ? "" : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Client-side only — the rows are already on the page (this endpoint's own
+ * response), so exporting them is a local file write, not a second request.
+ * A BOM is prepended so Excel opens the file as UTF-8 instead of guessing.
+ */
+function downloadCsv(filename: string, columns: string[], rows: Array<Record<string, unknown>>) {
+  const lines = [
+    columns.map(csvField).join(","),
+    ...rows.map((row) => columns.map((c) => csvField(row[c])).join(",")),
+  ];
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /**
  * The last drill-down level: the individual rows behind ONE day's number,
  * expanded inline under that day's row. Not a new query — the same source and
@@ -553,10 +577,18 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
           </p>
         ) : (
           <div>
-            <p className="text-[10px] text-slate-500 mb-1.5">
-              {r.sourceObject} · {r.totalRows?.toLocaleString()} row{r.totalRows === 1 ? "" : "s"}
-              {r.truncated ? ` · showing first ${r.rows.length.toLocaleString()}` : ""}
-            </p>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <p className="text-[10px] text-slate-500">
+                {r.sourceObject} · {r.totalRows?.toLocaleString()} row{r.totalRows === 1 ? "" : "s"}
+                {r.truncated ? ` · showing first ${r.rows.length.toLocaleString()}` : ""}
+              </p>
+              <button type="button"
+                onClick={() => downloadCsv(`${metricKey}_${date}.csv`, r.columns, r.rows)}
+                title="Download the rows shown here as a .csv file"
+                className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer">
+                <Download size={11} />CSV
+              </button>
+            </div>
             <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800 max-h-56 overflow-y-auto">
               <table className="w-full text-[10px]">
                 <thead className="bg-white dark:bg-slate-900 text-slate-400 sticky top-0">
