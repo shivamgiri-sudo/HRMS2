@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Clock, Database,
   Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles, Target,
-  Users, Users2, X,
+  Upload, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -814,7 +814,19 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
   // Sources already uses — a dry run cannot pass where the real write would
   // fail, because it is the same check, not a lookalike.
   const [pasted, setPasted] = useState("");
+  const [fileName, setFileName] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportOutcome[] | null>(null);
+  /** Reads a .csv/.txt in the browser; nothing is sent anywhere until Check runs. */
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPasted(String(reader.result ?? ""));
+      setFileName(file.name);
+      setPreview(null);
+    };
+    reader.readAsText(file);
+  };
   const parseBulkRows = (text: string) => {
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const body = lines.length && /^metric[_ ]?key\s*,/i.test(lines[0]) ? lines.slice(1) : lines;
@@ -966,11 +978,19 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
         ) : (
           <div className="p-5 space-y-3">
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
-                Paste rows — one per line
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                  Paste rows — one per line
+                </label>
+                <label className="text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer inline-flex items-center gap-1">
+                  <Upload size={11} />
+                  {fileName ?? "Upload .csv/.txt"}
+                  <input type="file" accept=".csv,.txt,text/csv,text/plain" className="hidden"
+                    onChange={(e) => onFile(e.target.files?.[0])} />
+                </label>
+              </div>
               <textarea value={pasted} rows={7}
-                onChange={(e) => { setPasted(e.target.value); setPreview(null); }}
+                onChange={(e) => { setPasted(e.target.value); setPreview(null); setFileName(null); }}
                 placeholder={"metric_key,date,value,note\nACCURACY_RATE,2026-09-08,91.5,\nUTILIZATION,2026-09-08,84.3,from client tracker"}
                 className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
               <p className="text-[10px] text-slate-400 mt-1">
