@@ -558,6 +558,8 @@ export interface MetricDrilldown {
   readings: Array<{
     date: string; value: number | null;
     numerator: number | null; denominator: number | null; note: string | null;
+    /** 'manual' or 'connector' for a real reading; null for a no_data day. */
+    source: string | null;
   }>;
 }
 
@@ -637,7 +639,7 @@ export async function getMetricDrilldown(
   }
 
   const [readingRows] = await db.execute<RowDataPacket[]>(
-    `SELECT score_date, actual_value, rollup_numerator, rollup_denominator, note
+    `SELECT score_date, actual_value, rollup_numerator, rollup_denominator, note, source
        FROM process_metric_actual
       WHERE process_id = ? AND metric_key = ?
         AND score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
@@ -690,6 +692,7 @@ export async function getMetricDrilldown(
         r.rollup_numerator === null ? null : Number(r.rollup_numerator), unit),
       denominator: r.rollup_denominator === null ? null : Number(r.rollup_denominator),
       note: r.note ?? null,
+      source: r.actual_value === null ? null : (r.source ? String(r.source) : null),
     })),
   };
 }

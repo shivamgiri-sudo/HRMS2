@@ -141,7 +141,7 @@ interface Drilldown {
   }>;
   readings: Array<{
     date: string; value: number | null; numerator: number | null;
-    denominator: number | null; note: string | null;
+    denominator: number | null; note: string | null; source: string | null;
   }>;
 }
 
@@ -730,6 +730,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                               <ChevronRight size={11}
                                 className={`shrink-0 text-slate-400 transition-transform ${expandedDate === x.date ? "rotate-90" : ""}`} />
                               {x.date}
+                              {x.source === "manual" && (
+                                <PenLine size={10} className="text-purple-500 shrink-0"
+                                  aria-label="Typed in by hand" />
+                              )}
                             </td>
                             <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${
                               x.value === null ? "text-slate-400 italic font-normal" : "text-slate-900 dark:text-slate-100"}`}>
