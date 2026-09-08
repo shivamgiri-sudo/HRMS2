@@ -77,6 +77,11 @@ async function main() {
 
   const duOfferedMetricId = await ensureMetric("DU_KOREA_THAILAND_CALLS_OFFERED", "DU Korea/Thailand calls offered", "count", "higher_is_better");
   const duAnsweredMetricId = await ensureMetric("DU_KOREA_THAILAND_CALLS_ANSWERED", "DU Korea/Thailand calls answered", "count", "higher_is_better");
+  // Not the shared AHT metric: DU Digital already has AHT scoped to DU_INBOUND_CDR
+  // (DU_Bangladesh_* only). saveDefinition upserts by (metric_id, scope) -- adding a
+  // second AHT definition for the same process+metric would silently close that one
+  // instead of coexisting, the same collision this file's LP section works around below.
+  const duAhtMetricId = await ensureMetric("DU_KOREA_THAILAND_AHT", "DU Korea/Thailand average handle time", "seconds", "lower_is_better");
 
   await saveDefinition({
     metric_id: duOfferedMetricId, grain: "process", process_id: DU_DIGITAL_PROCESS_ID,
@@ -87,6 +92,11 @@ async function main() {
     metric_id: duAnsweredMetricId, grain: "process", process_id: DU_DIGITAL_PROCESS_ID,
     data_source_id: duSourceId, formula_expression: "answered",
     aggregation_method: "sum", scoring_type: "raw", target_source: "none", created_by: CREATED_BY,
+  } as never, CREATED_BY);
+  await saveDefinition({
+    metric_id: duAhtMetricId, grain: "process", process_id: DU_DIGITAL_PROCESS_ID,
+    data_source_id: duSourceId, formula_expression: "SAFE_DIV(handle_seconds, answered)",
+    aggregation_method: "average", scoring_type: "raw", target_source: "none", created_by: CREATED_BY,
   } as never, CREATED_BY);
 
   console.log("[SEED] DU_KOREA_THAILAND_CDR wired:", duSourceId);

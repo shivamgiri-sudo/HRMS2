@@ -6,12 +6,16 @@
  *
  * DATA QUALITY FLAG, not a bug in this script: verified live 2026-09-08 that
  * db_masmis.magical_script_cache.op_success for client_id=419 (Housing Premium)
- * has NEVER recorded a 0 across 904 scored calls -- only 1 or NULL. Every other
- * client_id in the same table (375, 409, 468, 471, 475, 477...) shows a normal
- * mix of 0s and 1s. This metric will read a suspicious 100% until whatever AI
- * scoring pipeline populates op_success for this client is checked -- it is
- * wired here because it computes honestly from real rows, not because the
- * number is trustworthy yet.
+ * has NEVER recorded a 0 across 904 scored calls -- only 1 or NULL.
+ *
+ * UPDATE: this is not unique to Housing Premium. Checked the same recent window
+ * (call_date >= 2026-08-20) across every client_id in the table and found two
+ * more with the identical always-1 pattern -- GNC (409) and Neemans (475), see
+ * add-gnc-neemans-opening-success-definitions.ts -- while other clients (375,
+ * 487, 496, 498) show real, varied 0/1 splits in that same window. So this is a
+ * shared "opening" AI-scoring defect affecting exactly these three clients, not
+ * a Housing-Premium-specific break. Wired anyway because it computes honestly
+ * from real rows, not because the number is trustworthy yet.
  *
  * Run with: npx tsx scripts/add-housing-premium-opening-success-definition.ts
  */
