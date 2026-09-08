@@ -598,13 +598,17 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
     enabled: Boolean(metricKey),
   });
   const d = data?.data;
-  // Keyed by metricKey so switching metrics starts with nothing expanded —
-  // without this, a stale expansion from the last metric viewed would linger
-  // under a row of a completely different one.
-  const [expandedFor, setExpandedFor] = useState<{ metricKey: string | null; date: string } | null>(null);
-  const expandedDate = expandedFor?.metricKey === metricKey ? expandedFor.date : null;
+  // Keyed by BOTH processId and metricKey, not metricKey alone -- most
+  // workforce metrics (SHRINKAGE_PCT, ATTENDANCE_ISSUES_OPEN...) share the
+  // same key across nearly every process, so metricKey alone would carry an
+  // expanded date over from one process's drilldown into a completely
+  // different process's drilldown for the "same" metric.
+  const [expandedFor, setExpandedFor] = useState<{ processId: string; metricKey: string | null; date: string } | null>(null);
+  const expandedDate = expandedFor?.processId === processId && expandedFor.metricKey === metricKey
+    ? expandedFor.date : null;
   const toggleExpanded = (date: string) => setExpandedFor((prev) =>
-    prev?.metricKey === metricKey && prev.date === date ? null : { metricKey, date });
+    prev?.processId === processId && prev.metricKey === metricKey && prev.date === date
+      ? null : { processId, metricKey, date });
   const Label = ({ children }: { children: React.ReactNode }) => (
     <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">{children}</div>
   );
