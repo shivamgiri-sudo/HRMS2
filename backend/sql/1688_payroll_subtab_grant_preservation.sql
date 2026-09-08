@@ -1,4 +1,4 @@
--- 1677_payroll_subtab_grant_preservation.sql
+-- 1688_payroll_subtab_grant_preservation.sql
 --
 -- Per-tab RBAC on the merged payroll pages, without changing anyone's access.
 --
@@ -35,21 +35,15 @@
 --   roles that hold the page but not the child code. To undo, revert the frontend commit; to
 --   undo the rows, see the commented DELETE at the foot of this file.
 
--- ── 1. Payment Center: Disbursal tab ─────────────────────────────────────────────
-INSERT INTO role_page_access
-  (id, role_key, page_code, can_view, can_create, can_edit, can_delete, can_export, active_status, created_at)
-SELECT UUID(), parent.role_key, 'PAYROLL_DISBURSAL',
-       parent.can_view, parent.can_create, parent.can_edit, parent.can_delete, parent.can_export,
-       1, NOW()
-  FROM role_page_access parent
- WHERE parent.page_code = 'PAYROLL_BANK_READINESS'
-   AND parent.active_status = 1
-   AND parent.can_view = 1
-   AND NOT EXISTS (
-     SELECT 1 FROM role_page_access child
-      WHERE child.role_key = parent.role_key
-        AND child.page_code = 'PAYROLL_DISBURSAL'
-   );
+-- ── 1. Payment Center — DELIBERATELY NOT BACKFILLED ─────────────────────────────
+-- PAYROLL_DISBURSAL is retired, not stale. Migration 1605 deactivated every grant on it in
+-- production on 2026-08-25 with explicit owner approval, because this same merge left the code
+-- dangling: "no route has rendered it since PaymentDisbursalCenter.tsx absorbed its
+-- functionality ... which is gated on PAYROLL_BANK_READINESS instead".
+--
+-- So the Disbursal tab is NOT gated per-tab in the app, and no rows are inserted here. Doing
+-- either would undo an approved decision. If disbursal should be narrower than bank readiness,
+-- that needs a NEW page code with fresh grants — a decision about who may move money.
 
 -- ── 2. PF Management: Creation Queue + Batches tabs ──────────────────────────────
 INSERT INTO role_page_access
@@ -121,7 +115,7 @@ SELECT page_code,
        CASE WHEN active_status = 1 THEN 'active' ELSE '*** INACTIVE — tab will stay hidden ***' END AS catalog_state
   FROM page_catalog
  WHERE page_code IN (
-   'PAYROLL_DISBURSAL','PAYROLL_PF_CREATION_QUEUE','PAYROLL_PF_BATCHES',
+   'PAYROLL_PF_CREATION_QUEUE','PAYROLL_PF_BATCHES',
    'PAYROLL_HOLIDAY_WORK_REQUESTS','PAYROLL_HOLIDAY_WORK_APPROVALS','PAYROLL_PROCESS_READINESS'
  )
  ORDER BY page_code;
@@ -131,7 +125,6 @@ SELECT page_code, COUNT(*) AS roles_with_view
   FROM role_page_access
  WHERE active_status = 1 AND can_view = 1
    AND page_code IN (
-     'PAYROLL_BANK_READINESS','PAYROLL_DISBURSAL',
      'PAYROLL_PF_MANAGEMENT','PAYROLL_PF_CREATION_QUEUE','PAYROLL_PF_BATCHES',
      'PAYROLL_HOLIDAY_WORK','PAYROLL_HOLIDAY_WORK_REQUESTS','PAYROLL_HOLIDAY_WORK_APPROVALS',
      'PAYROLL_BRANCH_READINESS','PAYROLL_PROCESS_READINESS'
@@ -139,14 +132,14 @@ SELECT page_code, COUNT(*) AS roles_with_view
  GROUP BY page_code
  ORDER BY page_code;
 
-SELECT 'Migration 1677: payroll sub-tab grants backfilled from parent pages' AS status;
+SELECT 'Migration 1688: payroll sub-tab grants backfilled from parent pages' AS status;
 
 -- ── Rollback ─────────────────────────────────────────────────────────────────────
 -- Removes only the rows this migration created (identified by created_at), never a
 -- pre-existing grant. Substitute the actual run timestamp before use.
 --
 -- DELETE FROM role_page_access
---  WHERE page_code IN ('PAYROLL_DISBURSAL','PAYROLL_PF_CREATION_QUEUE','PAYROLL_PF_BATCHES',
+--  WHERE page_code IN ('PAYROLL_PF_CREATION_QUEUE','PAYROLL_PF_BATCHES',
 --                      'PAYROLL_HOLIDAY_WORK_REQUESTS','PAYROLL_HOLIDAY_WORK_APPROVALS',
 --                      'PAYROLL_PROCESS_READINESS')
 --    AND created_at >= '<migration run timestamp>';

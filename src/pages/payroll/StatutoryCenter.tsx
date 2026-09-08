@@ -1204,7 +1204,7 @@ export default function StatutoryCenter() {
   // super_admin is the only role that can open this page at all (it receives every active page
   // code). Gating on the code instead of the role is behaviour-identical today and lets the
   // grant, rather than an edit to this file, decide who gets Configuration once
-  // 1678_statutory_config_page_grants.sql is run.
+  // 1689_statutory_config_page_grants.sql is run.
   const { canViewTab, activeTab } = useTabAccess(
     { filing: "PAYROLL_STATUTORY_FILING", config: "STATUTORY_CONFIG" },
     searchParams.get("tab") || "filing",

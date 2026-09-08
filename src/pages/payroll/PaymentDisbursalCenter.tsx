@@ -56,7 +56,6 @@ import {
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-import { useTabAccess, NoTabAccess } from "@/components/security/TabGate";
 
 // ── Bank Readiness types ───────────────────────────────────────────────────────
 
@@ -237,15 +236,18 @@ export default function PaymentDisbursalCenter() {
 
   // URL-based outer tab (bank | disbursal)
   //
-  // Each tab is gated on the page code its screen used before the two were merged, so the
-  // grants that already exist for them govern again. Without this, one
-  // PAYROLL_BANK_READINESS grant — held by 11 roles — opened disbursal, CSV upload and
-  // manual payment entry as well.
+  // NOT per-tab gated, deliberately. The other merged payroll pages gate each tab on the page
+  // code its screen carried before the merge (see src/components/security/TabGate.tsx). This
+  // one cannot: migration 1605 deactivated every PAYROLL_DISBURSAL grant in production on
+  // 2026-08-25 with explicit owner approval, precisely because this merge made that code
+  // dangling — "which is gated on PAYROLL_BANK_READINESS instead", as that migration puts it.
+  //
+  // Gating the Disbursal tab on the retired code would therefore hide it from everyone but
+  // super_admin, and reviving the grants would undo an approved decision. Narrowing disbursal
+  // below PAYROLL_BANK_READINESS needs a NEW page code with its own grants — an owner
+  // decision about who may move money, not something a UI change should infer.
   const [searchParams, setSearchParams] = useSearchParams();
-  const { canViewTab, visibleTabs, activeTab } = useTabAccess(
-    { bank: "PAYROLL_BANK_READINESS", disbursal: "PAYROLL_DISBURSAL" },
-    searchParams.get("tab") ?? "bank",
-  );
+  const activeTab = searchParams.get("tab") ?? "bank";
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab }, { replace: true });
   };
@@ -600,23 +602,14 @@ export default function PaymentDisbursalCenter() {
         </div>
 
         {/* ── Outer Tabs ──────────────────────────────────────────────────── */}
-        {visibleTabs.length === 0 && <NoTabAccess pageCode="PAYROLL_BANK_READINESS" />}
-
-        {/* A value matching no tab renders no TabsContent, so the NoTabAccess panel above
-            stands alone. Not reachable today — the page gate is the bank tab's own code —
-            but it keeps the empty case correct if either grant is retired later. */}
-        <Tabs value={activeTab ?? "__none__"} onValueChange={handleTabChange}>
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList className="h-10">
-            {canViewTab("bank") && (
-              <TabsTrigger value="bank" className="px-6">
-                Bank Readiness
-              </TabsTrigger>
-            )}
-            {canViewTab("disbursal") && (
-              <TabsTrigger value="disbursal" className="px-6">
-                Disbursal
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="bank" className="px-6">
+              Bank Readiness
+            </TabsTrigger>
+            <TabsTrigger value="disbursal" className="px-6">
+              Disbursal
+            </TabsTrigger>
           </TabsList>
 
           {/* ════════════════════════════════════════════════════════════════
