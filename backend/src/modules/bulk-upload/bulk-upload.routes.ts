@@ -291,13 +291,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_onfido_poa_etm_batch",
   "import_onfido_task_skip_batch",
   "import_onfido_agent_daily_batch",
-  // Bella Vita process raw-data reports (sales, lead allocation, daily target
-  // plan, cancellations/RTO) - see bella-report-configs.ts. Call detail and
-  // inbound SLA are NOT here: dialer_db already holds both, live.
-  "import_bella_sale_raw_batch",
-  "import_bella_lead_allocation_batch",
+  // Bella Vita daily target plan - the one dataset no system emits. Sales,
+  // cart leads, cancellations/RTO, call detail and inbound SLA are all NOT
+  // here: db_masmis and dialer_db already hold them. See bella-report-configs.ts.
   "import_bella_target_plan_batch",
-  "import_bella_cancelled_order_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
