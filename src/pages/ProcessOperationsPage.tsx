@@ -83,6 +83,7 @@ interface NeverReportedGroup {
   metricKey: string; metricName: string; sourceObject: string;
   processCount: number; processNames: string[];
   uploadTypeCode: string | null; uploadTypeName: string | null;
+  existingSourceRows: number | null;
 }
 interface FeedHealth {
   checkedAt: string; warnAfterDays: number; stoppedAfterDays: number;
@@ -1227,11 +1228,27 @@ function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
                 <div className="text-[10px] text-slate-400 truncate">
                   {g.processNames.slice(0, 4).join(", ")}{g.processCount > g.processNames.length ? `, +${g.processCount - g.processNames.length} more` : ""}
                 </div>
-                {g.uploadTypeName && (
+                {g.uploadTypeName && g.existingSourceRows === 0 && (
                   <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
                     <Upload className="h-2.5 w-2.5 shrink-0" />
                     <span className="truncate">
-                      Manual upload already exists — Bulk Upload Hub → "{g.uploadTypeName}"
+                      Table is empty — Bulk Upload Hub → "{g.uploadTypeName}" would start this feed
+                    </span>
+                  </div>
+                )}
+                {g.uploadTypeName && g.existingSourceRows !== null && g.existingSourceRows > 0 && (
+                  <div className="mt-1 flex items-center gap-1 text-[10px] text-orange-700 dark:text-orange-400">
+                    <Database className="h-2.5 w-2.5 shrink-0" />
+                    <span className="truncate">
+                      {g.existingSourceRows.toLocaleString("en-IN")} raw rows already exist — this metric was never computed from them, not missing data
+                    </span>
+                  </div>
+                )}
+                {g.uploadTypeName && g.existingSourceRows === null && (
+                  <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
+                    <Upload className="h-2.5 w-2.5 shrink-0" />
+                    <span className="truncate">
+                      Manual upload available — Bulk Upload Hub → "{g.uploadTypeName}"
                     </span>
                   </div>
                 )}

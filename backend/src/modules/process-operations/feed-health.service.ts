@@ -1,5 +1,6 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
 
 /**
  * Feed health — which measurements have quietly stopped moving.
@@ -120,6 +121,23 @@ export interface NeverReportedGroup {
    */
   uploadTypeCode: string | null;
   uploadTypeName: string | null;
+  /**
+   * Rows the source table ALREADY holds for these specific processes, checked
+   * live (not assumed) whenever an upload template exists. Distinguishes two
+   * very different situations that both look like "never reported":
+   *   0        the table really is empty for these processes — uploading
+   *            through the template genuinely starts the feed.
+   *   > 0      the raw data is already there in volume, and it is the
+   *            METRIC COMPUTE that never ran, not a missing upload. Found
+   *            checking Roster Ack % (30 processes): wfm_roster_assignment
+   *            has 75,058 rows for Onfido alone, all employee_ack_status =
+   *            'pending' — the acknowledgement workflow is real and unused,
+   *            not a data gap a re-upload would fix.
+   *   null     couldn't be checked (no matching upload template, or the
+   *            source config didn't resolve safely) — say nothing rather
+   *            than guess.
+   */
+  existingSourceRows: number | null;
 }
 
 /**
@@ -151,6 +169,8 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
   if (!allowedProcessIds.size) return [];
   const [rows] = await retryOnLock(() => db.execute<RowDataPacket[]>(
     `SELECT d.process_id, p.process_name, m.metric_code, m.metric_name, ds.source_object,
+            ds.process_key_kind, ds.process_key_column, ds.process_key_value,
+            ds.employee_key_column, ds.employee_key_kind,
             t.upload_type_code, t.upload_type_name
        FROM kpi_studio_definition d
        JOIN kpi_metric_master m ON m.id = d.metric_id
@@ -165,12 +185,23 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
         )`,
   ));
 
-  const groups = new Map<string, NeverReportedGroup>();
+  interface Accum extends NeverReportedGroup {
+    /** Working state for the existence check below — stripped before return. */
+    _sourceObject: string;
+    _kind: string | null;
+    _keyColumn: string | null;
+    _keyValues: Set<string>;
+    _employeeKeyColumn: string | null;
+    _employeeKeyKind: string | null;
+    _processIds: Set<string>;
+  }
+
+  const groups = new Map<string, Accum>();
   for (const r of rows as any[]) {
     const processId = String(r.process_id);
     if (!allowedProcessIds.has(processId)) continue;
     const key = `${r.metric_code}|${r.source_object}`;
-    const g = groups.get(key) ?? {
+    const g: Accum = groups.get(key) ?? {
       metricKey: String(r.metric_code),
       metricName: r.metric_name ? String(r.metric_name) : String(r.metric_code),
       sourceObject: String(r.source_object),
@@ -178,12 +209,65 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
       processNames: [],
       uploadTypeCode: r.upload_type_code ? String(r.upload_type_code) : null,
       uploadTypeName: r.upload_type_name ? String(r.upload_type_name) : null,
+      existingSourceRows: null,
+      _sourceObject: String(r.source_object),
+      _kind: r.process_key_kind ? String(r.process_key_kind) : null,
+      _keyColumn: r.process_key_column ? String(r.process_key_column) : null,
+      _keyValues: new Set<string>(),
+      _employeeKeyColumn: r.employee_key_column ? String(r.employee_key_column) : null,
+      _employeeKeyKind: r.employee_key_kind ? String(r.employee_key_kind) : null,
+      _processIds: new Set<string>(),
     };
     g.processCount++;
     if (g.processNames.length < 8) g.processNames.push(String(r.process_name));
+    g._processIds.add(processId);
+    if (r.process_key_value != null) g._keyValues.add(String(r.process_key_value));
     groups.set(key, g);
   }
-  return [...groups.values()].sort((a, b) => b.processCount - a.processCount);
+
+  // Existence check: only for groups where an upload template exists, since
+  // it's the one place the answer changes what a reader is told to do. Each
+  // check is its own try/catch — a source whose config doesn't resolve
+  // safely just reports "unknown" rather than blocking the whole banner.
+  for (const g of groups.values()) {
+    if (!g.uploadTypeName) continue;
+    try {
+      const table = assertSafeIdentifier(g._sourceObject, "source table");
+      const quotedTable = table.split(".").map((p) => `\`${p}\``).join(".");
+      if (g._kind === "employee" && g._employeeKeyColumn && g._processIds.size) {
+        const employeeCol = assertSafeIdentifier(g._employeeKeyColumn, "employee key column");
+        const employeeSide = g._employeeKeyKind === "employee_id" ? "id" : "employee_code";
+        const ids = [...g._processIds];
+        const [cnt] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM ${quotedTable} s
+             JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeCol}\`
+            WHERE e.process_id IN (${ids.map(() => "?").join(",")})`,
+          ids,
+        ));
+        g.existingSourceRows = Number((cnt as any[])[0]?.n ?? 0);
+      } else if (g._kind === "column" && g._keyColumn && g._keyValues.size) {
+        const keyCol = assertSafeIdentifier(g._keyColumn, "process key column");
+        const values = [...g._keyValues];
+        const [cnt] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM ${quotedTable} WHERE \`${keyCol}\` IN (${values.map(() => "?").join(",")})`,
+          values,
+        ));
+        g.existingSourceRows = Number((cnt as any[])[0]?.n ?? 0);
+      } else if (g._kind === "constant") {
+        // The whole table already belongs to one process — no extra filter needed.
+        const [cnt] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM ${quotedTable}`,
+        ));
+        g.existingSourceRows = Number((cnt as any[])[0]?.n ?? 0);
+      }
+    } catch {
+      // Leave existingSourceRows null — an unresolved config says "unknown", not "empty".
+    }
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => b.processCount - a.processCount)
+    .map(({ _sourceObject, _kind, _keyColumn, _keyValues, _employeeKeyColumn, _employeeKeyKind, _processIds, ...g }) => g);
 }
 
 /**
