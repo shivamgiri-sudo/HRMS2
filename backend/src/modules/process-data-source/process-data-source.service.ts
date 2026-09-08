@@ -50,6 +50,47 @@ async function processCodeFor(processId: string): Promise<string | null> {
 }
 
 /**
+ * Is metricKey an active, real definition in kpi_metric_master? This is the
+ * SAME table Process Operations joins to resolve a metric's label/unit/
+ * direction/target (process-operations.service.ts), so a value saved under a
+ * code that passes this check is guaranteed to render there with a real name
+ * and unit — never an orphan key nothing displays. It is also the closed set
+ * of 158 already-curated metric definitions, so accepting one here reuses a
+ * real, existing measurement concept; it never lets a caller invent a new
+ * metric out of thin air the way a free-text key would.
+ */
+async function isCatalogMetric(metricKey: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM kpi_metric_master WHERE metric_code = ? AND active_status = 1 LIMIT 1`,
+    [metricKey],
+  );
+  return rows.length > 0;
+}
+
+/** The closed set a metric-key dropdown draws from: every active, real definition. */
+export interface CatalogMetric {
+  metricCode: string;
+  metricName: string;
+  unit: string | null;
+  direction: string | null;
+}
+
+export async function listMetricCatalog(): Promise<CatalogMetric[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT metric_code, metric_name, unit, direction
+       FROM kpi_metric_master
+      WHERE active_status = 1
+      ORDER BY metric_name ASC`,
+  );
+  return rows.map((r) => ({
+    metricCode: String(r.metric_code),
+    metricName: String(r.metric_name),
+    unit: r.unit === null ? null : String(r.unit),
+    direction: r.direction === null ? null : String(r.direction),
+  }));
+}
+
+/**
  * Every check the write performs, minus the write.
  *
  * Extracted so a dry run and the real import cannot drift: a preview that
@@ -66,10 +107,19 @@ export async function assertManualMetricValueValid(input: {
   const processCode = await processCodeFor(input.processId);
   if (!processCode) throw new Error("Unknown process");
 
-  // findMetricDef is scoped to the process, so a real key belonging to a
-  // DIFFERENT client is rejected here too, not just a nonsense one.
+  // Two closed sets, either satisfies it: the per-client Process KPI registry
+  // (a real SLA-target sheet, scoped to the handful of processes it names —
+  // rejects a key belonging to a DIFFERENT client, not just a nonsense one),
+  // or kpi_metric_master's own 158 curated definitions, open to any process.
+  // The second is what makes this endpoint usable for a process that has no
+  // registry entry at all — supplying a real, already-defined metric by hand
+  // for a process automation does not reach, not inventing a new one.
   const def = findMetricDef(processCode, input.metricKey);
-  if (!def) throw new Error(`${input.metricKey} is not a registered metric for ${processCode}`);
+  if (def) return;
+  if (await isCatalogMetric(input.metricKey)) return;
+  throw new Error(
+    `${input.metricKey} is not a registered metric for ${processCode}, and is not an active metric in the catalog.`,
+  );
 }
 
 export async function saveManualMetricValue(input: {

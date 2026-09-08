@@ -40,6 +40,17 @@ function readRange(req: AuthenticatedRequest): { from: string; to: string } {
 
 const OUT_OF_SCOPE = { success: false, code: "OUT_OF_SCOPE", message: "That process is outside your scope." };
 
+/**
+ * The closed set of real, already-defined metrics a manual entry may target —
+ * every active kpi_metric_master row. A single segment, so it cannot collide
+ * with the two-segment /:processId/values etc. routes below regardless of
+ * declaration order; kept here anyway for the same reason the drilldown route
+ * comment gives elsewhere in this codebase: readable next to what it feeds.
+ */
+router.get("/metric-catalog", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
+  res.json({ success: true, data: await svc.listMetricCatalog() });
+}));
+
 router.get("/:processId/values", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const { processId } = req.params;
   if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {

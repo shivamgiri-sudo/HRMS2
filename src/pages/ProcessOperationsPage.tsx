@@ -1,12 +1,14 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
+import { useToast } from "@/hooks/use-toast";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Clock, Database, Filter,
-  Headphones, Loader2, Minus, Radio, ShieldAlert, Sigma, Sparkles, Target, Users,
-  Users2, X,
+  Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles, Target,
+  Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart,
@@ -79,6 +81,7 @@ interface FeedHealth {
   checkedAt: string; warnAfterDays: number; stoppedAfterDays: number;
   counts: { ok: number; slowing: number; stopped: number }; feeds: FeedRow[];
 }
+interface CatalogMetric { metricCode: string; metricName: string; unit: string | null; direction: string | null }
 type ReportPeriod = "trend" | "today" | "wtd" | "mtd";
 interface Operations {
   processId: string; processName: string; headcount: number;
@@ -566,6 +569,142 @@ function DrilldownDrawer({ processId, metricKey, onClose }: {
   );
 }
 
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/**
+ * Manual entry drawer — for a process a feed does not reach. Writes through
+ * the SAME endpoint Process Data Sources uses (POST /api/process-data-source/
+ * :processId/values), which lands in process_metric_actual with source
+ * 'manual'; Process Operations reads that table already, so a saved reading
+ * shows up here on its own next refetch with no other change needed.
+ *
+ * The metric dropdown is the closed set of active kpi_metric_master
+ * definitions (the Form Input Rule: a free-text metric key forks an orphan
+ * nobody reads), fetched once and reused across opens.
+ */
+function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
+  open: boolean; processId: string | null; processName: string | null; onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [metricKey, setMetricKey] = useState("");
+  const [scoreDate, setScoreDate] = useState(todayIso());
+  const [value, setValue] = useState("");
+  const [note, setNote] = useState("");
+
+  const { data: catalogData, isLoading: catalogLoading } = useQuery({
+    queryKey: ["process-data-source", "metric-catalog"],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<CatalogMetric[]>>("/api/process-data-source/metric-catalog"),
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+  const options: SearchableOption[] = (catalogData?.data ?? []).map((m) => ({
+    value: m.metricCode, label: m.metricName, hint: m.unit ?? undefined,
+  }));
+
+  const save = useMutation({
+    mutationFn: () => hrmsApi.post(`/api/process-data-source/${processId}/values`, {
+      metricKey, scoreDate,
+      value: value.trim() === "" ? null : Number(value),
+      note: note.trim() || null,
+    }),
+    onSuccess: () => {
+      toast({ title: "Reading saved", description: "It will appear on the tile above on next refresh." });
+      setValue(""); setNote("");
+      onSaved();
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: "Could not save", variant: "destructive",
+        description: err instanceof Error ? err.message : "Request failed",
+      });
+    },
+  });
+
+  const canSave = Boolean(processId && metricKey && scoreDate && value.trim() !== "" && !save.isPending);
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="w-full sm:max-w-md p-0 overflow-y-auto">
+        <div className="sticky top-0 z-10 px-5 py-3 flex items-start gap-3" style={{ background: NAVY }}>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+              <PenLine size={14} />Add a reading
+            </h2>
+            <p className="text-[10px] text-indigo-200 mt-0.5">
+              {processName ? `For ${processName}. ` : ""}
+              Saved values are marked "manual" everywhere they show.
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close"
+            className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition cursor-pointer">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+              Metric
+            </label>
+            <SearchableSelect
+              options={options}
+              value={metricKey}
+              onChange={setMetricKey}
+              loading={catalogLoading}
+              placeholder="Choose a metric…"
+              searchPlaceholder="Search metrics…"
+              emptyText="No matching metric"
+              aria-label="Metric"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                Date
+              </label>
+              <input type="date" value={scoreDate} max={todayIso()}
+                onChange={(e) => setScoreDate(e.target.value)}
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+                Value
+              </label>
+              <input type="number" inputMode="decimal" value={value} placeholder="e.g. 92.5"
+                onChange={(e) => setValue(e.target.value)}
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-400" />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 block">
+              Note <span className="normal-case font-normal text-slate-400">(optional, but where's this figure from?)</span>
+            </label>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+              placeholder="e.g. Manually counted from the client's own tracker, 8 Sep"
+              className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
+          </div>
+
+          <button type="button" disabled={!canSave} onClick={() => save.mutate()}
+            className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+            style={{ background: NAVY }}>
+            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Save reading
+          </button>
+          <p className="text-[10px] text-slate-400">
+            Only enter a value you actually have — a guess stored here reads as real on every
+            chart that uses it.
+          </p>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 /** Feeds that have stopped, above the numbers they stopped feeding. */
 function StoppedFeeds({ health }: { health: FeedHealth }) {
   const dead = health.feeds.filter((f) => f.state === "stopped");
@@ -604,9 +743,11 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
 }
 
 export default function ProcessOperationsPage() {
+  const qc = useQueryClient();
   const [active, setActive] = useState<string | null>(null);
   const [drill, setDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
+  const [manualEntryOpen, setManualEntryOpen] = useState(false);
 
   const { data: listData, isLoading: listLoading, isError: listErrored, refetch: refetchList } = useQuery({
     queryKey: ["process-operations", "processes"],
@@ -681,20 +822,26 @@ export default function ProcessOperationsPage() {
               )}
             </div>
 
-            {/* Period selector: latest-reading trend, or a real calendar aggregate
-                (SUM/SUM across the range) compared against the same range one
-                period back — Today vs yesterday, WTD vs last week, MTD vs last
-                month. Not a rolling window; a real calendar boundary. */}
-            <div role="tablist" aria-label="Reporting period"
-              className="inline-flex rounded-lg bg-white/10 p-0.5 shrink-0">
-              {PERIODS.map((p) => (
-                <button key={p.key} type="button" role="tab" aria-selected={period === p.key}
-                  title={p.caption} onClick={() => setPeriod(p.key)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
-                    period === p.key ? "bg-white text-slate-900 shadow-sm" : "text-indigo-200 hover:text-white"}`}>
-                  {p.label}
-                </button>
-              ))}
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              {/* Period selector: latest-reading trend, or a real calendar aggregate
+                  (SUM/SUM across the range) compared against the same range one
+                  period back — Today vs yesterday, WTD vs last week, MTD vs last
+                  month. Not a rolling window; a real calendar boundary. */}
+              <div role="tablist" aria-label="Reporting period" className="inline-flex rounded-lg bg-white/10 p-0.5">
+                {PERIODS.map((p) => (
+                  <button key={p.key} type="button" role="tab" aria-selected={period === p.key}
+                    title={p.caption} onClick={() => setPeriod(p.key)}
+                    className={`cursor-pointer rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+                      period === p.key ? "bg-white text-slate-900 shadow-sm" : "text-indigo-200 hover:text-white"}`}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setManualEntryOpen(true)}
+                title="Type in today's number for a metric no automated feed reaches"
+                className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-white/20 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
+                <PenLine size={12} />Add a reading
+              </button>
             </div>
           </div>
         </header>
@@ -797,6 +944,16 @@ export default function ProcessOperationsPage() {
         {current && (
           <DrilldownDrawer processId={current} metricKey={drill} onClose={() => setDrill(null)} />
         )}
+        <ManualEntryDrawer
+          open={manualEntryOpen}
+          processId={current}
+          processName={ops?.processName ?? processes.find((p) => p.processId === current)?.processName ?? null}
+          onClose={() => setManualEntryOpen(false)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["process-operations", "detail", current] });
+            qc.invalidateQueries({ queryKey: ["process-operations", "processes"] });
+          }}
+        />
       </div>
     </DashboardLayout>
   );
