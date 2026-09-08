@@ -110,7 +110,7 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
       "Scoring coverage first: every rate here is measured only over the calls the AI pass actually judged.",
     members: [
       "FUNNEL_SCORED_PCT", "FUNNEL_OPENING_PCT", "FUNNEL_OFFER_PCT",
-      "FUNNEL_SALE_PCT", "FUNNEL_OFFER_TO_SALE_PCT",
+      "FUNNEL_SALE_PCT", "FUNNEL_OFFER_TO_SALE_PCT", "SALES_COUNT",
     ],
   },
   {
@@ -140,6 +140,18 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
       "QA_QUALITY_PCT", "QA_EMPATHY_PCT", "QA_CONCERN_PCT", "QA_ACCURACY_PCT",
       "QA_PROBING_PCT", "QA_CLOSURE_PCT", "QA_LISTENING_PCT",
       "QA_CONCERN_ACK_PCT", "QA_INFO_ACCURACY_PCT", "BLA_CALL_QUALITY_PCT",
+      // kpi_metric_master's own category column confirms these five belong
+      // here (category='quality'), not a guess: opening/offer compliance,
+      // mis-selling and requirement-probing checks, and the AI-scored
+      // opening/offer outcomes -- the same audit pass, not a duplicate of
+      // the funnel section's calls-scored coverage numbers.
+      "CALL_OPENING_PCT", "NO_MISSELLING_PCT", "PLAN_RECOMMENDATION_PCT",
+      "REQUIREMENT_PROBING_PCT", "OFFER_SUCCESS_PCT", "OPENING_SUCCESS_PCT",
+      // TNI (Training Need Identification) findings are the quality-audit
+      // pass's own coaching output -- see tni-derivation.service.ts -- so
+      // they belong with the rest of what that pass produces, not floating
+      // in "Other metrics".
+      "PROCESS_EXTREME_TNI_COUNT", "PROCESS_OPEN_TNI_COUNT",
     ],
   },
   {
@@ -160,6 +172,7 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
       "SHRINKAGE_PCT", "UNRESOLVED_PUNCH_PCT", "CORRECTION_LOAD_PCT",
       "ROSTER_ACK_PCT", "ATTENDANCE_ISSUES_OPEN", "ATTENDANCE_NO_EVIDENCE",
       "SHIFT_MINUTES_AVG", "PROCESS_JOINERS", "PROCESS_EXITS",
+      "PROC_ATTENDANCE_PCT",
     ],
   },
 ];
