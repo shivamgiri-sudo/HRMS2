@@ -820,6 +820,11 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
   const [pasted, setPasted] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportOutcome[] | null>(null);
+  // A dry-run "ready" row and a post-import "saved" row reuse the same table,
+  // but must not reuse the same word -- "saved" on a row that is only checked
+  // and not yet written directly contradicts the "nothing is saved yet" line
+  // right above the table.
+  const [previewDryRun, setPreviewDryRun] = useState(true);
 
   // The drawer is one persistent component whose visibility toggles, not one
   // remounted per open -- without this, closing it half-filled and reopening
@@ -858,7 +863,7 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
     });
   const checkBulk = useMutation({
     mutationFn: () => runBulkImport(true),
-    onSuccess: (res) => setPreview(res.data.outcomes),
+    onSuccess: (res) => { setPreview(res.data.outcomes); setPreviewDryRun(true); },
     onError: (err: unknown) => toast({
       title: "Could not check rows", variant: "destructive",
       description: err instanceof Error ? err.message : "Request failed",
@@ -868,6 +873,7 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
     mutationFn: () => runBulkImport(false),
     onSuccess: (res) => {
       setPreview(res.data.outcomes);
+      setPreviewDryRun(false);
       const failed = res.data.errors.length;
       toast({
         title: `${res.data.imported} row${res.data.imported === 1 ? "" : "s"} saved`,
@@ -1060,8 +1066,10 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
                           </td>
                           <td className={`px-2 py-1 ${o.ok ? "text-emerald-600" : "text-red-600"}`}>
                             {o.ok
-                              ? (o.replaces !== undefined
-                                  ? (o.replaces === null ? "new" : `replaces ${o.replaces}`)
+                              ? (previewDryRun
+                                  ? (o.replaces !== undefined
+                                      ? (o.replaces === null ? "ready — new" : `ready — replaces ${o.replaces}`)
+                                      : "ready")
                                   : "saved")
                               : (o.message ?? "error")}
                           </td>
