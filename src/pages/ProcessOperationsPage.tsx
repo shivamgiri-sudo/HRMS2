@@ -11,8 +11,8 @@ import {
   Users, Users2, X,
 } from "lucide-react";
 import {
-  Area, AreaChart, Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart,
-  PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
+  PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
@@ -424,6 +424,85 @@ function RiskBars({ metrics }: { metrics: Reading[] }) {
   );
 }
 
+/**
+ * The drawer's own trend chart — line or bar, the reader's choice, with the
+ * metric's real configured target drawn as a reference line when one exists.
+ * Only points that actually have a value are plotted; a gap in the middle of
+ * the range stays a gap rather than being interpolated across, the same
+ * honesty rule the top-level sparkline already follows.
+ */
+function DrilldownTrendChart({ readings, unit, targetValue, direction }: {
+  readings: Drilldown["readings"]; unit: string | null; targetValue: number | null; direction: string | null;
+}) {
+  const [chartType, setChartType] = useState<"line" | "bar">("line");
+  const data = useMemo(
+    () => [...readings].filter((r) => r.value !== null).reverse()
+      .map((r) => ({ date: r.date, value: r.value as number })),
+    [readings],
+  );
+  if (data.length < 2) return null;
+
+  const barColor = (v: number) => {
+    if (targetValue === null || !direction) return C_BLUE;
+    const pass = direction === "higher_is_better" ? v >= targetValue : v <= targetValue;
+    return pass ? C_GREEN : C_RED;
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Trend</div>
+        <div role="tablist" aria-label="Chart type" className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 p-0.5 shrink-0">
+          {(["line", "bar"] as const).map((t) => (
+            <button key={t} type="button" role="tab" aria-selected={chartType === t} onClick={() => setChartType(t)}
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold capitalize cursor-pointer transition-colors ${
+                chartType === t ? "bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="h-40 rounded-lg border border-slate-200 dark:border-slate-800 p-2">
+        <ResponsiveContainer width="100%" height="100%">
+          {chartType === "line" ? (
+            <LineChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: -14 }}>
+              <CartesianGrid {...GRID} vertical={false} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
+                tickFormatter={(v) => String(v).slice(5)} minTickGap={18} />
+              <YAxis tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false} width={38} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [formatValue(v, unit), "Value"]} />
+              {targetValue !== null && (
+                <ReferenceLine y={targetValue} stroke={C_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
+                  label={{ value: "Target", position: "insideTopRight", fontSize: 9, fill: C_AMBER }} />
+              )}
+              <Line type="monotone" dataKey="value" stroke={C_BLUE} strokeWidth={2}
+                dot={{ r: 2.5, fill: C_BLUE }} isAnimationActive={false} />
+            </LineChart>
+          ) : (
+            <BarChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: -14 }}>
+              <CartesianGrid {...GRID} vertical={false} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
+                tickFormatter={(v) => String(v).slice(5)} minTickGap={18} />
+              <YAxis tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false} width={38} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [formatValue(v, unit), "Value"]} />
+              {targetValue !== null && (
+                <ReferenceLine y={targetValue} stroke={C_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
+                  label={{ value: "Target", position: "insideTopRight", fontSize: 9, fill: C_AMBER }} />
+              )}
+              <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                {data.map((pt) => <Cell key={pt.date} fill={barColor(pt.value)} />)}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+      {targetValue !== null && chartType === "bar" && (
+        <p className="text-[10px] text-slate-400 mt-1">Green meets target, red misses it — the same rule the tile above colours by.</p>
+      )}
+    </section>
+  );
+}
+
 /** A raw column value, formatted for reading rather than left as whatever mysql2 handed back. */
 function formatCellValue(v: unknown): string {
   if (v === null || v === undefined) return "—";
@@ -608,6 +687,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                 </div>
               ) : <p className="text-xs text-slate-400 italic">None</p>}
             </section>
+
+            <DrilldownTrendChart
+              readings={d.readings} unit={d.unit}
+              targetValue={d.definition?.targetValue ?? null} direction={d.direction} />
 
             <section>
               <Label>Every reading, newest first — click a day for the individual records behind it</Label>
