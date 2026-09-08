@@ -26,6 +26,7 @@ import { validateSheetCsvUrl } from './kpi-studio.gsheet.js';
 // The allowed date formats live with the query builder that interpolates them, so
 // there is one list rather than two that can drift apart.
 import { DATE_FORMATS, isSupportedDateFormat } from './kpi-studio.sources.js';
+import { isNamedPool, listNamedPools } from './kpi-studio.pools.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────────────────────
 
@@ -35,7 +36,14 @@ export type StudioSourceType =
   | 'upload'
   | 'manual'
   /** A Google Sheet published to the web as CSV. Live, and needs no stored credential. */
-  | 'google_sheet_csv';
+  | 'google_sheet_csv'
+  /**
+   * One of the upstream databases this codebase already connects to, named in
+   * integration_key. The credential stays in that pool's own module rather than
+   * being copied into integration_config, where it would become a second record
+   * of one secret that can disagree.
+   */
+  | 'named_pool';
 
 export type AggregationMethod = 'average' | 'sum' | 'last' | 'min' | 'max';
 
@@ -504,12 +512,25 @@ export async function saveDataSource(
     'upload',
     'manual',
     'google_sheet_csv',
+    'named_pool',
   ];
   if (!validTypes.includes(input.source_type as StudioSourceType)) {
     throw new Error(`Source type must be one of: ${validTypes.join(', ')}`);
   }
   if (input.source_type === 'integration_connector' && !input.integration_key?.trim()) {
     throw new Error('A connector source needs the integration key of a configured external system');
+  }
+  // Checked on save. A source naming a database that does not exist would
+  // otherwise look configured and fail only when something read it.
+  if (input.source_type === 'named_pool') {
+    const named = String(input.integration_key ?? '').trim();
+    if (!named) throw new Error('Pick which database this source reads');
+    if (!isNamedPool(named)) {
+      throw new Error(
+        `"${named}" is not a database this system knows. Choose one of: ` +
+          `${listNamedPools().map((pool) => pool.key).join(', ')}`,
+      );
+    }
   }
 
   // A sheet's published link is validated HERE, on save, not at compute time. A source that only

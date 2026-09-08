@@ -35,6 +35,7 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import type { Pool as MysqlPool } from 'mysql2/promise';
 import { assertSafeIdentifier } from '../integration-hub/adapters/databaseAdapter.js';
+import { getNamedPool } from './kpi-studio.pools.js';
 import { getPoolForKey } from '../external-db/external-db.service.js';
 import { fetchSheetCsv, parseSheetDate, parseSheetNumber } from './kpi-studio.gsheet.js';
 
@@ -634,7 +635,16 @@ export async function readProcessGrainValues(
 
   let rows: Record<string, unknown>[];
   try {
-    if (source.source_type === 'integration_connector') {
+    if (source.source_type === 'named_pool') {
+      // A database this codebase already connects to, named rather than
+      // re-credentialed. The pool module owns the secret; nothing is copied.
+      if (!source.integration_key) {
+        return { values, rowsRead: 0, error: `Data source ${source.source_code} names no database` };
+      }
+      const pool = await getNamedPool(source.integration_key);
+      const [result] = await pool.query(plan.sql, plan.params);
+      rows = result as Record<string, unknown>[];
+    } else if (source.source_type === 'integration_connector') {
       if (!source.integration_key) {
         return { values, rowsRead: 0, error: `Data source ${source.source_code} has no connector selected` };
       }
@@ -772,6 +782,17 @@ async function readConnectorQuery(
   const plan = buildQueryPlan(source, fields, keys, dateFrom, dateTo);
 
   try {
+    // A named pool is already a MySQL pool from this codebase, so it skips the
+    // dialect guard below — there is no SQL Server behind any of them.
+    if (source.source_type === 'named_pool') {
+      const named = await getNamedPool(String(source.integration_key ?? ''));
+      const [result] = await named.query(plan.sql, plan.params);
+      const namedRows = (Array.isArray(result) ? result : []) as Array<Record<string, unknown>>;
+      return {
+        values: collectQueryRows(namedRows, plan.fieldNames, (key) => codeToId.get(key.toUpperCase())),
+        rowsRead: namedRows.length,
+      };
+    }
     const pool = await getPoolForKey(source.integration_key);
     // Only MySQL-shaped connectors are supported here. The SQL built above uses backticks and
     // DATE_ADD, which SQL Server rejects; claiming to support MSSQL and then emitting MySQL syntax
@@ -1131,6 +1152,23 @@ export async function introspectSourceColumns(source: DataSourceConfig): Promise
         is_date: DATE.includes(dataType),
       };
     });
+
+  if (source.source_type === 'named_pool' && source.integration_key) {
+    try {
+      const named = await getNamedPool(String(source.integration_key));
+      const [rows] = await named.execute<RowDataPacket[]>(
+        `SELECT COLUMN_NAME, DATA_TYPE
+           FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = ? ${schemaName ? 'AND TABLE_SCHEMA = ?' : ''}
+          ORDER BY ORDINAL_POSITION`,
+        schemaName ? [tableName, schemaName] : [tableName],
+      );
+      return mapRows(rows as Array<Record<string, unknown>>);
+    } catch {
+      // The browser degrades to "type the column name" rather than failing the page.
+      return [];
+    }
+  }
 
   if (source.source_type === 'integration_connector' && source.integration_key) {
     try {
