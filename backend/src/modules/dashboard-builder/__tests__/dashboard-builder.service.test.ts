@@ -415,3 +415,37 @@ describe("employee-grain rollup", () => {
     expect(out!.widgets[0].note).toBeUndefined();
   });
 });
+
+/**
+ * How far back a dashboard can look.
+ *
+ * The four original ranges reached 30 days or to last month, and no further, so a
+ * metric whose data ended earlier was invisible — the widget rendered "nothing
+ * supplied for this window", which reads as missing data rather than as a window
+ * that does not reach it. Biometric shift hours end in June and the order export
+ * in December; both fell outside every available choice.
+ */
+describe("resolveDateRange", () => {
+  const today = new Date(2026, 8, 8); // 8 September 2026, local
+
+  it("reaches back a quarter", () => {
+    expect(svc.resolveDateRange("last_90_days" as never, today))
+      .toEqual({ from: "2026-06-11", to: "2026-09-08" });
+  });
+
+  it("reaches back a year", () => {
+    expect(svc.resolveDateRange("last_365_days" as never, today))
+      .toEqual({ from: "2025-09-09", to: "2026-09-08" });
+  });
+
+  it("still bounds last_month to the calendar month, not a rolling 30 days", () => {
+    expect(svc.resolveDateRange("last_month" as never, today))
+      .toEqual({ from: "2026-08-01", to: "2026-08-31" });
+  });
+
+  it("includes both endpoints, so a 7-day window is 7 days and not 8", () => {
+    const { from, to } = svc.resolveDateRange("last_7_days" as never, today);
+    expect(from).toBe("2026-09-02");
+    expect(to).toBe("2026-09-08");
+  });
+});

@@ -50,13 +50,30 @@ export interface ProcessMetricReading {
  * COUNT comparison enforces.
  */
 function aggregateExpr(sumKeys: string[], exactRatio: boolean): string {
-  const average = exactRatio
-    ? "CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0 " +
-      "THEN SUM(rollup_numerator) / SUM(rollup_denominator) ELSE AVG(actual_value) END"
-    : "AVG(actual_value)";
-  if (!sumKeys.length) return average;
+  const hasParts =
+    "COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0";
+  const ratio = "SUM(rollup_numerator) / SUM(rollup_denominator)";
+
+  if (!sumKeys.length) {
+    return exactRatio ? `CASE WHEN ${hasParts} THEN ${ratio} ELSE AVG(actual_value) END` : "AVG(actual_value)";
+  }
+
   const list = sumKeys.map(() => "?").join(",");
-  return `CASE WHEN metric_key IN (${list}) THEN SUM(actual_value) ELSE ${average} END`;
+  if (!exactRatio) {
+    return `CASE WHEN metric_key IN (${list}) THEN SUM(actual_value) ELSE AVG(actual_value) END`;
+  }
+
+  // A ratio is checked BEFORE the volume list, and the order is the whole point.
+  // A metric's unit says what its number MEANS, not how it was derived: "average
+  // minutes on shift" is a duration carrying the unit `count`, and summing it
+  // reported 1,223 minutes — two days' averages added together, which is 20 hours
+  // in a shift and obviously wrong. Anything that recorded a numerator and a
+  // denominator is a ratio, whatever its unit claims, and a ratio is never a sum.
+  return (
+    `CASE WHEN ${hasParts} THEN ${ratio} ` +
+    `WHEN metric_key IN (${list}) THEN SUM(actual_value) ` +
+    `ELSE AVG(actual_value) END`
+  );
 }
 
 /**

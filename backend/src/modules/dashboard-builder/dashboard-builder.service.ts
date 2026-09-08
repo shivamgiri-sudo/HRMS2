@@ -29,7 +29,14 @@ const VIEWER_ROLES = [
 
 const WIDGET_TYPES = ["kpi_tile", "line", "bar", "pie", "table"] as const;
 const METRIC_SOURCES = ["kpi_daily_actual", "process_metric_actual"] as const;
-const DATE_RANGES = ["last_7_days", "last_30_days", "this_month", "last_month"] as const;
+// A dashboard could look back 30 days or to last month, and no further. That put
+// every metric whose data is older than that out of sight completely — not
+// showing a stale number, showing nothing at all, which reads as "no data" rather
+// than "outside the window". Biometric shift hours end in June and the order
+// export in December, so both were invisible.
+const DATE_RANGES = [
+  "last_7_days", "last_30_days", "last_90_days", "last_365_days", "this_month", "last_month",
+] as const;
 
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 export type MetricSource = (typeof METRIC_SOURCES)[number];
@@ -79,6 +86,16 @@ export function resolveDateRange(range: DateRange, today = new Date()): { from: 
     case "last_30_days": {
       const start = new Date(end);
       start.setDate(start.getDate() - 29);
+      return { from: iso(start), to: iso(end) };
+    }
+    case "last_90_days": {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 89);
+      return { from: iso(start), to: iso(end) };
+    }
+    case "last_365_days": {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 364);
       return { from: iso(start), to: iso(end) };
     }
     case "last_month": {

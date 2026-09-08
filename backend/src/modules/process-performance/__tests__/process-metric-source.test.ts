@@ -190,3 +190,47 @@ describe("exact period ratio", () => {
     expect(out.get("inbound_al_pct")?.exactRatio).toBe(false);
   });
 });
+
+/**
+ * A ratio is never a sum, whatever its unit says.
+ *
+ * The unit describes what a number MEANS, not how it was derived. "Average
+ * minutes on shift" is a duration that happens to carry the unit `count`, and
+ * treating counts as volumes summed two daily averages into 1,223 minutes — 20
+ * hours in a shift, on a dashboard, with nothing marking it as wrong.
+ */
+describe("volume rule versus stored ratio", () => {
+  beforeEach(() => {
+    execute.mockReset();
+    src.resetExactRatioProbe();
+  });
+
+  it("divides the parts even when the metric is named as a volume to sum", async () => {
+    execute
+      .mockResolvedValueOnce([[{ n: 2 }], []])
+      .mockResolvedValueOnce([[{ metric_key: "shift_minutes_avg", value: "601", n: 3, exact_ratio: 1 }], []])
+      .mockResolvedValueOnce([[], []]);
+    await src.fetchProcessMetricValues(
+      "p1", ["shift_minutes_avg"], "2026-06-01", "2026-06-30", ["shift_minutes_avg"],
+    );
+    const sql = String(execute.mock.calls[1][0]);
+    const ratioAt = sql.indexOf("SUM(rollup_numerator)");
+    const sumAt = sql.indexOf("THEN SUM(actual_value)");
+    expect(ratioAt).toBeGreaterThan(-1);
+    expect(sumAt).toBeGreaterThan(-1);
+    // Ordering is the fix: the ratio branch has to be reached first.
+    expect(ratioAt).toBeLessThan(sumAt);
+  });
+
+  it("still sums a genuine volume that recorded no parts", async () => {
+    execute
+      .mockResolvedValueOnce([[{ n: 2 }], []])
+      .mockResolvedValueOnce([[{ metric_key: "pan_submission_count", value: "120", n: 3, exact_ratio: 0 }], []])
+      .mockResolvedValueOnce([[], []]);
+    const out = await src.fetchProcessMetricValues(
+      "p1", ["pan_submission_count"], "2026-08-01", "2026-08-31", ["pan_submission_count"],
+    );
+    expect(String(execute.mock.calls[1][0])).toContain("THEN SUM(actual_value)");
+    expect(out.get("pan_submission_count")?.value).toBe(120);
+  });
+});
