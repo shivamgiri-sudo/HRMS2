@@ -56,6 +56,8 @@ type EcrLine = {
 type EcrResponse = {
   success: boolean;
   run_id: string;
+  /** The run's payroll month (YYYY-MM). Returned by the API; used to name the export. */
+  month?: string;
   data: EcrLine[];
 };
 
@@ -133,6 +135,48 @@ function fmtDate(d: string | null | undefined) {
 
 function copyText(text: string) {
   navigator.clipboard.writeText(text).catch(() => {});
+}
+
+/**
+ * A CSV cell, quoted and escaped.
+ *
+ * The ECR and ESIC "Copy CSV" buttons joined raw values with commas, so any
+ * employee whose name contains a comma — "SINGH, RAJIV", and legacy imports are
+ * full of them — silently split into an extra column and shifted every figure
+ * after it one place left. A wages column landing under "EPF Contribution" is
+ * not a display bug on a document that gets filed.
+ *
+ * Same escaper the biometric punch-log export already uses, rather than a
+ * second local copy with different rules.
+ */
+function csvCell(value: string | number | null | undefined): string {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+/**
+ * Save `rows` as a CSV file.
+ *
+ * These two statutory documents could only ever be COPIED to the clipboard —
+ * there was no download on the screen at all, so producing the ESIC challan as
+ * a file meant pasting into a spreadsheet by hand and hoping the paste landed
+ * in the right columns. A challan is a filing document; it needs to exist as a
+ * file.
+ *
+ * Blob + anchor rather than a backend endpoint: the data is already in the
+ * browser from the generate call, so a second round trip would only add a way
+ * for the file to disagree with the table the user is looking at.
+ */
+function downloadCsv(filename: string, headers: string[], rows: (string | number | null | undefined)[][]) {
+  const csv = [headers.map(csvCell).join(","), ...rows.map((r) => r.map(csvCell).join(","))].join("\n");
+  // The BOM is what makes Excel read the file as UTF-8. Without it "₹" and any
+  // non-ASCII name render as mojibake on the machines these are opened on.
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── UAN Tab ─────────────────────────────────────────────────────────────────
@@ -817,22 +861,32 @@ function EcrEsicTab() {
     }
   };
 
-  const copyEcrCsv = () => {
+  // One definition of each document's shape, used by both Copy and Download, so
+  // the file and the clipboard can never disagree about columns or ordering.
+  const ECR_HEADERS = ["UAN", "Member Name", "Wages", "EPF Contribution", "EPS Contribution"];
+  const ecrRows = () =>
+    (ecrData?.data ?? []).map((r) => [r.uan ?? "", r.member_name, r.wages, r.epf_contribution, r.eps_contribution]);
+
+  const ESIC_HEADERS = ["Employee Code", "Employee Name", "Wages", "Employee Contribution", "Employer Contribution"];
+  const esicRows = () =>
+    (esicData?.data ?? []).map((r) => [
+      r.employee_code, r.employee_name, r.wages, r.employee_contribution, r.employer_contribution,
+    ]);
+
+  const toCsv = (headers: string[], rows: (string | number | null | undefined)[][]) =>
+    [headers.map(csvCell).join(","), ...rows.map((r) => r.map(csvCell).join(","))].join("\n");
+
+  const copyEcrCsv = () => { if (ecrData) copyText(toCsv(ECR_HEADERS, ecrRows())); };
+  const copyEsicCsv = () => { if (esicData) copyText(toCsv(ESIC_HEADERS, esicRows())); };
+
+  const downloadEcrCsv = () => {
     if (!ecrData) return;
-    const header = "UAN,Member Name,Wages,EPF Contribution,EPS Contribution";
-    const lines = ecrData.data.map((r) =>
-      `${r.uan ?? ""},${r.member_name},${r.wages},${r.epf_contribution},${r.eps_contribution}`
-    );
-    copyText([header, ...lines].join("\n"));
+    downloadCsv(`ECR-${ecrData.month ?? "run"}.csv`, ECR_HEADERS, ecrRows());
   };
 
-  const copyEsicCsv = () => {
+  const downloadEsicCsv = () => {
     if (!esicData) return;
-    const header = "Employee Code,Employee Name,Wages,Employee Contribution,Employer Contribution";
-    const lines = esicData.data.map((r) =>
-      `${r.employee_code},${r.employee_name},${r.wages},${r.employee_contribution},${r.employer_contribution}`
-    );
-    copyText([header, ...lines].join("\n"));
+    downloadCsv(`ESIC-Challan-${esicData.period ?? "run"}.csv`, ESIC_HEADERS, esicRows());
   };
 
   return (
@@ -883,12 +937,20 @@ function EcrEsicTab() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="font-bold text-slate-700">ECR — {ecrData.data.length} employees</h4>
-            <button
-              onClick={copyEcrCsv}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-            >
-              <Copy className="h-3.5 w-3.5" /> Copy CSV
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={copyEcrCsv}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                <Copy className="h-3.5 w-3.5" /> Copy CSV
+              </button>
+              <button
+                onClick={downloadEcrCsv}
+                className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+              >
+                <Download className="h-3.5 w-3.5" /> Download CSV
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
             <table className="w-full text-sm">
@@ -931,12 +993,20 @@ function EcrEsicTab() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="font-bold text-slate-700">ESIC Challan — {esicData.period}</h4>
-            <button
-              onClick={copyEsicCsv}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-            >
-              <Copy className="h-3.5 w-3.5" /> Copy CSV
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={copyEsicCsv}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                <Copy className="h-3.5 w-3.5" /> Copy CSV
+              </button>
+              <button
+                onClick={downloadEsicCsv}
+                className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"
+              >
+                <Download className="h-3.5 w-3.5" /> Download CSV
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
