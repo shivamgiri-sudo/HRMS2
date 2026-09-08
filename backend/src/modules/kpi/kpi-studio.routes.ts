@@ -440,6 +440,7 @@ router.post(
       extraSourceIds: Array.isArray(body.extra_source_ids) ? body.extra_source_ids.map(String) : undefined,
       from: String(body.from ?? today),
       to: String(body.to ?? body.from ?? today),
+      processId: body.process_id ? String(body.process_id) : undefined,
     });
     res.json({ success: true, data: result });
   }),

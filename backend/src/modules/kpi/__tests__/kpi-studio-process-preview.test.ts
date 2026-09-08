@@ -163,7 +163,9 @@ describe("previewProcessFormula", () => {
       formula: "PCT(answered, offered)", dataSourceId: "s1", from: "2026-08-01", to: "2026-08-31",
     });
     expect(readProcessGrainValues).toHaveBeenCalledTimes(1);
-    expect(readProcessGrainValues.mock.calls[0].slice(2)).toEqual(["2026-08-01", "2026-08-31"]);
+    // Dates in positions 2 and 3; a 4th argument carries the process for a source
+    // that finds it through the employee, so the range is asserted by position.
+    expect(readProcessGrainValues.mock.calls[0].slice(2, 4)).toEqual(["2026-08-01", "2026-08-31"]);
   });
 });
 
@@ -255,5 +257,80 @@ describe("ratioParts", () => {
     const { ratioParts } = await import("../kpi-studio.compute.js");
     expect(ratioParts("PCT(a, b)", { a: null, b: 10 })).toBeNull();
     expect(ratioParts("PCT(a, b)", { a: 5, b: 0 })).toBeNull();
+  });
+});
+
+/**
+ * A day that stops having a reading must say so.
+ *
+ * Skipping the write on no_data left the previous value in place, so a
+ * correction never reached the table: excluding implausible 24-hour biometric
+ * shifts turned several days into no_data, and those days went on showing the
+ * very averages the exclusion existed to remove.
+ */
+describe("no_data clears a stale reading", () => {
+  it("writes NULL over the previous value rather than leaving it", async () => {
+    const { computeStudioKpis } = await import("../kpi-studio.compute.js");
+    capability.mockResolvedValue(INSTALLED);
+    readProcessGrainValues.mockReset();
+    readProcessGrainValues.mockResolvedValue({
+      rowsRead: 1,
+      // Read successfully; the formula simply has nothing to divide.
+      values: new Map([["2026-06-10", new Map([["answered", null], ["offered", null]])]]),
+    });
+
+    execute.mockReset();
+    execute.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes("FROM kpi_studio_definition d")) {
+        return Promise.resolve([[{
+          id: "d1", metric_id: "m1", metric_code: "SHIFT_MINUTES_AVG",
+          data_source_id: "s1", formula_expression: "PCT(answered, offered)", grain: "process",
+          effective_from: "2026-06-01", branch_id: null, process_id: "p1",
+          designation_id: null, employee_id: null,
+        }], []]);
+      }
+      if (text.includes("FROM kpi_studio_data_source")) return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p1" }], []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
+      if (text.includes("INFORMATION_SCHEMA.COLUMNS")) return Promise.resolve([[{ n: 2 }], []]);
+      return Promise.resolve([[], []]);
+    });
+
+    const out = await computeStudioKpis({ date: "2026-06-10", processId: "p1", dryRun: false });
+    expect(out.no_data).toBe(1);
+
+    const cleared = execute.mock.calls.find(([sql]) =>
+      String(sql).includes("UPDATE process_metric_actual") && String(sql).includes("actual_value = NULL"));
+    expect(cleared).toBeTruthy();
+    expect(cleared?.[1]).toContain("p1");
+    expect(cleared?.[1]).toContain("2026-06-10");
+  });
+
+  it("writes nothing at all on a dry run", async () => {
+    const { computeStudioKpis } = await import("../kpi-studio.compute.js");
+    capability.mockResolvedValue(INSTALLED);
+    readProcessGrainValues.mockReset();
+    readProcessGrainValues.mockResolvedValue({
+      rowsRead: 1,
+      values: new Map([["2026-06-10", new Map([["answered", null], ["offered", null]])]]),
+    });
+    execute.mockReset();
+    execute.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes("FROM kpi_studio_definition d")) {
+        return Promise.resolve([[{
+          id: "d1", metric_id: "m1", metric_code: "SHIFT_MINUTES_AVG",
+          data_source_id: "s1", formula_expression: "PCT(answered, offered)", grain: "process",
+          effective_from: "2026-06-01", branch_id: null, process_id: "p1",
+          designation_id: null, employee_id: null,
+        }], []]);
+      }
+      if (text.includes("FROM kpi_studio_data_source")) return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p1" }], []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
+      return Promise.resolve([[], []]);
+    });
+
+    await computeStudioKpis({ date: "2026-06-10", processId: "p1", dryRun: true });
+    expect(execute.mock.calls.some(([sql]) => String(sql).includes("UPDATE process_metric_actual"))).toBe(false);
   });
 });

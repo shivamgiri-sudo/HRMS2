@@ -468,9 +468,15 @@ async function computeProcessGrainDefinitions(
     // pay to scan another's. A process-grain definition takes its process from the
     // source's mapping, not from its own scope, so this is the only place the
     // answer is known.
+    // An employee-kind source describes a shape, not a client, so the definition's
+    // own scope says which process it is being read for. Every other kind carries
+    // the process on the source itself.
     let processId: string | null = null;
     for (const entry of entries) {
-      const mapped = (entry.source as { process_id?: string | null }).process_id ?? null;
+      const src = entry.source as { process_id?: string | null; process_key_kind?: string | null };
+      const mapped = src.process_key_kind === 'employee'
+        ? (definition.process_id ?? src.process_id ?? null)
+        : (src.process_id ?? null);
       if (mapped) { processId = mapped; break; }
     }
 
@@ -482,7 +488,7 @@ async function computeProcessGrainDefinitions(
 
     for (const entry of entries) {
       const source = entry.source as any;
-      const read = await readProcessGrainValues(source, entry.fields, options.date, options.date);
+      const read = await readProcessGrainValues(source, entry.fields, options.date, options.date, processId);
       if (read.error) {
         result.source_failures.push({ source_code: source.source_code, error: read.error });
         continue;
@@ -530,6 +536,38 @@ async function computeProcessGrainDefinitions(
 
       if (evaluated.value === null || evaluated.value === undefined) {
         result.no_data++;
+
+        // Recorded as NULL rather than skipped, so that "there is no longer a
+        // reading here" actually reaches the table.
+        //
+        // Skipping left whatever was written before untouched, which meant a
+        // correction never propagated: excluding implausible 24-hour shifts from
+        // the biometric source turned several days into no_data, and those days
+        // kept showing the very averages the exclusion was meant to remove — one
+        // process still reporting a 19-hour mean shift after the fix.
+        //
+        // Safe because this branch is only reached when the source WAS read and
+        // the formula legitimately produced nothing. A source that could not be
+        // read at all fails earlier, is counted in source_failures, and never
+        // arrives here, so an unreachable database still cannot erase good
+        // numbers.
+        if (!options.dryRun) {
+          const nulls = (await processMetricRollupSupported())
+            ? ', rollup_numerator = NULL, rollup_denominator = NULL'
+            : '';
+          await db.execute(
+            `UPDATE process_metric_actual
+                SET actual_value = NULL${nulls}, note = ?
+              WHERE process_id = ? AND metric_key = ? AND score_date = ?`,
+            [
+              `KPI Studio definition ${definition.id} — no reading for this day`,
+              processId,
+              definition.metric_code,
+              date,
+            ],
+          );
+        }
+
         if (result.sample.length < 20) {
           result.sample.push({
             employee_code: `process:${processId.slice(0, 8)}`,
@@ -1078,6 +1116,8 @@ export async function previewProcessFormula(input: {
   extraSourceIds?: string[];
   from: string;
   to: string;
+  /** Which client to test, for a source that finds its process via the employee. */
+  processId?: string | null;
 }): Promise<ProcessPreviewResult> {
   const today = new Date().toISOString().slice(0, 10);
   const from = ISO_DATE.test(input.from) ? input.from : today;
@@ -1131,8 +1171,10 @@ export async function previewProcessFormula(input: {
 
   for (const entry of entries) {
     const source = entry.source as any;
-    processId = processId ?? (source.process_id ?? null);
-    const read = await readProcessGrainValues(source, entry.fields, from, to);
+    processId = processId
+      ?? (source.process_key_kind === 'employee' ? (input.processId ?? source.process_id) : source.process_id)
+      ?? null;
+    const read = await readProcessGrainValues(source, entry.fields, from, to, processId);
     if (read.error) {
       failures.push(`${source.source_code}: ${read.error}`);
       continue;

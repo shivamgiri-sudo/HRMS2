@@ -487,6 +487,20 @@ export function buildProcessQueryPlan(
   fields: readonly SourceField[],
   dateFrom: string,
   dateTo: string,
+  /**
+   * Which process to read, when the source finds it through the employee.
+   *
+   * A 'constant' or 'column' source describes data that belongs to one client by
+   * its nature — a campaign, a client's own database — so the process is a
+   * property of the source. An 'employee' source describes a SHAPE:
+   * "cosec_daily_agg, joined to the employee". That shape is identical for all 52
+   * processes, and making each one carry its own copy would mean 52 duplicate
+   * sources to edit in step every time the table changed.
+   *
+   * So for the employee kind the process comes from the definition asking, and
+   * one source serves every client.
+   */
+  processIdOverride?: string | null,
 ): { sql: string; params: unknown[]; fieldNames: string[] } {
   if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
   if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
@@ -561,8 +575,15 @@ export function buildProcessQueryPlan(
     // never taken from configuration.
     const employeeSide = source.employee_key_kind === 'employee_id' ? 'id' : 'employee_code';
     join = `JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\``;
+    const readingFor = processIdOverride ?? source.process_id;
+    if (!readingFor) {
+      throw new Error(
+        `Data source ${source.source_code} looks the process up from the employee, but no process ` +
+          `was given to read`,
+      );
+    }
     where.push('e.process_id = ?');
-    params.push(source.process_id);
+    params.push(readingFor);
   }
 
   const sql = `
@@ -598,13 +619,15 @@ export async function readProcessGrainValues(
   fields: readonly SourceField[],
   dateFrom: string,
   dateTo: string,
+  /** Passed straight to buildProcessQueryPlan; see the note there. */
+  processIdOverride?: string | null,
 ): Promise<ProcessReadResult> {
   const values: ProcessFieldValues = new Map();
   if (!fields.length) return { values, rowsRead: 0 };
 
   let plan: ReturnType<typeof buildProcessQueryPlan>;
   try {
-    plan = buildProcessQueryPlan(source, fields, dateFrom, dateTo);
+    plan = buildProcessQueryPlan(source, fields, dateFrom, dateTo, processIdOverride);
   } catch (err) {
     return { values, rowsRead: 0, error: (err as Error).message };
   }
