@@ -41,8 +41,19 @@ export interface SkillParameterRule {
   category: TniCategory;
   /** Below this many scored calls in the window, a fail rate is not evidence of anything. */
   minSample: number;
-  /** Fail rate strictly above this raises a finding. */
-  failRateThreshold: number;
+  /**
+   * How many percentage points WORSE than the org-wide baseline for this exact
+   * parameter and window an agent must be to raise a finding — not a flat rate.
+   *
+   * A flat threshold was tried first and was wrong: checked against real data,
+   * "accuracy" runs a 49.9% org-wide fail rate and "empathy" 44.8% (2026-08-09 to
+   * 2026-09-08), both already above a flat 30% bar. A flat threshold there does
+   * not find agents with a training gap — it flags almost everyone, because the
+   * org average alone clears it. A margin above that day's actual baseline finds
+   * agents who are genuinely worse than typical, whatever typical turns out to be
+   * this window, rather than agents who are merely typical for a hard parameter.
+   */
+  marginAboveBaseline: number;
 }
 
 export interface EventParameterRule {
@@ -65,14 +76,19 @@ export type ParameterRule = SkillParameterRule | EventParameterRule;
  * customer, and neither is the same gap as closing a call properly.
  */
 export const PARAMETER_RULES: ParameterRule[] = [
-  { kind: "skill", key: "accuracy",  column: "correct_and_complete_information", category: "PROCESS_KNOWLEDGE", minSample: 5, failRateThreshold: 0.30 },
-  { kind: "skill", key: "probing",   column: "accurate_issue_probing",           category: "PROCESS_KNOWLEDGE", minSample: 5, failRateThreshold: 0.30 },
-  { kind: "skill", key: "concern",   column: "customer_concern_acknowledged",    category: "SOFT_SKILLS",       minSample: 5, failRateThreshold: 0.30 },
-  { kind: "skill", key: "empathy",   column: "express_empathy",                  category: "SOFT_SKILLS",       minSample: 5, failRateThreshold: 0.30 },
-  { kind: "skill", key: "listening", column: "active_listening",                 category: "SOFT_SKILLS",       minSample: 5, failRateThreshold: 0.30 },
-  { kind: "skill", key: "closure",   column: "proper_call_closure",              category: "CALL_HANDLING",     minSample: 5, failRateThreshold: 0.30 },
+  { kind: "skill", key: "accuracy",  column: "correct_and_complete_information", category: "PROCESS_KNOWLEDGE", minSample: 5, marginAboveBaseline: 0.15 },
+  { kind: "skill", key: "probing",   column: "accurate_issue_probing",           category: "PROCESS_KNOWLEDGE", minSample: 5, marginAboveBaseline: 0.15 },
+  { kind: "skill", key: "concern",   column: "customer_concern_acknowledged",    category: "SOFT_SKILLS",       minSample: 5, marginAboveBaseline: 0.15 },
+  { kind: "skill", key: "empathy",   column: "express_empathy",                  category: "SOFT_SKILLS",       minSample: 5, marginAboveBaseline: 0.15 },
+  { kind: "skill", key: "listening", column: "active_listening",                 category: "SOFT_SKILLS",       minSample: 5, marginAboveBaseline: 0.15 },
+  { kind: "skill", key: "closure",   column: "proper_call_closure",              category: "CALL_HANDLING",     minSample: 5, marginAboveBaseline: 0.15 },
   { kind: "event", key: "profanity", column: "agent_english_cuss_count",         category: "CONDUCT", coachingType: "ONE_ON_ONE", minOccurrences: 2 },
 ];
+
+/** A floor under the effective threshold: even on a parameter with a very low
+ *  org baseline (say 5%), a margin-only bar of 20% would flag agents on trivial
+ *  evidence. No skill finding raises below this rate regardless of baseline. */
+const MIN_EFFECTIVE_THRESHOLD = 0.30;
 
 /** A fail rate this extreme on this much evidence is as likely to be a scoring/calibration problem as a real one. */
 const EXTREME_FAIL_RATE = 0.90;
@@ -82,17 +98,29 @@ const EXTREME_MIN_SAMPLE = 20;
 const SYSTEMIC_SHARE = 0.30;
 const SYSTEMIC_MIN_AGENTS = 3;
 
+/**
+ * Pure classification: given an agent's own scored/fails and the EFFECTIVE
+ * threshold already computed for this parameter and window (baseline + margin,
+ * floored at MIN_EFFECTIVE_THRESHOLD), decides whether a finding is raised and
+ * how severe it is. Takes the threshold as a plain number rather than deriving
+ * it from the rule, so this stays trivially testable without a database.
+ */
 export function classifySkillFinding(
   rule: SkillParameterRule,
   scored: number,
   fails: number,
+  threshold: number,
 ): { severity: Severity; coachingType: CoachingType } | null {
   if (scored < rule.minSample) return null;
   const failRate = fails / scored;
-  if (failRate <= rule.failRateThreshold) return null;
+  if (failRate <= threshold) return null;
   const severity: Severity =
     failRate >= EXTREME_FAIL_RATE && scored >= EXTREME_MIN_SAMPLE ? "EXTREME_REVIEW" : "MEDIUM";
   return { severity, coachingType: "ONE_ON_ONE" };
+}
+
+export function effectiveThreshold(rule: SkillParameterRule, orgBaselineFailRate: number): number {
+  return Math.max(orgBaselineFailRate + rule.marginAboveBaseline, MIN_EFFECTIVE_THRESHOLD);
 }
 
 export function isSystemic(flaggedAgents: number, totalAudited: number): boolean {
@@ -106,10 +134,16 @@ export function evidenceNote(
   fails: number,
   from: string,
   to: string,
+  orgBaselineFailRate?: number,
 ): string {
   const rate = sample > 0 ? Math.round((fails / sample) * 1000) / 10 : 0;
   const noun = rule.kind === "skill" ? "audits" : "incidents";
-  return `${fails} of ${sample} ${noun} failed "${rule.key}" between ${from} and ${to} (${rate}%)`;
+  const base = `${fails} of ${sample} ${noun} failed "${rule.key}" between ${from} and ${to} (${rate}%)`;
+  // Named against the org's own baseline for the same window, so "58%" reads as
+  // what it is — meaningfully worse than typical here — rather than an unmoored
+  // number a reader has no way to judge against.
+  if (orgBaselineFailRate === undefined) return base;
+  return `${base}, vs an org-wide baseline of ${Math.round(orgBaselineFailRate * 1000) / 10}% for this parameter`;
 }
 
 // ─── Live derivation ──────────────────────────────────────────────────────
@@ -151,6 +185,28 @@ export interface DerivedFinding {
   evidenceNote: string;
 }
 
+interface BaselineRow extends RowDataPacket {
+  scored: number;
+  fails: number;
+}
+
+/** Org-wide fail rate for one skill parameter over one window — the "typical" an agent is measured against, not a fixed number picked once and left stale. */
+export async function computeBaselineFailRate(
+  rule: SkillParameterRule,
+  windowFrom: string,
+  windowTo: string,
+): Promise<number> {
+  const [rows] = await db.execute<BaselineRow[]>(
+    `SELECT COUNT(*) AS scored, SUM(CASE WHEN \`${rule.column}\` = 0 THEN 1 ELSE 0 END) AS fails
+       FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ? AND \`${rule.column}\` IS NOT NULL`,
+    [windowFrom, windowTo],
+  );
+  const scored = Number(rows[0]?.scored ?? 0);
+  if (scored === 0) return 0;
+  return Number(rows[0].fails) / scored;
+}
+
 /**
  * Scans the live audit table for one parameter over one window and returns every
  * finding it would raise — individual, and (for skill parameters) systemic. Pure
@@ -164,6 +220,9 @@ export async function deriveFindingsForParameter(
   const findings: DerivedFinding[] = [];
 
   if (rule.kind === "skill") {
+    const baseline = await computeBaselineFailRate(rule, windowFrom, windowTo);
+    const threshold = effectiveThreshold(rule, baseline);
+
     const [rows] = await db.execute<AgentRow[]>(
       `SELECT q.User AS user_code, e.id AS employee_id, e.full_name AS employee_name,
               e.process_id AS process_id, p.process_name AS process_name,
@@ -186,7 +245,7 @@ export async function deriveFindingsForParameter(
     for (const row of rows) {
       if (!row.process_id) continue; // an audited User with no resolvable employee/process is not attributable
       auditedByProcess.set(row.process_id, (auditedByProcess.get(row.process_id) ?? 0) + 1);
-      const cls = classifySkillFinding(rule, Number(row.scored), Number(row.fails));
+      const cls = classifySkillFinding(rule, Number(row.scored), Number(row.fails), threshold);
       if (!cls) continue;
 
       findings.push({
@@ -203,7 +262,7 @@ export async function deriveFindingsForParameter(
         windowFrom, windowTo,
         sample: Number(row.scored),
         fails: Number(row.fails),
-        evidenceNote: evidenceNote(rule, Number(row.scored), Number(row.fails), windowFrom, windowTo),
+        evidenceNote: evidenceNote(rule, Number(row.scored), Number(row.fails), windowFrom, windowTo, baseline),
       });
 
       const bucket = flaggedByProcess.get(row.process_id) ?? { count: 0, name: row.process_name };
