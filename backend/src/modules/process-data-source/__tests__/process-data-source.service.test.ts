@@ -33,7 +33,11 @@ describe("saveManualMetricValue", () => {
   });
 
   it("refuses a metric key the registry does not define for that process", async () => {
-    execute.mockResolvedValueOnce([[{ process_code: "GS1" }], []]);
+    // process lookup, then the kpi_metric_master catalog fallback check --
+    // a key belonging to neither is refused, not just a registry miss alone.
+    execute
+      .mockResolvedValueOnce([[{ process_code: "GS1" }], []])
+      .mockResolvedValueOnce([[], []]);
     await expect(
       svc.saveManualMetricValue({
         userId: "u1", processId: "p1", metricKey: "not_a_real_metric",
@@ -44,14 +48,34 @@ describe("saveManualMetricValue", () => {
   });
 
   it("refuses a metric that belongs to a different process", async () => {
-    // gs1_email_tat_sec is real, but it is GS1's -- not BLA_BLI_BLU's.
-    execute.mockResolvedValueOnce([[{ process_code: "BLA_BLI_BLU" }], []]);
+    // gs1_email_tat_sec is real, but it is GS1's -- not BLA_BLI_BLU's, and it
+    // is not in the general kpi_metric_master catalog either (it is a
+    // registry-only key), so the catalog fallback also misses.
+    execute
+      .mockResolvedValueOnce([[{ process_code: "BLA_BLI_BLU" }], []])
+      .mockResolvedValueOnce([[], []]);
     await expect(
       svc.saveManualMetricValue({
         userId: "u1", processId: "p1", metricKey: "gs1_email_tat_sec",
         scoreDate: "2026-08-01", value: 10,
       }),
     ).rejects.toThrow(/not a registered metric/i);
+  });
+
+  it("accepts a metric key that is not in the per-client registry but IS an active kpi_metric_master catalog entry", async () => {
+    // The whole point of the widened check: a process with no registry entry
+    // at all can still take a manual reading for any real, already-defined
+    // metric -- reusing an existing concept, never inventing a new one.
+    execute
+      .mockResolvedValueOnce([[{ process_code: "SOME_UNREGISTERED_PROCESS" }], []])
+      .mockResolvedValueOnce([[{ 1: 1 }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const out = await svc.saveManualMetricValue({
+      userId: "u1", processId: "p1", metricKey: "ACCURACY_RATE",
+      scoreDate: "2026-08-01", value: 91.5,
+    });
+    expect(out).toEqual({ ok: true });
+    expect(insertCall()).toBeTruthy();
   });
 
   it("refuses a date that is not YYYY-MM-DD", async () => {
