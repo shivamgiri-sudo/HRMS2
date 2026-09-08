@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
@@ -6,11 +6,32 @@ import type { RowDataPacket } from "mysql2";
 import path from "path";
 import fs from "fs";
 import PDFDocument from "pdfkit";
-import * as _archiverNs from "archiver";
-import type { ArchiverOptions, Archiver as ArchiverInstance } from "archiver";
+import { ZipArchive } from "archiver";
+import type { Archiver as ArchiverInstance } from "archiver";
 
-const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
-  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
+/**
+ * archiver 8 removed the callable factory.
+ *
+ * This module used `archiver('zip', opts)` through a CJS-interop shim:
+ *
+ *   const archiverLib = (ns.default ?? ns) as (format, options) => Archiver
+ *
+ * archiver 8.0.0 (installed) exports only classes — Archiver, ZipArchive,
+ * TarArchive, JsonArchive — and no `default`. So the shim resolved to the
+ * namespace OBJECT and calling it threw "archiverLib is not a function" at the
+ * first line of every download. The cast is why it type-checked: it asserted a
+ * call signature the module has not had since the upgrade.
+ *
+ * Verified against the installed package before changing it: `new
+ * ZipArchive({...})` yields the same instance API this code already uses —
+ * pipe, file, append, finalize.
+ *
+ * The identical shim is still in ats.joiningDocumentsTracker.service.ts and
+ * fails the same way; flagged separately rather than fixed blind from here.
+ */
+function newZipArchive(): ArchiverInstance {
+  return new ZipArchive({ zlib: { level: 9 } }) as unknown as ArchiverInstance;
+}
 
 const UPLOADS_ROOT = path.resolve(
   new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
@@ -20,12 +41,78 @@ const UPLOADS_ROOT = path.resolve(
 export const esiRegDocsRouter = Router();
 esiRegDocsRouter.use(requireAuth);
 
-const ESI_ROLES = ["payroll_branch", "payroll_head", "super_admin"] as const;
+/**
+ * Async error boundary.
+ *
+ * Every route here was a bare `async` handler. Express 4 does not catch a
+ * rejected promise from one, so it became an unhandled rejection and Node 24
+ * exits the process on those — which is exactly what happened twice while
+ * testing this file: one bad SQL bind and one bad archiver call each took the
+ * ENTIRE backend down, not just the request. Wrapping them turns a
+ * whole-service outage into a 500 on one endpoint.
+ *
+ * `next(err)` rather than a local response, so the existing error handler still
+ * decides the body — except once the archive has begun streaming, when the
+ * headers are already sent and the only honest move is to destroy the socket so
+ * the client sees a truncated download instead of a valid-looking short zip.
+ */
+type AsyncRoute = (req: Request, res: Response) => Promise<unknown>;
+const h = (fn: AsyncRoute) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req, res).catch((err: unknown) => {
+    if (res.headersSent) {
+      console.error("[esi-reg-docs] failed mid-stream:", err instanceof Error ? err.message : err);
+      return res.destroy();
+    }
+    return next(err);
+  });
+};
+
+/**
+ * Who may pull ESI registration packs.
+ *
+ * `payroll_hr` was missing and `payroll_branch` does not exist. Checked live
+ * 2026-09-08: user_roles carries payroll, payroll_admin, payroll_head and
+ * payroll_hr — there is no payroll_branch row anywhere, so of the three names
+ * above only payroll_head (2 holders) and super_admin (6) ever worked.
+ *
+ * Payroll HR is the role that actually does ESI registration, and it was locked
+ * out of every endpoint here. A previous session found the resulting 403s and
+ * hid the tab from payroll_hr rather than granting it, which turned a broken
+ * control into an invisible one. The owner confirmed on 2026-09-08 that Payroll
+ * HR and the Payroll Head are exactly the two who need this, so payroll_hr is
+ * granted here and the tab is shown to it again.
+ *
+ * payroll_branch is kept: it costs nothing while unheld, and dropping a name
+ * another session may be provisioning towards would be a silent revocation.
+ *
+ * `payroll` IS the grant that reaches Payroll HR, and naming payroll_hr alone
+ * does nothing. Proven live 2026-09-08 with a real token for sheelu.verma, who
+ * holds payroll_hr in both user_roles and user_assignment_scope: the request was
+ * refused, and requireRole logged her roles as [employee, hr, payroll,
+ * recruiter] — no payroll_hr at all.
+ *
+ * The cause is DASHBOARD_ROLE_ALIASES in shared/dashboardAccessRegistry.ts,
+ * which maps `payroll_hr -> payroll`. getUserRoleKeys() puts every resolved role
+ * through it, so a payroll_hr user reaches requireRole already rewritten to
+ * `payroll`, and a route listing "payroll_hr" can never match one. That alias
+ * makes payroll_hr and payroll the same principal to every RBAC check in the
+ * system, so granting `payroll` here is not a widening decision this route gets
+ * to make differently — the two cannot be separated without changing the alias,
+ * which is a system-wide RBAC change and deliberately not made here.
+ *
+ * payroll_hr is kept in the list even though it is unreachable today: it is what
+ * this route MEANS, and it starts working by itself if the alias is ever removed.
+ *
+ * NOTE: appointmentLetter.routes.ts carries the opposite claim — "payroll_hr has
+ * no alias in the role model ... requireRole('payroll') does NOT admit a
+ * payroll_hr user". That is backwards, and its ISSUE_ROLES has the same hole.
+ */
+const ESI_ROLES = ["payroll", "payroll_hr", "payroll_branch", "payroll_head", "super_admin"] as const;
 
 esiRegDocsRouter.get(
   "/esi-reg-docs",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
     const limit = parseInt(String(req.query.limit ?? "50"), 10);
     if (limit > 200) {
@@ -35,7 +122,36 @@ esiRegDocsRouter.get(
     const branchId = req.query.branch_id as string | undefined;
     const search = req.query.search as string | undefined;
 
+    /**
+     * LIMIT/OFFSET are interpolated, not bound.
+     *
+     * This endpoint had never returned a row: `LIMIT ? OFFSET ?` through
+     * db.execute() is a PREPARED statement, and MySQL will not accept a bound
+     * parameter in those positions — it answers ER_WRONG_ARGUMENTS (errno 1210,
+     * "Incorrect arguments to mysqld_stmt_execute"). The route has no error
+     * wrapper, so the rejection went unhandled and took the whole backend
+     * process down with it, not merely this request.
+     *
+     * It went unnoticed because the role list separately locked out everyone who
+     * would have called it. Two bugs, each hiding the other.
+     *
+     * Interpolation is safe here only because both values are coerced to bounded
+     * integers first and can never carry user text: limit is already rejected
+     * above if > 200, page is Math.max(1, parseInt(...)). Number.isFinite guards
+     * the NaN that parseInt("abc") returns, which would otherwise interpolate
+     * the literal text NaN into the SQL.
+     */
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+    const safeOffset = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
+
+    // active_status = 1 is the load-bearing one. Without it this listed every
+    // employee who ever held an ESI flag, terminated or not: 12,858 rows live on
+    // 2026-09-08 against 567 who are actually on the payroll. An ESI
+    // REGISTRATION queue made mostly of people who left is not a long list, it
+    // is the wrong list — and the bulk download would have built document packs
+    // for them.
     const whereParts: string[] = [
+      `e.active_status = 1`,
       `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
       `e.employment_status != 'terminated'`,
     ];
@@ -90,8 +206,8 @@ esiRegDocsRouter.get(
        LEFT JOIN branch_master b ON b.id = e.branch_id
        WHERE ${whereClause}
        ORDER BY e.employee_code
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+       LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
     );
 
     const employees = (rows as RowDataPacket[]).map((r) => ({
@@ -102,7 +218,7 @@ esiRegDocsRouter.get(
     }));
 
     return res.json({ employees, total: Number(total), page, limit });
-  }
+  })
 );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -165,6 +281,80 @@ function fileExists(filePath: string | null): boolean {
   try { return fs.statSync(filePath).isFile(); } catch { return false; }
 }
 
+/**
+ * Build one employee's ESI registration pack into `archive`, under `prefix`.
+ *
+ * Single and bulk download used to carry two copies of this, which is how they
+ * came to disagree: neither included the Aadhaar, but only the CSV export
+ * noticed that ESI registration needs it. One builder means a document added
+ * here appears in both, and the manifest can never describe a different set of
+ * files from the one actually written.
+ *
+ * Every document is optional by design. A missing file is recorded in the
+ * manifest as a named gap rather than failing the download — Payroll HR needs
+ * the pack for the documents that DO exist, plus a list of what to chase.
+ *
+ * Returns the manifest lines so the caller can also count what was found.
+ */
+async function appendEsiPack(
+  archive: ArchiverInstance,
+  emp: { id: string; employee_code: string; name: string; photo_url?: string | null; avatar_url?: string | null },
+  prefix: string,
+): Promise<{ manifest: string[]; found: number; missing: number }> {
+  const at = (n: string) => (prefix ? `${prefix}/${n}` : n);
+  const manifest: string[] = [`ESI Registration Documents — ${emp.name} (${emp.employee_code})\n`];
+  let found = 0, missing = 0;
+
+  // doc_category is the stable axis here, not doc_type: identity holds 27,165
+  // rows as 'POI' plus a handful of 'POI_1'/'POI_4', and a separate 'aadhaar'
+  // category holds 2. Matching the category catches all of them.
+  const byCategory = async (category: string): Promise<string | null> => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT file_url FROM employee_documents
+        WHERE employee_id = ? AND doc_category = ?
+        ORDER BY created_at DESC LIMIT 1`,
+      [emp.id, category],
+    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+    return urlToLocalPath((rows as RowDataPacket[])[0]?.file_url ?? null);
+  };
+
+  const docs: Array<{ label: string; localPath: string | null; note: string }> = [
+    { label: "PAN_Card", localPath: await byCategory("pan"), note: "PAN document not available — upload it on the employee profile" },
+    // Aadhaar is mandatory for ESI registration and was in no version of this
+    // pack, though the CSV export has carried the aadhaar NUMBER since
+    // 2026-09-02. A number without the scan does not complete a registration.
+    { label: "Aadhaar", localPath: (await byCategory("aadhaar")) ?? (await byCategory("identity")), note: "Aadhaar / identity proof not available" },
+    { label: "Photo", localPath: urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null), note: "Employee photo not available" },
+  ];
+
+  for (const d of docs) {
+    if (fileExists(d.localPath)) {
+      archive.file(d.localPath!, { name: at(`${d.label}${path.extname(d.localPath!)}`) });
+      manifest.push(`OK  ${d.label}${path.extname(d.localPath!)}`);
+      found++;
+    } else {
+      manifest.push(`--  ${d.note}`);
+      missing++;
+    }
+  }
+
+  // Always generated rather than fetched, so it exists even when nothing was
+  // uploaded — which for most of this population is the only content the pack
+  // would otherwise have.
+  try {
+    archive.append(await generateBankInfoPdf(emp.id), { name: at("Bank_Information.pdf") });
+    manifest.push("OK  Bank_Information.pdf");
+    found++;
+  } catch {
+    manifest.push("--  Bank information could not be generated");
+    missing++;
+  }
+
+  manifest.push(`\n${found} document(s) included, ${missing} missing.`);
+  archive.append(manifest.join("\n"), { name: at("manifest.txt") });
+  return { manifest, found, missing };
+}
+
 async function writeAuditLog(
   action: string,
   performedBy: string,
@@ -188,7 +378,7 @@ async function writeAuditLog(
 esiRegDocsRouter.get(
   "/esi-reg-docs/:employeeId/download",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const { employeeId } = req.params;
     const actorId = (req as any).authUser?.id ?? "unknown";
 
@@ -200,58 +390,36 @@ esiRegDocsRouter.get(
     );
     if (!empRow) return res.status(404).json({ error: "Employee not found" });
 
-    const [[panDoc]] = await db.execute<RowDataPacket[]>(
-      `SELECT file_url FROM employee_documents
-       WHERE employee_id = ? AND doc_category = 'pan'
-       ORDER BY created_at DESC LIMIT 1`,
-      [employeeId]
-    );
-
     const date = new Date().toISOString().slice(0, 10);
     const filename = `ESI_Docs_${empRow.employee_code}_${date}.zip`;
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    const archive = archiverLib("zip", { zlib: { level: 9 } });
+    const archive = newZipArchive();
     archive.pipe(res);
     archive.on("error", (err: Error) => console.error("[esi-reg-docs] archive error", err));
 
-    const manifest: string[] = [`ESI Registration Documents — ${empRow.name} (${empRow.employee_code})\n`];
+    const packed = await appendEsiPack(
+      archive,
+      {
+        id: employeeId,
+        employee_code: String(empRow.employee_code ?? ""),
+        name: String(empRow.name ?? ""),
+        photo_url: empRow.photo_url,
+        avatar_url: empRow.avatar_url,
+      },
+      "",
+    );
 
-    const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
-    if (fileExists(panPath)) {
-      const ext = path.extname(panPath!);
-      archive.file(panPath!, { name: `PAN_Card${ext}` });
-      manifest.push("✓ PAN_Card" + ext);
-    } else {
-      manifest.push("✗ PAN document not available — please upload in employee profile");
-    }
-
-    const photoPath = urlToLocalPath(empRow.photo_url ?? empRow.avatar_url ?? null);
-    if (fileExists(photoPath)) {
-      const ext = path.extname(photoPath!);
-      archive.file(photoPath!, { name: `Photo${ext}` });
-      manifest.push("✓ Photo" + ext);
-    } else {
-      manifest.push("✗ Employee photo not available");
-    }
-
-    try {
-      const bankPdf = await generateBankInfoPdf(employeeId);
-      archive.append(bankPdf, { name: "Bank_Information.pdf" });
-      manifest.push("✓ Bank_Information.pdf");
-    } catch {
-      manifest.push("✗ Bank information could not be generated");
-    }
-
-    archive.append(manifest.join("\n"), { name: "manifest.txt" });
     await archive.finalize();
 
     await writeAuditLog("esi_reg_doc_download", actorId, employeeId, {
       employee_code: empRow.employee_code,
+      documents_included: packed.found,
+      documents_missing: packed.missing,
     });
-  }
+  })
 );
 
 // ── Route: Bulk ZIP download ──────────────────────────────────────────────────
@@ -259,7 +427,7 @@ esiRegDocsRouter.get(
 esiRegDocsRouter.post(
   "/esi-reg-docs/bulk-download",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const { employee_ids } = req.body as { employee_ids?: string[] };
     if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
       return res.status(400).json({ error: "employee_ids must be a non-empty array" });
@@ -273,7 +441,7 @@ esiRegDocsRouter.post(
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="ESI_Bulk_Docs_${date}.zip"`);
 
-    const archive = archiverLib("zip", { zlib: { level: 9 } });
+    const archive = newZipArchive();
     archive.pipe(res);
     archive.on("error", (err: Error) => console.error("[esi-reg-docs] bulk archive error", err));
 
@@ -285,44 +453,32 @@ esiRegDocsRouter.post(
       employee_ids
     );
 
+    // One folder per employee inside the single zip, so Payroll HR opens the
+    // archive and finds a ready-made folder per registration rather than a flat
+    // pile of files they have to sort by filename.
+    const index: string[] = ["Employee Code,Employee Name,Documents Included,Documents Missing"];
     for (const emp of rows as RowDataPacket[]) {
-      const folder = `${emp.employee_code}_${(emp.name as string).replace(/\s+/g, "_")}`;
-      const manifest: string[] = [`ESI Docs — ${emp.name} (${emp.employee_code})\n`];
-
-      const [[panDoc]] = await db.execute<RowDataPacket[]>(
-        `SELECT file_url FROM employee_documents
-         WHERE employee_id = ? AND doc_category = 'pan'
-         ORDER BY created_at DESC LIMIT 1`,
-        [emp.id]
+      // Sanitised, because an employee name reaches a zip ENTRY PATH here: a
+      // name carrying "/" or ".." would place the file outside its own folder.
+      const safeName = String(emp.name ?? "").replace(/[^A-Za-z0-9 _-]/g, "").trim().replace(/\s+/g, "_");
+      const safeCode = String(emp.employee_code ?? "").replace(/[^A-Za-z0-9_-]/g, "");
+      const packed = await appendEsiPack(
+        archive,
+        {
+          id: String(emp.id),
+          employee_code: String(emp.employee_code ?? ""),
+          name: String(emp.name ?? ""),
+          photo_url: emp.photo_url,
+          avatar_url: emp.avatar_url,
+        },
+        `${safeCode}_${safeName}`,
       );
-      const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
-      if (fileExists(panPath)) {
-        const ext = path.extname(panPath!);
-        archive.file(panPath!, { name: `${folder}/PAN_Card${ext}` });
-        manifest.push("✓ PAN_Card" + ext);
-      } else {
-        manifest.push("✗ PAN document not available");
-      }
-
-      const photoPath = urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null);
-      if (fileExists(photoPath)) {
-        const ext = path.extname(photoPath!);
-        archive.file(photoPath!, { name: `${folder}/Photo${ext}` });
-        manifest.push("✓ Photo" + ext);
-      } else {
-        manifest.push("✗ Photo not available");
-      }
-
-      try {
-        const bankPdf = await generateBankInfoPdf(emp.id as string);
-        archive.append(bankPdf, { name: `${folder}/Bank_Information.pdf` });
-        manifest.push("✓ Bank_Information.pdf");
-      } catch {
-        manifest.push("✗ Bank info unavailable");
-      }
-
-      archive.append(manifest.join("\n"), { name: `${folder}/manifest.txt` });
+      index.push(`${emp.employee_code},"${String(emp.name ?? "").replace(/"/g, '""')}",${packed.found},${packed.missing}`);
     }
+
+    // A top-level index, so a 200-employee archive can be checked without
+    // opening 200 manifests to find which packs are short of a document.
+    archive.append(index.join("\n"), { name: "INDEX.csv" });
 
     await archive.finalize();
 
@@ -330,7 +486,7 @@ esiRegDocsRouter.post(
       employee_ids,
       count: employee_ids.length,
     });
-  }
+  })
 );
 
 // ── Route: CSV export ─────────────────────────────────────────────────────────
@@ -338,11 +494,14 @@ esiRegDocsRouter.post(
 esiRegDocsRouter.get(
   "/esi-reg-docs/export-csv",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const actorId = (req as any).authUser?.id ?? "unknown";
     const branchId = req.query.branch_id as string | undefined;
 
+    // Same scope as the list above, deliberately — an export that disagrees with
+    // the screen it was exported from is worse than no export.
     const whereParts = [
+      `e.active_status = 1`,
       `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
       `e.employment_status != 'terminated'`,
     ];
@@ -408,5 +567,5 @@ esiRegDocsRouter.get(
     res.send("\uFEFF" + header + csvRows);
 
     await writeAuditLog("esi_reg_csv_export", actorId, null, { branch_id: branchId ?? "all" });
-  }
+  })
 );

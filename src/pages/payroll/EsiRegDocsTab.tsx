@@ -47,15 +47,27 @@ function useEsiList(params: { search: string; branchId: string; page: number }) 
   });
 }
 
-function KpiStrip({ employees }: { employees: EsiEmployee[] }) {
-  const total = employees.length;
+/**
+ * `total` is the server's full count, not employees.length.
+ *
+ * The tile read the loaded PAGE and so announced "ESI Eligible 50" while the
+ * footer under the same table said 567 — the list is paginated at 50. On a
+ * registration queue that is not a cosmetic disagreement: 50 looks like a
+ * morning's work and 567 is the actual backlog.
+ *
+ * The two readiness tiles stay page-scoped because the API returns readiness
+ * only for the rows it sends, and they say so on their labels rather than
+ * implying they cover all 567.
+ */
+function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
+  const onPage = employees.length;
   const allReady = employees.filter((e) => e.pan_ready && e.photo_ready && e.bank_ready).length;
-  const missing = total - allReady;
+  const missing = onPage - allReady;
 
   const tiles = [
     { label: "ESI Eligible", value: total, icon: Users, tone: "blue" as const },
-    { label: "All Docs Ready", value: allReady, icon: CheckCircle2, tone: "green" as const },
-    { label: "Docs Missing", value: missing, icon: AlertTriangle, tone: "amber" as const },
+    { label: `All Docs Ready (of ${onPage} shown)`, value: allReady, icon: CheckCircle2, tone: "green" as const },
+    { label: `Docs Missing (of ${onPage} shown)`, value: missing, icon: AlertTriangle, tone: "amber" as const },
   ];
 
   const toneMap = {
@@ -397,7 +409,7 @@ export default function EsiRegDocsTab() {
         </div>
       </div>
 
-      {!isLoading && <KpiStrip employees={employees} />}
+      {!isLoading && <KpiStrip employees={employees} total={data?.total ?? employees.length} />}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">

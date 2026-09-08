@@ -38,8 +38,13 @@ export default defineConfig(({ mode }) => ({
       // /api/* request through localhost:8080 hung 45s+ before this change,
       // and connecting to the backend directly on either address family always
       // worked, isolating the hang to this one DNS-resolution path.
+      // API_PROXY_TARGET overrides the port for one dev server without editing
+      // this shared file. Several sessions run against this same working tree,
+      // so port 5055 is often already held by someone else's backend — and the
+      // rule here is to work around a held port, not to kill the process that
+      // holds it. Unset, the behaviour is exactly as before.
       '/api': {
-        target: 'http://127.0.0.1:5055',
+        target: process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:5055',
         changeOrigin: true,
       },
     },
