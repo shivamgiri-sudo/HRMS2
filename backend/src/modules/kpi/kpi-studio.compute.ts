@@ -27,6 +27,9 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { evaluateFormula } from './kpi-formula.engine.js';
+// Already matches both 1213 (deadlock) and 1205 (lock wait). This module simply
+// was not using it.
+import { withDeadlockRetry } from '../../shared/deadlockRetry.js';
 import {
   getStudioCapability,
   getDefinitionSourceIds,
@@ -555,16 +558,18 @@ async function computeProcessGrainDefinitions(
           const nulls = (await processMetricRollupSupported())
             ? ', rollup_numerator = NULL, rollup_denominator = NULL'
             : '';
-          await db.execute(
-            `UPDATE process_metric_actual
-                SET actual_value = NULL${nulls}, note = ?
-              WHERE process_id = ? AND metric_key = ? AND score_date = ?`,
-            [
-              `KPI Studio definition ${definition.id} — no reading for this day`,
-              processId,
-              definition.metric_code,
-              date,
-            ],
+          await withDeadlockRetry(() =>
+            db.execute(
+              `UPDATE process_metric_actual
+                  SET actual_value = NULL${nulls}, note = ?
+                WHERE process_id = ? AND metric_key = ? AND score_date = ?`,
+              [
+                `KPI Studio definition ${definition.id} — no reading for this day`,
+                processId,
+                definition.metric_code,
+                date,
+              ],
+            ),
           );
         }
 
@@ -598,22 +603,37 @@ async function computeProcessGrainDefinitions(
              rollup_numerator   = VALUES(rollup_numerator),
              rollup_denominator = VALUES(rollup_denominator),`
           : '';
-        await db.execute(
-          `INSERT INTO process_metric_actual
-             (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note${rollupCols})
-           VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?${rollupValues})
-           ON DUPLICATE KEY UPDATE
-             actual_value = VALUES(actual_value),${rollupUpdate}
-             source       = 'connector',
-             note         = VALUES(note)`,
-          [
-            processId,
-            definition.metric_code,
-            date,
-            evaluated.value,
-            `KPI Studio definition ${definition.id}`,
-            ...(rollupCols ? [parts?.numerator ?? null, parts?.denominator ?? null] : []),
-          ],
+        // Retried, because a bulk run contends with itself and with whatever else
+        // is writing. A single lock-wait timeout was leaving one process-day with
+        // no reading at all during a 52-process sweep — recorded in
+        // source_failures, so visible, but a permanent gap for a condition that
+        // resolves on its own in milliseconds.
+        await withDeadlockRetry(
+          () =>
+            db.execute(
+              `INSERT INTO process_metric_actual
+                 (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note${rollupCols})
+               VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?${rollupValues})
+               ON DUPLICATE KEY UPDATE
+                 actual_value = VALUES(actual_value),${rollupUpdate}
+                 source       = 'connector',
+                 note         = VALUES(note)`,
+              [
+                processId,
+                definition.metric_code,
+                date,
+                evaluated.value,
+                `KPI Studio definition ${definition.id}`,
+                ...(rollupCols ? [parts?.numerator ?? null, parts?.denominator ?? null] : []),
+              ],
+            ),
+          {
+            onRetry: (attempt, error) =>
+              console.warn(
+                `[kpi-studio] ${definition.metric_code} ${date}: lock contention, attempt ${attempt} — ` +
+                  `${(error as Error).message}`,
+              ),
+          },
         );
       }
       result.written++;

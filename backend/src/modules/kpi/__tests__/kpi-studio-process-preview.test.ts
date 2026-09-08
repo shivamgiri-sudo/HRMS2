@@ -334,3 +334,56 @@ describe("no_data clears a stale reading", () => {
     expect(execute.mock.calls.some(([sql]) => String(sql).includes("UPDATE process_metric_actual"))).toBe(false);
   });
 });
+
+/**
+ * Lock contention during a bulk run.
+ *
+ * A 52-process sweep contends with itself and with whatever else is writing. One
+ * lock-wait timeout was leaving a process-day with no reading at all — recorded
+ * in source_failures so it was visible, but a permanent gap for a condition that
+ * clears itself in milliseconds. The retry helper already matched both 1213 and
+ * 1205; this module simply was not using it.
+ */
+describe("a contended write is retried", () => {
+  it("succeeds on a second attempt after a lock-wait timeout", async () => {
+    const { computeStudioKpis } = await import("../kpi-studio.compute.js");
+    capability.mockResolvedValue(INSTALLED);
+    readProcessGrainValues.mockReset();
+    readProcessGrainValues.mockResolvedValue({
+      rowsRead: 1,
+      values: new Map([["2026-08-31", new Map([["answered", 90], ["offered", 100]])]]),
+    });
+
+    let insertAttempts = 0;
+    execute.mockReset();
+    execute.mockImplementation((sql: string) => {
+      const text = String(sql);
+      if (text.includes("FROM kpi_studio_definition d")) {
+        return Promise.resolve([[{
+          id: "d1", metric_id: "m1", metric_code: "PROCESS_EXITS",
+          data_source_id: "s1", formula_expression: "PCT(answered, offered)", grain: "process",
+          effective_from: "2026-08-01", branch_id: null, process_id: "p1",
+          designation_id: null, employee_id: null,
+        }], []]);
+      }
+      if (text.includes("FROM kpi_studio_data_source")) return Promise.resolve([[{ ...SOURCE, id: "s1", process_id: "p1" }], []]);
+      if (text.includes("FROM kpi_studio_source_field")) return Promise.resolve([FIELDS, []]);
+      if (text.includes("INFORMATION_SCHEMA.COLUMNS")) return Promise.resolve([[{ n: 2 }], []]);
+      if (text.includes("INSERT INTO process_metric_actual")) {
+        insertAttempts++;
+        if (insertAttempts === 1) {
+          const err = new Error("Lock wait timeout exceeded; try restarting transaction") as Error & { errno: number };
+          err.errno = 1205;
+          return Promise.reject(err);
+        }
+        return Promise.resolve([{ affectedRows: 1 }, []]);
+      }
+      return Promise.resolve([[], []]);
+    });
+
+    const out = await computeStudioKpis({ date: "2026-08-31", processId: "p1", dryRun: false });
+    expect(insertAttempts).toBe(2);
+    expect(out.written).toBe(1);
+    expect(out.errors).toBe(0);
+  });
+});
