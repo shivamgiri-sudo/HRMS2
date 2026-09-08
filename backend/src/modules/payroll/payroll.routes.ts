@@ -9,6 +9,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { resolveCostCentreScope } from "./payroll-run-scope.service.js";
 import { getMonthCoverage } from "./payroll-run-coverage.service.js";
+import { getRunLineCoverage } from "./payroll-line-coverage.service.js";
 import { MonthOutputError, resolveOutputRunIds, runIdPlaceholders } from "./payroll-month-outputs.service.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
@@ -2903,27 +2904,73 @@ router.get("/month/:month/neft-export", requireRole("admin", "super_admin", "fin
 
 // ─── Payroll Validation / Rejection (Head Payroll) ───────────────────────────
 
+// GET /api/payroll/runs/:id/line-coverage — who worked this month and holds no pay in this run
+router.get("/runs/:id/line-coverage", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    return res.json({ success: true, data: await getRunLineCoverage(req.params.id) });
+  }));
+
 // PATCH /api/payroll/runs/:id/validate — Head Payroll validates a run (unlocks NEFT export)
 router.patch("/runs/:id/validate", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   if (!(await hasAnyRoleAsync(userId, "payroll_head", "super_admin"))) {
     return res.status(403).json({ success: false, message: "Only Head Payroll can validate a payroll run" });
   }
-  const { note } = req.body as { note?: string };
+  const { note, acknowledgeCoverageGaps } = req.body as { note?: string; acknowledgeCoverageGaps?: boolean };
   const [runRows] = await db.execute("SELECT id, status, validation_status FROM salary_prep_run WHERE id = ? LIMIT 1", [req.params.id]);
   const run = (runRows as any[])[0];
   if (!run) return res.status(404).json({ success: false, message: "Run not found" });
   if (run.validation_status === "validated") return res.status(400).json({ success: false, message: "Already validated" });
 
+  /*
+   * Nobody who worked leaves this gate unpaid without somebody saying so out loud.
+   *
+   * Validation is the point of no return: it unlocks the NEFT export, and after the run locks,
+   * isRunClosed() correctly refuses to recompute it — so a gap that survives this moment stops
+   * being a recalculation and becomes an arrears decision about people who have mostly already
+   * left. That is precisely what 2026-07 cost: 63 employees, 292 recorded working days, Rs 1.76
+   * lakh, discovered five weeks after the run locked.
+   *
+   * Not a hard refusal. A gap can be a deliberate call — someone withheld pending an enquiry, a
+   * structure the business has decided not to assign — and a payroll that cannot be signed off at
+   * all is worse than one signed off knowingly. So it blocks by default and takes an explicit
+   * acknowledgement, which is recorded with the count and the days in payroll_validation_log,
+   * where the sign-off already lives. Silence is what this removes, not authority.
+   */
+  const coverage = await getRunLineCoverage(req.params.id);
+  if (!coverage.clean && acknowledgeCoverageGaps !== true) {
+    return res.status(409).json({
+      success: false,
+      code: "COVERAGE_GAPS",
+      message:
+        `${coverage.gapsWithAttendance} employee(s) worked ${coverage.unpaidAttendanceDays} recorded day(s) ` +
+        `this month and hold no pay in this run. Recalculate the run, or re-submit with ` +
+        `acknowledgeCoverageGaps: true to validate anyway.`,
+      data: coverage,
+    });
+  }
+
   await db.execute(
     `UPDATE salary_prep_run SET validation_status = 'validated', validated_by = ?, validated_at = NOW() WHERE id = ?`,
     [userId, req.params.id]
   );
+  // The acknowledgement is appended to the note rather than stored in a column of its own: this is
+  // the record somebody reads when asking "was this known at sign-off", and it has to answer that
+  // without a schema change on the audit table.
+  const reason = coverage.clean
+    ? (note ?? null)
+    : `${note ? note + " | " : ""}coverage gaps acknowledged: ${coverage.gapsWithAttendance} employee(s), ` +
+      `${coverage.unpaidAttendanceDays} unpaid recorded day(s) [` +
+      coverage.gaps.filter((g) => g.attendanceDays > 0).map((g) => g.employeeCode).join(",") + "]";
   await db.execute(
     `INSERT INTO payroll_validation_log (id, run_id, action, actor_id, actor_role, reason, created_at) VALUES (UUID(), ?, 'validated', ?, ?, ?, NOW())`,
-    [req.params.id, userId, req.authUser!.role, note ?? null]
+    [req.params.id, userId, req.authUser!.role, reason]
   );
-  return res.json({ success: true, message: "Payroll run validated. NEFT export is now unlocked." });
+  return res.json({
+    success: true,
+    message: "Payroll run validated. NEFT export is now unlocked.",
+    coverageGapsAcknowledged: coverage.clean ? 0 : coverage.gapsWithAttendance,
+  });
 }));
 
 // PATCH /api/payroll/runs/:id/reject-validation — Head Payroll rejects a run
