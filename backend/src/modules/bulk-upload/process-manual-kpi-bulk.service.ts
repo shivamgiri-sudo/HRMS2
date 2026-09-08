@@ -31,9 +31,22 @@ export const PROCESS_MANUAL_KPI_HEADERS = [
   "Allocated",
   "RTO",
   "Delivered",
+  "Tickets",
+  "Resolved",
+  "In TAT",
+  "Judged",
 ] as const;
 
-/** Header -> the field_name a linked KPI Studio source reads. One row can carry any subset. */
+/**
+ * Header -> the field_name a linked KPI Studio source reads. One row can carry
+ * any subset — a sales upload and a chat upload for the same process share this
+ * table and never collide, because they name different fields.
+ *
+ * Tickets/Resolved/In TAT/Judged exist for IDAM Natural Wellness's chat KPIs
+ * (CHAT_TICKETS, CHAT_RESOLVED_PCT, CHAT_FRT_SLA_PCT), whose real source,
+ * db_masmis.bb_chat, is the same stopped-upload problem as the sales tables —
+ * verified stale 71 days on 2026-09-08.
+ */
 const FIELD_COLUMNS: Array<{ header: string; field: string }> = [
   { header: "Sales", field: "sales" },
   { header: "Revenue", field: "revenue" },
@@ -43,6 +56,10 @@ const FIELD_COLUMNS: Array<{ header: string; field: string }> = [
   { header: "Allocated", field: "allocated" },
   { header: "RTO", field: "rto" },
   { header: "Delivered", field: "delivered" },
+  { header: "Tickets", field: "tickets" },
+  { header: "Resolved", field: "resolved" },
+  { header: "In TAT", field: "in_tat" },
+  { header: "Judged", field: "judged" },
 ];
 
 export function parseNumber(raw: unknown): number | null {

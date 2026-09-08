@@ -37,4 +37,17 @@ describe("headers", () => {
     expect(PROCESS_MANUAL_KPI_HEADERS).toContain("Connected");
     expect(PROCESS_MANUAL_KPI_HEADERS).toContain("Allocated");
   });
+
+  /**
+   * These four exist for IDAM Natural Wellness's chat KPIs (CHAT_TICKETS,
+   * CHAT_RESOLVED_PCT, CHAT_FRT_SLA_PCT), whose real source — db_masmis.bb_chat —
+   * is the same stopped-upload problem as the sales tables: verified stale 71
+   * days on 2026-09-08, despite the table name suggesting Bella Vita.
+   */
+  it("names the chat columns added for IDAM's manual feed", () => {
+    expect(PROCESS_MANUAL_KPI_HEADERS).toContain("Tickets");
+    expect(PROCESS_MANUAL_KPI_HEADERS).toContain("Resolved");
+    expect(PROCESS_MANUAL_KPI_HEADERS).toContain("In TAT");
+    expect(PROCESS_MANUAL_KPI_HEADERS).toContain("Judged");
+  });
 });
