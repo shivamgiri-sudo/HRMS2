@@ -890,6 +890,21 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
   const readyCount = preview?.filter((o) => o.ok).length ?? 0;
   const blockedCount = preview?.filter((o) => !o.ok).length ?? 0;
 
+  // Single entry has no dry-run step the way bulk paste does, so this is its
+  // only warning before Save silently overwrites a real, already-measured
+  // figure. Reuses the same read the bulk path's "replaces" hint is built
+  // from, scoped to exactly the one day being typed into.
+  const { data: existingData } = useQuery({
+    queryKey: ["process-data-source", "values", processId, scoreDate],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<Array<{ metricKey: string; value: number | null; source: string }>>>(
+      `/api/process-data-source/${processId}/values?from=${scoreDate}&to=${scoreDate}`),
+    enabled: mode === "single" && Boolean(processId && scoreDate),
+    staleTime: 30 * 1000,
+  });
+  const existingForMetric = metricKey
+    ? (existingData?.data ?? []).find((v) => v.metricKey === metricKey && v.value !== null)
+    : undefined;
+
   const save = useMutation({
     mutationFn: () => hrmsApi.post(`/api/process-data-source/${processId}/values`, {
       metricKey, scoreDate,
@@ -986,6 +1001,18 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
                 placeholder="e.g. Manually counted from the client's own tracker, 8 Sep"
                 className="w-full rounded-md border border-slate-300 dark:border-slate-700 dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 resize-none" />
             </div>
+
+            {existingForMetric && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                <span>
+                  {scoreDate} already has a {existingForMetric.source === "manual" ? "manually entered" : "measured"} value
+                  of <strong className="tabular-nums">
+                    {formatValue(existingForMetric.value, catalog.find((m) => m.metricCode === metricKey)?.unit ?? null)}
+                  </strong> for this metric — saving will replace it.
+                </span>
+              </div>
+            )}
 
             <button type="button" disabled={!canSave} onClick={() => save.mutate()}
               className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
