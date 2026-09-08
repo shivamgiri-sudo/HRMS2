@@ -895,12 +895,23 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       <SelectValue placeholder={formData.branch_id ? "Select cost centre" : "Select a branch first"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {costCentres.map((cc: any) => (
-                        <SelectItem key={cc.id} value={cc.id}>
-                          {cc.cost_centre_name}
-                          {cc.cost_centre_code ? ` (${cc.cost_centre_code})` : ""}
-                        </SelectItem>
-                      ))}
+                      {costCentres.map((cc: any) => {
+                        // Every cost centre sourced from db_bill carries
+                        // cost_centre_name = cost_centre_code, so the old label rendered
+                        // "BSS/OB/Noida/1045 (BSS/OB/Noida/1045)" — the code twice, and no
+                        // sign of the client the user is actually looking for. Show the
+                        // client instead whenever the name is only the code repeated.
+                        const isCodeOnlyName = !cc.cost_centre_name || cc.cost_centre_name === cc.cost_centre_code;
+                        const label = isCodeOnlyName
+                          ? (cc.client_name || cc.billing_client_name || cc.cost_centre_code)
+                          : cc.cost_centre_name;
+                        return (
+                          <SelectItem key={cc.id} value={cc.id}>
+                            {label}
+                            {cc.cost_centre_code && label !== cc.cost_centre_code ? ` (${cc.cost_centre_code})` : ""}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>

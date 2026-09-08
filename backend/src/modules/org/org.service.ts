@@ -601,10 +601,33 @@ export const costCentreService = {
       whereClauses.push("cc.active_status = 1"); // Default
     }
 
-    // Search filter
+    /**
+     * Search filter.
+     *
+     * `cc.client_name` is searched alongside the joined `cl.client_name`, and that is the
+     * whole fix. The SELECT below already displays COALESCE(cl.client_name, cc.client_name),
+     * but the search looked only at the JOINED column - and `cc.client_id` is NULL on all
+     * ~940 rows, so the join produces NULL and the clause can never match. The list therefore
+     * SHOWED the client name it refused to search on.
+     *
+     * Reported 2026-09-08 as "Satya Retails is not showing in mas_hrms". The row
+     * (BSS/OB/Noida/1045 / SATYA E-COM SERVICES LIMITED) had been imported that morning and
+     * was visible in the table; typing "Satya" filtered it away. A search that answers "no
+     * such record" about a record it is displaying is worse than a slow one - the user's next
+     * move is to create a duplicate.
+     *
+     * `cc.process_name_bill` is included for the same reason as `p.process_name`:
+     * cost_centre_master.process_id is populated on 24 of 937 rows, so the joined process name
+     * is almost always NULL while the billing campaign name is the one people actually use.
+     */
     if (q && q.trim()) {
-      whereClauses.push("(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ? OR p.process_name LIKE ?)");
-      params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
+      whereClauses.push(
+        "(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ?" +
+        " OR cc.client_name LIKE ? OR cc.billing_client_name LIKE ?" +
+        " OR p.process_name LIKE ? OR cc.process_name_bill LIKE ?)"
+      );
+      const term = `%${q.trim()}%`;
+      params.push(term, term, term, term, term, term, term);
     }
 
     // Relationship filters — same axes the Add/Edit form already requires (client, LOB,
