@@ -305,3 +305,41 @@ describe("process looked up from the employee", () => {
     expect(plan.sql).not.toContain("s.`");
   });
 });
+
+/**
+ * Text present, or absent.
+ *
+ * A free-text column records "nothing to say" as an empty string about as often
+ * as NULL, so is_null answers only half the question — and `ne ''` cannot answer
+ * the other half, because a filter carrying an empty value is refused as a likely
+ * mistake, which it usually is. Voice-of-Customer comments are exactly this
+ * shape: 27% of audited calls carry a negative logistics remark and the rest
+ * hold '' or NULL indistinguishably.
+ */
+describe("is_blank / is_not_blank", () => {
+  const withFilter = (op: string) => [{
+    field_name: "commented", source_column: "id", aggregate_fn: "COUNT", source_expression: null,
+    filter_json: JSON.stringify([{ column: "voc_note", op, value: null }]),
+  }] as never[];
+
+  it("counts a column that actually holds text", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_not_blank"), "2026-08-01", "2026-08-31");
+    expect(plan.sql).toContain("`voc_note` IS NOT NULL AND TRIM(`voc_note`) <> ''");
+  });
+
+  it("treats NULL and empty alike when asking for blank", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_blank"), "2026-08-01", "2026-08-31");
+    expect(plan.sql).toContain("`voc_note` IS NULL OR TRIM(`voc_note`) = ''");
+  });
+
+  it("trims, so a cell holding one space is not a comment", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_not_blank"), "2026-08-01", "2026-08-31");
+    expect(plan.sql).toContain("TRIM(");
+  });
+
+  it("binds no parameter, because the operator carries the whole condition", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_not_blank"), "2026-08-01", "2026-08-31");
+    // Only the two date bounds.
+    expect(plan.params).toEqual(["2026-08-01", "2026-08-31"]);
+  });
+});

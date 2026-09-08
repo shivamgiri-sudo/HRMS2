@@ -724,7 +724,7 @@ export async function saveSourceField(input: {
   // the builder will later refuse produces a field that looks configured and
   // silently never yields a value — the failure mode this module keeps hitting.
   const cap = await getStudioCapability();
-  const FILTER_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'is_not_null'];
+  const FILTER_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'is_not_null', 'is_blank', 'is_not_blank'];
   let filterJson: string | null = null;
   if (cap.fieldFilters && Array.isArray(input.filter_json) && input.filter_json.length) {
     if (!column) throw new Error('A filter needs a column to aggregate — pick one first');
@@ -735,7 +735,7 @@ export async function saveSourceField(input: {
       if (!FILTER_OPS.includes(String(filter?.op))) {
         throw new Error(`Unsupported condition "${String(filter?.op)}". Use one of ${FILTER_OPS.join(', ')}.`);
       }
-      const needsValue = filter.op !== 'is_null' && filter.op !== 'is_not_null';
+      const needsValue = !['is_null', 'is_not_null', 'is_blank', 'is_not_blank'].includes(String(filter.op));
       if (needsValue && (filter.value === undefined || filter.value === null || String(filter.value).trim() === '')) {
         throw new Error(`The "${String(filter.op)}" condition on ${filterColumn} needs a value`);
       }
@@ -748,7 +748,9 @@ export async function saveSourceField(input: {
         value:
           filter.op === 'in'
             ? String(filter.value ?? '').split(',').map((part) => part.trim()).filter(Boolean)
-            : filter.op === 'is_null' || filter.op === 'is_not_null'
+            : ['is_null', 'is_not_null', 'is_blank', 'is_not_blank'].includes(String(filter.op))
+              // Stored as null so a value can never be mistaken for part of the
+              // condition; the operator carries the whole meaning.
               ? null
               : String(filter.value),
       })),

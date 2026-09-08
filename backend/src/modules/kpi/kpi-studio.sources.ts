@@ -54,7 +54,15 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export interface FieldFilter {
   column: string;
-  op: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "is_null" | "is_not_null";
+  op:
+    | "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "is_null" | "is_not_null"
+    /**
+     * Text present, or absent. A free-text column records "nothing to say" as an
+     * empty string about as often as NULL, so is_null alone answers half the
+     * question — and `ne ''` cannot express the other half, because a filter with
+     * an empty value is refused as a likely mistake, which it usually is.
+     */
+    | "is_blank" | "is_not_blank";
   value?: string | number | Array<string | number> | null;
 }
 
@@ -167,7 +175,7 @@ function toDateString(raw: unknown): string | null {
  * a bare column is re-validated before falling back — belt and braces, because a row could have
  * been written by an older version of that function or edited directly in the database.
  */
-const FILTER_OPS: Record<FieldFilter["op"], string> = {
+const FILTER_OPS: Partial<Record<FieldFilter["op"], string>> = {
   eq: "=", ne: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=",
   in: "IN", is_null: "IS NULL", is_not_null: "IS NOT NULL",
 };
@@ -215,6 +223,20 @@ function compileFieldFilters(
   for (const filter of filters) {
     if (!filter?.column) throw new Error(`A filter on field ${alias} names no column`);
     const column = assertSafeIdentifier(filter.column, `filter column on ${alias}`);
+    // Handled before the operator table is consulted: each of these renders two
+    // conditions rather than a single infix operator, so it has no entry there.
+    if (filter.op === "is_blank" || filter.op === "is_not_blank") {
+      // TRIM as well as the emptiness test: a cell holding a single space is not
+      // a comment, and counting it as one overstates every rate built on it.
+      const blankExpr = `${q}\`${column}\``;
+      conds.push(
+        filter.op === "is_not_blank"
+          ? `(${blankExpr} IS NOT NULL AND TRIM(${blankExpr}) <> '')`
+          : `(${blankExpr} IS NULL OR TRIM(${blankExpr}) = '')`,
+      );
+      continue;
+    }
+
     const op = FILTER_OPS[filter.op];
     if (!op) {
       throw new Error(
