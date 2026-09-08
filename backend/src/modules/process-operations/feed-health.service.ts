@@ -108,6 +108,18 @@ export interface NeverReportedGroup {
   processCount: number;
   /** Up to 8 real names for a reader to recognise; not every process when there are many. */
   processNames: string[];
+  /**
+   * Set when an active `upload_template_master` row already targets this exact
+   * source table — i.e. a manual path to fill this gap exists today and needs
+   * nobody to write code, only to use it. null means genuinely no path exists yet.
+   * Found by checking, not assumed: process_delivery_actual has a writer
+   * (bulk-upload/process-delivery-bulk.service.ts), a mounted route, and an
+   * active template ("Process Delivery Actuals") — its zero rows are a usage
+   * gap, not a missing pipeline, and this field is what makes that distinction
+   * visible instead of another guess.
+   */
+  uploadTypeCode: string | null;
+  uploadTypeName: string | null;
 }
 
 /**
@@ -117,10 +129,19 @@ export interface NeverReportedGroup {
  * process_metric_actual. getFeedHealth's query is `FROM process_metric_actual
  * ... GROUP BY`, which structurally cannot see a pair with zero rows — a feed
  * that never started is invisible to a monitor built to catch a feed that
- * stopped. Found by checking, not assumed: 162 such pairs exist right now,
+ * stopped. Found by checking, not assumed: 163 such pairs exist right now,
  * 116 of them (PROCESS_DELIVERED_UNITS / PROCESS_DELIVERY_QUALITY, on nearly
  * every process) pointing at process_delivery_actual, which has zero rows at
- * all — not a per-process gap, a table nothing has ever written to.
+ * all.
+ *
+ * That one is a usage gap, not a missing pipeline — checked past the first
+ * guess: process_delivery_actual already has a writer
+ * (bulk-upload/process-delivery-bulk.service.ts), a mounted import route, and
+ * an active upload template ("Process Delivery Actuals (planned vs
+ * delivered)", target_table = process_delivery_actual). Godfrey Philips' WFM
+ * team just hasn't uploaded their "Order vs Delivery" sheet through it yet.
+ * uploadTypeName below carries that distinction into the UI so a reader isn't
+ * told to go build something that already exists.
  *
  * Grouped by (metric, source) rather than listed per process: the 116 above
  * are one root cause wearing 116 faces, and a reader needs to see that once,
@@ -129,11 +150,14 @@ export interface NeverReportedGroup {
 export async function getNeverReported(allowedProcessIds: Set<string>): Promise<NeverReportedGroup[]> {
   if (!allowedProcessIds.size) return [];
   const [rows] = await retryOnLock(() => db.execute<RowDataPacket[]>(
-    `SELECT d.process_id, p.process_name, m.metric_code, m.metric_name, ds.source_object
+    `SELECT d.process_id, p.process_name, m.metric_code, m.metric_name, ds.source_object,
+            t.upload_type_code, t.upload_type_name
        FROM kpi_studio_definition d
        JOIN kpi_metric_master m ON m.id = d.metric_id
        JOIN process_master p ON p.id = d.process_id AND p.active_status = 1
        JOIN kpi_studio_data_source ds ON ds.id = d.data_source_id
+       LEFT JOIN upload_template_master t
+              ON t.target_table = ds.source_object AND t.active_status = 1
       WHERE d.active_status = 1
         AND NOT EXISTS (
           SELECT 1 FROM process_metric_actual a
@@ -152,6 +176,8 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
       sourceObject: String(r.source_object),
       processCount: 0,
       processNames: [],
+      uploadTypeCode: r.upload_type_code ? String(r.upload_type_code) : null,
+      uploadTypeName: r.upload_type_name ? String(r.upload_type_name) : null,
     };
     g.processCount++;
     if (g.processNames.length < 8) g.processNames.push(String(r.process_name));
