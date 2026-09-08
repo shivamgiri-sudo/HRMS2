@@ -235,6 +235,7 @@ import { processPerformanceRouter } from "./modules/process-performance/process-
 import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
 import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
+import { processOperationsRouter } from "./modules/process-operations/process-operations.routes.js";
 import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-process-dashboard.routes.js";
 import { salaryRevisionRouter } from "./modules/salary-revision/salary-revision.routes.js";
 import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes.js";
@@ -759,6 +760,7 @@ app.use("/api/process-performance", processPerformanceRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
 app.use("/api/process-data-source", processDataSourceRouter);
 app.use("/api/dashboard-builder", dashboardBuilderRouter);
+app.use("/api/process-operations", processOperationsRouter);
 app.use("/api/onfido-process", onfidoProcessDashboardRouter);
 app.use("/api/salary-revision", salaryRevisionRouter);
 app.use("/api/salary-change", salaryChangeRouter);
