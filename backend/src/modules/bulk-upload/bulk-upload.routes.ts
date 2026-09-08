@@ -295,6 +295,8 @@ const KNOWN_IMPORT_RPCS = new Set([
   // cart leads, cancellations/RTO, call detail and inbound SLA are all NOT
   // here: db_masmis and dialer_db already hold them. See bella-report-configs.ts.
   "import_bella_target_plan_batch",
+  // Floor compliance audit - a Google Form export; see compliance-audit-bulk.service.ts.
+  "import_compliance_audit_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -670,6 +672,14 @@ async function dispatchImport(
       throw new Error(`No Onfido report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importOnfidoRawBatch(config, id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_compliance_audit_batch") {
+    const { importComplianceAuditBatch } = await import(
+      "../bulk-upload/compliance-audit-bulk.service.js"
+    );
+    const data = await importComplianceAuditBatch(id, userId);
     return { success: true, data };
   }
 
