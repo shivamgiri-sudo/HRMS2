@@ -331,8 +331,11 @@ export const leaveService = {
       const isFemaleOnly = leaveCode === "MTRL";
       const isMaleOnly = leaveCode === "PL" || leaveCode === "PTRL";
       if ((isFemaleOnly && !isFemale) || (isMaleOnly && !isMale)) {
-        throw new Error(
-          `This leave type is not available for your profile. Please contact HR if you believe this is incorrect.`
+        throw Object.assign(
+          new Error(
+            `This leave type is not available for your profile. Please contact HR if you believe this is incorrect.`
+          ),
+          { statusCode: 400 },
         );
       }
     }
@@ -367,8 +370,11 @@ export const leaveService = {
     if (leaveCode === 'CL' || leaveCode === 'ML') {
       // More than 2 continuous days must be applied as EL
       if (effectiveDayCount > 2) {
-        throw new Error(
-          `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`
+        throw Object.assign(
+          new Error(
+            `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`
+          ),
+          { statusCode: 400 },
         );
       }
 
@@ -377,9 +383,12 @@ export const leaveService = {
         input.employeeId, input.fromDate, input.toDate, effectiveDayCount
       );
       if (capCheck.exceeded) {
-        throw new Error(
-          `Monthly leave limit reached for ${capCheck.monthBreached}. ` +
-          `You have already used ${capCheck.usedDays} of ${capCheck.cap} allowed CL/ML days this month.`
+        throw Object.assign(
+          new Error(
+            `Monthly leave limit reached for ${capCheck.monthBreached}. ` +
+            `You have already used ${capCheck.usedDays} of ${capCheck.cap} allowed CL/ML days this month.`
+          ),
+          { statusCode: 400 },
         );
       }
     }
@@ -391,8 +400,11 @@ export const leaveService = {
       // Single-application cap: max 12 days
       const singleGo = leavePolicyService.checkELSingleGoCap(effectiveDayCount);
       if (singleGo.exceeded) {
-        throw new Error(
-          `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`
+        throw Object.assign(
+          new Error(
+            `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`
+          ),
+          { statusCode: 400 },
         );
       }
 
@@ -401,8 +413,11 @@ export const leaveService = {
         input.employeeId, input.fromDate, input.toDate
       );
       if (sameMonth.hasConflict) {
-        throw new Error(
-          `You already have an Earned Leave request in ${sameMonth.conflictMonth}. Only one EL application per calendar month is allowed.`
+        throw Object.assign(
+          new Error(
+            `You already have an Earned Leave request in ${sameMonth.conflictMonth}. Only one EL application per calendar month is allowed.`
+          ),
+          { statusCode: 400 },
         );
       }
 
@@ -433,7 +448,10 @@ export const leaveService = {
     try {
       const [lockRows] = await lockConn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]);
       if (Number((lockRows as any)?.[0]?.acquired) !== 1) {
-        throw new Error("Another leave submission for this employee is already in progress. Please try again.");
+        throw Object.assign(
+          new Error("Another leave submission for this employee is already in progress. Please try again."),
+          { statusCode: 409 },
+        );
       }
       try {
         const [overlapRows] = await lockConn.execute(
@@ -446,9 +464,12 @@ export const leaveService = {
           [input.employeeId, input.toDate, input.fromDate]
         );
         if ((overlapRows as RowDataPacket[]).length > 0) {
-          throw new Error(
-            `A leave request already exists for one or more dates in the range ` +
-            `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`
+          throw Object.assign(
+            new Error(
+              `A leave request already exists for one or more dates in the range ` +
+              `${input.fromDate} – ${input.toDate}. Cancel the existing request before applying again.`
+            ),
+            { statusCode: 409 },
           );
         }
 
@@ -686,8 +707,11 @@ export const leaveService = {
           [request.employee_id, id, request.to_date, request.from_date]
         );
         if ((approvalOverlapRows as RowDataPacket[]).length > 0) {
-          throw new Error(
-            `Cannot approve — this employee already has an approved leave request overlapping ${request.from_date} – ${request.to_date}.`
+          throw Object.assign(
+            new Error(
+              `Cannot approve — this employee already has an approved leave request overlapping ${request.from_date} – ${request.to_date}.`
+            ),
+            { statusCode: 409 },
           );
         }
 
@@ -773,6 +797,35 @@ export const leaveService = {
         for (const [year, datesInYear] of byYear) {
           const daysNeeded = isHalfDayRequest ? 0.5 : datesInYear.length;
 
+          // A leave dated in a calendar year whose balances have not been opened yet
+          // deducts against nothing. readBalance's "missing row is permissive" fallback
+          // below is meant for an administrative gap in a year that EXISTS (HR hasn't
+          // seeded one type for one employee) — not for a year that has no ledger rows at
+          // all. leave_balance_ledger holds nothing for a future year until the monthly
+          // credit worker first runs in that January, so approving a next-January leave in
+          // December created a fresh row with allocated_days = 0 and charged the days
+          // against an allowance that was never granted, bounded only by the annual cap.
+          // Scoped to a year LATER than the current one so current-year gaps keep behaving
+          // exactly as before. The year comparison is the DB's own CURDATE(), not a JS Date
+          // in this process — a host-timezone Date read as UTC has shifted the day here
+          // before. (2026-09-08)
+          const [yearGuardRows] = await conn.execute(
+            `SELECT (? > YEAR(CURDATE())) AS is_future_year,
+                    EXISTS(SELECT 1 FROM leave_balance_ledger
+                            WHERE employee_id = ? AND balance_year = ?) AS has_any_row`,
+            [year, employeeId, year]
+          );
+          const yearGuard = (yearGuardRows as RowDataPacket[])[0] as any;
+          if (Number(yearGuard?.is_future_year) === 1 && Number(yearGuard?.has_any_row) === 0) {
+            throw Object.assign(
+              new Error(
+                `Leave balances for ${year} have not been opened yet, so this request cannot ` +
+                `be approved against them. Approve it once ${year} balances are credited.`
+              ),
+              { statusCode: 400 },
+            );
+          }
+
           const primary = await readBalance(conn, employeeId, leaveTypeId, year);
           // No ledger row yet for the DIRECTLY REQUESTED type (e.g. HR hasn't
           // run balance-seeding for this employee/type/year) is treated
@@ -811,9 +864,12 @@ export const leaveService = {
             const split = pooled
               ? ` (${primary.usedDays} ${leaveCode} + ${partner!.usedDays} ${partnerCode})`
               : "";
-            throw new Error(
-              `Approving this request would exceed the annual limit of ${capTotal} day(s) ` +
-              `for ${scope} in ${year}. Already used: ${usedTotal}${split}, requested: ${daysNeeded}.`
+            throw Object.assign(
+              new Error(
+                `Approving this request would exceed the annual limit of ${capTotal} day(s) ` +
+                `for ${scope} in ${year}. Already used: ${usedTotal}${split}, requested: ${daysNeeded}.`
+              ),
+              { statusCode: 400 },
             );
           }
 
@@ -838,8 +894,11 @@ export const leaveService = {
             const poolNote = pooled
               ? ` (pooled with ${partnerCode}: ${primary.available} ${leaveCode} + ${partner!.available} ${partnerCode})`
               : "";
-            throw new Error(
-              `Insufficient leave balance for ${year}. Available: ${primary.available + fromPartner}${poolNote}, Requested: ${daysNeeded}.`
+            throw Object.assign(
+              new Error(
+                `Insufficient leave balance for ${year}. Available: ${primary.available + fromPartner}${poolNote}, Requested: ${daysNeeded}.`
+              ),
+              { statusCode: 400 },
             );
           }
 
