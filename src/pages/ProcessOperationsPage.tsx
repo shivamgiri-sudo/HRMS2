@@ -117,6 +117,7 @@ function formatPeriodRange(from: string | null, to: string | null): string | nul
 interface Drilldown {
   metricKey: string; metricName: string; unit: string | null; direction: string | null;
   processId: string; processName: string;
+  period: ReportPeriod; periodFrom: string | null; periodTo: string | null;
   definition: {
     id: string | null; formula: string | null; grain: string | null;
     effectiveFrom: string | null; effectiveTo: string | null; targetValue: number | null;
@@ -495,13 +496,13 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
  * The drill-down drawer: the formula, the source it reads, the filter on every
  * field, and each daily reading with the parts it divided.
  */
-function DrilldownDrawer({ processId, metricKey, onClose }: {
-  processId: string; metricKey: string | null; onClose: () => void;
+function DrilldownDrawer({ processId, metricKey, period, onClose }: {
+  processId: string; metricKey: string | null; period: ReportPeriod; onClose: () => void;
 }) {
   const { data, isLoading } = useQuery({
-    queryKey: ["process-operations", "drilldown", processId, metricKey],
+    queryKey: ["process-operations", "drilldown", processId, metricKey, period],
     queryFn: () => hrmsApi.get<HrmsEnvelope<Drilldown>>(
-      `/api/process-operations/${processId}/metric/${metricKey}`),
+      `/api/process-operations/${processId}/metric/${metricKey}?period=${period}`),
     enabled: Boolean(metricKey),
   });
   const d = data?.data;
@@ -530,6 +531,9 @@ function DrilldownDrawer({ processId, metricKey, onClose }: {
             <p className="text-[10px] text-indigo-200 mt-0.5">
               {d?.processName ?? ""}{d?.unit ? ` · ${d.unit}` : ""}
               {d?.direction ? ` · ${d.direction.replace("_", " ")}` : ""}
+              {d && d.period !== "trend" && formatPeriodRange(d.periodFrom, d.periodTo)
+                ? ` · ${PERIODS.find((p) => p.key === d.period)?.label ?? d.period} (${formatPeriodRange(d.periodFrom, d.periodTo)})`
+                : ""}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close"
@@ -1036,7 +1040,7 @@ export default function ProcessOperationsPage() {
         )}
 
         {current && (
-          <DrilldownDrawer processId={current} metricKey={drill} onClose={() => setDrill(null)} />
+          <DrilldownDrawer processId={current} metricKey={drill} period={period} onClose={() => setDrill(null)} />
         )}
         <ManualEntryDrawer
           open={manualEntryOpen}

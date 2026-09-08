@@ -484,6 +484,10 @@ export interface MetricDrilldown {
   direction: string | null;
   processId: string;
   processName: string;
+  /** Which period the readings below are trimmed to. "trend" carries a rolling window, not a calendar range. */
+  period: ReportPeriod;
+  periodFrom: string | null;
+  periodTo: string | null;
   definition: {
     id: string | null;
     formula: string | null;
@@ -519,9 +523,18 @@ export interface MetricDrilldown {
 
 export async function getMetricDrilldown(
   userId: string, processId: string, metricKey: string, windowDays = 30,
+  period: ReportPeriod = "trend",
 ): Promise<MetricDrilldown | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
+
+  // A period other than the plain trend fetches the wider window a
+  // WTD/MTD range plus its comparison period needs, THEN trims the returned
+  // readings to the exact range the card above is showing -- so opening a
+  // drill-down while "MTD" is selected shows the same days MTD summed, not an
+  // unrelated 30-day window that happens to overlap it.
+  const range = periodRange(period, new Date());
+  const effectiveWindowDays = range ? 66 : windowDays;
 
   const [procRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, process_name FROM process_master WHERE id = ? LIMIT 1`, [processId],
@@ -588,13 +601,24 @@ export async function getMetricDrilldown(
        FROM process_metric_actual
       WHERE process_id = ? AND metric_key = ?
         AND score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-      ORDER BY score_date DESC`, [processId, metricKey, windowDays],
+      ORDER BY score_date DESC`, [processId, metricKey, effectiveWindowDays],
   );
 
   // Nothing known about it and nothing ever recorded: this metric does not exist
   // for this process, and an empty shell returned as 200 would look like a metric
   // that simply has no data yet.
   if (!metric && !def && !(readingRows as any[]).length) return null;
+
+  // Trim to the exact range the card above summed, once a period beyond plain
+  // trend is asked for -- otherwise a drawer opened while "MTD" is selected
+  // shows an unrelated 66-day fetch window instead of the days MTD actually
+  // covers.
+  const readingsInRange = range
+    ? (readingRows as any[]).filter((r) => {
+        const d = isoDate(r.score_date);
+        return d >= range.from && d <= range.to;
+      })
+    : (readingRows as any[]);
 
   return {
     metricKey,
@@ -603,6 +627,9 @@ export async function getMetricDrilldown(
     direction: metric?.direction ?? null,
     processId,
     processName: String(proc.process_name),
+    period,
+    periodFrom: range?.from ?? null,
+    periodTo: range?.to ?? null,
     definition: def ? {
       id: String(def.id),
       formula: def.formula_expression ?? null,
@@ -616,7 +643,7 @@ export async function getMetricDrilldown(
     } : null,
     source,
     fields,
-    readings: (readingRows as any[]).map((r) => ({
+    readings: readingsInRange.map((r) => ({
       date: isoDate(r.score_date),
       value: r.actual_value === null ? null : Number(r.actual_value),
       numerator: unscaleNumerator(
