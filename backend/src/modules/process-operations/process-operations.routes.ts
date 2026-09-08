@@ -60,6 +60,31 @@ router.get("/:processId/metric/:metricKey", requireAuth, requireRole(...VIEWER_R
   res.json({ success: true, data });
 }));
 
+/**
+ * The last drill-down level: the individual rows behind one day's number.
+ * Four path segments, so it is never shadowed by /:processId/metric/:metricKey
+ * above regardless of declaration order — Express matches by segment count —
+ * but declared right after its two-segment sibling for the same readability
+ * reason that comment gives.
+ */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+router.get("/:processId/metric/:metricKey/raw", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const date = String(req.query.date ?? "");
+  if (!ISO_DATE.test(date)) {
+    return res.status(400).json({
+      success: false, code: "BAD_DATE", message: "?date=YYYY-MM-DD is required.",
+    });
+  }
+  const data = await svc.getMetricRawRows(req.authUser!.id, req.params.processId, req.params.metricKey, date);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process or metric, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
 const REPORT_PERIODS = new Set(["trend", "today", "wtd", "mtd"]);
 
 router.get("/:processId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {

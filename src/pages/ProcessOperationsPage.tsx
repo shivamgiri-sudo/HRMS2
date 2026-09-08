@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { Fragment, useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -6,8 +6,8 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Clock, Database, Filter,
-  Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles, Target,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Clock, Database,
+  Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles, Target,
   Users, Users2, X,
 } from "lucide-react";
 import {
@@ -82,6 +82,12 @@ interface FeedHealth {
   counts: { ok: number; slowing: number; stopped: number }; feeds: FeedRow[];
 }
 interface CatalogMetric { metricCode: string; metricName: string; unit: string | null; direction: string | null }
+interface RawRows {
+  date: string; available: boolean; reason: string | null;
+  sourceCode: string | null; sourceObject: string | null;
+  totalRows: number | null; truncated: boolean;
+  columns: string[]; rows: Array<Record<string, unknown>>;
+}
 type ReportPeriod = "trend" | "today" | "wtd" | "mtd";
 interface Operations {
   processId: string; processName: string; headcount: number;
@@ -417,6 +423,74 @@ function RiskBars({ metrics }: { metrics: Reading[] }) {
   );
 }
 
+/** A raw column value, formatted for reading rather than left as whatever mysql2 handed back. */
+function formatCellValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return v.toLocaleString();
+  return String(v);
+}
+
+/**
+ * The last drill-down level: the individual rows behind ONE day's number,
+ * expanded inline under that day's row. Not a new query — the same source and
+ * filters that computed the aggregate, just unaggregated, so a viewer sees
+ * exactly what was summed rather than a plausible-looking lookalike.
+ */
+function RawRowsPanel({ processId, metricKey, date, columnCount }: {
+  processId: string; metricKey: string; date: string; columnCount: number;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "raw-rows", processId, metricKey, date],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<RawRows>>(
+      `/api/process-operations/${processId}/metric/${metricKey}/raw?date=${date}`),
+  });
+  const r = data?.data;
+  return (
+    <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
+      <td colSpan={columnCount} className="px-2 py-2">
+        {isLoading || !r ? (
+          <div className="flex items-center gap-2 text-[11px] text-slate-500 py-1">
+            <Loader2 className="h-3 w-3 animate-spin" />Loading the individual records…
+          </div>
+        ) : !r.available ? (
+          <p className="text-[11px] text-slate-400 italic py-1">{r.reason ?? "No underlying records to show."}</p>
+        ) : r.rows.length === 0 ? (
+          <p className="text-[11px] text-slate-400 italic py-1">
+            The source was read for this day and returned zero rows — not that a number was zero.
+          </p>
+        ) : (
+          <div>
+            <p className="text-[10px] text-slate-500 mb-1.5">
+              {r.sourceObject} · {r.totalRows?.toLocaleString()} row{r.totalRows === 1 ? "" : "s"}
+              {r.truncated ? ` · showing first ${r.rows.length.toLocaleString()}` : ""}
+            </p>
+            <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800 max-h-56 overflow-y-auto">
+              <table className="w-full text-[10px]">
+                <thead className="bg-white dark:bg-slate-900 text-slate-400 sticky top-0">
+                  <tr>{r.columns.map((c) => (
+                    <th key={c} className="text-left px-2 py-1 font-semibold font-mono">{c}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {r.rows.map((row, i) => (
+                    <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                      {r.columns.map((c) => (
+                        <td key={c} className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                          {formatCellValue(row[c])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 /**
  * The drill-down drawer: the formula, the source it reads, the filter on every
  * field, and each daily reading with the parts it divided.
@@ -431,6 +505,13 @@ function DrilldownDrawer({ processId, metricKey, onClose }: {
     enabled: Boolean(metricKey),
   });
   const d = data?.data;
+  // Keyed by metricKey so switching metrics starts with nothing expanded —
+  // without this, a stale expansion from the last metric viewed would linger
+  // under a row of a completely different one.
+  const [expandedFor, setExpandedFor] = useState<{ metricKey: string | null; date: string } | null>(null);
+  const expandedDate = expandedFor?.metricKey === metricKey ? expandedFor.date : null;
+  const toggleExpanded = (date: string) => setExpandedFor((prev) =>
+    prev?.metricKey === metricKey && prev.date === date ? null : { metricKey, date });
   const Label = ({ children }: { children: React.ReactNode }) => (
     <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">{children}</div>
   );
@@ -525,9 +606,9 @@ function DrilldownDrawer({ processId, metricKey, onClose }: {
             </section>
 
             <section>
-              <Label>Every reading, newest first</Label>
+              <Label>Every reading, newest first — click a day for the individual records behind it</Label>
               {d.readings.length ? (
-                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-80 overflow-y-auto">
+                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-96 overflow-y-auto">
                   <table className="w-full text-[11px]">
                     <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 sticky top-0">
                       <tr>
@@ -539,19 +620,32 @@ function DrilldownDrawer({ processId, metricKey, onClose }: {
                     </thead>
                     <tbody>
                       {d.readings.map((x) => (
-                        <tr key={x.date} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">{x.date}</td>
-                          <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${
-                            x.value === null ? "text-slate-400 italic font-normal" : "text-slate-900 dark:text-slate-100"}`}>
-                            {x.value === null ? "no data" : formatValue(x.value, d.unit)}
-                          </td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
-                            {x.numerator === null ? "—" : Math.round(x.numerator).toLocaleString()}
-                          </td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
-                            {x.denominator === null ? "—" : Math.round(x.denominator).toLocaleString()}
-                          </td>
-                        </tr>
+                        <Fragment key={x.date}>
+                          <tr onClick={() => toggleExpanded(x.date)}
+                            aria-expanded={expandedDate === x.date}
+                            title="Show the individual records behind this day"
+                            className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                              expandedDate === x.date ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
+                            <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                              <ChevronRight size={11}
+                                className={`shrink-0 text-slate-400 transition-transform ${expandedDate === x.date ? "rotate-90" : ""}`} />
+                              {x.date}
+                            </td>
+                            <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${
+                              x.value === null ? "text-slate-400 italic font-normal" : "text-slate-900 dark:text-slate-100"}`}>
+                              {x.value === null ? "no data" : formatValue(x.value, d.unit)}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                              {x.numerator === null ? "—" : Math.round(x.numerator).toLocaleString()}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                              {x.denominator === null ? "—" : Math.round(x.denominator).toLocaleString()}
+                            </td>
+                          </tr>
+                          {expandedDate === x.date && metricKey && (
+                            <RawRowsPanel processId={processId} metricKey={metricKey} date={x.date} columnCount={4} />
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>

@@ -1,6 +1,8 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
+import { dateExpression } from "../kpi/kpi-studio.sources.js";
 
 /**
  * Process Operations — every metric a process actually has, in one read.
@@ -623,4 +625,161 @@ export async function getMetricDrilldown(
       note: r.note ?? null,
     })),
   };
+}
+
+export interface MetricRawRows {
+  date: string;
+  /** false means there is nowhere to trace this day's number back to — never an empty result standing in for that. */
+  available: boolean;
+  reason: string | null;
+  sourceCode: string | null;
+  sourceObject: string | null;
+  /** How many rows actually matched, even when more than `rows` were returned. Null when unknown. */
+  totalRows: number | null;
+  truncated: boolean;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+}
+
+const RAW_ROWS_LIMIT = 200;
+
+/**
+ * The individual rows behind one day's number — the last level the Drill-Down
+ * Mandate asks for. Not a new query invented for this view: the same source
+ * (kpi_studio_data_source), the same date/process-key filtering
+ * getMetricDrilldown already resolves and buildProcessQueryPlan in
+ * kpi-studio.sources.ts already uses to COMPUTE the aggregate, just without the
+ * GROUP BY and the aggregate functions — so what this returns is provably the
+ * rows that were summed into the number on the tile, not a lookalike query.
+ *
+ * A metric with no configured source (most manual entries, the workforce
+ * metrics derived from employees/attendance directly rather than a registered
+ * source) returns available:false with a real reason — never a fabricated or
+ * silently empty row list standing in for "nothing to show".
+ */
+export async function getMetricRawRows(
+  userId: string, processId: string, metricKey: string, date: string,
+): Promise<MetricRawRows | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const [defRows] = await db.execute<RowDataPacket[]>(
+    `SELECT d.data_source_id
+       FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+      WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
+      ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
+      LIMIT 1`, [metricKey, processId],
+  );
+  const def = (defRows as any[])[0] ?? null;
+  const noSource = (reason: string, sourceCode: string | null = null): MetricRawRows => ({
+    date, available: false, reason, sourceCode, sourceObject: null,
+    totalRows: null, truncated: false, columns: [], rows: [],
+  });
+  if (!def?.data_source_id) {
+    return noSource("This metric has no configured data source to trace individual records back to.");
+  }
+
+  const [srcRows] = await db.execute<RowDataPacket[]>(
+    `SELECT source_code, source_object, date_column, date_format,
+            process_key_kind, process_key_column, process_key_value,
+            employee_key_column, employee_key_kind
+       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [def.data_source_id],
+  );
+  const src = (srcRows as any[])[0] ?? null;
+  if (!src?.source_object || !src?.date_column) {
+    return noSource(
+      "The data source behind this metric has no table or date column configured.",
+      src?.source_code ?? null,
+    );
+  }
+
+  const [fieldRows] = await db.execute<RowDataPacket[]>(
+    `SELECT source_column, filter_json FROM kpi_studio_source_field
+      WHERE data_source_id = ? AND active_status = 1 AND source_column IS NOT NULL
+      ORDER BY field_name`, [def.data_source_id],
+  );
+  const columnSet = new Set<string>();
+  for (const f of fieldRows as any[]) {
+    if (f.source_column) columnSet.add(String(f.source_column));
+    // A field's own displayed column is only half its logic -- "offered" is
+    // call_date filtered by offer_success = 1, and without offer_success in the
+    // row set a viewer can see the count but not WHY each row did or didn't
+    // count. Every column a filter references is surfaced for the same reason
+    // the field itself is: this is meant to be the full working, not a summary.
+    try {
+      const raw = f.filter_json;
+      const parsed = raw == null ? [] : Array.isArray(raw) ? raw : JSON.parse(String(raw));
+      for (const cond of Array.isArray(parsed) ? parsed : []) {
+        if (cond && typeof cond.column === "string") columnSet.add(cond.column);
+      }
+    } catch { /* an unreadable filter just contributes no extra column */ }
+  }
+  const columns = [...columnSet];
+  if (!columns.length) {
+    return noSource(
+      "This data source has no plain columns to show — every field here is a computed expression, not a stored one.",
+      String(src.source_code),
+    );
+  }
+
+  try {
+    const table = assertSafeIdentifier(src.source_object, "source table");
+    const dateColumn = assertSafeIdentifier(src.date_column, "date column");
+    const kind = src.process_key_kind ?? "none";
+    const joinsEmployees = kind === "employee";
+    const q = joinsEmployees ? "s." : "";
+    const dateExpr = dateExpression(dateColumn, src.date_format, q);
+    const quotedTable = table.split(".").map((p) => `\`${p}\``).join(".");
+
+    const where = [`${dateExpr} >= ?`, `${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)`];
+    const params: unknown[] = [date, date];
+
+    if (kind === "column") {
+      if (!src.process_key_column) throw new Error("this source maps by column but names none");
+      const keyColumn = assertSafeIdentifier(src.process_key_column, "process key column");
+      where.push(`${q}\`${keyColumn}\` = ?`);
+      params.push(src.process_key_value ?? "");
+    }
+
+    let join = "";
+    if (joinsEmployees) {
+      if (!src.employee_key_column) throw new Error("this source looks the process up from the employee but names no employee column");
+      const employeeColumn = assertSafeIdentifier(src.employee_key_column, "employee key column");
+      const employeeSide = src.employee_key_kind === "employee_id" ? "id" : "employee_code";
+      join = `JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\``;
+      where.push("e.process_id = ?");
+      params.push(processId);
+    }
+
+    const safeColumns = columns.map((c) => assertSafeIdentifier(c, "source column"));
+    const selectCols = safeColumns.map((c) => `${q}\`${c}\` AS \`${c}\``).join(", ");
+    const fromClause = `FROM ${quotedTable}${joinsEmployees ? " s" : ""} ${join}`;
+    const whereClause = `WHERE ${where.join(" AND ")}`;
+
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n ${fromClause} ${whereClause}`, params,
+    );
+    const totalRows = Number((countRows as any[])[0]?.n ?? 0);
+
+    const [dataRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${selectCols} ${fromClause} ${whereClause} LIMIT ${RAW_ROWS_LIMIT}`, params,
+    );
+
+    return {
+      date, available: true, reason: null,
+      sourceCode: String(src.source_code), sourceObject: String(src.source_object),
+      totalRows, truncated: totalRows > (dataRows as any[]).length,
+      columns: safeColumns,
+      rows: (dataRows as any[]).map((r) => ({ ...r })),
+    };
+  } catch (err) {
+    return {
+      date, available: false,
+      reason: `Could not read individual records: ${(err as Error).message}`,
+      sourceCode: String(src.source_code), sourceObject: String(src.source_object),
+      totalRows: null, truncated: false, columns: [], rows: [],
+    };
+  }
 }
