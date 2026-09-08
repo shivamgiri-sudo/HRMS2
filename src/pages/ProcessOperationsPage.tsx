@@ -70,6 +70,8 @@ interface Reading {
   provisional: boolean; priorValue: number | null; targetValue: number | null;
   trend: Array<{ date: string; value: number | null; numerator: number | null; denominator: number | null }>;
   numerator: number | null; denominator: number | null;
+  /** 'manual' when the latest reading was hand-entered, 'connector' when a real pipeline wrote it. */
+  source: string | null;
 }
 interface Section { key: string; title: string; blurb: string | null; metrics: Reading[] }
 interface FeedRow {
@@ -284,6 +286,12 @@ function KpiCard({ r, staleAfter, accent, tint, period, onOpen }: {
             {r.label}
           </p>
           <div className="ml-auto flex shrink-0 gap-1">
+            {r.source === "manual" && (
+              <span title="This reading was typed in by hand, not written by an automated feed"
+                className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-purple-700">
+                <PenLine className="h-2 w-2" />manual
+              </span>
+            )}
             {r.provisional && (
               <span title="Today is still in progress — this will move as the day fills in"
                 className="rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-blue-700">today</span>

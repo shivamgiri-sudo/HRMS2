@@ -80,6 +80,14 @@ export interface MetricReading {
   /** Parts behind a ratio, when the compute stored them. */
   numerator: number | null;
   denominator: number | null;
+  /**
+   * Where the LATEST reading came from -- 'connector' (a real pipeline wrote
+   * it, whether an external feed or HRMS's own attendance/roster compute) or
+   * 'manual' (a person typed it in through the Add-a-reading drawer). Null
+   * only when there is no reading at all. Surfaced so a "manual" badge on a
+   * tile is an honest fact about that specific number, not a guess.
+   */
+  source: string | null;
 }
 
 export interface MetricSection {
@@ -218,16 +226,47 @@ export async function listProcesses(userId: string, windowDays = 45) {
       ORDER BY metrics DESC, p.process_name`,
     [windowDays],
   );
+
+  // Of those same metric_keys, how many have at least one reading a real
+  // pipeline actually wrote (source='connector') versus every reading being
+  // hand-typed (source='manual'). This is the table's own authoritative
+  // signal for "automated" -- NOT whether a kpi_studio_definition exists:
+  // that join was tried first and found EVERY active definition (832/832)
+  // carries a data_source_id, including the workforce metrics computed from
+  // attendance/roster tables, which are genuinely automated too. source is
+  // what actually distinguishes a hand-entered figure from a computed one.
+  const [autoRows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_id, COUNT(DISTINCT metric_key) automated
+       FROM process_metric_actual
+      WHERE actual_value IS NOT NULL
+        AND score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND source = 'connector'
+      GROUP BY process_id`,
+    [windowDays],
+  );
+  const automatedByProcess = new Map<string, number>(
+    (autoRows as any[]).map((r) => [String(r.process_id), Number(r.automated)]),
+  );
+
   return (rows as any[])
     .filter((r) => allowed.has(String(r.process_id)))
-    .map((r) => ({
-      processId: String(r.process_id),
-      processName: String(r.process_name),
-      metrics: Number(r.metrics),
-      headcount: Number(r.headcount),
-      latestDate: r.latest ? isoDate(r.latest) : null,
-      staleDays: r.latest ? daysSince(isoDate(r.latest)) : null,
-    }));
+    .map((r) => {
+      const metrics = Number(r.metrics);
+      const automatedMetrics = automatedByProcess.get(String(r.process_id)) ?? 0;
+      return {
+        processId: String(r.process_id),
+        processName: String(r.process_name),
+        metrics,
+        // Never a negative: a metric can be BOTH automated (a source exists)
+        // and manually corrected on some days, so "automated" is not a strict
+        // subset by construction -- clamp rather than show a confusing -1.
+        automatedMetrics,
+        manualOnlyMetrics: Math.max(0, metrics - automatedMetrics),
+        headcount: Number(r.headcount),
+        latestDate: r.latest ? isoDate(r.latest) : null,
+        staleDays: r.latest ? daysSince(isoDate(r.latest)) : null,
+      };
+    });
 }
 
 export type ReportPeriod = "trend" | "today" | "wtd" | "mtd";
@@ -349,7 +388,7 @@ export async function getProcessOperations(
   // Every reading in the window, with its parts. Ordered so the trend is already
   // chronological and the last row of each metric is its latest.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.metric_key, a.score_date, a.actual_value, a.rollup_numerator, a.rollup_denominator,
+    `SELECT a.metric_key, a.score_date, a.actual_value, a.rollup_numerator, a.rollup_denominator, a.source,
             m.metric_name, m.unit, m.direction
        FROM process_metric_actual a
        LEFT JOIN kpi_metric_master m ON m.metric_code = a.metric_key
@@ -383,7 +422,7 @@ export async function getProcessOperations(
         direction: r.direction ? String(r.direction) : null,
         value: null, staleDays: null, latestDate: null, provisional: false,
         priorValue: null, targetValue: targets.get(key) ?? null, trend: [],
-        numerator: null, denominator: null,
+        numerator: null, denominator: null, source: null,
       });
     }
     const m = byMetric.get(key)!;
@@ -401,6 +440,7 @@ export async function getProcessOperations(
       m.latestDate = date;
       m.numerator = dayNumerator;
       m.denominator = dayDenominator;
+      m.source = r.source ? String(r.source) : null;
     }
   }
   const todayIso = isoDate(new Date());
