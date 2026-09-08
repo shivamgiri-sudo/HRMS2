@@ -54,6 +54,10 @@ describe("fetchProcessMetricValues", () => {
       // No day carried the numbers behind its rate, so this is the mean of the
       // daily values and says so. See the exact-ratio tests below.
       exactRatio: false,
+      // Null, not absent: the reading always reports whether it holds the
+      // counts behind the rate, and these rows carry no rollup parts.
+      ratioNumerator: null,
+      ratioDenominator: null,
     });
   });
 
@@ -114,6 +118,10 @@ describe("metric_code aliases", () => {
       count: 4,
       trend: [{ period: "2026-08", value: 3100 }],
       exactRatio: false,
+      // Null, not absent: the reading always reports whether it holds the
+      // counts behind the rate, and these rows carry no rollup parts.
+      ratioNumerator: null,
+      ratioDenominator: null,
     });
     expect(out.get("GS1_EMAIL_TAT_SEC")).toBeUndefined();
   });

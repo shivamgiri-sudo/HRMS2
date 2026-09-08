@@ -116,7 +116,36 @@ export interface KpiScorecardRow {
   actual: number | null;
   rag: "good" | "warn" | "crit" | null;
   trend: Array<{ period: string; value: number | null }>;
+  /**
+   * The counts the rate was built from, so the UI can print "356 of 363" beside
+   * the 98.1% instead of leaving the reader to guess whether it rests on three
+   * calls or three thousand. Null for a volume metric, and null whenever any day
+   * in the window lacked its parts — the same condition that makes the period
+   * figure a mean of daily rates rather than the period's own ratio.
+   */
+  support?: { numerator: number; denominator: number } | null;
   note?: string;
+}
+
+/**
+ * process_metric_actual stores a ratio's parts already scaled into the metric's
+ * unit, so numerator/denominator reproduces the stored value directly. For a
+ * percentage that means the numerator carries a factor of 100 — Clovia's answer
+ * level is held as 35,600 / 363. The denominator is always the real count; only
+ * the numerator needs undoing, and only for a percentage.
+ */
+export function supportFrom(
+  reading: { ratioNumerator?: number | null; ratioDenominator?: number | null } | undefined,
+  unit: KpiUnit,
+): { numerator: number; denominator: number } | null {
+  const numerator = reading?.ratioNumerator;
+  const denominator = reading?.ratioDenominator;
+  if (numerator == null || denominator == null || denominator === 0) return null;
+  const isPercent = String(unit).startsWith("percent");
+  return {
+    numerator: Math.round(isPercent ? numerator / 100 : numerator),
+    denominator: Math.round(denominator),
+  };
 }
 
 function ragFor(actual: number, target: number, direction: KpiDirection): "good" | "warn" | "crit" {
@@ -413,6 +442,7 @@ async function computeScorecards(
         actual: availability === "ok" ? reading!.value : null,
         rag: availability === "ok" && reading!.value != null ? ragFor(reading!.value, m.target, m.direction) : null,
         trend: reading?.trend ?? [],
+        support: availability === "ok" ? supportFrom(reading, m.unit) : null,
         note: availability === "no_data"
           ? "No figure supplied for this window yet — this metric is filled in from the process's own upload or database connection."
           : undefined,

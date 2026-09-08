@@ -30,6 +30,23 @@ export interface ProcessMetricReading {
    * caller should say which one it is showing.
    */
   exactRatio?: boolean;
+  /**
+   * The two numbers the period's ratio was built from, so a reader can be shown
+   * "356 of 363" rather than a bare "98.1%" and judge whether the rate rests on
+   * enough volume to mean anything.
+   *
+   * Both are SUMmed across the period, and BOTH ARE SCALED INTO THE METRIC UNIT
+   * exactly as process_metric_actual stores them: for a percentage metric the
+   * numerator is already multiplied by 100, so numerator/denominator reproduces
+   * `value` directly. A caller wanting the underlying count must divide the
+   * numerator by 100 for a percentage metric — printing it raw shows 35,600
+   * answered calls out of 363 offered.
+   *
+   * Null when any counted day lacked its parts, which is the same condition that
+   * makes exactRatio false: a partial sum belongs to neither method.
+   */
+  ratioNumerator?: number | null;
+  ratioDenominator?: number | null;
 }
 
 /**
@@ -142,8 +159,12 @@ export async function fetchProcessMetricValues(
         // condition the exact form above requires. Reported so a caller can say
         // which of the two numbers it is showing instead of guessing.
         ? `, CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
-                  THEN 1 ELSE 0 END AS exact_ratio`
-        : ", 0 AS exact_ratio"
+                  THEN 1 ELSE 0 END AS exact_ratio,
+             CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
+                  THEN SUM(rollup_numerator) END AS ratio_numerator,
+             CASE WHEN COUNT(rollup_denominator) = COUNT(actual_value) AND SUM(rollup_denominator) <> 0
+                  THEN SUM(rollup_denominator) END AS ratio_denominator`
+        : ", 0 AS exact_ratio, NULL AS ratio_numerator, NULL AS ratio_denominator"
     }
        FROM process_metric_actual
       WHERE process_id = ?
@@ -184,6 +205,8 @@ export async function fetchProcessMetricValues(
       count: n,
       trend: trendByKey.get(key) ?? [],
       exactRatio: Number(r.exact_ratio ?? 0) === 1,
+      ratioNumerator: r.ratio_numerator == null ? null : Number(r.ratio_numerator),
+      ratioDenominator: r.ratio_denominator == null ? null : Number(r.ratio_denominator),
     });
   }
   return out;
