@@ -64,6 +64,10 @@ const ALL_PAGES = [
   "PROCESS_DATA_SOURCE",
   "KPI_STUDIO",
   "DASHBOARD_BUILDER",
+  // Same gap as the others above, one entry further on: PROCESS_OPERATIONS was
+  // registered in page_catalog by migration 1693 but never added here, so it
+  // was unreachable under any demo login despite being live for real users.
+  "PROCESS_OPERATIONS",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);

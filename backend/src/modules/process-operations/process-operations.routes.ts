@@ -60,12 +60,21 @@ router.get("/:processId/metric/:metricKey", requireAuth, requireRole(...VIEWER_R
   res.json({ success: true, data });
 }));
 
+const REPORT_PERIODS = new Set(["trend", "today", "wtd", "mtd"]);
+
 router.get("/:processId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const days = Number(req.query.days);
   // Clamped rather than trusted: an unbounded window here is a full-table scan
   // per metric, and the page only ever asks for a month.
   const windowDays = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 7), 90) : 30;
-  const data = await svc.getProcessOperations(req.authUser!.id, req.params.processId, windowDays);
+  // A closed set validated against the fixed list the service knows how to
+  // compute, not trusted from the querystring -- an unrecognised value falls
+  // back to the plain trend view rather than reaching the aggregator with a
+  // period it has no boundaries for.
+  const periodParam = String(req.query.period ?? "trend");
+  const period = (REPORT_PERIODS.has(periodParam) ? periodParam : "trend") as
+    "trend" | "today" | "wtd" | "mtd";
+  const data = await svc.getProcessOperations(req.authUser!.id, req.params.processId, windowDays, period);
   if (!data) {
     return res.status(404).json({
       success: false, code: "NOT_FOUND",

@@ -65,8 +65,8 @@ interface ProcessRow {
 interface Reading {
   metricKey: string; label: string; unit: string | null; direction: string | null;
   value: number | null; staleDays: number | null; latestDate: string | null;
-  provisional: boolean; priorValue: number | null;
-  trend: Array<{ date: string; value: number | null }>;
+  provisional: boolean; priorValue: number | null; targetValue: number | null;
+  trend: Array<{ date: string; value: number | null; numerator: number | null; denominator: number | null }>;
   numerator: number | null; denominator: number | null;
 }
 interface Section { key: string; title: string; blurb: string | null; metrics: Reading[] }
@@ -79,10 +79,31 @@ interface FeedHealth {
   checkedAt: string; warnAfterDays: number; stoppedAfterDays: number;
   counts: { ok: number; slowing: number; stopped: number }; feeds: FeedRow[];
 }
+type ReportPeriod = "trend" | "today" | "wtd" | "mtd";
 interface Operations {
   processId: string; processName: string; headcount: number;
   windowDays: number; staleAfterDays: number;
+  period: ReportPeriod; periodFrom: string | null; periodTo: string | null;
   sections: Section[]; ungrouped: Reading[];
+}
+
+const PERIODS: Array<{ key: ReportPeriod; label: string; caption: string }> = [
+  { key: "trend", label: "Trend", caption: "Latest reading, 30-day window" },
+  { key: "today", label: "Today", caption: "Today so far, vs yesterday" },
+  { key: "wtd", label: "WTD", caption: "Week to date (Mon–today), vs the same days last week" },
+  { key: "mtd", label: "MTD", caption: "Month to date (1st–today), vs the same days last month" },
+];
+
+/** "MTD (1–8 Sep)" — a bare code means nothing; the actual calendar range does. */
+function formatPeriodRange(from: string | null, to: string | null): string | null {
+  if (!from || !to) return null;
+  const f = new Date(`${from}T00:00:00`);
+  const t = new Date(`${to}T00:00:00`);
+  const day = (d: Date) => d.getDate();
+  const mon = (d: Date) => d.toLocaleDateString("en-GB", { month: "short" });
+  if (from === to) return `${day(f)} ${mon(f)}`;
+  if (mon(f) === mon(t)) return `${day(f)}–${day(t)} ${mon(t)}`;
+  return `${day(f)} ${mon(f)} – ${day(t)} ${mon(t)}`;
 }
 interface Drilldown {
   metricKey: string; metricName: string; unit: string | null; direction: string | null;
@@ -135,7 +156,29 @@ function deltaOf(r: Reading): { delta: number; good: boolean | null } | null {
   const delta = r.value - r.priorValue;
   if (Math.abs(delta) < 0.05) return { delta: 0, good: null };
   if (!r.direction) return { delta, good: null };
-  return { delta, good: r.direction === "higher_better" ? delta > 0 : delta < 0 };
+  return { delta, good: r.direction === "higher_is_better" ? delta > 0 : delta < 0 };
+}
+
+/**
+ * Pass/fail against the metric's real configured SLA, the way the reference
+ * dashboards state theirs ("Target >= 95%", "Target <= 300s") and colour their
+ * project table and comparison charts from it. Returns null -- not a guessed
+ * pass -- when no target is configured, which most of this page's metrics do
+ * not have yet; the tile then falls back to its section colour instead of
+ * claiming a verdict nobody set.
+ */
+function targetStatus(r: Reading): "pass" | "fail" | null {
+  if (r.value === null || r.targetValue === null || !r.direction) return null;
+  return r.direction === "higher_is_better"
+    ? (r.value >= r.targetValue ? "pass" : "fail")
+    : (r.value <= r.targetValue ? "pass" : "fail");
+}
+
+/** "Target >= 95%" / "Target <= 300s" -- the comparison the target implies, in the metric's own unit. */
+function targetCaption(r: Reading): string | null {
+  if (r.targetValue === null || !r.direction) return null;
+  const op = r.direction === "higher_is_better" ? "≥" : "≤";
+  return `Target ${op} ${formatValue(r.targetValue, r.unit)}`;
 }
 
 /** A chart panel with the reference dashboards' navy header. */
@@ -186,11 +229,30 @@ function Sparkline({ trend, color }: { trend: Reading["trend"]; color: string })
  * value in the section's accent — and, unlike theirs, a button. Every figure on
  * this page opens its own root-cause drawer.
  */
-function KpiCard({ r, staleAfter, accent, tint, onOpen }: {
-  r: Reading; staleAfter: number; accent: string; tint: string; onOpen: () => void;
+const DELTA_TITLE: Record<ReportPeriod, string> = {
+  trend: "Against the average of everything older than a week",
+  today: "Against yesterday, same time of day",
+  wtd: "Against the same weekdays last week",
+  mtd: "Against the same days-of-month last month",
+};
+
+function KpiCard({ r, staleAfter, accent, tint, period, onOpen }: {
+  r: Reading; staleAfter: number; accent: string; tint: string; period: ReportPeriod; onOpen: () => void;
 }) {
   const stale = r.staleDays !== null && r.staleDays > staleAfter;
   const d = deltaOf(r);
+  // Pass/fail against a REAL configured target, the way the reference
+  // dashboards colour theirs -- red/green on the number itself, not just the
+  // trend arrow. Falls back to the section's identity colour when no target is
+  // set, which is most metrics here; a fabricated threshold would be worse
+  // than none.
+  const status = targetStatus(r);
+  const statusPill = status === "pass"
+    ? "bg-emerald-100 text-emerald-700"
+    : status === "fail"
+      ? "bg-red-100 text-red-700"
+      : null;
+  const caption = targetCaption(r);
   return (
     <button type="button" onClick={onOpen}
       title="Open the full working behind this number"
@@ -220,13 +282,19 @@ function KpiCard({ r, staleAfter, accent, tint, onOpen }: {
           </div>
         </div>
 
-        <div className="flex items-baseline gap-1.5">
-          <span className={`text-lg font-black leading-none ${r.value === null ? "text-slate-400 text-sm font-normal italic" : ""}`}
-            style={r.value === null ? undefined : { color: accent }}>
-            {formatValue(r.value, r.unit)}
-          </span>
+        <div className="flex items-baseline gap-1.5 flex-wrap">
+          {statusPill ? (
+            <span className={`inline-block rounded-full px-2 py-0.5 text-base font-black leading-none tabular-nums ${statusPill}`}>
+              {formatValue(r.value, r.unit)}
+            </span>
+          ) : (
+            <span className={`text-lg font-black leading-none ${r.value === null ? "text-slate-400 text-sm font-normal italic" : ""}`}
+              style={r.value === null ? undefined : { color: accent }}>
+              {formatValue(r.value, r.unit)}
+            </span>
+          )}
           {d && (
-            <span title="Against the average of everything older than a week"
+            <span title={DELTA_TITLE[period]}
               className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums ${
                 d.good === null ? "text-slate-500" : d.good ? "text-emerald-600" : "text-red-600"}`}>
               {d.delta === 0 ? <Minus className="h-2.5 w-2.5" />
@@ -236,13 +304,15 @@ function KpiCard({ r, staleAfter, accent, tint, onOpen }: {
           )}
         </div>
 
-        {r.numerator !== null && r.denominator !== null && r.denominator > 0 ? (
+        {caption ? (
+          <p className="text-[9px] text-slate-600 font-semibold mt-0.5 truncate">{caption}</p>
+        ) : r.numerator !== null && r.denominator !== null && r.denominator > 0 ? (
           <p className="text-[9px] text-slate-600 font-semibold mt-0.5 tabular-nums truncate">
             {Math.round(r.numerator).toLocaleString()} of {Math.round(r.denominator).toLocaleString()}
           </p>
         ) : <p className="text-[9px] mt-0.5">&nbsp;</p>}
 
-        <Sparkline trend={r.trend} color={accent} />
+        <Sparkline trend={r.trend} color={status === "fail" ? C_RED : status === "pass" ? C_GREEN : accent} />
       </div>
     </button>
   );
@@ -536,8 +606,9 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
 export default function ProcessOperationsPage() {
   const [active, setActive] = useState<string | null>(null);
   const [drill, setDrill] = useState<string | null>(null);
+  const [period, setPeriod] = useState<ReportPeriod>("trend");
 
-  const { data: listData, isLoading: listLoading } = useQuery({
+  const { data: listData, isLoading: listLoading, isError: listErrored, refetch: refetchList } = useQuery({
     queryKey: ["process-operations", "processes"],
     queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessRow[]>>("/api/process-operations/processes"),
   });
@@ -551,8 +622,9 @@ export default function ProcessOperationsPage() {
   const feedHealth = feedData?.data;
 
   const { data: opsData, isLoading: opsLoading } = useQuery({
-    queryKey: ["process-operations", "detail", current],
-    queryFn: () => hrmsApi.get<HrmsEnvelope<Operations>>(`/api/process-operations/${current}`),
+    queryKey: ["process-operations", "detail", current, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<Operations>>(
+      `/api/process-operations/${current}?period=${period}`),
     enabled: Boolean(current),
   });
   const ops = opsData?.data;
@@ -577,34 +649,74 @@ export default function ProcessOperationsPage() {
         <header className="rounded-2xl text-white px-5 py-4 shadow-md relative overflow-hidden" style={{ background: NAVY }}>
           <div aria-hidden className="absolute inset-0 opacity-25"
             style={{ background: "radial-gradient(circle at 20% 15%, #6366F1, transparent 55%)" }} />
-          <div className="relative">
-            <h1 className="text-lg md:text-xl font-bold flex items-center gap-2">
-              <Activity className="h-5 w-5" />Process Operations
-            </h1>
-            <p className="text-[12px] text-indigo-200 mt-1 max-w-3xl">
-              Every metric a process is measured on, from whichever system supplies it.
-              Click any tile for the formula, the source and every reading behind it.
-            </p>
-            {ops && (
-              <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2.5 text-[12px] text-white/90">
-                <span className="inline-flex items-center gap-1.5 font-semibold">
-                  <Users className="h-3.5 w-3.5" />{ops.headcount} active
-                </span>
-                <span className="tabular-nums">{allMetrics.length} metrics · {ops.windowDays} days</span>
-                {noDataCount > 0 && <span className="tabular-nums">{noDataCount} no data</span>}
-                {staleCount > 0 && (
-                  <span className="inline-flex items-center gap-1.5 tabular-nums text-amber-300">
-                    <Clock className="h-3.5 w-3.5" />{staleCount} stale
+          <div className="relative flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="text-lg md:text-xl font-bold flex items-center gap-2">
+                <Activity className="h-5 w-5" />Process Operations
+              </h1>
+              <p className="text-[12px] text-indigo-200 mt-1 max-w-3xl">
+                Every metric a process is measured on, from whichever system supplies it.
+                Click any tile for the formula, the source and every reading behind it.
+              </p>
+              {ops && (
+                <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2.5 text-[12px] text-white/90">
+                  <span className="inline-flex items-center gap-1.5 font-semibold">
+                    <Users className="h-3.5 w-3.5" />{ops.headcount} active
                   </span>
-                )}
-              </div>
-            )}
+                  <span className="tabular-nums">
+                    {allMetrics.length} metrics
+                    {ops.period === "trend"
+                      ? ` · ${ops.windowDays} day trend`
+                      : formatPeriodRange(ops.periodFrom, ops.periodTo)
+                        ? ` · ${formatPeriodRange(ops.periodFrom, ops.periodTo)}`
+                        : ""}
+                  </span>
+                  {noDataCount > 0 && <span className="tabular-nums">{noDataCount} no data</span>}
+                  {staleCount > 0 && (
+                    <span className="inline-flex items-center gap-1.5 tabular-nums text-amber-300">
+                      <Clock className="h-3.5 w-3.5" />{staleCount} stale
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Period selector: latest-reading trend, or a real calendar aggregate
+                (SUM/SUM across the range) compared against the same range one
+                period back — Today vs yesterday, WTD vs last week, MTD vs last
+                month. Not a rolling window; a real calendar boundary. */}
+            <div role="tablist" aria-label="Reporting period"
+              className="inline-flex rounded-lg bg-white/10 p-0.5 shrink-0">
+              {PERIODS.map((p) => (
+                <button key={p.key} type="button" role="tab" aria-selected={period === p.key}
+                  title={p.caption} onClick={() => setPeriod(p.key)}
+                  className={`cursor-pointer rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+                    period === p.key ? "bg-white text-slate-900 shadow-sm" : "text-indigo-200 hover:text-white"}`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
         </header>
 
         {listLoading ? (
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <Loader2 className="h-4 w-4 animate-spin" />Loading processes…
+          </div>
+        ) : listErrored ? (
+          // Distinct from "zero processes" on purpose. A failed request and a
+          // genuinely empty result look identical to a reader unless the page
+          // says which one happened -- the same distinction this page draws
+          // everywhere else between "no data" and a fabricated zero.
+          <div className="rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-900 p-6 text-sm text-red-700 dark:text-red-400 shadow-sm flex items-center justify-between gap-3">
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Could not reach the server. This is not "no processes" -- the request itself failed.
+            </span>
+            <button onClick={() => refetchList()}
+              className="shrink-0 rounded-lg bg-red-600 text-white text-xs font-semibold px-3 py-1.5 hover:bg-red-700 transition cursor-pointer">
+              Retry
+            </button>
           </div>
         ) : processes.length === 0 ? (
           <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">
@@ -670,7 +782,8 @@ export default function ProcessOperationsPage() {
                       <div className="grid gap-2.5 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                         {s.metrics.map((r) => (
                           <KpiCard key={r.metricKey} r={r} staleAfter={ops.staleAfterDays}
-                            accent={style.accent} tint={style.tint} onOpen={() => setDrill(r.metricKey)} />
+                            accent={style.accent} tint={style.tint} period={period}
+                            onOpen={() => setDrill(r.metricKey)} />
                         ))}
                       </div>
                     </section>

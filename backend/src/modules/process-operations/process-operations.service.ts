@@ -66,8 +66,15 @@ export interface MetricReading {
    * a arrow drawn from one prior reading is noise wearing a direction.
    */
   priorValue: number | null;
+  /**
+   * The real configured SLA for this metric on this process, from the live KPI
+   * Studio definition -- never a guessed band. Callmaster states its targets
+   * this way ("Target >= 95%") and colours pass/fail from them; a metric with
+   * no target configured gets neither, rather than a threshold invented here.
+   */
+  targetValue: number | null;
   /** Chronological daily points for a sparkline. Gaps are gaps, not zeroes. */
-  trend: Array<{ date: string; value: number | null }>;
+  trend: Array<{ date: string; value: number | null; numerator: number | null; denominator: number | null }>;
   /** Parts behind a ratio, when the compute stored them. */
   numerator: number | null;
   denominator: number | null;
@@ -221,19 +228,101 @@ export async function listProcesses(userId: string, windowDays = 45) {
     }));
 }
 
+export type ReportPeriod = "trend" | "today" | "wtd" | "mtd";
+
 export interface ProcessOperations {
   processId: string;
   processName: string;
   headcount: number;
   windowDays: number;
   staleAfterDays: number;
+  /** Which period the headline value/numerator/denominator represent. */
+  period: ReportPeriod;
+  periodFrom: string | null;
+  periodTo: string | null;
   sections: MetricSection[];
   /** Metric codes this process has that no section claims. Listed, never hidden. */
   ungrouped: MetricReading[];
 }
 
+/**
+ * Calendar-aligned period boundaries, and the SAME range one period back for a
+ * real week-over-week / month-over-week comparison -- not "today vs a rolling
+ * average of the last week", which is what the plain trend view uses instead.
+ *
+ * Week starts Monday, matching the roster and shrinkage-config convention
+ * already in use elsewhere in this codebase (day_of_week 0 = Monday there).
+ */
+function periodRange(period: ReportPeriod, today: Date):
+  { from: string; to: string; priorFrom: string; priorTo: string } | null {
+  const iso = (d: Date) => isoDate(d);
+  const clone = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  if (period === "today") {
+    const y = clone(today); y.setDate(y.getDate() - 1);
+    return { from: iso(today), to: iso(today), priorFrom: iso(y), priorTo: iso(y) };
+  }
+  if (period === "wtd") {
+    const dow = today.getDay(); // 0 = Sunday
+    const sinceMonday = (dow + 6) % 7;
+    const monday = clone(today); monday.setDate(monday.getDate() - sinceMonday);
+    const priorMonday = clone(monday); priorMonday.setDate(priorMonday.getDate() - 7);
+    const priorSameWeekday = clone(monday); priorSameWeekday.setDate(priorSameWeekday.getDate() - 7 + sinceMonday);
+    return { from: iso(monday), to: iso(today), priorFrom: iso(priorMonday), priorTo: iso(priorSameWeekday) };
+  }
+  if (period === "mtd") {
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    const dayOfMonth = today.getDate();
+    const priorMonthFirst = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const priorMonthLastDay = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+    const priorMonthSameDay = new Date(
+      today.getFullYear(), today.getMonth() - 1, Math.min(dayOfMonth, priorMonthLastDay));
+    return { from: iso(first), to: iso(today), priorFrom: iso(priorMonthFirst), priorTo: iso(priorMonthSameDay) };
+  }
+  return null; // "trend" -- the existing rolling-window behaviour, unchanged.
+}
+
+/**
+ * A metric's real value over a date range, computed the way process grain has
+ * been computed all through this codebase: SUM(numerator)/SUM(denominator)
+ * across the range, never the mean of each day's own ratio -- averaging seven
+ * daily percentages is not the week's percentage whenever daily volume varies,
+ * and it is exactly the error process grain exists to avoid at the day level.
+ *
+ * A day with no reading in the range is simply absent from the sums, the same
+ * way a single day's no_data already behaves -- it does not zero out the
+ * period, it is left out of it.
+ */
+function aggregateRange(
+  trend: MetricReading["trend"], unit: string | null, from: string, to: string,
+): { value: number | null; numerator: number | null; denominator: number | null; daysWithData: number } {
+  const inRange = trend.filter((p) => p.date >= from && p.date <= to);
+  const withValue = inRange.filter((p) => p.value !== null);
+  if (!withValue.length) return { value: null, numerator: null, denominator: null, daysWithData: 0 };
+
+  const withParts = withValue.filter((p) => p.numerator !== null && p.denominator !== null);
+  const u = (unit ?? "").toLowerCase();
+  const isRatio = u === "percentage" || u === "percent" || u === "ratio";
+
+  if (isRatio && withParts.length) {
+    const num = withParts.reduce((s, p) => s + (p.numerator as number), 0);
+    const den = withParts.reduce((s, p) => s + (p.denominator as number), 0);
+    return { value: den > 0 ? (num / den) * 100 : null, numerator: num, denominator: den, daysWithData: withValue.length };
+  }
+  const isVolume = ["count", "currency", "number", "volume"].includes(u);
+  if (isVolume) {
+    const total = withValue.reduce((s, p) => s + (p.value as number), 0);
+    return { value: total, numerator: null, denominator: null, daysWithData: withValue.length };
+  }
+  // No parts and not a plain volume (e.g. an average-of-minutes metric with no
+  // numerator/denominator behind it): the mean of the days that did read is the
+  // closest honest answer available, the same caveat this codebase already
+  // states wherever this fallback is used.
+  const mean = withValue.reduce((s, p) => s + (p.value as number), 0) / withValue.length;
+  return { value: mean, numerator: null, denominator: null, daysWithData: withValue.length };
+}
+
 export async function getProcessOperations(
-  userId: string, processId: string, windowDays = 30,
+  userId: string, processId: string, windowDays = 30, period: ReportPeriod = "trend",
 ): Promise<ProcessOperations | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
@@ -246,6 +335,15 @@ export async function getProcessOperations(
   const proc = (procRows as any[])[0];
   if (!proc) return null;
 
+  const today = new Date();
+  const range = periodRange(period, today);
+  // A period view needs this period's days AND the prior equivalent period's,
+  // to build a real WoW/MoM comparison rather than the trend view's rolling
+  // average. MTD's prior period reaches back up to ~62 days (a 31-day month
+  // compared against the one before it); fetch generously rather than let the
+  // comparison silently go missing for a long month.
+  const fetchDays = range ? 66 : windowDays;
+
   // Every reading in the window, with its parts. Ordered so the trend is already
   // chronological and the last row of each metric is its latest.
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -256,8 +354,21 @@ export async function getProcessOperations(
       WHERE a.process_id = ?
         AND a.score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       ORDER BY a.metric_key, a.score_date`,
-    [processId, windowDays],
+    [processId, fetchDays],
   );
+
+  // The real configured SLA per metric, where one exists -- not invented. Read
+  // straight from the live definition rather than duplicated onto the reading,
+  // so a target changed in KPI Studio is reflected immediately.
+  const [targetRows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.metric_code, d.target_value FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+      WHERE d.process_id = ? AND d.active_status = 1 AND d.effective_to IS NULL
+        AND d.target_value IS NOT NULL`,
+    [processId],
+  );
+  const targets = new Map<string, number>(
+    (targetRows as any[]).map((r) => [String(r.metric_code), Number(r.target_value)]));
 
   const byMetric = new Map<string, MetricReading>();
   for (const r of rows as any[]) {
@@ -269,24 +380,25 @@ export async function getProcessOperations(
         unit: r.unit ? String(r.unit) : null,
         direction: r.direction ? String(r.direction) : null,
         value: null, staleDays: null, latestDate: null, provisional: false,
-        priorValue: null, trend: [],
+        priorValue: null, targetValue: targets.get(key) ?? null, trend: [],
         numerator: null, denominator: null,
       });
     }
     const m = byMetric.get(key)!;
     const date = isoDate(r.score_date);
     const value = r.actual_value === null ? null : Number(r.actual_value);
-    m.trend.push({ date, value });
+    const dayNumerator = r.rollup_numerator === null ? null : unscaleNumerator(Number(r.rollup_numerator), m.unit);
+    const dayDenominator = r.rollup_denominator === null ? null : Number(r.rollup_denominator);
+    m.trend.push({ date, value, numerator: dayNumerator, denominator: dayDenominator });
     // The headline is the most recent day that actually produced a number. A
     // no_data day must not blank out a metric that was reading fine yesterday.
+    // Overwritten below for a period view, which aggregates instead of reading
+    // the single latest day.
     if (value !== null) {
       m.value = value;
       m.latestDate = date;
-      m.numerator = unscaleNumerator(
-        r.rollup_numerator === null ? null : Number(r.rollup_numerator),
-        m.unit,
-      );
-      m.denominator = r.rollup_denominator === null ? null : Number(r.rollup_denominator);
+      m.numerator = dayNumerator;
+      m.denominator = dayDenominator;
     }
   }
   const todayIso = isoDate(new Date());
@@ -307,6 +419,21 @@ export async function getProcessOperations(
       : null;
   }
 
+  if (range) {
+    for (const m of byMetric.values()) {
+      const current = aggregateRange(m.trend, m.unit, range.from, range.to);
+      const prior = aggregateRange(m.trend, m.unit, range.priorFrom, range.priorTo);
+      m.value = current.value;
+      m.numerator = current.numerator;
+      m.denominator = current.denominator;
+      m.priorValue = prior.value;
+      // staleDays/provisional still describe the single latest reading -- a
+      // metric can be mid-week with a perfectly fresh MTD figure and still be
+      // worth flagging if yesterday specifically never reported.
+      m.trend = m.trend.filter((pt) => pt.date >= range.from && pt.date <= range.to);
+    }
+  }
+
   const sections: MetricSection[] = SECTIONS.map((s) => ({
     key: s.key, title: s.title, blurb: s.blurb,
     metrics: [...byMetric.values()]
@@ -325,6 +452,9 @@ export async function getProcessOperations(
     headcount: Number(proc.headcount),
     windowDays,
     staleAfterDays: STALE_AFTER_DAYS,
+    period,
+    periodFrom: range?.from ?? null,
+    periodTo: range?.to ?? null,
     sections,
     ungrouped,
   };
