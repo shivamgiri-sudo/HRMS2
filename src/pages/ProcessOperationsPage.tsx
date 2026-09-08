@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo } from "react";
+import { Fragment, useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -816,6 +816,19 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
   const [pasted, setPasted] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportOutcome[] | null>(null);
+
+  // The drawer is one persistent component whose visibility toggles, not one
+  // remounted per open -- without this, closing it half-filled and reopening
+  // for a DIFFERENT process would silently carry the first process's typed
+  // value or pasted rows into the second one's write, since the mutation
+  // closes over whatever processId is current at click time. Reset on every
+  // (re)open and on every process switch, whichever fires first.
+  useEffect(() => {
+    if (!open) return;
+    setMode("single"); setMetricKey(""); setScoreDate(todayIso());
+    setValue(""); setNote(""); setPasted(""); setFileName(null); setPreview(null);
+  }, [open, processId]);
+
   /** Reads a .csv/.txt in the browser; nothing is sent anywhere until Check runs. */
   const onFile = (file: File | undefined) => {
     if (!file) return;
