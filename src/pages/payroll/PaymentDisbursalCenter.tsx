@@ -56,6 +56,7 @@ import {
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useTabAccess, NoTabAccess } from "@/components/security/TabGate";
 
 // ── Bank Readiness types ───────────────────────────────────────────────────────
 
@@ -235,8 +236,16 @@ export default function PaymentDisbursalCenter() {
   const canManageDisbursal = roleKeys.some((r) => DISBURSAL_WRITE_ROLES.includes(r));
 
   // URL-based outer tab (bank | disbursal)
+  //
+  // Each tab is gated on the page code its screen used before the two were merged, so the
+  // grants that already exist for them govern again. Without this, one
+  // PAYROLL_BANK_READINESS grant — held by 11 roles — opened disbursal, CSV upload and
+  // manual payment entry as well.
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get("tab") ?? "bank";
+  const { canViewTab, visibleTabs, activeTab } = useTabAccess(
+    { bank: "PAYROLL_BANK_READINESS", disbursal: "PAYROLL_DISBURSAL" },
+    searchParams.get("tab") ?? "bank",
+  );
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab }, { replace: true });
   };
@@ -591,14 +600,23 @@ export default function PaymentDisbursalCenter() {
         </div>
 
         {/* ── Outer Tabs ──────────────────────────────────────────────────── */}
-        <Tabs value={activeTab} onValueChange={handleTabChange}>
+        {visibleTabs.length === 0 && <NoTabAccess pageCode="PAYROLL_BANK_READINESS" />}
+
+        {/* A value matching no tab renders no TabsContent, so the NoTabAccess panel above
+            stands alone. Not reachable today — the page gate is the bank tab's own code —
+            but it keeps the empty case correct if either grant is retired later. */}
+        <Tabs value={activeTab ?? "__none__"} onValueChange={handleTabChange}>
           <TabsList className="h-10">
-            <TabsTrigger value="bank" className="px-6">
-              Bank Readiness
-            </TabsTrigger>
-            <TabsTrigger value="disbursal" className="px-6">
-              Disbursal
-            </TabsTrigger>
+            {canViewTab("bank") && (
+              <TabsTrigger value="bank" className="px-6">
+                Bank Readiness
+              </TabsTrigger>
+            )}
+            {canViewTab("disbursal") && (
+              <TabsTrigger value="disbursal" className="px-6">
+                Disbursal
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* ════════════════════════════════════════════════════════════════

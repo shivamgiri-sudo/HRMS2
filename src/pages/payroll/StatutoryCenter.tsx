@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useTabAccess, NoTabAccess } from "@/components/security/TabGate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1194,10 +1195,21 @@ function ConfigTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function StatutoryCenter() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { roleKeys } = useWorkforceAccess();
 
-  const tab = searchParams.get("tab") || "filing";
-  const isSuperAdmin = roleKeys.includes("super_admin");
+  // Each tab gated on the page code its screen carried before the merge.
+  //
+  // The Configuration tab was previously gated on a hardcoded roleKeys.includes("super_admin").
+  // That looks like policy but reads as a workaround: STATUTORY_CONFIG — the code this whole
+  // route is gated on — has no role_page_access grant seeded anywhere in backend/sql, so
+  // super_admin is the only role that can open this page at all (it receives every active page
+  // code). Gating on the code instead of the role is behaviour-identical today and lets the
+  // grant, rather than an edit to this file, decide who gets Configuration once
+  // 1678_statutory_config_page_grants.sql is run.
+  const { canViewTab, activeTab } = useTabAccess(
+    { filing: "PAYROLL_STATUTORY_FILING", config: "STATUTORY_CONFIG" },
+    searchParams.get("tab") || "filing",
+  );
+  const tab = activeTab ?? "filing";
 
   const handleTabChange = (newTab: string) => {
     setSearchParams({ tab: newTab }, { replace: true });
@@ -1221,14 +1233,16 @@ export default function StatutoryCenter() {
 
             {/* Tab Toggle */}
             <div className="flex items-center gap-1 bg-white/10 rounded-xl p-1">
-              <button
-                onClick={() => handleTabChange("filing")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab === "filing" ? "bg-white text-violet-700 shadow-sm" : "text-white/80 hover:text-white hover:bg-white/10"}`}
-              >
-                <FileCheck2 className="w-4 h-4" />
-                Filing Tracker
-              </button>
-              {isSuperAdmin && (
+              {canViewTab("filing") && (
+                <button
+                  onClick={() => handleTabChange("filing")}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab === "filing" ? "bg-white text-violet-700 shadow-sm" : "text-white/80 hover:text-white hover:bg-white/10"}`}
+                >
+                  <FileCheck2 className="w-4 h-4" />
+                  Filing Tracker
+                </button>
+              )}
+              {canViewTab("config") && (
                 <button
                   onClick={() => handleTabChange("config")}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab === "config" ? "bg-white text-violet-700 shadow-sm" : "text-white/80 hover:text-white hover:bg-white/10"}`}
@@ -1242,15 +1256,14 @@ export default function StatutoryCenter() {
         </div>
 
         {/* Tab Content */}
-        {tab === "filing" && <FilingTab />}
-        {tab === "config" && isSuperAdmin && <ConfigTab />}
-        {tab === "config" && !isSuperAdmin && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
-            <Shield className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-            <p className="font-semibold text-amber-800">Access Restricted</p>
-            <p className="text-sm text-amber-600 mt-1">Only Super Admin can access statutory configuration settings.</p>
-          </div>
-        )}
+        {tab === "filing" && canViewTab("filing") && <FilingTab />}
+        {tab === "config" && canViewTab("config") && <ConfigTab />}
+        {/* The old "Only Super Admin can access statutory configuration" panel is gone
+            because it is now unreachable, not because the denial was dropped: useTabAccess
+            returns the first permitted tab when the requested one is not permitted, so
+            ?tab=config from someone without the grant lands on Filing Tracker with the
+            Configuration button absent. A viewer holding neither grant sees the panel below. */}
+        {!activeTab && <NoTabAccess pageCode="STATUTORY_CONFIG" />}
       </div>
     </DashboardLayout>
   );

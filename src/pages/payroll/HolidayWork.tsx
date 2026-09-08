@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useSearchParams } from "react-router-dom";
+import { useTabAccess, NoTabAccess } from "@/components/security/TabGate";
 
 // ── shared constants ─────────────────────────────────────────────────────────
 
@@ -326,6 +328,21 @@ function ApprovalsTab() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function HolidayWork() {
+  // Two fixes in one place.
+  //
+  // 1. ?tab was never read. /payroll/holiday-work-approvals redirects here as
+  //    ?tab=approvals, and with an uncontrolled <Tabs defaultValue="submit"> that param
+  //    was discarded — the link landed everyone on Submit Request instead.
+  // 2. Each tab is gated on the page code its screen used before the merge
+  //    (PAYROLL_HOLIDAY_WORK_REQUESTS / _APPROVALS). Both are granted to the same five
+  //    roles today, so nobody's access changes; it stops the two drifting apart silently
+  //    the next time either grant is edited.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { canViewTab, activeTab } = useTabAccess(
+    { submit: "PAYROLL_HOLIDAY_WORK_REQUESTS", approvals: "PAYROLL_HOLIDAY_WORK_APPROVALS" },
+    searchParams.get("tab") ?? "submit",
+  );
+
   return (
     <DashboardLayout>
       <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -333,10 +350,14 @@ export default function HolidayWork() {
           <h1 className="text-2xl font-semibold text-slate-900">Holiday Work</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Submit requests for staff working on designated holidays and manage the multi-stage approval workflow.</p>
         </div>
-        <Tabs defaultValue="submit">
+        {!activeTab && <NoTabAccess pageCode="PAYROLL_HOLIDAY_WORK" />}
+        <Tabs
+          value={activeTab ?? "__none__"}
+          onValueChange={(tab) => setSearchParams(tab === "submit" ? {} : { tab }, { replace: true })}
+        >
           <TabsList className="mb-4">
-            <TabsTrigger value="submit">Submit Request</TabsTrigger>
-            <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>
+            {canViewTab("submit") && <TabsTrigger value="submit">Submit Request</TabsTrigger>}
+            {canViewTab("approvals") && <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>}
           </TabsList>
           <TabsContent value="submit"><SubmitTab /></TabsContent>
           <TabsContent value="approvals"><ApprovalsTab /></TabsContent>

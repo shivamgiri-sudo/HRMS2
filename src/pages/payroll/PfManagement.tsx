@@ -12,6 +12,7 @@ import EcrDownloadTab from "./EcrDownloadTab";
 import PfEstablishmentsTab from "./PfEstablishmentsTab";
 import EsiRegDocsTab from "./EsiRegDocsTab";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useTabAccess } from "@/components/security/TabGate";
 
 /**
  * Mirrors ESI_ROLES in backend/src/modules/payroll/esi-reg-docs.routes.ts.
@@ -28,9 +29,26 @@ const ESI_TAB_ROLES = ["payroll_branch", "payroll_head", "super_admin"];
 
 export default function PfManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const defaultTab = searchParams.get("tab") ?? "queue";
   const { hasAnyRole } = useWorkforceAccess();
   const canSeeEsi = hasAnyRole(...ESI_TAB_ROLES);
+
+  // Creation Queue and Batches were separate routes with their own page codes before this
+  // merge; those codes and their grants still exist, so the tabs are gated on them again
+  // rather than on PAYROLL_PF_MANAGEMENT alone. ECR Download and Establishments have no
+  // page code of their own and stay on the page grant — giving them one would mean
+  // inventing a code and a grant, which is a policy decision, not a wiring fix.
+  //
+  // Controlled rather than defaultValue: an uncontrolled Tabs ignores a later change to
+  // the active tab, so the fallback below (requested tab not permitted -> first permitted
+  // tab) would not take effect.
+  const { canViewTab, activeTab } = useTabAccess(
+    { queue: "PAYROLL_PF_CREATION_QUEUE", batches: "PAYROLL_PF_BATCHES" },
+    searchParams.get("tab") ?? "queue",
+  );
+  // Tabs with no page code of their own remain selectable for anyone holding the page.
+  const UNGATED_TABS = ["ecr", "establishments", "esi-reg"];
+  const requestedTab = searchParams.get("tab") ?? "queue";
+  const currentTab = UNGATED_TABS.includes(requestedTab) ? requestedTab : activeTab ?? "ecr";
 
   return (
     <DashboardLayout>
@@ -39,10 +57,10 @@ export default function PfManagement() {
           <h1 className="text-2xl font-semibold text-slate-900">PF / EPFO Management</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Manage bulk PF registration — validate new joiner queue entries, create EPFO batches, and track acknowledgements.</p>
         </div>
-        <Tabs defaultValue={defaultTab} onValueChange={v => setSearchParams(v === "queue" ? {} : { tab: v })}>
+        <Tabs value={currentTab} onValueChange={v => setSearchParams(v === "queue" ? {} : { tab: v })}>
           <TabsList className="mb-2">
-            <TabsTrigger value="queue">Creation Queue</TabsTrigger>
-            <TabsTrigger value="batches">Batches</TabsTrigger>
+            {canViewTab("queue") && <TabsTrigger value="queue">Creation Queue</TabsTrigger>}
+            {canViewTab("batches") && <TabsTrigger value="batches">Batches</TabsTrigger>}
             <TabsTrigger value="ecr">ECR Download</TabsTrigger>
             <TabsTrigger value="establishments">Establishments</TabsTrigger>
             {canSeeEsi && <TabsTrigger value="esi-reg">ESI Reg. Docs</TabsTrigger>}

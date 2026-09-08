@@ -71,6 +71,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useTabAccess } from "@/components/security/TabGate";
 import { useAuth } from "@/contexts/AuthContext";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
@@ -1686,7 +1687,15 @@ function BranchScopeOwnView({ month, processOnly = false }: { month: string; pro
 
 export default function PayrollReadinessDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const scope = searchParams.get("scope") || "branch";
+  // Branch and Process were separate routes before the merge, each with its own page code.
+  // The page itself is gated on PAYROLL_BRANCH_READINESS, so without this the branch grant
+  // alone opened both views. readinessViewFor() below still decides which *component* the
+  // chosen view renders; this decides whether the view is offered at all.
+  const { canViewTab, activeTab: scopeTab } = useTabAccess(
+    { branch: "PAYROLL_BRANCH_READINESS", process: "PAYROLL_PROCESS_READINESS" },
+    searchParams.get("scope") || "branch",
+  );
+  const scope = scopeTab ?? "branch";
   const [month, setMonth] = useState(processingMonth);
   const { roleKeys, scopes, isLoading: roleLoading } = useWorkforceAccess();
   const { user } = useAuth();
@@ -1751,14 +1760,18 @@ export default function PayrollReadinessDashboard() {
         {/* Scope Toggle */}
         <Tabs value={scope} onValueChange={handleScopeChange} className="w-full">
           <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="branch" className="flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              Branch View
-            </TabsTrigger>
-            <TabsTrigger value="process" className="flex items-center gap-2">
-              <Layers className="h-4 w-4" />
-              Process View
-            </TabsTrigger>
+            {canViewTab("branch") && (
+              <TabsTrigger value="branch" className="flex items-center gap-2">
+                <Building2 className="h-4 w-4" />
+                Branch View
+              </TabsTrigger>
+            )}
+            {canViewTab("process") && (
+              <TabsTrigger value="process" className="flex items-center gap-2">
+                <Layers className="h-4 w-4" />
+                Process View
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="branch" className="mt-4">
