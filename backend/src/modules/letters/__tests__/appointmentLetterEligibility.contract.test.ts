@@ -5,16 +5,25 @@
  * right in both directions: it must not issue to someone whose BGV or documents
  * are outstanding, and it must not block someone who has genuinely finished.
  *
- * The BGV rule is the codebase's existing canonical one —
- * overall_status = 'clear' AND is_auto_approved = 0 — which appears three times
- * in reconciliation.service.ts. An auto-approved report is explicitly not a
- * pass: it is a report nobody looked at.
+ * The BGV rule was the codebase's canonical one — overall_status = 'clear' AND
+ * is_auto_approved = 0 — and it was too strict to be usable: of 154 BGV reports
+ * live on 2026-09-08, ZERO satisfied it, so no appointment letter had ever been
+ * issued to anybody. Education and address have no automated provider, so
+ * deriveOverallStatus() never reaches 'clear'.
+ *
+ * Owner decision, 2026-09-08: adverse ('refer'/'negative') and auto-approved
+ * reports still block absolutely; a report a human is still working through
+ * warns instead, and a warning costs HR force=true plus a recorded reason.
+ *
+ * The salary gate carries the governance that BGV gave up: the letter prints
+ * only a Payroll-Head-approved package, and that review is a human sign-off
+ * over this same BGV, the documents and the bank details.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Rows = Record<string, unknown>[];
 const state: {
-  employee?: Rows; issued?: Rows; bgv?: Rows; docs?: Rows; esign?: Rows; salary?: Rows;
+  employee?: Rows; issued?: Rows; bgv?: Rows; docs?: Rows; esign?: Rows; review?: Rows;
 } = {};
 
 vi.mock("../../../db/mysql.js", () => ({
@@ -26,7 +35,7 @@ vi.mock("../../../db/mysql.js", () => ({
       if (s.includes("FROM candidate_bgv_report")) return [state.bgv ?? []];
       if (s.includes("signed_count")) return [state.esign ?? []];
       if (s.includes("employee_joining_document_checklist")) return [state.docs ?? []];
-      if (s.includes("salary_component_assignments")) return [state.salary ?? []];
+      if (s.includes("employee_payroll_head_review")) return [state.review ?? []];
       return [[]];
     }),
   },
@@ -48,7 +57,7 @@ function setup(over: Partial<typeof state> = {}) {
   state.bgv = [{ overall_status: "clear", is_auto_approved: 0 }];
   state.docs = [{ mandatory_total: 6, mandatory_done: 6, pending_names: null }];
   state.esign = [{ signed_count: 1 }];
-  state.salary = [{ sca: 1, legacy: 0 }];
+  state.review = [{ status: "approved", package_accepted: 1, salary_package_id: "pkg-1" }];
   Object.assign(state, over);
 }
 
@@ -71,17 +80,37 @@ describe("BGV", () => {
     expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("bgv_not_started");
   });
 
-  it.each(["pending", "in_progress", "refer", "negative"])("blocks when overall_status is %s", async (status) => {
+  it.each(["refer", "negative"])("blocks absolutely on an adverse report (%s)", async (status) => {
+    // The one BGV outcome that says something was actually FOUND, rather than
+    // not yet looked for. Never forceable.
     setup({ bgv: [{ overall_status: status, is_auto_approved: 0 }] });
-    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("bgv_not_clear");
-  });
-
-  it("blocks a clear-but-auto-approved report", async () => {
-    // Clear on paper, but nobody reviewed it.
-    setup({ bgv: [{ overall_status: "clear", is_auto_approved: 1 }] });
     const r = await evaluateAppointmentLetterEligibility("emp-1");
     expect(r.eligible).toBe(false);
-    expect(codes(r)).toContain("bgv_auto_approved");
+    expect(codes(r)).toContain("bgv_adverse");
+  });
+
+  it.each(["pending", "in_progress"])("warns, but does not block, while a human works through it (%s)", async (status) => {
+    // This is the case that made the whole screen inert: 138 of 154 live reports
+    // sit here, held by education/address checks no provider fills.
+    setup({ bgv: [{ overall_status: status, is_auto_approved: 0 }] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(codes(r)).not.toContain("bgv_not_clear");
+    expect(r.warnings.map((w) => w.code)).toContain("bgv_not_clear");
+    // Eligible, but only through the force + stated-reason path.
+    expect(r.eligible).toBe(true);
+  });
+
+  it("blocks an auto-approved report at ANY status, not only 'clear'", async () => {
+    // A report the system approved is a report nobody looked at. The old rule
+    // only caught this at 'clear'; every other status was blocked by the
+    // status check instead, so relaxing that would have let 12 live
+    // auto-approved reports through unnoticed.
+    for (const status of ["clear", "pending", "in_progress"]) {
+      setup({ bgv: [{ overall_status: status, is_auto_approved: 1 }] });
+      const r = await evaluateAppointmentLetterEligibility("emp-1");
+      expect(r.eligible, `auto-approved '${status}' must not be eligible`).toBe(false);
+      expect(codes(r)).toContain("bgv_auto_approved");
+    }
   });
 });
 
@@ -141,14 +170,28 @@ describe("what the letter needs in order to be printable", () => {
     expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("branch_not_assigned");
   });
 
-  it("blocks when no salary can be resolved", async () => {
-    setup({ salary: [{ sca: 0, legacy: 0 }] });
-    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("salary_not_assigned");
+  it("blocks when the Payroll Head has never reviewed the salary", async () => {
+    setup({ review: [] });
+    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("salary_not_reviewed");
   });
 
-  it("accepts a legacy-only salary", async () => {
-    setup({ salary: [{ sca: 0, legacy: 12 }] });
-    expect((await evaluateAppointmentLetterEligibility("emp-1")).eligible).toBe(true);
+  it("blocks a review still pending", async () => {
+    // 23 live employees sat here on 2026-09-08 holding an active assignment
+    // row, which the previous gate accepted as "salary assigned".
+    setup({ review: [{ status: "pending_review", package_accepted: 0, salary_package_id: null }] });
+    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("salary_not_approved");
+  });
+
+  it("blocks a REJECTED review", async () => {
+    setup({ review: [{ status: "rejected", package_accepted: 0, salary_package_id: null }] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.eligible).toBe(false);
+    expect(codes(r)).toContain("salary_review_rejected");
+  });
+
+  it("blocks an approved review carrying no accepted package", async () => {
+    setup({ review: [{ status: "approved", package_accepted: 0, salary_package_id: "pkg-1" }] });
+    expect(codes(await evaluateAppointmentLetterEligibility("emp-1"))).toContain("salary_package_missing");
   });
 
   it("blocks when there is no date of joining", async () => {
@@ -186,13 +229,13 @@ describe("every failing reason is reported, not just the first", () => {
     setup({
       bgv: [{ overall_status: "refer", is_auto_approved: 0 }],
       docs: [{ mandatory_total: 6, mandatory_done: 2, pending_names: "NDA" }],
-      salary: [{ sca: 0, legacy: 0 }],
+      review: [],
       employee: [{ ...READY, branch_address: "" }],
     });
     const r = await evaluateAppointmentLetterEligibility("emp-1");
     expect(r.eligible).toBe(false);
     expect(codes(r)).toEqual(expect.arrayContaining([
-      "bgv_not_clear", "joining_documents_incomplete", "branch_address_missing", "salary_not_assigned",
+      "bgv_adverse", "joining_documents_incomplete", "branch_address_missing", "salary_not_reviewed",
     ]));
     expect(r.blockers.length).toBeGreaterThanOrEqual(4);
   });

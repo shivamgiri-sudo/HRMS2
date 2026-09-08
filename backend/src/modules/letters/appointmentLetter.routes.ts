@@ -199,19 +199,28 @@ router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES
     hasAddress: true,
   }));
 
-  // Resolve salary — use real data or placeholder
+  // Resolve salary — the Payroll-Head-approved package, or a marked placeholder.
+  //
+  // Preview is a draft: no letter number, no signature, no DB write, nothing
+  // sent. So it may render without an approved package, where issuance may not.
+  // What it must never do is show a plausible-looking salary that nobody
+  // approved, so the fallback is explicit zeros carrying the reason the real
+  // figures are absent — the renderer prints unavailableLines on the letter.
   let salary: Awaited<ReturnType<typeof resolveAppointmentLetterSalary>>;
   try {
     salary = await resolveAppointmentLetterSalary(employeeId);
-  } catch {
+  } catch (err) {
     salary = {
       basic: 0, hra: 0, lta: 0, conveyance: 0, otherAllowance: 0,
       specialAllowance: 0, bonus: 0, medicalAllowance: 0, portfolio: 0,
       pli: 0, gross: 0, esicEmployee: 0, epfEmployee: 0, netSalary: 0,
       esicEmployer: 0, epfEmployer: 0, adminCharges: 0, ctc: 0,
-      source: "salary_component_assignments", sourceRef: null,
+      source: "payroll_head_approved_package", sourceRef: null,
+      approvedBy: null, approvedAt: null, packageEffectiveFrom: null,
       pfApplicable: false, esicApplicable: false,
-      unavailableLines: ["Salary not yet assigned — placeholder values shown"],
+      unavailableLines: [
+        `PREVIEW ONLY — no approved salary: ${err instanceof Error ? err.message : "reason unknown"}`,
+      ],
     };
   }
 

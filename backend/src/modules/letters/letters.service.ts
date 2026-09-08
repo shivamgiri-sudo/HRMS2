@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
-import { resolveAppointmentLetterSalary, toLetterRows } from "./appointmentLetterData.service.js";
+import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
 
 export const lettersService = {
@@ -54,12 +54,14 @@ export const lettersService = {
     if (!emp) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
 
 
-    // Build data payload matching renderer variable names
-    // Salary comes from the resolver, which knows the three real sources
-    // (approved package -> assignment -> legacy snapshot). The fields below
-    // previously read columns that do not exist on employee_salary_assignment,
-    // so every line of the salary table rendered "0.00".
-    const salary = await resolveAppointmentLetterSalary(data.employee_id);
+    // Build data payload matching renderer variable names.
+    //
+    // Salary is the Payroll-Head-approved package and nothing else. This
+    // generator serves the offer/confirmation/experience templates, two of
+    // which print no salary at all, so a missing approval leaves the salary
+    // variables BLANK rather than failing the whole letter — see
+    // letterSalaryRowsOrBlank() for why blank and not zero.
+    const { rows: salaryRows } = await letterSalaryRowsOrBlank(data.employee_id);
 
     const vars: Record<string, string> = {
       full_name:         assertUsableName(emp.full_name ?? `${emp.first_name} ${emp.last_name ?? ""}`),
@@ -75,7 +77,7 @@ export const lettersService = {
       issued_date:       istDate(data.issued_date ?? new Date()),
       epf_no:            emp.epf_number ?? "",
       esi_no:            emp.esic_number ?? "",
-      ...toLetterRows(salary),
+      ...salaryRows,
       ...data.override_vars,
     };
 

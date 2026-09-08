@@ -9,7 +9,7 @@ import { renderLetterHtml } from "./letters-render.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { resolveAppointmentLetterSalary, toLetterRows } from "./appointmentLetterData.service.js";
+import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
 
 const router = Router();
@@ -187,11 +187,11 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
   if (!emp) return res.status(404).json({ error: "Employee not found" });
 
 
-  // Salary comes from the resolver, which knows the three real sources
-  // (approved package -> assignment -> legacy snapshot). The fields below
-  // previously read columns that do not exist on employee_salary_assignment,
-  // so every line of the salary table rendered "0.00".
-  const salary = await resolveAppointmentLetterSalary(employee_id);
+  // Salary is the Payroll-Head-approved package and nothing else. This preview
+  // renders the offer/confirmation/experience templates, two of which print no
+  // salary, so a missing approval leaves the salary variables BLANK rather than
+  // failing the request — see letterSalaryRowsOrBlank() for why blank not zero.
+  const { rows: salaryRows } = await letterSalaryRowsOrBlank(employee_id);
 
   const data: Record<string, string> = {
     full_name:         assertUsableName(emp.full_name),
@@ -207,7 +207,7 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
     issued_date:       istDate(issued_date ?? new Date()),
     epf_no:            emp.epf_number ?? "",
     esi_no:            emp.esic_number ?? "",
-    ...toLetterRows(salary),
+    ...salaryRows,
     ...(override_vars ?? {}),
   };
 

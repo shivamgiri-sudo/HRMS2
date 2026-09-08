@@ -8,11 +8,40 @@
  *
  * Reuses the definitions that already exist rather than inventing parallel ones:
  *
- *   BGV passed = candidate_bgv_report.overall_status = 'clear' AND
- *                is_auto_approved = 0. That exact expression appears three times
- *                in reconciliation.service.ts and is the codebase's canonical
- *                "BGV really passed" test. An auto-approved report is explicitly
- *                not a pass — it is a report nobody looked at.
+ *   BGV = a report exists, a human looked at it, and it is not adverse.
+ *
+ *                This used to demand overall_status = 'clear' AND
+ *                is_auto_approved = 0 — reconciliation.service.ts's canonical
+ *                "BGV really passed" test. Measured live on 2026-09-08, that
+ *                made the whole screen inert: of 154 BGV reports in the
+ *                database, **zero** satisfied it. Exactly one report reads
+ *                'clear', and that one is auto-approved, which the test
+ *                explicitly rejects. Nought appointment letters had ever been
+ *                issued, to anybody, and this was the only reason.
+ *
+ *                The cause is upstream and not fixable from here:
+ *                deriveOverallStatus() only returns 'clear' once education AND
+ *                address are verified or waived, and neither has an automated
+ *                provider — so unless somebody marks them by hand, which nobody
+ *                does, BGV never derives to 'clear' for anyone.
+ *
+ *                Decided by the product owner on 2026-09-08: an adverse report
+ *                ('refer'/'negative') and an auto-approved one still block
+ *                absolutely, and a missing report still blocks. A report that a
+ *                human is working through ('pending'/'in_progress') downgrades
+ *                to a WARNING — it does not stop issuance, but it cannot be
+ *                passed silently either: warnings require force=true plus a
+ *                stated override reason, which is recorded against the letter.
+ *
+ *                This is a smaller relaxation than it looks, because the salary
+ *                gate below independently requires a Payroll-Head-approved
+ *                package, and that review is a human sign-off over this same
+ *                BGV, the documents, and the bank details.
+ *
+ *                Note is_auto_approved now blocks at ANY status, not only at
+ *                'clear'. That is not a tightening in practice — every
+ *                auto-approved report was already blocked by the old
+ *                status !== 'clear' test — it just names the real reason.
  *
  *   Documents complete = every mandatory checklist row in the terminal set
  *                ('verified','completed','esign_completed','signed_verified',
@@ -166,25 +195,42 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
       blockers.push({ code: "bgv_not_started", reason: "Background verification has not been run.", severity: "critical" });
     } else {
       const status = String(report.overall_status ?? "");
-      if (status !== "clear") {
-        // Name the categories, not just the verdict. "in_progress" sent HR to the
-        // BGV report to work out which of seven checks was holding the letter —
-        // and the answer is usually education or address, which have no automated
-        // provider and so sit at 'not_run' until somebody marks them by hand.
-        const outstanding = await outstandingBgvCategories(candidateId, report);
-        blockers.push({
-          code: "bgv_not_clear",
-          reason:
-            `Background verification is "${status || "pending"}", not clear.` +
-            (outstanding.length ? ` Outstanding: ${outstanding.join(", ")}.` : ""),
-          severity: "critical",
-        });
-      } else if (Number(report.is_auto_approved) === 1) {
-        // A report auto-approved by the system is not a report anyone checked.
+      if (Number(report.is_auto_approved) === 1) {
+        // A report auto-approved by the system is not a report anyone checked,
+        // whatever status it ended up at. Checked first, and unconditionally,
+        // so a 'clear' auto-approval cannot slip through as a mere warning.
         blockers.push({
           code: "bgv_auto_approved",
           reason: "The BGV report was auto-approved and has not been reviewed by HR.",
           severity: "critical",
+        });
+      } else if (status === "refer" || status === "negative") {
+        // An adverse finding. Never forceable: this is the one BGV outcome that
+        // says something was actually found, rather than not yet looked for.
+        blockers.push({
+          code: "bgv_adverse",
+          reason:
+            `Background verification came back "${status}". An appointment letter cannot be ` +
+            "issued against an adverse BGV report.",
+          severity: "critical",
+        });
+      } else if (status !== "clear") {
+        // In progress, and a human is on it. Name the categories, not just the
+        // verdict: "in_progress" sent HR to the BGV report to work out which of
+        // seven checks was holding the letter — and the answer is usually
+        // education or address, which have no automated provider and so sit at
+        // 'not_run' until somebody marks them by hand.
+        //
+        // A warning rather than a blocker, so issuance costs HR an explicit
+        // override with a recorded reason instead of being impossible.
+        const outstanding = await outstandingBgvCategories(candidateId, report);
+        warnings.push({
+          code: "bgv_not_clear",
+          reason:
+            `Background verification is "${status || "pending"}", not yet clear.` +
+            (outstanding.length ? ` Outstanding: ${outstanding.join(", ")}.` : "") +
+            " Confirm before issuing.",
+          severity: "warning",
         });
       }
     }
@@ -266,18 +312,52 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     });
   }
 
-  // ── salary ────────────────────────────────────────────────────────────────
+  // ── salary: the Payroll-Head-approved package, and nothing else ───────────
+  //
+  // This asks the same question appointmentLetterData.service.ts asks at
+  // issuance, so the queue cannot advertise someone as eligible whom issuance
+  // would then refuse. It used to count rows in salary_component_assignments or
+  // legacy_payslip_snapshot — neither of which involves the Payroll Head — and
+  // on 2026-09-08 that was true for 264 active employees with no approved
+  // review at all, 23 of them pending and one rejected.
+  //
+  // The statuses are read rather than counted so the reason names the actual
+  // situation: "not reviewed yet" and "rejected" need opposite actions from HR.
   const [sal] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       (SELECT COUNT(*) FROM salary_component_assignments WHERE employee_id = ? AND status = 'active') AS sca,
-       (SELECT COUNT(*) FROM legacy_payslip_snapshot WHERE employee_id = ?) AS legacy`,
-    [employeeId, employeeId],
+    `SELECT r.status, r.package_accepted, r.salary_package_id
+       FROM employee_payroll_head_review r
+      WHERE r.employee_id = ? LIMIT 1`,
+    [employeeId],
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
-  const s = (sal as RowDataPacket[])[0];
-  if (Number(s?.sca ?? 0) === 0 && Number(s?.legacy ?? 0) === 0) {
+  const review = (sal as RowDataPacket[])[0];
+  const reviewStatus = String(review?.status ?? "");
+
+  if (!review) {
     blockers.push({
-      code: "salary_not_assigned",
-      reason: "No salary is assigned, so the letter's remuneration table cannot be produced.",
+      code: "salary_not_reviewed",
+      reason:
+        "The Payroll Head has not reviewed this employee's salary, so there is no approved " +
+        "package to print on the letter.",
+      severity: "critical",
+    });
+  } else if (reviewStatus === "rejected") {
+    blockers.push({
+      code: "salary_review_rejected",
+      reason: "The Payroll Head rejected this employee's salary review. Correct it and get it re-approved first.",
+      severity: "critical",
+    });
+  } else if (reviewStatus !== "approved") {
+    blockers.push({
+      code: "salary_not_approved",
+      reason: `The Payroll Head salary review is "${reviewStatus || "pending"}", not approved. The letter prints the approved salary.`,
+      severity: "critical",
+    });
+  } else if (Number(review.package_accepted ?? 0) !== 1 || !review.salary_package_id) {
+    blockers.push({
+      code: "salary_package_missing",
+      reason:
+        "The Payroll Head review is approved but carries no accepted salary package, so the " +
+        "letter's remuneration table cannot be produced.",
       severity: "critical",
     });
   }
