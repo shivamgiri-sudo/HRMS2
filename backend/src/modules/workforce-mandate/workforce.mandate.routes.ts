@@ -162,6 +162,8 @@ router.get(
     "hr", "admin", "super_admin", "wfm", "ceo",
     "branch_wfm", "branch_head", "process_manager", "manager", "assistant_manager",
     "team_leader", "tl", "tq_head", "trainer", "qa",
+    // Designation-based audience that no existing role can express - see migration 1689.
+    "capacity_viewer",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
