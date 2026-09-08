@@ -8,6 +8,7 @@ import fs from "fs";
 import PDFDocument from "pdfkit";
 import { ZipArchive } from "archiver";
 import type { Archiver as ArchiverInstance } from "archiver";
+import { resolveOnboardingDocumentFile } from "../ats/onboardingDocumentPath.js";
 
 /**
  * archiver 8 removed the callable factory.
@@ -308,6 +309,15 @@ async function appendEsiPack(
   // doc_category is the stable axis here, not doc_type: identity holds 27,165
   // rows as 'POI' plus a handful of 'POI_1'/'POI_4', and a separate 'aadhaar'
   // category holds 2. Matching the category catches all of them.
+  //
+  // In practice this NEVER resolves for the ESI-eligible population: verified
+  // live 2026-09-08, zero of 436 employee_documents rows in that scope carry an
+  // /api/files/... URL this can read — 434 are `legacy://document_master/...`
+  // markers left by a one-way db_bill import that copied the ROW but never the
+  // file bytes (backend/src/modules/migration/migrateDocumentsFromLegacy.ts),
+  // and 2 point at a different server's absolute filesystem path. It stays
+  // first in the chain because it is the correct source for anything uploaded
+  // through THIS app's own document flow, present or future.
   const byCategory = async (category: string): Promise<string | null> => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT file_url FROM employee_documents
@@ -318,12 +328,53 @@ async function appendEsiPack(
     return urlToLocalPath((rows as RowDataPacket[])[0]?.file_url ?? null);
   };
 
+  /**
+   * PAN/Aadhaar, sourced from the candidate's OWN onboarding upload.
+   *
+   * This is what actually resolves. Before a candidate becomes an employee,
+   * they upload PAN/Aadhaar through the ATS onboarding flow into
+   * `candidate_onboarding_document`, whose `file_path` is a real absolute path
+   * under `private-storage/onboarding-documents/` on THIS server — verified
+   * live: 1,699 real files on disk, resolvable via the same
+   * `resolveOnboardingDocumentFile()` the candidate-document viewer already
+   * uses (it also survives the Windows-dev-path / cwd-mismatch cases recorded
+   * there). Checked live 2026-09-08: 38 of 567 ESI-eligible employees have a
+   * real PAN or Aadhaar here — zero via employee_documents.
+   *
+   * `doc_type` is free text with several live spellings per document
+   * (`pan`/`PAN Card`/`pan_card`, `Aadhaar`/`aadhaar_card`/`aadhar`), so this
+   * matches on a normalised set rather than one literal string.
+   */
+  const fromCandidateOnboarding = async (types: string[]): Promise<string | null> => {
+    const placeholders = types.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT d.file_path
+         FROM candidate_onboarding_document d
+         JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+        WHERE ab.employee_id = ? AND d.deleted_at IS NULL AND LOWER(d.doc_type) IN (${placeholders})
+        ORDER BY d.uploaded_at DESC LIMIT 1`,
+      [emp.id, ...types],
+    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+    return resolveOnboardingDocumentFile((rows as RowDataPacket[])[0]?.file_path ?? null);
+  };
+
   const docs: Array<{ label: string; localPath: string | null; note: string }> = [
-    { label: "PAN_Card", localPath: await byCategory("pan"), note: "PAN document not available — upload it on the employee profile" },
+    {
+      label: "PAN_Card",
+      localPath: (await byCategory("pan")) ?? (await fromCandidateOnboarding(["pan", "pan card", "pan_card"])),
+      note: "PAN document not available — upload it on the employee profile",
+    },
     // Aadhaar is mandatory for ESI registration and was in no version of this
     // pack, though the CSV export has carried the aadhaar NUMBER since
     // 2026-09-02. A number without the scan does not complete a registration.
-    { label: "Aadhaar", localPath: (await byCategory("aadhaar")) ?? (await byCategory("identity")), note: "Aadhaar / identity proof not available" },
+    {
+      label: "Aadhaar",
+      localPath:
+        (await byCategory("aadhaar")) ??
+        (await byCategory("identity")) ??
+        (await fromCandidateOnboarding(["aadhaar", "aadhaar_card", "aadhar"])),
+      note: "Aadhaar / identity proof not available",
+    },
     { label: "Photo", localPath: urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null), note: "Employee photo not available" },
   ];
 

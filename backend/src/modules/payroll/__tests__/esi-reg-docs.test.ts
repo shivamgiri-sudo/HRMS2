@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
+import path from "path";
+import fs from "fs";
 import { esiRegDocsRouter } from "../esi-reg-docs.routes.js";
 
 vi.mock("../../../db/mysql.js", () => ({
@@ -36,20 +38,29 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
  * updated to match the installed package before the suite can pass — which is
  * the property that was missing.
  */
+const { zipInstances } = vi.hoisted(() => ({ zipInstances: [] as any[] }));
+
 vi.mock("archiver", () => {
-  class ZipArchive {
-    private _dest: any = null;
-    append = vi.fn().mockReturnThis();
-    file = vi.fn().mockReturnThis();
-    on = vi.fn().mockReturnThis();
-    pipe = vi.fn((dest: any) => { this._dest = dest; return this; });
-    finalize = vi.fn(() => {
-      if (this._dest && typeof this._dest.end === "function") this._dest.end();
+  // A constructor, not a factory: each `new ZipArchive()` records itself so a
+  // test can assert against the instance the code actually built (e.g. which
+  // files were archived), not one handed back by a shared factory mock.
+  const ZipArchive = vi.fn(function (this: any) {
+    let _dest: any = null;
+    this.append = vi.fn().mockReturnThis();
+    this.file = vi.fn().mockReturnThis();
+    this.on = vi.fn().mockReturnThis();
+    this.pipe = vi.fn((dest: any) => { _dest = dest; return this; });
+    this.finalize = vi.fn(() => {
+      if (_dest && typeof _dest.end === "function") _dest.end();
       return Promise.resolve();
     });
-  }
+    zipInstances.push(this);
+  });
   return { ZipArchive, Archiver: ZipArchive };
 });
+
+/** The archive the code under test just constructed. */
+const lastArchive = () => zipInstances[zipInstances.length - 1];
 
 import { db } from "../../../db/mysql.js";
 
@@ -121,6 +132,59 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/zip/);
+  });
+
+  it("falls back to the candidate's onboarding-uploaded PAN/Aadhaar when employee_documents has nothing", async () => {
+    // Live 2026-09-08: employee_documents resolves ZERO PAN/Aadhaar files for the
+    // entire ESI-eligible population (434 of 436 rows are unreadable legacy://
+    // markers). candidate_onboarding_document is where a real file exists — 38
+    // of 567 employees. This pins that fallback actually fires and is included
+    // in the zip, not merely that the code compiles.
+    const onboardingRoot = path.resolve(process.cwd(), "private-storage", "onboarding-documents");
+    fs.mkdirSync(onboardingRoot, { recursive: true });
+    const pan = path.join(onboardingRoot, "esi-test-pan.jpg");
+    const aadhaar = path.join(onboardingRoot, "esi-test-aadhaar.jpg");
+    fs.writeFileSync(pan, "fake-pan-bytes");
+    fs.writeFileSync(aadhaar, "fake-aadhaar-bytes");
+
+    try {
+      vi.mocked(db.execute).mockImplementation(async (sql: unknown) => {
+        const s = String(sql);
+        if (s.includes("FROM employees WHERE id")) {
+          return [[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }], []] as any;
+        }
+        // employee_documents: nothing resolvable, matching live reality.
+        if (s.includes("FROM employee_documents")) return [[], []] as any;
+        // candidate_onboarding_document: a real PAN and a real Aadhaar file.
+        if (s.includes("FROM candidate_onboarding_document") && s.includes("'pan'")) {
+          return [[{ file_path: pan }], []] as any;
+        }
+        if (s.includes("FROM candidate_onboarding_document")) {
+          return [[{ file_path: aadhaar }], []] as any;
+        }
+        return [[], []] as any;
+      });
+
+      const res = await request(app)
+        .get("/api/payroll/esi-reg-docs/emp-1/download")
+        .buffer(true)
+        .parse((res: any, cb: any) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c: Buffer) => chunks.push(c));
+          res.on("end", () => cb(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      // The mock ZipArchive records every archive.file() call; both real files
+      // must have reached it under the labels the pack promises.
+      const archived = lastArchive();
+      const namedFiles = archived.file.mock.calls.map((c: any[]) => c[1]?.name);
+      expect(namedFiles).toContain("PAN_Card.jpg");
+      expect(namedFiles).toContain("Aadhaar.jpg");
+    } finally {
+      fs.rmSync(pan, { force: true });
+      fs.rmSync(aadhaar, { force: true });
+    }
   });
 
   it("returns 404 when employee not found", async () => {
