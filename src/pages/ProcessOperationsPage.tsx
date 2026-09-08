@@ -1393,6 +1393,12 @@ export default function ProcessOperationsPage() {
           onSaved={() => {
             qc.invalidateQueries({ queryKey: ["process-operations", "detail", current] });
             qc.invalidateQueries({ queryKey: ["process-operations", "processes"] });
+            // A saved reading can belong to a metric whose drill-down is already
+            // open (or gets reopened next) -- without this its cached readings/
+            // trend chart would keep showing the pre-save figure until an
+            // unrelated cache eviction happened to clear it.
+            qc.invalidateQueries({ queryKey: ["process-operations", "drilldown"] });
+            qc.invalidateQueries({ queryKey: ["process-operations", "raw-rows"] });
           }}
         />
       </div>
