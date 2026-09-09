@@ -920,6 +920,45 @@ export async function saveOffer(
     false,
   );
 
+  // A submitted offer's CTC/gross/net feed straight into both the Branch Head
+  // and Payroll Head approval screens -- both read ats_employment_offer
+  // directly, so this is the one canonical place that value comes from.
+  // Nothing before this point rejected a non-positive or nonsensically low
+  // "Monthly CTC" -- a blank/zero field (client-side validation only checked
+  // truthiness, so the *string* "0" passed) or a fat-fingered figure like
+  // "16.5" instead of "16,500" was silently saved. That produced ₹0 (or
+  // near-₹0) CTC/gross rows with a negative net-in-hand once the flat
+  // professional-tax deduction was applied on top, mixed in with correctly
+  // priced offers in the same queue. Guarded once, here, for every caller.
+  if (submit) {
+    const monthlyCtc = components.offered_ctc;
+    if (!Number.isFinite(monthlyCtc) || monthlyCtc <= 0) {
+      throw Object.assign(
+        new Error('Monthly CTC must be greater than zero to submit an offer.'),
+        { statusCode: 400 },
+      );
+    }
+    const isProposedException = Boolean(offerData.is_proposed_exception)
+      && String(offerData.proposed_reason ?? '').trim().length > 0;
+    if (!isProposedException) {
+      const [slabRows] = await db.execute<RowDataPacket[]>(
+        `SELECT slab_from, slab_to FROM salary_band_master WHERE band_code = ? AND active_status = 1`,
+        [offerData.salary_band ?? null],
+      ).catch(() => [[] as RowDataPacket[]]);
+      const slab = (slabRows as RowDataPacket[])[0];
+      if (slab && (monthlyCtc < Number(slab.slab_from) || monthlyCtc > Number(slab.slab_to))) {
+        throw Object.assign(
+          new Error(
+            `Monthly CTC ₹${monthlyCtc.toLocaleString('en-IN')} is outside Band ${offerData.salary_band}'s ` +
+            `range (₹${Number(slab.slab_from).toLocaleString('en-IN')}–₹${Number(slab.slab_to).toLocaleString('en-IN')}). ` +
+            `Pick a package from the salary master or correct the CTC.`
+          ),
+          { statusCode: 400 },
+        );
+      }
+    }
+  }
+
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
 

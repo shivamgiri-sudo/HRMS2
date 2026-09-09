@@ -1055,10 +1055,18 @@ export default function NativeHROnboardingRequests() {
     if (!offer.reporting_manager_id) errors.reporting_manager_id = 'Reporting manager is required.';
     if (!offer.salary_band) errors.salary_band = 'Salary band is required.';
     if (isProposed) {
-      if (!proposedCtc) errors.proposed_ctc = 'Proposed CTC is required.';
+      // `!proposedCtc` alone only catches an empty field -- the *string* "0"
+      // is truthy in JS, so a candidate could be submitted with a proposed
+      // CTC of zero and no error shown. Checked as a number instead.
+      if (!proposedCtc || !(Number(proposedCtc) > 0)) errors.proposed_ctc = 'Proposed CTC must be greater than zero.';
       if (!proposedReason.trim()) errors.proposed_reason = 'Exception reason is required.';
-    } else if (!offer.offered_ctc) {
-      errors.offered_ctc = 'Package or monthly CTC is required.';
+    } else if (!offer.offered_ctc || !(Number(offer.offered_ctc) > 0)) {
+      // Same truthiness gap as above -- "0" (typed, or left over from a
+      // package whose amount didn't populate) passed this check silently and
+      // produced a ₹0 CTC/gross offer with a negative net-in-hand once
+      // submitted. See ats.onboarding.service.ts saveOffer() for the
+      // matching server-side guard (client validation alone is not enough).
+      errors.offered_ctc = 'Enter a package or a monthly CTC greater than zero.';
     }
     setFormFieldErrors(errors);
     if (Object.keys(errors).length) {
