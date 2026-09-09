@@ -147,7 +147,7 @@ export default function BankLedgerReportPage() {
 
       {bankAccountId && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
-          Provisional export — Bank Reconciliation isn't built yet, so no period can be marked "closed." Treat this Tally export as a draft hand-off, not the final posting.
+          An export here is "final" only for date ranges fully covered by a closed period in Bank Reconciliation — otherwise it's provisional. Use Bank Reconciliation to close a period before treating its Tally export as the final posting.
         </div>
       )}
 
