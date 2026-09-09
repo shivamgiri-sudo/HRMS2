@@ -8,6 +8,7 @@ import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import {
   AlertTriangle,
   Calculator,
@@ -21,6 +22,7 @@ import {
   FileCheck,
   Loader2,
   Maximize2,
+  MoreVertical,
   RotateCcw,
   RotateCw,
   Search,
@@ -1732,17 +1734,16 @@ export default function NativeHROnboardingRequests() {
                 <table className="w-full text-sm">
                   <thead className="border-b bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th className="px-4 py-3 text-left">#</th>
+                      <th className="w-10 px-4 py-3 text-left">#</th>
                       <th className="px-4 py-3 text-left">Name / Code</th>
-                      <th className="px-4 py-3 text-left">Date</th>
+                      <th className="w-28 px-4 py-3 text-left">Date</th>
                       <th className="px-4 py-3 text-left">Branch</th>
                       <th className="px-4 py-3 text-left">Process</th>
-                      <th className="px-4 py-3 text-left">Status</th>
-                      <th className="px-4 py-3 text-left">Offer</th>
-                      <th className="px-4 py-3 text-left">Docs</th>
-                      <th className="px-4 py-3 text-left">Bank</th>
-                      <th className="px-4 py-3 text-left">Resend Link</th>
-                      <th className="px-4 py-3 text-left">Action</th>
+                      <th className="w-32 px-4 py-3 text-left">Status</th>
+                      <th className="w-28 px-4 py-3 text-left">Offer</th>
+                      <th className="w-16 px-4 py-3 text-left">Docs</th>
+                      <th className="w-24 px-4 py-3 text-left">Bank</th>
+                      <th className="w-16 px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1766,96 +1767,79 @@ export default function NativeHROnboardingRequests() {
                         <td className="px-4 py-3"><OfferBadge status={r.offer_status} /></td>
                         <td className="px-4 py-3 text-slate-600">{r.documents_uploaded ?? 0}</td>
                         <td className="px-4 py-3 text-slate-600 capitalize">{statusLabel(r.bank_verification_status)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col gap-1">
-                            {r.candidate_status === 'not_joining' ? (
-                              canMarkNotJoining && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={notJoiningId === r.candidate_id}
-                                  onClick={(e) => void clearNotJoining(r, e)}
-                                  className="min-h-[32px] gap-1 text-slate-600 border-slate-200 hover:bg-slate-50"
-                                >
-                                  {notJoiningId === r.candidate_id
-                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    : null}
-                                  Reactivate
-                                </Button>
-                              )
-                            ) : (
-                              <>
-                                {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) ? (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={resendingId === r.candidate_id}
-                                    onClick={(e) => void resendLink(r, e)}
-                                    className="min-h-[32px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                                  >
-                                    {resendingId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <Send className="h-3.5 w-3.5" />}
-                                    Resend
-                                  </Button>
-                                ) : (
-                                  <span className="text-xs text-slate-300">—</span>
-                                )}
-                                {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={reminderSendingId === r.candidate_id}
-                                    onClick={(e) => void sendReminder(r, e)}
-                                    className="min-h-[32px] gap-1 text-orange-700 border-orange-200 hover:bg-orange-50"
-                                  >
-                                    {reminderSendingId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <Send className="h-3.5 w-3.5" />}
-                                    Remind
-                                  </Button>
-                                )}
-                                {canMarkNotJoining && !r.employee_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          {/* Was up to 4 buttons stacked in one column plus a separate always-visible
+                              "Open" column — the actions column ballooned in height/width while the
+                              short columns (Status, Offer, Docs, Bank) sat mostly empty beside it. One
+                              compact menu per row; "View Details" replaces the redundant Open button
+                              (the row itself already opens detail on click). */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0"
+                                aria-label="Row actions"
+                              >
+                                {resendingId === r.candidate_id
+                                  || reminderSendingId === r.candidate_id
+                                  || notJoiningId === r.candidate_id
+                                  || branchChangingId === r.candidate_id
+                                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                                  : <MoreVertical className="h-4 w-4" />}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); void openDetail(r); }}>
+                                View Details
+                              </DropdownMenuItem>
+                              {r.candidate_status === 'not_joining' ? (
+                                canMarkNotJoining && (
+                                  <DropdownMenuItem
                                     disabled={notJoiningId === r.candidate_id}
-                                    onClick={(e) => void markNotJoining(r, e)}
-                                    className="min-h-[32px] gap-1 text-slate-500 border-slate-200 hover:bg-slate-50"
+                                    onClick={(e) => void clearNotJoining(r, e)}
                                   >
-                                    {notJoiningId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <X className="h-3.5 w-3.5" />}
-                                    Not Joining
-                                  </Button>
-                                )}
-                                {canMarkNotJoining && !r.employee_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={branchChangingId === r.candidate_id}
-                                    onClick={(e) => openBranchModal(r, e)}
-                                    className="min-h-[32px] gap-1 text-slate-500 border-slate-200 hover:bg-slate-50"
-                                  >
-                                    {branchChangingId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : null}
-                                    Change Branch
-                                  </Button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => { e.stopPropagation(); void openDetail(r); }}
-                            className="min-h-[36px]"
-                          >
-                            Open
-                          </Button>
+                                    Reactivate
+                                  </DropdownMenuItem>
+                                )
+                              ) : (
+                                <>
+                                  {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) && (
+                                    <DropdownMenuItem
+                                      disabled={resendingId === r.candidate_id}
+                                      onClick={(e) => void resendLink(r, e)}
+                                    >
+                                      <Send className="mr-2 h-3.5 w-3.5" /> Resend Link
+                                    </DropdownMenuItem>
+                                  )}
+                                  {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
+                                    <DropdownMenuItem
+                                      disabled={reminderSendingId === r.candidate_id}
+                                      onClick={(e) => void sendReminder(r, e)}
+                                    >
+                                      <Send className="mr-2 h-3.5 w-3.5" /> Send Reminder
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canMarkNotJoining && !r.employee_id && (
+                                    <DropdownMenuItem
+                                      disabled={notJoiningId === r.candidate_id}
+                                      onClick={(e) => void markNotJoining(r, e)}
+                                    >
+                                      <X className="mr-2 h-3.5 w-3.5" /> Mark Not Joining
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canMarkNotJoining && !r.employee_id && (
+                                    <DropdownMenuItem
+                                      disabled={branchChangingId === r.candidate_id}
+                                      onClick={(e) => openBranchModal(r, e)}
+                                    >
+                                      Change Branch
+                                    </DropdownMenuItem>
+                                  )}
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
