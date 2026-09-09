@@ -8,6 +8,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
+import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -204,7 +205,11 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
   }
   const id = randomUUID();
   const batchNo = body.upload_batch_no || `BATCH-${Date.now()}`;
-  await db.execute(
+  // withDeadlockRetry is safe here: this is one autocommit statement (no explicit
+  // transaction), and it is idempotent on retry — a lost deadlock rolls the whole INSERT
+  // back (nothing partially written), and `id` was generated once above, so a retry
+  // replays the exact same row rather than creating a duplicate.
+  await withDeadlockRetry(() => db.execute(
     `INSERT INTO upload_batch (id, upload_batch_no, upload_type_code, original_file_name, file_path,
      file_size_bytes, total_rows, valid_rows, error_rows, batch_status, error_summary, metadata,
      uploaded_by, validated_by, validated_at)
@@ -216,7 +221,7 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
      req.authUser!.id,
      body.valid_rows > 0 ? req.authUser!.id : null,
      body.valid_rows > 0 ? new Date().toISOString().slice(0, 19).replace("T", " ") : null]
-  );
+  ));
   const [rows] = await db.execute<UploadBatchRow[]>("SELECT * FROM upload_batch WHERE id = ? LIMIT 1", [id]);
   res.status(201).json({ success: true, data: rows[0] ?? null });
 }));
@@ -248,11 +253,18 @@ router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm"
       row.error_messages ? JSON.stringify(row.error_messages) : null
     );
   }
-  await db.execute(
+  // withDeadlockRetry is safe here for the same reason as the /batches INSERT above:
+  // one autocommit statement, and every row's id was generated once above the retry, so
+  // a retry replays the identical INSERT rather than double-staging rows. This is the
+  // exact write that silently lost BATCH-1788948395588-R6909's 14 resubmitted rows to a
+  // deadlock — the batch header had already been created with "14 valid" before this
+  // statement ran, and when it lost the deadlock the rows were simply never saved, with
+  // nothing left to show for it beyond a batch that claimed rows it didn't have.
+  await withDeadlockRetry(() => db.execute(
     `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
      VALUES ${placeholders.join(", ")}`,
     values
-  );
+  ));
   res.status(201).json({ success: true, count: rows.length });
 }));
 
@@ -384,6 +396,45 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')`,
     [id]
   );
+
+  /*
+   * Guard against BATCH-1788948395588-R6909's failure mode: a batch that claims valid
+   * rows (from its own creation payload) but has ZERO rows actually staged in
+   * upload_batch_row — at ANY status, not just 'valid'/'pending' — used to run the
+   * import anyway, find nothing to do, and report a clean "imported, 0 rows" success,
+   * because every importer only checks for ERRORS, never for whether it did anything
+   * at all. Root cause there was the staging INSERT (POST /batches/:id/rows) losing a
+   * database deadlock after the batch header already claimed "14 valid" — the two are
+   * separate requests, so one can succeed while the other silently fails.
+   *
+   * This must NOT fire for the ordinary, legitimate case of re-importing a batch whose
+   * rows already all got consumed by an earlier successful run — those rows still
+   * exist, just as 'imported'/'error', which is exactly why `pending` above is 0 for
+   * that case too. The only reliable way to tell "nothing left to do" apart from
+   * "nothing was ever there" is whether upload_batch_row holds ANY row for this batch,
+   * regardless of status — so that is checked separately, only in this already-rare
+   * pending===0 branch.
+   */
+  if (Number((pending as RowDataPacket[])[0]?.n ?? 0) === 0) {
+    const [batchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT valid_rows FROM upload_batch WHERE id = ? LIMIT 1`, [id]
+    );
+    const [stagedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM upload_batch_row WHERE upload_batch_id = ?`, [id]
+    );
+    const validRows = Number((batchRows as RowDataPacket[])[0]?.valid_rows ?? 0);
+    const stagedCount = Number((stagedRows as RowDataPacket[])[0]?.n ?? 0);
+    if (validRows > 0 && stagedCount === 0) {
+      const message = `This batch claims ${validRows} valid row(s), but none were ever saved to the `
+        + `database — the upload's row-staging step likely failed or timed out partway through. `
+        + `There is nothing here to import. Re-upload the file (or redo Edit & Resubmit) instead.`;
+      await db.execute(
+        `UPDATE upload_batch SET batch_status = 'validation_failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+        [message.slice(0, 1000), id]
+      );
+      return res.status(409).json({ success: false, error: message });
+    }
+  }
 
   startBatchJob(
     id,

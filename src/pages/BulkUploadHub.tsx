@@ -2638,14 +2638,22 @@ function BatchRowsDialog({
       });
       const newBatchId = batchRes.data.id;
 
-      // 2. Stage the (edited) failed rows
+      // 2. Stage the (edited) failed rows. This is the exact call that silently lost
+      // BATCH-1788948395588-R6909's 14 resubmitted rows: the batch header (step 1, just
+      // above) had already been created and shown "14 valid" by the time this INSERT hit
+      // a database deadlock, and the default 30s timeout meant the browser gave up and
+      // moved on before the server even finished failing — so no error ever surfaced,
+      // and the batch was left claiming rows it never actually saved. The server now
+      // retries a lost deadlock on this write automatically (see withDeadlockRetry in
+      // bulk-upload.routes.ts), but that retry needs headroom to run before the browser
+      // gives up on it — 60s matches the import call's own timeout just below.
       const stagingPayload = failedRows.map((row) => ({
         row_no: row.row_no,
         raw_data: Object.fromEntries(dataKeys.map((k) => [k, getCellValue(row, k)])),
         row_status: "pending",
         error_messages: [],
       }));
-      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload);
+      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload, 60000);
 
       // 3. Run import. It answers 202 and keeps working, so wait it out by polling
       // rather than by holding the request open past the proxy timeout.
