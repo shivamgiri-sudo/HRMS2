@@ -56,6 +56,23 @@ bankReconciliationRouter.post(
   }),
 );
 
+// All statement lines uploaded into a period so far, most recently uploaded import first.
+bankReconciliationRouter.get(
+  "/periods/:periodId/statement-lines",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT bsl.id, bsl.txn_date, bsl.description, bsl.reference, bsl.debit_amount, bsl.credit_amount, bsl.match_status
+         FROM bank_statement_line bsl
+         JOIN bank_statement_import bsi ON bsi.id = bsl.import_id
+        WHERE bsi.period_id = ?
+        ORDER BY bsi.imported_at DESC, bsl.txn_date ASC`,
+      [req.params.periodId],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
+
 // Upload + parse a statement into an open period, auto-match immediately.
 bankReconciliationRouter.post(
   "/periods/:periodId/statements",
