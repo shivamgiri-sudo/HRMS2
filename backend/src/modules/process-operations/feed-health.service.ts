@@ -110,6 +110,13 @@ export interface NeverReportedGroup {
   /** Up to 8 real names for a reader to recognise; not every process when there are many. */
   processNames: string[];
   /**
+   * Every affected process id (not capped like processNames) — lets the UI
+   * answer "does this gap affect the process I'm currently looking at?" and
+   * offer a fill-in-the-blanks upload template scoped to exactly that
+   * process, without a second round trip.
+   */
+  processIds: string[];
+  /**
    * Set when an active `upload_template_master` row already targets this exact
    * source table — i.e. a manual path to fill this gap exists today and needs
    * nobody to write code, only to use it. null means genuinely no path exists yet.
@@ -207,6 +214,7 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
       sourceObject: String(r.source_object),
       processCount: 0,
       processNames: [],
+      processIds: [],
       uploadTypeCode: r.upload_type_code ? String(r.upload_type_code) : null,
       uploadTypeName: r.upload_type_name ? String(r.upload_type_name) : null,
       existingSourceRows: null,
@@ -267,7 +275,8 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
 
   return [...groups.values()]
     .sort((a, b) => b.processCount - a.processCount)
-    .map(({ _sourceObject, _kind, _keyColumn, _keyValues, _employeeKeyColumn, _employeeKeyKind, _processIds, ...g }) => g);
+    .map(({ _sourceObject, _kind, _keyColumn, _keyValues, _employeeKeyColumn, _employeeKeyKind, _processIds, ...g }) =>
+      ({ ...g, processIds: [..._processIds] }));
 }
 
 /**

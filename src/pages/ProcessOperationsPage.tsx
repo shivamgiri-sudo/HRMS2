@@ -82,7 +82,7 @@ interface FeedRow {
 }
 interface NeverReportedGroup {
   metricKey: string; metricName: string; sourceObject: string;
-  processCount: number; processNames: string[];
+  processCount: number; processNames: string[]; processIds: string[];
   uploadTypeCode: string | null; uploadTypeName: string | null;
   existingSourceRows: number | null;
 }
@@ -1510,7 +1510,23 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
  * process, because the dominant case here is one dead table wearing dozens of
  * process names, not dozens of independent problems.
  */
-function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
+/** metric_key,date,value,note — the same 4 columns the bulk-paste box already
+ *  parses, so a filled-in template pastes straight in with zero translation. */
+function downloadFillInTemplate(g: NeverReportedGroup, processName: string) {
+  const days = 14;
+  const rows: Array<Record<string, unknown>> = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    rows.push({ metric_key: g.metricKey, date: d.toISOString().slice(0, 10), value: "", note: "" });
+  }
+  const safeProcess = processName.replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+  downloadCsv(`${g.metricKey}_${safeProcess}_template.csv`, ["metric_key", "date", "value", "note"], rows);
+}
+
+function NeverReportedBanner({ groups, currentProcessId, currentProcessName }: {
+  groups: NeverReportedGroup[]; currentProcessId: string | null; currentProcessName: string | null;
+}) {
   // Same reasoning as StoppedFeeds: collapsed by default so this doesn't
   // push the actual dashboard off the first screen. The headline count is
   // the part worth seeing unconditionally; the per-metric breakdown (with
@@ -1578,6 +1594,14 @@ function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
                       Manual upload available — Bulk Upload Hub → "{g.uploadTypeName}"
                     </span>
                   </div>
+                )}
+                {currentProcessId && currentProcessName && g.processIds.includes(currentProcessId) && (
+                  <button type="button"
+                    onClick={() => downloadFillInTemplate(g, currentProcessName)}
+                    title={`A blank 14-day CSV for ${g.metricKey} — same 4 columns "Add a reading" → Bulk paste already reads, fill in real values and paste it back in for ${currentProcessName}`}
+                    className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition cursor-pointer">
+                    <Download size={10} />Blank template for {currentProcessName}
+                  </button>
                 )}
               </div>
             ))}
@@ -1767,7 +1791,10 @@ export default function ProcessOperationsPage() {
         ) : (
           <>
             {feedHealth && <StoppedFeeds health={feedHealth} />}
-            {feedHealth && <NeverReportedBanner groups={feedHealth.neverReported} />}
+            {feedHealth && (
+              <NeverReportedBanner groups={feedHealth.neverReported}
+                currentProcessId={current} currentProcessName={currentProcess?.processName ?? null} />
+            )}
 
             <div className="rounded-2xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 shadow-sm p-3.5">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
