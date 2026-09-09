@@ -53,6 +53,7 @@ type Voucher = {
   created_at: string;
   approval_events?: Array<{ action: string; actor_user_id: string; actor_role: string; created_at: string; remarks: string | null }>;
   audit_log?: Array<{ action_type: string; created_at: string }>;
+  consumption_since_replenishment?: { sinceDate: string; rows: Array<{ transaction_date: string; amount: number; grn_number: string | null; expense_head: string | null; narration: string | null }> } | null;
 };
 
 const PAYMENT_MODES = ["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other"];
@@ -185,6 +186,14 @@ export default function PaymentVouchersPage() {
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/imprest/managers")).data ?? [],
     enabled: raiseOpen && raiseForm.sourceType === "imprest_allocation",
   });
+  // "% of sanctioned float" auto-flag (PRD §10) — badges the managers who are actually low, so
+  // Finance doesn't have to check each one's balance by hand before deciding who to top up.
+  const replenishmentFlagsQuery = useQuery({
+    queryKey: ["payment-voucher-replenishment-flags"],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/imprest/replenishment-flags")).data ?? [],
+    enabled: raiseOpen && raiseForm.sourceType === "imprest_allocation",
+  });
+  const flaggedManagerIds = new Set((replenishmentFlagsQuery.data ?? []).map((f: any) => f.id));
 
   const detailQuery = useQuery({
     queryKey: ["payment-voucher-detail", detailId],
@@ -355,7 +364,13 @@ export default function PaymentVouchersPage() {
                   <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select imprest manager" /></SelectTrigger>
                   <SelectContent>
                     {(imprestManagersQuery.data ?? []).map((m: any) => (
-                      <SelectItem key={m.id} value={m.id}>{m.tally_name ?? m.employee_name ?? m.id} — {m.branch_name}</SelectItem>
+                      <SelectItem key={m.id} value={m.id}>
+                        <span className="inline-flex items-center gap-1.5">
+                          {flaggedManagerIds.has(m.id) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" aria-hidden />}
+                          {m.tally_name ?? m.employee_name ?? m.id} — {m.branch_name}
+                          {flaggedManagerIds.has(m.id) && <span className="text-[10px] font-bold uppercase text-rose-600">Needs Replenishment</span>}
+                        </span>
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -442,6 +457,26 @@ export default function PaymentVouchersPage() {
                     )}
                   </dl>
                 </section>
+
+                {detailQuery.data.source_type === "imprest_allocation" && detailQuery.data.consumption_since_replenishment && (
+                  <section>
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                      Consumed Since Last Replenishment ({detailQuery.data.consumption_since_replenishment.sinceDate})
+                    </h3>
+                    {detailQuery.data.consumption_since_replenishment.rows.length === 0 ? (
+                      <p className="text-sm text-slate-400">Nothing spent since the last top-up</p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {detailQuery.data.consumption_since_replenishment.rows.map((r, i) => (
+                          <li key={i} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs">
+                            <span className="text-gray-600">{r.transaction_date} — {r.grn_number ?? r.narration ?? "—"} {r.expense_head ? `(${r.expense_head})` : ""}</span>
+                            <span className="font-semibold text-gray-800">{money(r.amount)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                )}
 
                 {detailQuery.data.status === "raised" && canApprove && (
                   <section className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/50 p-3">

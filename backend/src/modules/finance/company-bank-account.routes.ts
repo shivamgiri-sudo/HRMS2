@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { companyBankAccountService, CompanyBankAccountError } from "./company-bank-account.service.js";
+import { bankLedgerService } from "./bank-ledger.service.js";
 
 /**
  * Company Bank Account master — own prefix (/api/finance/bank-accounts), matching the
@@ -82,6 +83,38 @@ companyBankAccountRouter.get(
   h(async (req, res) => {
     const data = await companyBankAccountService.getAuditTrail(req.params.id);
     res.json({ success: true, data });
+  }),
+);
+
+/** Credit/Debit report (PRD §6.1) — the running bank book for one account. */
+companyBankAccountRouter.get(
+  "/:id/ledger",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const data = await bankLedgerService.getReport({
+      bankAccountId: req.params.id,
+      from: req.query.from ? String(req.query.from) : undefined,
+      to: req.query.to ? String(req.query.to) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json({ success: true, data });
+  }),
+);
+
+/** CSV fallback export (PRD §6.2.2) — same authenticated-blob-download idiom as
+ *  gst-export.routes.ts / vendor-payment-tracking's export. */
+companyBankAccountRouter.get(
+  "/:id/ledger/export",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const csv = await bankLedgerService.toCsv({
+      bankAccountId: req.params.id,
+      from: req.query.from ? String(req.query.from) : undefined,
+      to: req.query.to ? String(req.query.to) : undefined,
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="bank-ledger-${req.params.id}.csv"`);
+    res.send(csv);
   }),
 );
 

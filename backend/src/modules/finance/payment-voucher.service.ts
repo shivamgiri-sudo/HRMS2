@@ -6,6 +6,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
+import { imprestService } from "./imprest.service.js";
 
 /**
  * Payment Voucher — the authorization + release chain (PRD §3.4, §6.5, §6.6).
@@ -161,12 +162,20 @@ export const paymentVoucherService = {
         LIMIT 20`,
       [id],
     );
+    // PRD §6.6's CA-grade detail: the CEO approving a float replenishment should see what the
+    // float was actually spent on since it was last topped up, not just a number the manager
+    // asked for. Only fetched for the lane it applies to.
+    const consumptionSinceReplenishment = (row as any).source_type === "imprest_allocation" && (row as any).linked_imprest_manager_id
+      ? await imprestService.getConsumptionSinceLastReplenishment(String((row as any).linked_imprest_manager_id))
+      : null;
+
     return {
       ...maskVoucherRow(row),
       // The raise -> CEO-approve -> release timeline (drill-down mandate's "Approval / workflow
       // timeline" section) — same generic reader every other finance entity type uses.
       approval_events: await listFinanceApprovalEvents("payment_voucher", id),
       audit_log: auditRows,
+      consumption_since_replenishment: consumptionSinceReplenishment,
     };
   },
 

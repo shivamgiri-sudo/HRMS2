@@ -525,4 +525,43 @@ imprestRouter.get(
   }),
 );
 
+// ── Replenishment auto-flag (Payment Voucher System Phase 2) ─────────────────
+// Mounted here rather than a new router — same resource (imprest managers), same read roles.
+
+imprestRouter.get(
+  "/replenishment-flags",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const data = await imprestService.listReplenishmentFlags({
+      branchScope: await scopeOf(req),
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    res.json({ success: true, data });
+  }),
+);
+
+imprestRouter.get(
+  "/managers/:id/replenishment-status",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const check = await assertManagerBranch(req, req.params.id);
+    if (!check.found) return res.status(404).json({ success: false, error: "Imprest manager not found" });
+    if (!check.allowed) return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    const data = await imprestService.getReplenishmentStatus(req.params.id);
+    res.json({ success: true, data });
+  }),
+);
+
+imprestRouter.get(
+  "/managers/:id/consumption-since-replenishment",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const check = await assertManagerBranch(req, req.params.id);
+    if (!check.found) return res.status(404).json({ success: false, error: "Imprest manager not found" });
+    if (!check.allowed) return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    const data = await imprestService.getConsumptionSinceLastReplenishment(req.params.id);
+    res.json({ success: true, data });
+  }),
+);
+
 export default imprestRouter;

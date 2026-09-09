@@ -13,6 +13,11 @@ import { imprestLedgerService } from "./imprest-ledger.service.js";
  * grn_type='imprest' GRN, not a fourth entity here.
  */
 
+/** Owner ruling (PRD §10, 2026-09-09): flag a manager for replenishment when their float drops
+ *  below this percentage of their own sanctioned_float_amount, unless they carry their own
+ *  replenishment_floor_pct override. */
+const DEFAULT_REPLENISHMENT_FLOOR_PCT = 25;
+
 const ALLOCATION_STATUSES = ["draft", "submitted", "branch_head_approved", "disbursed", "rejected"] as const;
 export type ImprestAllocationStatus = (typeof ALLOCATION_STATUSES)[number];
 
@@ -115,6 +120,12 @@ export const imprestService = {
       effectiveFrom?: string;
       effectiveTo?: string | null;
       activeStatus?: number;
+      /** Payment Voucher System Phase 2 (1705_imprest_manager_sanctioned_float.sql). The float
+       *  ceiling the "% of sanctioned float" replenishment auto-flag computes against — NULL
+       *  means no cap is set yet, so that manager gets no auto-flag until Finance sets one. */
+      sanctionedFloatAmount?: number | null;
+      /** NULL = use the global default (25%). Per-manager override of the flag threshold. */
+      replenishmentFloorPct?: number | null;
     },
     actorUserId: string,
   ) {
@@ -217,12 +228,16 @@ export const imprestService = {
               SET tally_name = COALESCE(?, tally_name),
                   effective_to = COALESCE(?, effective_to),
                   active_status = ?,
+                  sanctioned_float_amount = COALESCE(?, sanctioned_float_amount),
+                  replenishment_floor_pct = COALESCE(?, replenishment_floor_pct),
                   updated_by = ?
             WHERE id = ?`,
           [
             input.tallyName !== undefined ? input.tallyName : null,
             input.effectiveTo ?? null,
             nextActiveStatus,
+            input.sanctionedFloatAmount ?? null,
+            input.replenishmentFloorPct ?? null,
             actorUserId,
             input.id,
           ],
@@ -256,11 +271,12 @@ export const imprestService = {
       await connection.execute(
         `INSERT INTO imprest_manager
            (id, branch_id, user_id, employee_id, tally_name, effective_from, effective_to,
-            active_status, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            active_status, sanctioned_float_amount, replenishment_floor_pct, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           id, input.branchId, input.userId, input.employeeId ?? null, input.tallyName ?? null,
-          input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId,
+          input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1,
+          input.sanctionedFloatAmount ?? null, input.replenishmentFloorPct ?? null, actorUserId,
         ],
       );
       await connection.commit();
@@ -282,6 +298,74 @@ export const imprestService = {
     );
     if (!rows[0]) throw new Error("Imprest manager not found");
     return rows[0];
+  },
+
+  // ── Replenishment auto-flag (Payment Voucher System Phase 2) ────────────────
+  //
+  // Owner ruling (PRD §10): "% of sanctioned float", not a flat rupee floor — a manager with a
+  // ₹50,000 float and one with a ₹5,000 float should not be flagged at the same number. Default
+  // 25%, overridable per manager via imprest_manager.replenishment_floor_pct (1705).
+  //
+  // A manager with no sanctioned_float_amount set gets no flag at all — there is nothing to take
+  // a percentage OF — which degrades to the equivalent of Option C (no automatic flag) for that
+  // manager until Finance sets one, exactly as 1705's migration comment says.
+
+  async getReplenishmentStatus(imprestManagerId: string) {
+    const manager = await this.getManager(imprestManagerId);
+    const sanctioned = manager.sanctioned_float_amount != null ? Number(manager.sanctioned_float_amount) : null;
+    const currentBalance = await imprestLedgerService.getBalance(imprestManagerId);
+    if (sanctioned == null || sanctioned <= 0) {
+      return {
+        imprestManagerId, sanctionedFloatAmount: null, floorPct: null, floorAmount: null,
+        currentBalance, needsReplenishment: false,
+        reason: "No sanctioned float amount set for this manager — cannot compute a percentage floor.",
+      };
+    }
+    const floorPct = manager.replenishment_floor_pct != null ? Number(manager.replenishment_floor_pct) : DEFAULT_REPLENISHMENT_FLOOR_PCT;
+    const floorAmount = Math.round((sanctioned * floorPct / 100 + Number.EPSILON) * 100) / 100;
+    return {
+      imprestManagerId, sanctionedFloatAmount: sanctioned, floorPct, floorAmount, currentBalance,
+      needsReplenishment: currentBalance < floorAmount,
+      reason: null,
+    };
+  },
+
+  /** Every active manager whose float is currently below its own flag line — the list a Finance
+   *  Head dashboard/queue reads to know who to raise a Lane B voucher for. */
+  async listReplenishmentFlags(filters: { branchScope?: FinanceBranchScope; branchId?: string }) {
+    const managers = await this.listManagers({ ...filters, activeOnly: true });
+    const flagged: any[] = [];
+    for (const m of managers as any[]) {
+      const status = await this.getReplenishmentStatus(String(m.id));
+      if (status.needsReplenishment) flagged.push({ ...m, ...status });
+    }
+    return flagged;
+  },
+
+  /**
+   * The imprest GRNs (voucher debits) posted since this manager's last allocation credit — the
+   * "here's what the float was actually spent on" list PRD §6.6 asks the CEO's approval to be
+   * backed by, rather than just a number the manager asked for. Not a report of ALL history —
+   * only what has happened since the float was last topped up.
+   */
+  async getConsumptionSinceLastReplenishment(imprestManagerId: string) {
+    const [lastAllocRows] = await db.execute<RowDataPacket[]>(
+      `SELECT transaction_date FROM imprest_transaction_ledger
+        WHERE imprest_manager_id = ? AND entry_type = 'allocation'
+        ORDER BY transaction_date DESC, created_at DESC LIMIT 1`,
+      [imprestManagerId],
+    );
+    const since = lastAllocRows[0]?.transaction_date ?? "1900-01-01";
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT l.id, l.transaction_date, l.amount, l.narration,
+              g.grn_number, g.head AS expense_head, g.sub_head AS expense_sub_head
+         FROM imprest_transaction_ledger l
+         LEFT JOIN grn_request g ON l.reference_type = 'grn_request' AND g.id = l.reference_id
+        WHERE l.imprest_manager_id = ? AND l.entry_type = 'voucher' AND l.transaction_date > ?
+        ORDER BY l.transaction_date ASC`,
+      [imprestManagerId, since],
+    );
+    return { sinceDate: since, rows };
   },
 
   // ── Allocation ────────────────────────────────────────────────────────────
