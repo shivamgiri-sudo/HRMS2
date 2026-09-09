@@ -395,6 +395,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // while auditing the same workbook family; no DB backing exists
   // anywhere. See clovia-apr-daily-bulk.service.ts.
   "import_clovia_apr_daily_batch",
+  // Clovia's IB CDR Raw, full inbound call log -- found while auditing
+  // the same workbook family; no DB backing exists anywhere. See
+  // clovia-ib-cdr-bulk.service.ts.
+  "import_clovia_ib_cdr_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -993,6 +997,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-apr-daily-bulk.service.js"
     );
     const data = await importCloviaAprDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_ib_cdr_batch") {
+    const { importCloviaIbCdrBatch } = await import(
+      "../bulk-upload/clovia-ib-cdr-bulk.service.js"
+    );
+    const data = await importCloviaIbCdrBatch(id, userId);
     return { success: true, data };
   }
 

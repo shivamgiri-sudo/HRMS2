@@ -17,6 +17,11 @@ describe("parseSecondsFlexible", () => {
   it("returns null for blank", () => {
     expect(parseSecondsFlexible("")).toBeNull();
   });
+  /** Regression: an earlier <= 3 cutoff misread a plain few-second duration as "days". */
+  it("treats a small plain-seconds value as seconds, not a day fraction (caught live 2026-09-09)", () => {
+    expect(parseSecondsFlexible(3)).toBe(3);
+    expect(parseSecondsFlexible(2)).toBe(2);
+  });
 });
 
 describe("parsePctFraction", () => {
