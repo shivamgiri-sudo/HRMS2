@@ -95,17 +95,31 @@ export default function BankLedgerReportPage() {
               <p className="text-sm text-blue-100">Credit/Debit report — filterable by account and date range, exportable for Tally.</p>
             </div>
           </div>
-          <Button
-            className="cursor-pointer bg-white text-blue-700 hover:bg-blue-50"
-            disabled={!bankAccountId}
-            onClick={() => downloadCsv(
-              `/api/finance/bank-accounts/${bankAccountId}/ledger/export?from=${from}&to=${to}`,
-              `bank-ledger-${selectedAccount?.account_name ?? bankAccountId}-${from}-to-${to}.csv`,
-              toast,
-            )}
-          >
-            <Download className="mr-1.5 h-4 w-4" /> Export CSV
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="cursor-pointer border-white/40 bg-white/10 text-white hover:bg-white/20"
+              disabled={!bankAccountId}
+              onClick={() => downloadCsv(
+                `/api/finance/bank-accounts/${bankAccountId}/tally-export?from=${from}&to=${to}`,
+                `tally-export-${selectedAccount?.account_name ?? bankAccountId}-${from}-to-${to}.xml`,
+                toast,
+              )}
+            >
+              <Download className="mr-1.5 h-4 w-4" /> Tally XML
+            </Button>
+            <Button
+              className="cursor-pointer bg-white text-blue-700 hover:bg-blue-50"
+              disabled={!bankAccountId}
+              onClick={() => downloadCsv(
+                `/api/finance/bank-accounts/${bankAccountId}/ledger/export?from=${from}&to=${to}`,
+                `bank-ledger-${selectedAccount?.account_name ?? bankAccountId}-${from}-to-${to}.csv`,
+                toast,
+              )}
+            >
+              <Download className="mr-1.5 h-4 w-4" /> Export CSV
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -130,6 +144,12 @@ export default function BankLedgerReportPage() {
           <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
       </div>
+
+      {bankAccountId && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
+          Provisional export — Bank Reconciliation isn't built yet, so no period can be marked "closed." Treat this Tally export as a draft hand-off, not the final posting.
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm backdrop-blur-sm">
         <div className="overflow-x-auto">

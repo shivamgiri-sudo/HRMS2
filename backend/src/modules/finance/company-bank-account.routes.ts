@@ -5,6 +5,7 @@ import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../.
 import { requireRole } from "../../middleware/requireRole.js";
 import { companyBankAccountService, CompanyBankAccountError } from "./company-bank-account.service.js";
 import { bankLedgerService } from "./bank-ledger.service.js";
+import { tallyExportService } from "./tally-export.service.js";
 
 /**
  * Company Bank Account master — own prefix (/api/finance/bank-accounts), matching the
@@ -115,6 +116,28 @@ companyBankAccountRouter.get(
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="bank-ledger-${req.params.id}.csv"`);
     res.send(csv);
+  }),
+);
+
+/** Tally XML export (PRD §6.2.1) — see tally-export.service.ts for the ENVELOPE format and the
+ *  sign-convention derivation. Read-only (generating/downloading it changes nothing), but
+ *  still an explicit action worth the same role gate as the ledger itself. */
+companyBankAccountRouter.get(
+  "/:id/tally-export",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const result = await tallyExportService.exportAndLog(
+      req.params.id,
+      req.query.from ? String(req.query.from) : undefined,
+      req.query.to ? String(req.query.to) : undefined,
+      actor(req).id,
+      actor(req).role,
+    );
+    res.setHeader("Content-Type", "application/xml; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="tally-export-${req.params.id}.xml"`);
+    res.setHeader("X-Tally-Export-Final", String(result.isFinal));
+    res.setHeader("X-Tally-Export-Entry-Count", String(result.entryCount));
+    res.send(result.xml);
   }),
 );
 
