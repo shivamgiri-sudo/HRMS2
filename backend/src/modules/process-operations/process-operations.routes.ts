@@ -152,6 +152,23 @@ router.get("/:processId/workforce-correlation", requireAuth, requireRole(...VIEW
   res.json({ success: true, data });
 }));
 
+/**
+ * Business Health: revenue/GRN/expenses/Op% from the real P&L engine,
+ * headcount vs. sanctioned mandate, and the hiring pipeline — for this one
+ * process, this month. Declared before /:processId for the same shadowing
+ * reason as its siblings.
+ */
+router.get("/:processId/business-health", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getProcessBusinessHealth(req.authUser!.id, req.params.processId);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
 router.get("/:processId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const days = Number(req.query.days);
   // Clamped rather than trusted: an unbounded window here is a full-table scan

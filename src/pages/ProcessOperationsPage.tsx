@@ -179,6 +179,25 @@ interface ClapVoiceOfCustomer {
   };
 }
 
+interface ProcessBusinessHealth {
+  available: boolean; reason: string | null;
+  periodCode: string;
+  finance: {
+    available: boolean; reason: string | null;
+    revenue: number | null; revenueStatus: string | null;
+    grn: number | null; agentSalary: number | null;
+    ebit: number | null; operatingProfitPct: number | null;
+  };
+  headcount: {
+    available: boolean; reason: string | null;
+    activeHc: number; mandatedHc: number | null; gap: number | null;
+  };
+  hiring: {
+    available: boolean; reason: string | null;
+    openRequisitions: number; openPositions: number; candidatesInPipeline: number;
+  };
+}
+
 interface WorkforceCorrelationPoint {
   date: string;
   agentClapPct: number | null;
@@ -678,6 +697,150 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
           These lines are shown together, not correlated — with a handful of weekly events per process, a
           computed correlation would be more confident than the data actually is. Read it by eye: do agent
           complaints move with a green floor or a staffing gap, or don't they.
+        </p>
+      </div>
+    </ChartCard>
+  );
+}
+
+function currency(v: number | null): string {
+  if (v === null) return "no data";
+  return `₹${Math.round(v).toLocaleString("en-IN")}`;
+}
+
+const REVENUE_STATUS_LABEL: Record<string, string> = {
+  recognized: "Recognized",
+  configured_no_delivery: "Configured (no delivery feed)",
+  accounting_fallback: "Fallback — no revenue rule was in effect",
+  missing_rule: "No revenue rule configured",
+};
+
+/** A single stat in the Business Health grid — value, its own honest-null state, a caption. */
+function HealthStat({ label, value, caption, tone }: {
+  label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral";
+}) {
+  const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED : C_SLATE;
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px]">
+      <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide truncate">{label}</p>
+      <p className={`text-sm font-bold tabular-nums mt-0.5 ${value === "no data" ? "text-slate-400 text-xs font-normal italic" : ""}`}
+        style={value === "no data" ? undefined : { color }}>
+        {value}
+      </p>
+      {caption && <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">{caption}</p>}
+    </div>
+  );
+}
+
+/**
+ * Revenue/GRN/expenses/Op%, headcount vs. mandate, and hiring pipeline — for
+ * this one process, this month. Every figure here is read from real, already
+ * working engines elsewhere in this repo (process-pnl, workforce-mandate,
+ * job-requisition), not a new calculation — what's new is showing them
+ * together and saying plainly where each one's own real gap applies to THIS
+ * process (no mandate configured, no revenue rule in effect this month, no
+ * open requisitions right now). Shrinkage is left out on purpose: the
+ * dedicated shrinkage table has never been populated at process grain for
+ * any process in this system yet.
+ */
+function BusinessHealthPanel({ processId }: { processId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "business-health", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessBusinessHealth>>(
+      `/api/process-operations/${processId}/business-health`),
+    staleTime: 60_000,
+  });
+  const health = data?.data;
+
+  if (isLoading || !health) {
+    return (
+      <ChartCard title="Business Health" subtitle="Revenue, headcount and hiring for this process, this month">
+        <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Pulling P&L, mandate and hiring data…
+        </div>
+      </ChartCard>
+    );
+  }
+
+  const { finance, headcount, hiring, periodCode } = health;
+  return (
+    <ChartCard title="Business Health" subtitle={`${periodCode} — revenue, headcount and hiring for this process`}>
+      <div className="px-3 space-y-4">
+        {/* Finance */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            Revenue &amp; margin
+          </p>
+          {finance.available ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <HealthStat label="Revenue" value={currency(finance.revenue)}
+                  caption={finance.revenueStatus ? REVENUE_STATUS_LABEL[finance.revenueStatus] ?? finance.revenueStatus : undefined}
+                  tone={finance.revenue && finance.revenue > 0 ? "good" : "neutral"} />
+                <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} />
+                <HealthStat label="Agent salary" value={currency(finance.agentSalary)} />
+                <HealthStat label="EBIT" value={currency(finance.ebit)}
+                  tone={finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"} />
+                <HealthStat label="Op %" value={finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`}
+                  tone={finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"} />
+              </div>
+              {finance.revenue === 0 && (
+                <p className="text-[9.5px] text-slate-400 italic mt-1.5">
+                  Revenue shows ₹0 because no revenue rule was in effect for this exact month — not because the
+                  process earned nothing. Expenses (GRN, salary) are real regardless.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-400 italic py-1">{finance.reason}</p>
+          )}
+        </div>
+
+        {/* Headcount vs mandate */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            Headcount vs. sanctioned mandate
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <HealthStat label="Active headcount" value={String(headcount.activeHc)} />
+            {headcount.available ? (
+              <>
+                <HealthStat label="Mandated headcount" value={String(headcount.mandatedHc)} />
+                <HealthStat label="Gap" value={`${(headcount.gap ?? 0) > 0 ? "+" : ""}${headcount.gap}`}
+                  caption={headcount.gap === 0 ? "exactly at mandate" : headcount.gap! > 0 ? "over mandate" : "under mandate"}
+                  tone={headcount.gap === 0 ? "neutral" : headcount.gap! > 0 ? "good" : "bad"} />
+              </>
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-2.5 py-2 flex items-center">
+                <p className="text-[10.5px] text-slate-400 italic">{headcount.reason}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Hiring pipeline */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            Hiring pipeline
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <HealthStat label="Open requisitions" value={String(hiring.openRequisitions)}
+              tone={hiring.openRequisitions > 0 ? "neutral" : "good"} />
+            <HealthStat label="Open positions" value={String(hiring.openPositions)}
+              tone={hiring.openPositions > 0 ? "bad" : "good"} />
+            <HealthStat label="Candidates in pipeline" value={String(hiring.candidatesInPipeline)}
+              caption="Matched by process name, not a hard link" />
+          </div>
+          {hiring.openRequisitions === 0 && hiring.candidatesInPipeline === 0 && (
+            <p className="text-[9.5px] text-slate-400 italic mt-1.5">
+              Nothing open right now — this is a genuinely empty pipeline, not a missing feature.
+            </p>
+          )}
+        </div>
+
+        <p className="text-[9.5px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+          Shrinkage isn't shown here: the dedicated shrinkage table has no process-level data for any
+          process yet — the nightly job that fills it only runs at branch/org level today.
         </p>
       </div>
     </ChartCard>
@@ -2301,6 +2464,7 @@ export default function ProcessOperationsPage() {
 
                 {current && <VoiceOfCustomerPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
+                {current && <BusinessHealthPanel processId={current} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]

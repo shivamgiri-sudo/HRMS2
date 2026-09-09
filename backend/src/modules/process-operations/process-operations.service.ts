@@ -4,6 +4,7 @@ import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
 import { dateExpression, buildProcessEmployeeBreakdownPlan, type SourceField, type DataSourceConfig } from "../kpi/kpi-studio.sources.js";
 import { evaluateFormula } from "../kpi/kpi-formula.engine.js";
+import { getCachedAllocationSummary } from "../process-pnl/canonical-pnl.service.js";
 
 /**
  * Process Operations — every metric a process actually has, in one read.
@@ -1508,4 +1509,147 @@ export async function getWorkforceCorrelation(
     available: true, reason: null, periodFrom: from, periodTo: to,
     daily, weeklyAttrition, rosterCoverageDays,
   };
+}
+
+/**
+ * Process Business Health — revenue/GRN/expenses/Op%, headcount vs. sanctioned
+ * mandate, and hiring pipeline, in one honest read.
+ *
+ * Every one of these already exists as real, working code elsewhere in this
+ * repo (process-pnl, workforce-mandate, job-requisition) — nothing here is a
+ * new calculation. What's new is reading all three together for one process
+ * and being explicit about the real, per-process gaps each already has: most
+ * processes have no `workforce_mandate` row, revenue can be genuinely
+ * `missing_rule` for a given month, and most processes currently have zero
+ * open requisitions. None of that is hidden or defaulted to zero.
+ *
+ * Shrinkage is deliberately NOT included: the dedicated shrinkage snapshot
+ * table has never been populated at process grain for any process (the
+ * nightly cron only writes branch/org-level — see rta-nightly.cron.ts), so
+ * there is nothing real to show here yet.
+ */
+export interface ProcessBusinessHealth {
+  available: boolean;
+  reason: string | null;
+  periodCode: string;
+  finance: {
+    available: boolean;
+    reason: string | null;
+    revenue: number | null;
+    revenueStatus: string | null;
+    grn: number | null;
+    agentSalary: number | null;
+    ebit: number | null;
+    operatingProfitPct: number | null;
+  };
+  headcount: {
+    available: boolean;
+    reason: string | null;
+    activeHc: number;
+    mandatedHc: number | null;
+    gap: number | null;
+  };
+  hiring: {
+    available: boolean;
+    reason: string | null;
+    openRequisitions: number;
+    openPositions: number;
+    candidatesInPipeline: number;
+  };
+}
+
+export async function getProcessBusinessHealth(
+  userId: string, processId: string,
+): Promise<ProcessBusinessHealth | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const [processRows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_name FROM process_master WHERE id = ?`, [processId],
+  );
+  const processName = (processRows as any[])[0]?.process_name ?? null;
+
+  const today = new Date();
+  const periodCode = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+
+  // ── Finance: revenue/GRN/expenses/Op% -- reuses the real P&L engine as-is,
+  // never a second copy of its formulas. MUST go through the org-wide
+  // getCachedAllocationSummary (60s TTL, shared with the P&L pages), never
+  // bpoPnlAllocationOverlayService.getProcessDetail directly -- that one
+  // recomputes the full org-wide allocation from scratch, uncached, on every
+  // single call. Found the hard way: it hung well past 90s under this
+  // machine's real concurrent load and stalled every other DB-backed route
+  // behind it (shared connection pool). This reads one process's row out of
+  // the SAME cached summary every P&L page already warms.
+  let finance: ProcessBusinessHealth["finance"];
+  try {
+    const summary: any = await getCachedAllocationSummary({ period: periodCode });
+    const row = (summary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
+    if (!row) {
+      finance = {
+        available: false, reason: "No P&L allocation row for this process this month.",
+        revenue: null, revenueStatus: null, grn: null, agentSalary: null, ebit: null, operatingProfitPct: null,
+      };
+    } else {
+      finance = {
+        available: true, reason: null,
+        revenue: row.recognizedRevenue ?? null,
+        revenueStatus: row.revenueDataStatus ?? null,
+        grn: row.grnVendorActual ?? null,
+        agentSalary: row.agentSalary ?? null,
+        ebit: row.ebit ?? row.operatingProfit ?? null,
+        operatingProfitPct: row.operatingProfitPct ?? null,
+      };
+    }
+  } catch (err) {
+    finance = {
+      available: false, reason: `P&L engine error: ${err instanceof Error ? err.message : "unknown"}`,
+      revenue: null, revenueStatus: null, grn: null, agentSalary: null, ebit: null, operatingProfitPct: null,
+    };
+  }
+
+  // ── Headcount vs. mandate -- active headcount is always real; mandate is
+  // real only where a workforce_mandate row was actually configured for this
+  // process (21 of 58 processes, as of this session's audit).
+  const [hcRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS active_hc FROM employees WHERE process_id = ? AND active_status = 1`, [processId],
+  );
+  const activeHc = Number((hcRows as any[])[0]?.active_hc ?? 0);
+  const [mandateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(mandated_hc) AS total_mandated_hc
+       FROM workforce_mandate
+      WHERE process_id = ? AND active_status = 1
+        AND effective_from <= CURDATE() AND (effective_to IS NULL OR effective_to >= CURDATE())`,
+    [processId],
+  );
+  const mandatedHcRaw = (mandateRows as any[])[0]?.total_mandated_hc;
+  const mandatedHc = mandatedHcRaw !== null && mandatedHcRaw !== undefined ? Number(mandatedHcRaw) : null;
+  const headcount: ProcessBusinessHealth["headcount"] = mandatedHc === null
+    ? { available: false, reason: "No sanctioned headcount mandate configured for this process.", activeHc, mandatedHc: null, gap: null }
+    : { available: true, reason: null, activeHc, mandatedHc, gap: activeHc - mandatedHc };
+
+  // ── Hiring pipeline -- job_requisition carries a real process_id link;
+  // ats_candidate only matches by process NAME (no FK), which is weaker and
+  // stated as such rather than presented with equal confidence.
+  const [reqRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS open_reqs, COALESCE(SUM(GREATEST(requested_headcount - fulfilled_headcount, 0)), 0) AS open_positions
+       FROM job_requisition
+      WHERE process_id = ? AND approval_status NOT IN ('closed', 'cancelled', 'rejected')`,
+    [processId],
+  );
+  const openRequisitions = Number((reqRows as any[])[0]?.open_reqs ?? 0);
+  const openPositions = Number((reqRows as any[])[0]?.open_positions ?? 0);
+
+  let candidatesInPipeline = 0;
+  if (processName) {
+    const [candRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM ats_candidate WHERE applied_for_process = ?`, [processName],
+    );
+    candidatesInPipeline = Number((candRows as any[])[0]?.n ?? 0);
+  }
+  const hiring: ProcessBusinessHealth["hiring"] = {
+    available: true, reason: null, openRequisitions, openPositions, candidatesInPipeline,
+  };
+
+  return { available: true, reason: null, periodCode, finance, headcount, hiring };
 }
