@@ -387,6 +387,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // workbook used for Sale Raw; no DB backing exists anywhere. See
   // housing-premium-cdr-bulk.service.ts.
   "import_housing_premium_cdr_batch",
+  // Clovia's Team Allignment roster -- found while auditing the same
+  // workbook family used for Chat Performance/CRM Disposition; no DB
+  // backing exists anywhere. See clovia-team-alignment-bulk.service.ts.
+  "import_clovia_team_alignment_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -969,6 +973,14 @@ async function dispatchImport(
       "../bulk-upload/housing-premium-cdr-bulk.service.js"
     );
     const data = await importHousingPremiumCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_team_alignment_batch") {
+    const { importCloviaTeamAlignmentBatch } = await import(
+      "../bulk-upload/clovia-team-alignment-bulk.service.js"
+    );
+    const data = await importCloviaTeamAlignmentBatch(id, userId);
     return { success: true, data };
   }
 
