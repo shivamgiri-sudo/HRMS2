@@ -49,6 +49,7 @@ interface OnboardingRequest {
   branch_name: string;
   applied_for_process?: string;
   process_name?: string;
+  process_raw?: string;
   offer_id?: string;
   offer_status?: string;
   offered_ctc?: number;
@@ -434,6 +435,13 @@ export default function NativeHROnboardingRequests() {
   const [notJoiningId, setNotJoiningId] = useState<string | null>(null);
   const [notJoiningResult, setNotJoiningResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
+  // ── Change branch state — modal, not inline, since it needs a mandatory reason
+  const [branchModalRow, setBranchModalRow] = useState<OnboardingRequest | null>(null);
+  const [branchModalNewId, setBranchModalNewId] = useState('');
+  const [branchModalReason, setBranchModalReason] = useState('');
+  const [branchChangingId, setBranchChangingId] = useState<string | null>(null);
+  const [branchChangeResult, setBranchChangeResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
+
   // ── Detail / selected state
   const [selected, setSelected] = useState<OnboardingRequest | null>(null);
   const [detailData, setDetailData] = useState<any | null>(null);
@@ -807,6 +815,45 @@ export default function NativeHROnboardingRequests() {
       setNotJoiningId(null);
     }
   }, []);
+
+  // ── Change candidate branch — corrects ats_onboarding_request.branch_id, the
+  // column both the displayed branch and branch-HR queue visibility key off.
+  const openBranchModal = useCallback((row: OnboardingRequest, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBranchModalReason('');
+    setBranchModalNewId(row.branch_id ?? '');
+    setBranchModalRow(row);
+  }, []);
+
+  const submitBranchChange = useCallback(async () => {
+    const row = branchModalRow;
+    if (!row) return;
+    if (!branchModalNewId) { window.alert('Select a branch.'); return; }
+    if (!branchModalReason.trim()) { window.alert('A reason is required.'); return; }
+    setBranchChangingId(row.candidate_id);
+    setBranchChangeResult(null);
+    setBranchModalRow(null);
+    try {
+      const result: any = await hrmsApi.patch(`/api/ats/onboarding/candidates/${row.candidate_id}/branch`, {
+        branchId: branchModalNewId,
+        reason: branchModalReason.trim(),
+      });
+      const newBranchName = result?.branchName ?? allBranches.find((b: any) => b.id === branchModalNewId)?.branch_name ?? '';
+      setRows((prev) => prev.map((x) => x.candidate_id === row.candidate_id
+        ? { ...x, branch_id: branchModalNewId, branch_name: newBranchName }
+        : x));
+      setSelected((prev) => prev && prev.candidate_id === row.candidate_id
+        ? { ...prev, branch_id: branchModalNewId, branch_name: newBranchName }
+        : prev);
+      setBranchChangeResult({ id: row.candidate_id, ok: true, msg: `${row.full_name}'s branch changed to ${newBranchName}.` });
+      setTimeout(() => setBranchChangeResult(null), 6000);
+    } catch (err: any) {
+      setBranchChangeResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to change branch.' });
+      setTimeout(() => setBranchChangeResult(null), 6000);
+    } finally {
+      setBranchChangingId(null);
+    }
+  }, [branchModalRow, branchModalNewId, branchModalReason, allBranches]);
 
   // ── Load master dropdowns once
   useEffect(() => {
@@ -1656,6 +1703,16 @@ export default function NativeHROnboardingRequests() {
               </div>
             )}
 
+            {/* Change Branch result toast */}
+            {branchChangeResult && (
+              <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${branchChangeResult.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                {branchChangeResult.ok
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+                  : <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-500" />}
+                {branchChangeResult.msg}
+              </div>
+            )}
+
             {loading ? (
               <div className="flex h-64 items-center justify-center rounded-xl border bg-white">
                 <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -1696,7 +1753,7 @@ export default function NativeHROnboardingRequests() {
                           {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                         </td>
                         <td className="px-4 py-3 text-slate-600">{r.branch_name || '—'}</td>
-                        <td className="px-4 py-3 text-slate-600">{r.process_name || r.applied_for_process || '—'}</td>
+                        <td className="px-4 py-3 text-slate-600">{r.process_name || r.process_raw || '—'}</td>
                         <td className="px-4 py-3"><StatusBadge status={resolveDisplayStatus(r)} /></td>
                         <td className="px-4 py-3"><OfferBadge status={r.offer_status} /></td>
                         <td className="px-4 py-3 text-slate-600">{r.documents_uploaded ?? 0}</td>
@@ -1764,6 +1821,20 @@ export default function NativeHROnboardingRequests() {
                                     Not Joining
                                   </Button>
                                 )}
+                                {canMarkNotJoining && !r.employee_id && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={branchChangingId === r.candidate_id}
+                                    onClick={(e) => openBranchModal(r, e)}
+                                    className="min-h-[32px] gap-1 text-slate-500 border-slate-200 hover:bg-slate-50"
+                                  >
+                                    {branchChangingId === r.candidate_id
+                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      : null}
+                                    Change Branch
+                                  </Button>
+                                )}
                               </>
                             )}
                           </div>
@@ -1808,7 +1879,7 @@ export default function NativeHROnboardingRequests() {
               </div>
               <div className="flex flex-wrap gap-4 text-sm text-slate-600">
                 <span><span className="text-slate-400">Branch: </span>{selected.branch_name || '—'}</span>
-                <span><span className="text-slate-400">Process: </span>{selected.process_name || selected.applied_for_process || '—'}</span>
+                <span><span className="text-slate-400">Process: </span>{selected.process_name || selected.process_raw || '—'}</span>
                 <span><span className="text-slate-400">Mobile: </span>{maskMobile(selected.mobile)}</span>
                 <span><span className="text-slate-400">Email: </span>{maskEmail(selected.email)}</span>
               </div>
@@ -1881,6 +1952,19 @@ export default function NativeHROnboardingRequests() {
                       Mark as Not Joining
                     </Button>
                   )
+                )}
+                {canMarkNotJoining && !selected.employee_id && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={branchChangingId === selected.candidate_id}
+                    onClick={(e) => openBranchModal(selected, e)}
+                    className="gap-1 min-h-[36px] text-slate-500 border-slate-200 hover:bg-slate-50"
+                  >
+                    {branchChangingId === selected.candidate_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Change Branch
+                  </Button>
                 )}
               </div>
             </div>
@@ -2968,6 +3052,65 @@ export default function NativeHROnboardingRequests() {
                     <Send className="h-4 w-4 mr-2" />Send
                   </Button>
                   <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => setResendModalRow(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Change Branch Modal — top-level, renders regardless of active tab.
+            Updates ats_onboarding_request.branch_id, the column both the displayed
+            branch and branch-HR queue visibility key off. Reassigns which Branch
+            Head approves the offer, so a reason is mandatory and it's audited. */}
+        {branchModalRow && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b px-5 py-4">
+                <h3 className="font-bold text-slate-800">Change Branch</h3>
+                <button type="button" onClick={() => setBranchModalRow(null)}><X className="h-4 w-4 text-slate-400" /></button>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-slate-600">
+                  Moving <strong>{branchModalRow.full_name}</strong> from{' '}
+                  <strong>{branchModalRow.branch_name || '—'}</strong> to a different branch.
+                  This changes which Branch Head approves the offer and which branch's HR
+                  sees this candidate — not just the label on this page.
+                </p>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">New Branch</label>
+                  <select
+                    className={SEL}
+                    value={branchModalNewId}
+                    onChange={(e) => setBranchModalNewId(e.target.value)}
+                  >
+                    <option value="">Select branch…</option>
+                    {allBranches.map((b: any) => (
+                      <option key={b.id} value={b.id}>{b.branch_name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Reason (required)</label>
+                  <input
+                    type="text"
+                    value={branchModalReason}
+                    onChange={(e) => setBranchModalReason(e.target.value)}
+                    placeholder="e.g. Entered wrong at intake — candidate actually joining NOIDA-2"
+                    className={SEL}
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    className="flex-1 min-h-[44px]"
+                    disabled={!branchModalNewId || !branchModalReason.trim()}
+                    onClick={() => void submitBranchChange()}
+                  >
+                    Save
+                  </Button>
+                  <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => setBranchModalRow(null)}>
                     Cancel
                   </Button>
                 </div>

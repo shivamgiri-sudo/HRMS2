@@ -8,6 +8,7 @@ import {
   listPendingApprovals, approveOffer, rejectOffer,
   sendOnboardingProgressReminder,
   markCandidateNotJoining, clearCandidateNotJoining,
+  changeCandidateBranch,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
 import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
@@ -260,6 +261,27 @@ router.patch(
   requireRole('admin', 'super_admin', 'hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const result = await clearCandidateNotJoining(req.params!.id, req.authUser!.id);
+    res.json({ ok: true, ...result });
+  }),
+);
+
+// ── Change a candidate's onboarding branch ────────────────────────────────────
+//
+// There was previously no update path for ats_onboarding_request.branch_id at
+// all (only written once, at request creation) — a branch entered wrong at
+// intake had no fix short of a direct DB UPDATE. Same role gate as
+// not-joining: this reassigns which Branch Head approves the offer and which
+// branch HR's queue the candidate appears in, so it stays admin/super_admin/hr
+// only, mandatory reason, audited via changeCandidateBranch().
+router.patch(
+  '/candidates/:id/branch',
+  requireAuth,
+  requireRole('admin', 'super_admin', 'hr'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const branchId = String(req.body?.branchId ?? '');
+    const reason = String(req.body?.reason ?? '');
+    if (!branchId) { res.status(400).json({ ok: false, message: 'branchId is required' }); return; }
+    const result = await changeCandidateBranch(req.params!.id, branchId, req.authUser!.id, reason);
     res.json({ ok: true, ...result });
   }),
 );

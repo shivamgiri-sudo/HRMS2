@@ -452,6 +452,21 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
             c.candidate_status,
             r.branch_id,
             COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch) AS branch_name,
+            -- applied_for_process is VARCHAR holding a process_master id on some rows
+            -- (e.g. entered via a cost-centre-linked offer) and a process name on
+            -- others (e.g. typed on the walk-in form) — same ambiguity already
+            -- handled in listPendingApprovals() above; resolve it the same way here
+            -- so this list stops printing raw process_master UUIDs to HR.
+            (SELECT p.process_name FROM process_master p
+              WHERE p.id = c.applied_for_process OR p.process_name = c.applied_for_process
+              ORDER BY (p.id = c.applied_for_process) DESC, p.process_name
+              LIMIT 1) AS process_name,
+            -- The raw label, only when it is not an unresolved id — showing a raw
+            -- UUID is worse than showing nothing.
+            CASE
+              WHEN c.applied_for_process REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-' THEN NULL
+              ELSE NULLIF(TRIM(c.applied_for_process), '')
+            END AS process_raw,
             o.id AS offer_id, o.status AS offer_status, o.offered_ctc,
             ob.employee_id, e.employee_code,
             e.joining_document_status, e.joining_document_completion_pct,
@@ -540,6 +555,74 @@ export async function clearCandidateNotJoining(candidateId: string, actorUserId:
     entity_id: candidateId,
   });
   return { candidateId };
+}
+
+// ── HR/Admin: Change a candidate's onboarding branch ─────────────────────────
+//
+// ats_onboarding_request.branch_id is written once, at request creation
+// (INSERT above), and nothing has ever updated it since — there was no route,
+// button or admin tool to fix a branch entered wrong at intake. That same
+// column is what listOnboardingRequests() joins for the displayed branch name
+// AND what buildScopeWhereClause() keys branch-HR visibility on
+// (backend/src/shared/scopeAccess.ts) — so a wrong branch here is not cosmetic,
+// it silently hides the candidate from the correct branch HR's queue with no
+// error anywhere. ats_candidate.applied_for_branch (edited via the general
+// PUT /candidates/:id) is a *different*, free-text column and does not affect
+// either of those — updating it alone does not fix visibility.
+export async function changeCandidateBranch(
+  candidateId: string,
+  newBranchId: string,
+  actorUserId: string,
+  reason: string,
+): Promise<{ candidateId: string; branchId: string; branchName: string }> {
+  const trimmedReason = String(reason ?? '').trim();
+  if (!trimmedReason) {
+    throw Object.assign(new Error('A reason is required to change a candidate\'s branch'), { statusCode: 400 });
+  }
+
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, branch_name FROM branch_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [newBranchId],
+  );
+  const newBranch = (branchRows as RowDataPacket[])[0];
+  if (!newBranch) {
+    throw Object.assign(new Error('Branch not found or inactive'), { statusCode: 400 });
+  }
+
+  const [reqRows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id AS request_id, r.branch_id AS old_branch_id, b.branch_name AS old_branch_name
+       FROM ats_onboarding_request r
+       LEFT JOIN branch_master b ON b.id = r.branch_id
+      WHERE r.candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const existing = (reqRows as RowDataPacket[])[0];
+  if (!existing) {
+    throw Object.assign(new Error('No onboarding request found for this candidate'), { statusCode: 404 });
+  }
+
+  if (existing.old_branch_id === newBranchId) {
+    return { candidateId, branchId: newBranchId, branchName: String(newBranch.branch_name) };
+  }
+
+  await db.execute(
+    `UPDATE ats_onboarding_request SET branch_id = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [newBranchId, candidateId],
+  );
+
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: 'CANDIDATE_BRANCH_CHANGED',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_onboarding_request',
+    entity_id: String(existing.request_id),
+    reason: trimmedReason,
+    old_value_json: { branch_id: existing.old_branch_id ?? null, branch_name: existing.old_branch_name ?? null },
+    new_value_json: { branch_id: newBranchId, branch_name: newBranch.branch_name },
+  });
+
+  return { candidateId, branchId: newBranchId, branchName: String(newBranch.branch_name) };
 }
 
 // ── HR: Send Progress Reminder to Candidate ──────────────────────────────────
