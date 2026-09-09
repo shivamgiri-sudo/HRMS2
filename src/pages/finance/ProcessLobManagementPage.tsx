@@ -89,6 +89,21 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
   );
 }
 
+/**
+ * The figure beside this icon is computed, but the input it depends on is
+ * incomplete or missing — a warning, not a value. Reused across the LOB
+ * performance table wherever the backend's own `dataStatus` says so, so the
+ * same amber-triangle-plus-tooltip means the same thing everywhere on this
+ * page rather than each cell inventing its own honesty convention.
+ */
+function DataWarning({ label, message }: { label: string; message: string }) {
+  return (
+    <span title={message}>
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-label={label} />
+    </span>
+  );
+}
+
 function StatusBadge({ value }: { value: unknown }) {
   const status = String(value ?? "unknown").toLowerCase();
   const className = status.includes("approved") || status.includes("validated") || status.includes("locked")
@@ -453,15 +468,30 @@ export default function ProcessLobManagementPage() {
                             <td className="px-3 py-3 font-semibold">
                               <span className="inline-flex items-center gap-1">
                                 {currency(row.recognizedRevenue)}
-                                {row.dataStatus.delivery === "missing" ? (
-                                  <span
-                                    title={`${row.lobName} has no validated delivery actual for this period — this revenue figure is unverified, not a confirmed measurement.`}
-                                  >
-                                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-label="Delivery data missing" />
-                                  </span>
+                                {row.dataStatus.revenue === "missing_rule" ? (
+                                  <DataWarning label="No revenue rule" message={`${row.lobName} has no approved revenue rule for this period — this is a hard ₹0, not a measured result.`} />
+                                ) : row.dataStatus.delivery === "missing" ? (
+                                  <DataWarning label="Delivery data missing" message={`${row.lobName} has no validated delivery actual for this period — this revenue figure is unverified, not a confirmed measurement.`} />
                                 ) : null}
                               </span>
-                            </td><td className="px-3 py-3">{currency(row.agentSalary)}</td><td className="px-3 py-3">{currency(row.directVendorCost)}</td><td className="px-3 py-3">{currency(row.sharedCost)}</td><td className="px-3 py-3">{currency(row.contribution)}</td><td className={`px-3 py-3 font-semibold ${row.ebitda < 0 ? "text-rose-600" : "text-emerald-700"}`}>{currency(row.ebitda)}</td><td className="px-3 py-3">{percent(row.ebitdaMarginPct)}</td><td className="px-3 py-3">{currency(row.pbt)}</td><td className="px-3 py-3">{currency(row.pat)}</td><td className="px-3 py-3"><StatusBadge value={row.planStatus} /></td>
+                            </td>
+                            <td className="px-3 py-3">
+                              <span className="inline-flex items-center gap-1">
+                                {currency(row.agentSalary)}
+                                {row.dataStatus.payroll === "unavailable" ? (
+                                  <DataWarning label="Payroll data unavailable" message={`Salary data was unavailable while computing ${row.lobName} — this cost figure may be understated.`} />
+                                ) : null}
+                              </span>
+                            </td>
+                            <td className="px-3 py-3">
+                              <span className="inline-flex items-center gap-1">
+                                {currency(row.directVendorCost)}
+                                {row.dataStatus.grn === "unavailable" ? (
+                                  <DataWarning label="GRN data unavailable" message={`Vendor/GRN cost data was unavailable while computing ${row.lobName} — this cost figure may be understated.`} />
+                                ) : null}
+                              </span>
+                            </td>
+                            <td className="px-3 py-3">{currency(row.sharedCost)}</td><td className="px-3 py-3">{currency(row.contribution)}</td><td className={`px-3 py-3 font-semibold ${row.ebitda < 0 ? "text-rose-600" : "text-emerald-700"}`}>{currency(row.ebitda)}</td><td className="px-3 py-3">{percent(row.ebitdaMarginPct)}</td><td className="px-3 py-3">{currency(row.pbt)}</td><td className="px-3 py-3">{currency(row.pat)}</td><td className="px-3 py-3"><StatusBadge value={row.planStatus} /></td>
                           </tr>
                         ))}
                         {!processRows.length ? <tr><td colSpan={15} className="px-4 py-12 text-center text-slate-500">No LOB P&amp;L rows are available. Complete LOB setup, plan, rate and delivery first.</td></tr> : null}
