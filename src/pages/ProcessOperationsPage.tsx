@@ -644,6 +644,13 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
   // expanded date over from one process's drilldown into a completely
   // different process's drilldown for the "same" metric.
   const [expandedFor, setExpandedFor] = useState<{ processId: string; metricKey: string | null; date: string } | null>(null);
+  // Collapsed by default -- the formula/source/field breakdown is real,
+  // required detail (Drill-Down Mandate: nothing is hidden), but it is SQL-
+  // facing detail most readers open this drawer to get past, not to read
+  // first. The chart and the actual readings are what a click on a KPI tile
+  // is usually for; the working behind the number is one click away, not the
+  // first thing in the way of it.
+  const [showDetails, setShowDetails] = useState(false);
   const expandedDate = expandedFor?.processId === processId && expandedFor.metricKey === metricKey
     ? expandedFor.date : null;
   const toggleExpanded = (date: string) => setExpandedFor((prev) =>
@@ -684,67 +691,6 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
           </div>
         ) : (
           <div className="p-5 space-y-5">
-            <section>
-              <Label>How it is calculated</Label>
-              {d.definition?.formula ? (
-                <code className="block rounded-lg bg-slate-900 text-emerald-300 text-[11px] px-3 py-2 font-mono break-all">
-                  {d.definition.formula}
-                </code>
-              ) : <p className="text-xs text-slate-400 italic">No formula recorded.</p>}
-              <div className="mt-2">
-                <Row k="Grain" v={d.definition?.grain} />
-                <Row k="In force from" v={d.definition?.effectiveFrom} />
-                <Row k="In force to" v={d.definition?.effectiveTo ?? "open"} />
-                <Row k="Target" v={d.definition?.targetValue ?? "None"} />
-                <Row k="Defined" v={d.definition?.createdAt ? new Date(d.definition.createdAt).toLocaleString("en-GB") : "None"} />
-                {d.definition?.notes && <Row k="Notes" v={d.definition.notes} />}
-              </div>
-            </section>
-
-            <section>
-              <Label><span className="inline-flex items-center gap-1"><Database size={11} />Where the data comes from</span></Label>
-              {d.source ? (
-                <div>
-                  <Row k="Source" v={`${d.source.sourceCode}${d.source.sourceName ? ` — ${d.source.sourceName}` : ""}`} />
-                  <Row k="Table" v={d.source.sourceObject} />
-                  <Row k="Date column" v={d.source.dateColumn} />
-                  <Row k="Attributed by" v={d.source.processKeyKind === "column"
-                    ? `${d.source.processKeyColumn} = ${d.source.processKeyValue}`
-                    : d.source.processKeyKind} />
-                </div>
-              ) : <p className="text-xs text-slate-400 italic">None</p>}
-            </section>
-
-            <section>
-              <Label><span className="inline-flex items-center gap-1"><Filter size={11} />The parts it counts</span></Label>
-              {d.fields.length ? (
-                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
-                  <table className="w-full text-[11px]">
-                    <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
-                      <tr>
-                        <th className="text-left px-2 py-1.5 font-semibold">Field</th>
-                        <th className="text-left px-2 py-1.5 font-semibold">Agg</th>
-                        <th className="text-left px-2 py-1.5 font-semibold">Column</th>
-                        <th className="text-left px-2 py-1.5 font-semibold">Filter</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {d.fields.map((f) => (
-                        <tr key={f.fieldName} className="border-t border-slate-100 dark:border-slate-800">
-                          <td className="px-2 py-1.5 font-mono text-slate-800 dark:text-slate-200">{f.fieldName}</td>
-                          <td className="px-2 py-1.5 text-slate-500">{f.aggregateFn ?? "—"}</td>
-                          <td className="px-2 py-1.5 text-slate-500">{f.sourceColumn ?? "—"}</td>
-                          <td className="px-2 py-1.5 text-slate-500 max-w-[15rem] truncate" title={f.filter ?? ""}>
-                            {f.filter ?? "no filter"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <p className="text-xs text-slate-400 italic">None</p>}
-            </section>
-
             <DrilldownTrendChart
               readings={d.readings} unit={d.unit}
               targetValue={d.definition?.targetValue ?? null} direction={d.direction} />
@@ -803,6 +749,82 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                 A “no data” row means the source was read and the calculation had nothing to say —
                 not that the value was zero.
               </p>
+            </section>
+
+            <section className="rounded-xl border border-slate-200 dark:border-slate-800">
+              <button type="button" onClick={() => setShowDetails((v) => !v)}
+                aria-expanded={showDetails}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl transition">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  <Filter size={11} />How this number is calculated
+                </span>
+                <ChevronRight size={13}
+                  className={`shrink-0 text-slate-400 transition-transform ${showDetails ? "rotate-90" : ""}`} />
+              </button>
+              {showDetails && (
+                <div className="px-3 pb-3 space-y-4 border-t border-slate-100 dark:border-slate-800 pt-3">
+                  <div>
+                    <Label>Formula</Label>
+                    {d.definition?.formula ? (
+                      <code className="block rounded-lg bg-slate-900 text-emerald-300 text-[11px] px-3 py-2 font-mono break-all">
+                        {d.definition.formula}
+                      </code>
+                    ) : <p className="text-xs text-slate-400 italic">No formula recorded.</p>}
+                    <div className="mt-2">
+                      <Row k="Grain" v={d.definition?.grain} />
+                      <Row k="In force from" v={d.definition?.effectiveFrom} />
+                      <Row k="In force to" v={d.definition?.effectiveTo ?? "open"} />
+                      <Row k="Target" v={d.definition?.targetValue ?? "None"} />
+                      <Row k="Defined" v={d.definition?.createdAt ? new Date(d.definition.createdAt).toLocaleString("en-GB") : "None"} />
+                      {d.definition?.notes && <Row k="Notes" v={d.definition.notes} />}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label><span className="inline-flex items-center gap-1"><Database size={11} />Where the data comes from</span></Label>
+                    {d.source ? (
+                      <div>
+                        <Row k="Source" v={`${d.source.sourceCode}${d.source.sourceName ? ` — ${d.source.sourceName}` : ""}`} />
+                        <Row k="Table" v={d.source.sourceObject} />
+                        <Row k="Date column" v={d.source.dateColumn} />
+                        <Row k="Attributed by" v={d.source.processKeyKind === "column"
+                          ? `${d.source.processKeyColumn} = ${d.source.processKeyValue}`
+                          : d.source.processKeyKind} />
+                      </div>
+                    ) : <p className="text-xs text-slate-400 italic">None</p>}
+                  </div>
+
+                  <div>
+                    <Label><span className="inline-flex items-center gap-1"><Filter size={11} />The parts it counts</span></Label>
+                    {d.fields.length ? (
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                        <table className="w-full text-[11px]">
+                          <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
+                            <tr>
+                              <th className="text-left px-2 py-1.5 font-semibold">Field</th>
+                              <th className="text-left px-2 py-1.5 font-semibold">Agg</th>
+                              <th className="text-left px-2 py-1.5 font-semibold">Column</th>
+                              <th className="text-left px-2 py-1.5 font-semibold">Filter</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {d.fields.map((f) => (
+                              <tr key={f.fieldName} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-2 py-1.5 font-mono text-slate-800 dark:text-slate-200">{f.fieldName}</td>
+                                <td className="px-2 py-1.5 text-slate-500">{f.aggregateFn ?? "—"}</td>
+                                <td className="px-2 py-1.5 text-slate-500">{f.sourceColumn ?? "—"}</td>
+                                <td className="px-2 py-1.5 text-slate-500 max-w-[15rem] truncate" title={f.filter ?? ""}>
+                                  {f.filter ?? "no filter"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <p className="text-xs text-slate-400 italic">None</p>}
+                  </div>
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -1156,22 +1178,37 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
 
 /** Feeds that have stopped, above the numbers they stopped feeding. */
 function StoppedFeeds({ health }: { health: FeedHealth }) {
+  // Collapsed by default: this is a real, worth-knowing fact, but 100 dead
+  // feeds rendered as a 9-tile grid was pushing the actual dashboard --
+  // the numbers a reader came here for -- below the fold before it even
+  // loaded. The headline count and the "how stale" line stay visible either
+  // way; only the per-process breakdown is opt-in.
+  const [expanded, setExpanded] = useState(false);
   const dead = health.feeds.filter((f) => f.state === "stopped");
   if (!dead.length) return null;
   const byProcess = new Map<string, FeedRow[]>();
   dead.forEach((f) => byProcess.set(f.processName, [...(byProcess.get(f.processName) ?? []), f]));
   return (
     <div className="rounded-2xl border border-red-200 dark:border-red-900 bg-red-50/80 dark:bg-red-950/30 p-4 shadow-sm">
-      <div className="flex items-start gap-2">
+      <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
+        className="w-full flex items-start gap-2 text-left cursor-pointer">
         <Radio className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-bold text-red-800 dark:text-red-300">
-            {dead.length} measurement{dead.length === 1 ? "" : "s"} stopped updating
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-red-800 dark:text-red-300">
+              {dead.length} measurement{dead.length === 1 ? "" : "s"} stopped updating
+            </h2>
+            <ChevronRight size={14}
+              className={`shrink-0 text-red-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
+          </div>
           <p className="text-[11px] text-red-700/80 dark:text-red-400/80 mt-0.5">
             Nothing recorded for over {health.stoppedAfterDays} days. Their last value may still be
-            on a tile below, looking current.
+            on a tile below, looking current.{!expanded && " Click to see which."}
           </p>
+        </div>
+      </button>
+      {expanded && (
+        <>
           <div className="mt-2.5 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
             {[...byProcess.entries()].slice(0, 9).map(([proc, rows]) => (
               <div key={proc} className="rounded-lg bg-white/80 dark:bg-slate-900/60 border border-red-100 dark:border-red-900/60 px-2.5 py-1.5">
@@ -1185,8 +1222,8 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
           {byProcess.size > 9 && (
             <p className="text-[11px] text-red-700/70 mt-1.5">and {byProcess.size - 9} more processes</p>
           )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1199,20 +1236,34 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
  * process names, not dozens of independent problems.
  */
 function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
+  // Same reasoning as StoppedFeeds: collapsed by default so this doesn't
+  // push the actual dashboard off the first screen. The headline count is
+  // the part worth seeing unconditionally; the per-metric breakdown (with
+  // its upload-path hints) is a click away.
+  const [expanded, setExpanded] = useState(false);
   if (!groups.length) return null;
   const totalConfigs = groups.reduce((s, g) => s + g.processCount, 0);
   return (
     <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/80 dark:bg-amber-950/30 p-4 shadow-sm">
-      <div className="flex items-start gap-2">
+      <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
+        className="w-full flex items-start gap-2 text-left cursor-pointer">
         <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-bold text-amber-800 dark:text-amber-300">
-            {totalConfigs} configured measurement{totalConfigs === 1 ? "" : "s"} across {groups.length} metric{groups.length === 1 ? "" : "s"} {groups.length === 1 ? "has" : "have"} never reported
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-amber-800 dark:text-amber-300">
+              {totalConfigs} configured measurement{totalConfigs === 1 ? "" : "s"} across {groups.length} metric{groups.length === 1 ? "" : "s"} {groups.length === 1 ? "has" : "have"} never reported
+            </h2>
+            <ChevronRight size={14}
+              className={`shrink-0 text-amber-600 transition-transform ${expanded ? "rotate-90" : ""}`} />
+          </div>
           <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
             A real configuration exists and a source table is named, but nothing has ever been written
-            there — not a feed that stopped, one that never started.
+            there — not a feed that stopped, one that never started.{!expanded && " Click to see which."}
           </p>
+        </div>
+      </button>
+      {expanded && (
+        <>
           <div className="mt-2.5 space-y-1.5">
             {groups.slice(0, 6).map((g) => (
               <div key={`${g.metricKey}|${g.sourceObject}`}
@@ -1259,8 +1310,8 @@ function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
           {groups.length > 6 && (
             <p className="text-[11px] text-amber-700/70 mt-1.5">and {groups.length - 6} more metric groups</p>
           )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
