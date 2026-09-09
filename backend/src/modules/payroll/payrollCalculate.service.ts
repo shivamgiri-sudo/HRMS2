@@ -539,6 +539,15 @@ interface EmployeeRow {
   employee_id: string;
   employee_code: string;
   prep_line_id?: string | null;
+  /**
+   * Set from spl_existing.manual_override_locked (migration 1697). When true, this employee's
+   * row was patched directly outside this engine — e.g. the 2026-09-08 db_bill reconciliation
+   * override — and must be skipped entirely on recalculation, the same way a G11-blocked or
+   * not-yet-started employee is skipped below. Without this, any recalculation of a locked
+   * employee silently discards the override and replaces it with freshly computed figures; this
+   * already happened once in production (MAS63361) before the guard existed.
+   */
+  is_manual_override_locked?: boolean | number;
   ctc_annual: number;
   basic_pct: number;
   hra_pct: number;
@@ -775,6 +784,21 @@ export async function calculatePayrollRunScoped(
     empParams.push(...scopedEmployeeIds);
   }
 
+  // Manual override lock (migration 1697). Kept OUT of empConds deliberately — excluding a
+  // locked employee from `employees` here would also remove them from `currentIds` a few lines
+  // below, and the stale-row reconciliation block treats "not in currentIds" as "no longer
+  // eligible for this run" and DELETES their salary_prep_line row (see the block above staleRows,
+  // for employees with no acknowledged payslip). That is the opposite of what a lock means: keep
+  // the employee eligible, just skip recomputing and overwriting their figures. The actual skip
+  // is applied per-employee inside the calculation loop below, next to the existing G11 and
+  // salary_start_date skips. Kill switch: payroll_config_flags('dbbill_manual_override_lock_enabled').
+  const [overrideLockFlagRows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_value FROM payroll_config_flags
+      WHERE branch_id IS NULL AND process_id IS NULL
+        AND config_key = 'dbbill_manual_override_lock_enabled' LIMIT 1`
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const overrideLockEnabled = !overrideLockFlagRows.length || overrideLockFlagRows[0].config_value !== 'false';
+
   // Payroll Head mandatory salary/journey review gate (migration 1541). Additive
   // only: an employee with NO row in employee_payroll_head_review — every employee
   // created before this gate existed, forever — is unaffected, because NOT EXISTS
@@ -818,6 +842,7 @@ export async function calculatePayrollRunScoped(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             spl_existing.id AS prep_line_id,
+            spl_existing.manual_override_locked AS is_manual_override_locked,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             -- cost_centre_id is stamped onto the payroll line below. employees.cost_centre_id is
@@ -1007,6 +1032,14 @@ export async function calculatePayrollRunScoped(
 
     // G11: Skip employees with unresolved attendance issues when payroll gate is enabled
     if (blockedEmployeeIds.has(emp.employee_id)) {
+      continue;
+    }
+
+    // Manual override lock (migration 1697): this row was patched directly outside the engine
+    // (e.g. the 2026-09-08 db_bill reconciliation override) and must not be recomputed. Leaving
+    // the row entirely untouched -- no INSERT, no UPDATE -- is the point: recomputing and then
+    // discarding the result would still cost the query time and risk a partial write on error.
+    if (overrideLockEnabled && Number(emp.is_manual_override_locked) === 1) {
       continue;
     }
 
