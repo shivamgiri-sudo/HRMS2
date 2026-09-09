@@ -323,6 +323,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // sample; no DB backing exists anywhere. See
   // clovia-crm-disposition-bulk.service.ts.
   "import_clovia_crm_disposition_batch",
+  // Housing Premium's "Sale Raw" -- per its SOP, a manually-updated Google
+  // Sheet with no DB backing anywhere. See
+  // housing-premium-sale-raw-bulk.service.ts.
+  "import_housing_premium_sale_raw_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -746,6 +750,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-crm-disposition-bulk.service.js"
     );
     const data = await importCloviaCrmDispositionBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_premium_sale_raw_batch") {
+    const { importHousingPremiumSaleRawBatch } = await import(
+      "../bulk-upload/housing-premium-sale-raw-bulk.service.js"
+    );
+    const data = await importHousingPremiumSaleRawBatch(id, userId);
     return { success: true, data };
   }
 
