@@ -33,6 +33,8 @@ const CostCentreManagementPage     = lazy(() => import("@/pages/finance/CostCent
 const ClientBillingWorkspacePage   = lazy(() => import("@/pages/finance/ClientBillingWorkspacePage"));
 const ClientPaymentManagementPage  = lazy(() => import("@/pages/finance/ClientPaymentManagementPage"));
 const FinanceMasterPage            = lazy(() => import("@/pages/finance/FinanceMasterPage"));
+const CompanyBankAccountsPage      = lazy(() => import("@/pages/finance/CompanyBankAccountsPage"));
+const PaymentVouchersPage          = lazy(() => import("@/pages/finance/PaymentVouchersPage"));
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 // Branch roles raise GRNs — the backend already grants them GRN write access and
@@ -62,6 +64,12 @@ export const financeRouteElements = (
       {/* Finance Masters — expense heads/sub-heads, vendor approval, vendor→head mapping */}
       {/* Roles match 1532_finance_masters_page_access.sql */}
       <Route path="/finance/masters" element={<ProtectedRoute roles={['super_admin','finance_head','branch_admin']}><Gate pageCode="FINANCE_MASTERS"><FinanceMasterPage /></Gate></ProtectedRoute>} />
+
+      {/* Payment Voucher System Phase 1 (2026-09-09). Roles must match BANK_ACCOUNT_READ_ROLES /
+          VOUCHER_READ_ROLES exactly (company-bank-account.routes.ts / payment-voucher.routes.ts)
+          and the grant in migration 1706 — same discipline as every other finance route above. */}
+      <Route path="/finance/bank-accounts"    element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','branch_head','admin','finance']}><Gate pageCode="FINANCE_BANK_ACCOUNTS"><CompanyBankAccountsPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/payment-vouchers" element={<ProtectedRoute roles={['super_admin','finance_head','ceo','accounts_head','branch_head','admin','finance']}><Gate pageCode="FINANCE_PAYMENT_VOUCHERS"><PaymentVouchersPage /></Gate></ProtectedRoute>} />
 
       {/* Finance */}
       <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />

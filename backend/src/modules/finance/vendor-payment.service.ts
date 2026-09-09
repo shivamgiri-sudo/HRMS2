@@ -282,16 +282,31 @@ export const vendorPaymentService = {
     return rows[0] ?? null;
   },
 
+  /**
+   * externalConnection: pass the caller's own PoolConnection to run this inside a larger
+   * transaction instead of opening/committing one of its own — payment-voucher.service.ts's
+   * release() needs this update, the bank_account_ledger_entry insert and the payment_voucher
+   * status transition to commit or roll back together. Mirrors createFromGrn's existing
+   * `connection?: PoolConnection` parameter in this same file.
+   *
+   * When an externalConnection is supplied, this method does not begin/commit/rollback, does
+   * not fire the post-commit logSensitiveAction (the caller does that once, after ITS commit,
+   * covering both this update and its own event), and does not re-read the row via
+   * this.getPayment() — that would run on a different connection and could read the
+   * pre-transaction row before the caller commits. The caller is expected to log and re-read.
+   */
   async updatePayment(
     id: string,
     payload: UpdatePaymentPayload,
     actorUserId: string,
-    actorRole?: string
+    actorRole?: string,
+    externalConnection?: PoolConnection
   ) {
-    const connection = await db.getConnection();
+    const owns = !externalConnection;
+    const connection = externalConnection ?? await db.getConnection();
     let auditSummary: Record<string, unknown> = {};
     try {
-      await connection.beginTransaction();
+      if (owns) await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT *
            FROM vendor_payment_tracking
@@ -473,13 +488,15 @@ export const vendorPaymentService = {
         auditSummary,
         connection
       );
-      await connection.commit();
+      if (owns) await connection.commit();
     } catch (error) {
-      await connection.rollback();
+      if (owns) await connection.rollback();
       throw error;
     } finally {
-      connection.release();
+      if (owns) connection.release();
     }
+
+    if (!owns) return null;
 
     await logSensitiveAction({
       actor_user_id: actorUserId,

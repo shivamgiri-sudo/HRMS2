@@ -256,6 +256,9 @@ import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
+import { companyBankAccountRouter } from "./modules/finance/company-bank-account.routes.js";
+import { payableAccountRouter } from "./modules/finance/payable-account.routes.js";
+import { paymentVoucherRouter } from "./modules/finance/payment-voucher.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
@@ -634,6 +637,11 @@ app.use("/api/finance", vendorApprovalRouter);
 // Mounted at its own /imprest prefix rather than bare /api/finance, so no imprest path can
 // ever be shadowed by grnRouter's "/grns/:id"-shaped routes above it.
 app.use("/api/finance/imprest", imprestRouter);
+// Payment Voucher System Phase 1 (2026-09-09). Each on its own prefix, same reasoning as
+// imprest above: none of these paths may ever be shadowed by grnRouter's ":id"-shaped routes.
+app.use("/api/finance/bank-accounts", companyBankAccountRouter);
+app.use("/api/finance/payable-accounts", payableAccountRouter);
+app.use("/api/finance/payment-vouchers", paymentVoucherRouter);
 // Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
 // not be reachable through a path that a broader finance router also serves.
 app.use("/api/finance/payroll", salaryVoucherRouter);
