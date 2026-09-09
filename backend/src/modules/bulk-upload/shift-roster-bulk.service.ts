@@ -4,7 +4,6 @@ import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 import { applyRestDecision, isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
-import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
@@ -111,13 +110,135 @@ export async function importShiftRosterBatch(
       [batchId]
     );
 
+    /*
+     * Performance rework (owner request — imports were taking ~1.8s/row: 67s for a 240-row
+     * file that only produced 38 real assignments). The per-row, per-day loop below used to
+     * make 3 separate DB round trips PER DAY it touched — an employee lookup, a payroll-lock
+     * check, and a shift-template lookup — none of which can actually differ between rows in
+     * the same file for the parts that are safe to batch. Three of those are now resolved ONCE
+     * up front instead of once per day:
+     *
+     *   1. Employee lookup — was one query per ROW; now one query for every employee_code in
+     *      the file.
+     *   2. Payroll-lock check — was one query per DAY; now one query for every
+     *      (employee, date) pair the file could possibly touch (computed from each row's own
+     *      week_start_date, same as the per-day loop already does).
+     *   3. Shift-template resolution — was one query per DAY, re-resolving the identical
+     *      "09:00-18:00"-style timing over and over; now cached in memory per distinct timing
+     *      for the life of this one import run.
+     *
+     * What is deliberately NOT batched: minimum-rest-policy resolution and the
+     * previous/next-shift lookup it depends on (resolveRestPolicy / findAdjacentShifts /
+     * validateMinimumRest / applyRestDecision, still called once per day exactly as before).
+     * Those depend on state that can change AS this same run writes earlier rows for the same
+     * employee (a multi-week file has one row per week per employee), and on this exact
+     * employee/process/branch/date combination in a way that isn't safe to pre-compute without
+     * risking a different compliance decision than today. This rework changes nothing about
+     * what gets approved, rejected or warned — only how many round trips it costs to get there.
+     */
+    const parsedRows = (batchRows as RowDataPacket[]).map((batchRow) => ({
+      batchRow,
+      raw: (typeof batchRow.normalized_data === "string"
+        ? JSON.parse(batchRow.normalized_data)
+        : batchRow.normalized_data) as Record<string, string>,
+    }));
+
+    // 1. Batch employee resolution — one query for the whole file instead of one per row.
+    const employeeCodes = [...new Set(
+      parsedRows.map((p) => String(p.raw.employee_code ?? "").trim()).filter(Boolean)
+    )];
+    const employeeByCode = new Map<string, { id: string; process_id: string | null; branch_id: string | null }>();
+    if (employeeCodes.length > 0) {
+      const [empRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT employee_code, id, process_id, branch_id FROM employees
+          WHERE employee_code IN (${employeeCodes.map(() => "?").join(",")}) AND employment_status = 'active'`,
+        employeeCodes
+      );
+      for (const r of empRows as RowDataPacket[]) {
+        employeeByCode.set(String(r.employee_code), {
+          id: r.id as string,
+          process_id: r.process_id as string | null,
+          branch_id: r.branch_id as string | null,
+        });
+      }
+    }
+
+    /** Same YYYY-MM-DD / DD-MM-YYYY parsing the main loop uses below, duplicated here (not
+     *  extracted) so this pre-pass has zero chance of silently drifting from the loop's own
+     *  validation — both must agree on what "a valid week_start_date" means. */
+    function parseWeekStartDate(value: string): Date | null {
+      let d: Date;
+      if (/^\d{2}-\d{2}-\d{4}$/.test(value)) {
+        const [dd, mm, yy] = value.split("-");
+        d = new Date(`${yy}-${mm}-${dd}`);
+      } else {
+        d = new Date(value);
+      }
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    // 2. Batch the payroll-lock check — one query for every (employee, date) pair this file
+    // could touch, instead of one query per day. Only rows that will actually reach the
+    // lock-check step in the main loop below (real employee_code, resolvable employee,
+    // parseable week_start_date) contribute pairs — a row that will error out earlier for its
+    // own reasons costs nothing here.
+    const lockCandidatePairs = new Map<string, { employeeId: string; date: string }>();
+    for (const { raw } of parsedRows) {
+      const employeeCode = String(raw.employee_code ?? "").trim();
+      if (!employeeCode || !raw.week_start_date) continue;
+      const emp = employeeByCode.get(employeeCode);
+      if (!emp) continue;
+      const startDate = parseWeekStartDate(raw.week_start_date);
+      if (!startDate) continue;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startDate);
+        d.setDate(d.getDate() + i);
+        const dateStr = d.toISOString().slice(0, 10);
+        lockCandidatePairs.set(`${emp.id}|${dateStr}`, { employeeId: emp.id, date: dateStr });
+      }
+    }
+    const lockedPairSet = new Set<string>();
+    {
+      const pairs = [...lockCandidatePairs.values()];
+      const LOCK_CHECK_CHUNK = 500;
+      for (let i = 0; i < pairs.length; i += LOCK_CHECK_CHUNK) {
+        const slice = pairs.slice(i, i + LOCK_CHECK_CHUNK);
+        if (!slice.length) continue;
+        const [lockRows] = await conn.execute<RowDataPacket[]>(
+          `SELECT employee_id, record_date, is_locked FROM attendance_daily_record
+            WHERE (employee_id, record_date) IN (${slice.map(() => "(?,?)").join(",")})`,
+          slice.flatMap((p) => [p.employeeId, p.date])
+        );
+        for (const r of lockRows as RowDataPacket[]) {
+          if (Number(r.is_locked) === 1) {
+            lockedPairSet.add(`${r.employee_id}|${String(r.record_date).slice(0, 10)}`);
+          }
+        }
+      }
+    }
+    // Same result shape and message text as roster-lock-guard.ts's checkEmployeeDateNotLocked
+    // (the async DB call this pre-fetch replaces), just answered from the Set above instead of
+    // a query — every call site below reads identically to before.
+    function checkLockFromPrefetch(employeeId: string, rosterDate: string): { blocked: true; error: string } | { blocked: false } {
+      if (lockedPairSet.has(`${employeeId}|${rosterDate}`)) {
+        return {
+          blocked: true,
+          error: "This roster date's attendance is already locked for payroll and can no longer be edited through the normal roster-write path. Use the payroll correction/reopen workflow instead.",
+        };
+      }
+      return { blocked: false };
+    }
+
+    // 3. Shift-template cache — resolveShiftTemplate() below already does its own
+    // find-or-create against wfm_shift_template; this only stops the SAME "09:00-18:00"-style
+    // timing from being looked up (or, on a lucky race, created) again for every day/row that
+    // shares it. resolveShiftTemplate is itself still called normally on a cache miss, so a
+    // genuinely new timing behaves exactly as it did before this change.
+    const shiftTemplateCache = new Map<string, string>();
+
     const rowStatusUpdates: { id: string; status: string; errors?: string[]; targetRecordIds: string[] }[] = [];
 
-    for (const batchRow of batchRows as RowDataPacket[]) {
-      const raw = (typeof batchRow.normalized_data === "string"
-        ? JSON.parse(batchRow.normalized_data)
-        : batchRow.normalized_data) as Record<string, string>;
-
+    for (const { batchRow, raw } of parsedRows) {
       const { employee_code, week_start_date, notes } = raw;
 
       if (!employee_code || !week_start_date) {
@@ -131,12 +252,10 @@ export async function importShiftRosterBatch(
         continue;
       }
 
-      // Resolve employee and get process_id/branch_id for cycle
-      const [empRows] = await conn.execute<RowDataPacket[]>(
-        "SELECT id, process_id, branch_id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
-        [employee_code]
-      );
-      if (!(empRows as RowDataPacket[]).length) {
+      // Resolve employee and get process_id/branch_id for cycle — from the batch lookup above,
+      // not a per-row query.
+      const employee = employeeByCode.get(String(employee_code).trim());
+      if (!employee) {
         const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
         errors.push(msg);
         await conn.execute(
@@ -146,10 +265,9 @@ export async function importShiftRosterBatch(
         skipped++;
         continue;
       }
-      const employee = (empRows as RowDataPacket[])[0];
-      const employeeId = employee.id as string;
-      const employeeProcessId = employee.process_id as string | null;
-      const employeeBranchId = employee.branch_id as string | null;
+      const employeeId = employee.id;
+      const employeeProcessId = employee.process_id;
+      const employeeBranchId = employee.branch_id;
 
       // Validate employee has process_id (required for weekly_roster_cycle)
       if (!employeeProcessId) {
@@ -259,7 +377,7 @@ export async function importShiftRosterBatch(
           // record). Checked before shift-timing parsing since there's no
           // point resolving a shift template for a day this path is about
           // to refuse anyway.
-          const dateLockResult = await checkEmployeeDateNotLocked(conn, employeeId, rosterDateStr);
+          const dateLockResult = checkLockFromPrefetch(employeeId, rosterDateStr);
           if (dateLockResult.blocked) {
             rowErrors.push(`${DAYS[i].toUpperCase()}: ${dateLockResult.error}`);
             continue;
@@ -276,7 +394,14 @@ export async function importShiftRosterBatch(
               continue;
             }
             try {
-              shiftTemplateId = await resolveShiftTemplate(conn, parsed.startTime, parsed.endTime, cellValue, userId);
+              const templateCacheKey = `${parsed.startTime}|${parsed.endTime}`;
+              const cachedTemplateId = shiftTemplateCache.get(templateCacheKey);
+              if (cachedTemplateId) {
+                shiftTemplateId = cachedTemplateId;
+              } else {
+                shiftTemplateId = await resolveShiftTemplate(conn, parsed.startTime, parsed.endTime, cellValue, userId);
+                shiftTemplateCache.set(templateCacheKey, shiftTemplateId);
+              }
             } catch (e) {
               rowErrors.push(`${DAYS[i].toUpperCase()}: failed to resolve shift template — ${(e as Error).message}`);
               continue;
