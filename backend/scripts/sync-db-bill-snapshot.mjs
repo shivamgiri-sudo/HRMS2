@@ -136,6 +136,20 @@ function safeDec(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Labels how a bill_pay_particulars row's own numbers relate to each other — see the note
+ * at its call site (syncBillPayments) for why this exists rather than a "fix".
+ */
+function paymentCompleteness(billAmount, tds, deduction, netAmount) {
+  const bill = safeDec(billAmount);
+  if (bill === 0) return 'unknown';
+  const expected = bill - safeDec(tds) - safeDec(deduction);
+  const net = safeDec(netAmount);
+  const diff = net - expected;
+  if (Math.abs(diff) <= 1) return 'full';
+  return diff < 0 ? 'partial' : 'over';
+}
+
 /** Full datetime, not the date-only value safeDate() returns — approval times matter. */
 function safeDateTime(v) {
   if (!v) return null;
@@ -1195,6 +1209,11 @@ async function syncBillPayments(hrms, bill) {
     tds_deducted: safeDec(r.tds_ded),
     net_amount: safeDec(r.net_amount),
     deduction: safeDec(r.deduction),
+    // Not an arithmetic check on the migration — a read of what db_bill itself recorded.
+    // A bill paid across several rows (a genuine, common partial-payment pattern here — see
+    // migration 1719) will legitimately show net_amount below bill_amount - tds - deduction
+    // on any one row; this only labels that fact so a reader doesn't mistake it for corruption.
+    payment_completeness: paymentCompleteness(r.bill_amount, r.tds_ded, r.deduction, r.net_amount),
     status: trim(r.status),
     remarks: trim(r.remarks)?.slice(0, 500) ?? null,
     pay_type_date: safeDateTime(r.pay_type_dates),
@@ -1208,14 +1227,16 @@ async function syncBillPayments(hrms, bill) {
   }));
   const cols = ['bill_source_id','payment_ref','company_name','branch_name','financial_year','pay_type',
     'pay_no','bank_name','pay_date_raw','pay_amount','deposit_bank','no_of_bills','bill_no','bill_amount',
-    'bill_passed','tds_deducted','net_amount','deduction','status','remarks','pay_type_date',
-    'collection_id','raised_by','is_deleted','payment_file','is_dialdesk','source_created_at','synced_at'];
+    'bill_passed','tds_deducted','net_amount','payment_completeness','deduction','status','remarks',
+    'pay_type_date','collection_id','raised_by','is_deleted','payment_file','is_dialdesk',
+    'source_created_at','synced_at'];
   const n = await insertBatch(hrms, 'vendor_bill_payment_snapshot', rows, cols, cols.slice(1));
   await pruneOrphans(hrms, 'vendor_bill_payment_snapshot', rows.map(r => r.bill_source_id), '1=1');
   const netPaid = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
   const tds = rows.reduce((s, r) => s + Number(r.tds_deducted || 0), 0);
+  const partial = rows.filter(r => r.payment_completeness === 'partial').length;
   log(`  vendor_bill_payment_snapshot: ${n} rows, Rs ${(netPaid / 100000).toFixed(2)} lakh net paid, `
-    + `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted`);
+    + `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted, ${partial} flagged partial`);
 }
 
 /** Sync 16 — vendor_bill_deduction_snapshot, from db_bill.other_deductions_bill. */
