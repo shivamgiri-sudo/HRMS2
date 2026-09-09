@@ -612,7 +612,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
         ) : !displayRows.length ? (
           <GrnEmptyState icon={<FileText className="h-9 w-9" />} title="No GRNs match the filters" />
         ) : (
-          <GrnTable minWidth={980}>
+          <GrnTable minWidth={1080}>
             <thead>
               <tr>
                 <GrnTh sticky={false} className="w-[120px]">GRN</GrnTh>
@@ -625,7 +625,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     carry a bill date weeks old, so the two are routinely far apart. */}
                 <GrnTh sticky={false}>Raised</GrnTh>
                 <GrnTh sticky={false}>Due</GrnTh>
-                {backDated && <GrnTh sticky={false}>Acctg Period</GrnTh>}
+                {/* Always visible — an approver needs to know which month a GRN books into
+                    (P&L close, budget headroom) whether or not it happens to be back-dated. */}
+                <GrnTh sticky={false}>Accounting Month</GrnTh>
                 <GrnTh sticky={false} align="right">Waiting</GrnTh>
                 <GrnTh sticky={false}>Status</GrnTh>
                 <GrnTh sticky={false} />
@@ -665,11 +667,15 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     {row.bill_date && <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>}
                   </GrnTd>
                   <GrnTd>{row.due_date ? dateLabel(row.due_date) : "—"}</GrnTd>
-                  {backDated && (
-                    <GrnTd>
-                      <span className="font-grn-mono text-amber-700">{row.accounting_period ?? "—"}</span>
-                    </GrnTd>
-                  )}
+                  <GrnTd>
+                    <span className={`font-grn-mono ${
+                      row.accounting_period && row.bill_date
+                        && row.accounting_period.slice(0, 7) !== row.bill_date.slice(0, 7)
+                        ? "text-amber-700" : "text-grn-ink-soft"
+                    }`}>
+                      {row.accounting_period ?? "—"}
+                    </span>
+                  </GrnTd>
                   <GrnTd align="right">
                     {(() => {
                       // Use server-computed ageing_days which handles legacy data correctly

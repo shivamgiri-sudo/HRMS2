@@ -842,7 +842,27 @@ export const grnService = {
       );
       const grn = rows[0] as any;
       if (!grn) throw new Error("GRN not found");
-      if (!grn.budget_line_id) throw new Error("GRN has no approved budget mapping");
+      /*
+       * A GRN with no budget_line_id used to be an unconditional block here — "GRN has no
+       * approved budget mapping" — regardless of why the line was missing. That contradicted
+       * the Owner ruling already live on the Smart GRN path (grn-smart.service.ts review():
+       * an unbudgeted GRN approves WITHOUT a budget line, deliberately; linking is an option
+       * Finance Head has, never a gate). This legacy reviewGrn() is what a GRN with zero
+       * grn_cost_allocation rows falls through to (see onlyWhenSmart in grn-smart.routes.ts) —
+       * which includes every GRN imported from db_bill (created_by = the dbbill import user),
+       * none of which were ever given a budget line or an allocation row. Those legitimately
+       * reached branch_head_approved and then hard-failed here the moment Finance Head tried
+       * to approve them, even though the system had allowed raising (and Branch-Head-approving)
+       * them in the first place.
+       *
+       * Fix: no longer block on a missing budget line. Instead `noBudgetLine` skips the
+       * reserve/consume/release calls below (there is no line to move money against) and the
+       * GRN is flagged is_unbudgeted so the gap stays visible rather than silently indistinguishable
+       * from a normal budgeted GRN. The cost still lands in the P&L overlay regardless — it reads
+       * grn_request.pnl_cost_amount directly (bpo-pnl.service.ts), which has never depended on
+       * budget_line_id being set.
+       */
+      const noBudgetLine = !grn.budget_line_id;
       notifyGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
       notifyBranchId = grn.branch_id ? String(grn.branch_id) : null;
       notifyVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
@@ -904,13 +924,16 @@ export const grnService = {
         }
 
         if (payload.decision === "approved") {
-          await budgetConsumptionService.reserve(
-            connection,
-            grn.budget_line_id,
-            Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity),
-            Number(grn.amount_without_tax) || undefined,
-          );
+          // noBudgetLine: nothing to reserve against — see the comment on noBudgetLine above.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.reserve(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
           newStatus = "branch_head_approved";
         } else {
           newStatus = "rejected";
@@ -933,7 +956,8 @@ export const grnService = {
                   reviewed_by = ?,
                   reviewed_at = NOW(),
                   review_note = ?,
-                  rejection_reason = ?
+                  rejection_reason = ?,
+                  is_unbudgeted = CASE WHEN ? THEN 1 ELSE is_unbudgeted END
             WHERE id = ? AND status = 'submitted'`,
           [
             newStatus,
@@ -942,6 +966,7 @@ export const grnService = {
             actorUserId,
             payload.reviewNote?.trim() || null,
             payload.decision === "rejected" ? payload.reviewNote?.trim() : null,
+            noBudgetLine,
             grnId,
           ]
         );
@@ -959,13 +984,17 @@ export const grnService = {
         }
 
         if (payload.decision === "approved") {
-          await budgetConsumptionService.consume(
-            connection,
-            grn.budget_line_id,
-            Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity),
-            Number(grn.amount_without_tax) || undefined,
-          );
+          // noBudgetLine: nothing was reserved, so nothing to move into consumed — see the
+          // comment on noBudgetLine above. The GRN still approves; it just funds nothing.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.consume(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
           newStatus = grn.grn_type === "vendor"
             ? "pending_accounts_payment"
             : "approved";
@@ -989,7 +1018,8 @@ export const grnService = {
                     approved_by = ?,
                     approved_at = NOW(),
                     rejection_reason = NULL,
-                    grn_number = COALESCE(grn_number, ?)
+                    grn_number = COALESCE(grn_number, ?),
+                    is_unbudgeted = CASE WHEN ? THEN 1 ELSE is_unbudgeted END
               WHERE id = ? AND status = 'branch_head_approved'`,
             [
               newStatus,
@@ -1000,6 +1030,7 @@ export const grnService = {
               payload.reviewNote?.trim() || null,
               actorUserId,
               grnNumber,
+              noBudgetLine,
               grnId,
             ]
           );
@@ -1018,13 +1049,16 @@ export const grnService = {
             );
           }
         } else {
-          await budgetConsumptionService.release(
-            connection,
-            grn.budget_line_id,
-            Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity),
-            Number(grn.amount_without_tax) || undefined,
-          );
+          // noBudgetLine: nothing was reserved at Branch Head stage, so nothing to release.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.release(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
           newStatus = "rejected";
           const [fhRejectResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
