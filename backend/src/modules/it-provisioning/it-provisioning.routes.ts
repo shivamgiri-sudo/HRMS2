@@ -583,8 +583,13 @@ router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'h
       const task = (taskRows as RowDataPacket[])[0];
       if (!task) { results.push({ employee_code: row.employee_code, status: 'error', message: 'No pending IT task found' }); continue; }
 
-      if (!row.official_email?.trim() || !row.domain_account?.trim()) {
-        results.push({ employee_code: row.employee_code, status: 'error', message: 'official_email and domain_account required' }); continue;
+      // official_email is optional (owner decision) — domain_account is the only hard
+      // requirement, matching completeItProvisioningTask's single-task path.
+      if (!row.domain_account?.trim()) {
+        results.push({ employee_code: row.employee_code, status: 'error', message: 'domain_account required' }); continue;
+      }
+      if (row.official_email?.trim() && !OFFICIAL_EMAIL_REGEX.test(row.official_email.trim().toLowerCase())) {
+        results.push({ employee_code: row.employee_code, status: 'error', message: 'official_email must end with @teammas.in or @teammas.co.in' }); continue;
       }
       await persistStructuredFields(task.id, row);
       await actionProvisioningRequest({ requestId: task.id, actionedBy: req.authUser!.id, evidenceNote: `Bulk completed: ${row.official_email}` });
@@ -856,10 +861,11 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
           if (assetTag)      actions.push(`asset_tag set to ${assetTag}`);
         }
 
-        // If task is still pending, mark it actioned
+        // If task is still pending, mark it actioned. official_email is optional (owner
+        // decision) — domain_account is the only hard requirement here too.
         if (task.status === 'pending' || task.status === 'pending_unassigned') {
-          if (!officialEmail || !domainAccount) {
-            actions.push('task NOT completed — official_email and domain_account both required');
+          if (!domainAccount) {
+            actions.push('task NOT completed — domain_account required');
           } else {
             await actionProvisioningRequest({
               requestId: task.id,
