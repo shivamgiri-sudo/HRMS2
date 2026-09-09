@@ -102,7 +102,15 @@ const BULK_UPLOAD_BUCKET = "hrms-bulk-uploads";
 // practical request size long before that — one file this size in a single POST is
 // megabytes of JSON and risks the same silent-timeout failure the comment below already
 // worked around once for smaller files.
-const STAGE_CHUNK_SIZE = 2000;
+//
+// 2000 -> 1000 (2026-09-09): a 2000-row single INSERT holds its locks on
+// upload_batch_row for long enough that several Onfido DOC_RAW files uploaded minutes apart
+// collided and lost the DB's patience — "Lock wait timeout exceeded", the whole chunk's rows
+// never saved, 6 files (~137k rows) silently staged as zero rows despite the batch header
+// claiming otherwise. The backend now retries a lost lock conflict on this exact write (see
+// withDeadlockRetry in bulk-upload.routes.ts), but a smaller chunk means a shorter lock hold
+// in the first place — fewer collisions to need retrying, not just a faster recovery from one.
+const STAGE_CHUNK_SIZE = 1000;
 
 const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   EMPLOYEE_MASTER: "import_upload_batch",
