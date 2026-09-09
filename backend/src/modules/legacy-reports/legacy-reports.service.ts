@@ -1799,29 +1799,40 @@ const REPORTS: Record<string, ReportDef> = {
     },
   },
 
-  // ── 39. Vendor Payment History (paid history — migration 1718/1719) ────────
+  // ── 39. Client Bill Collection History (migration 1718/1719/1720) ──────────
   //
   // db_bill.bill_pay_particulars had no mirror in mas_hrms until 1718 — invoices and
-  // GRNs were already synced, but "who got paid, how much, when, with what TDS
-  // deducted" was not. This surfaces that mirror. Uses Range mode (from_date/to_date
-  // against pay_type_date, a real DATETIME) rather than tally-invoice's from_date-as-
-  // finance-year convention, which the date-picker UI can't actually drive.
-  "vendor-payment-history": {
-    label: "Vendor Payment History",
+  // GRNs were already synced, but "who paid us, how much, when, with what TDS
+  // deducted" was not. This surfaces that mirror.
+  //
+  // Originally shipped as "Vendor Payment History" / vendor_bill_payment_snapshot —
+  // WRONG, corrected by migration 1720 the same day. company_name on this table is
+  // always 'Mas Callnet India Pvt Ltd' or 'IDC' (MAS's own entities, never a vendor),
+  // and reconstructing bill_no + '/' + short finance_year matches
+  // billing_invoice_snapshot.bill_no (MAS's own CLIENT invoices) on 79% of rows, with
+  // the matched invoice's bill_client being a real client (Vodafone, Idea Cellular,
+  // Aircel, ...) and grand_total equal to this row's bill_amount on every sampled
+  // pair. This is money MAS RECEIVED from its clients, not money MAS paid a vendor.
+  //
+  // Uses Range mode (from_date/to_date against pay_type_date, a real DATETIME) rather
+  // than tally-invoice's from_date-as-finance-year convention, which the date-picker
+  // UI can't actually drive.
+  "client-bill-collection-history": {
+    label: "Client Bill Collection History",
     sumCols: ["bill_amount", "tds_deducted", "net_amount"],
     columns: [
       { key: "bill_no",              label: "Bill No",       format: "text" },
       { key: "branch_name",          label: "Branch",        format: "text" },
       { key: "financial_year",       label: "Financial Year", format: "text" },
       { key: "bill_amount",          label: "Bill Amount",   format: "currency", align: "right" },
-      { key: "tds_deducted",         label: "TDS Deducted",  format: "currency", align: "right" },
+      { key: "tds_deducted",         label: "TDS Deducted by Client", format: "currency", align: "right" },
       { key: "deduction",            label: "Other Deduction", format: "currency", align: "right" },
-      { key: "net_amount",           label: "Net Paid",      format: "currency", align: "right" },
+      { key: "net_amount",           label: "Net Collected", format: "currency", align: "right" },
       { key: "payment_completeness", label: "Completeness",  format: "status" },
       { key: "bill_passed",          label: "Bill Passed",   format: "text" },
       { key: "status",               label: "Status",        format: "status" },
       { key: "bank_name",            label: "Bank",          format: "text" },
-      { key: "pay_type_date",        label: "Paid On",       format: "date" },
+      { key: "pay_type_date",        label: "Collected On",  format: "date" },
       { key: "raised_by",            label: "Raised By",     format: "text" },
     ],
     async query(f: LegacyFilter) {
@@ -1835,7 +1846,7 @@ const REPORTS: Record<string, ReportDef> = {
                COALESCE(net_amount,0)   AS net_amount,
                COALESCE(payment_completeness, 'unknown') AS payment_completeness,
                bill_passed, status, bank_name, pay_type_date, raised_by
-        FROM vendor_bill_payment_snapshot
+        FROM client_bill_collection_snapshot
         WHERE is_deleted = 0 ${bw} ${dw}
         ORDER BY pay_type_date DESC, bill_source_id DESC
         LIMIT ${f._limit ?? 50000}

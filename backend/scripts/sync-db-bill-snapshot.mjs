@@ -15,8 +15,8 @@
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=budget
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=grn
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=particulars
- *   node backend/scripts/sync-db-bill-snapshot.mjs --only=payment_runs
- *   node backend/scripts/sync-db-bill-snapshot.mjs --only=bill_payments
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=collection_runs
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=bill_collections
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=other_deductions
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=billing_ledger
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=opening_balance
@@ -138,7 +138,7 @@ function safeDec(v) {
 
 /**
  * Labels how a bill_pay_particulars row's own numbers relate to each other — see the note
- * at its call site (syncBillPayments) for why this exists rather than a "fix".
+ * at its call site (syncBillCollections) for why this exists rather than a "fix".
  */
 function paymentCompleteness(billAmount, tds, deduction, netAmount) {
   const bill = safeDec(billAmount);
@@ -1124,15 +1124,21 @@ async function syncGrnLines(hrms, bill) {
 }
 
 /**
- * Sync 14 — vendor_payment_run_snapshot, from db_bill.tbl_payment.
+ * Sync 14 — client_bill_collection_run_snapshot, from db_bill.tbl_payment.
  *
- * Payment RUN headers — one row per batch of bills paid together in a single bank
- * transaction. Mirrored in full (not finance-year scoped like budget/GRN): only 6,280
- * rows total, so there is no volume reason to window it, and a "when did we last pay
- * this vendor" question naturally reaches back further than the current FY.
+ * NOT vendor payments, despite this table's original name (fixed in migration 1720 —
+ * see its header for the verification). company_name on every row is 'Mas Callnet
+ * India Pvt Ltd' or 'IDC' — MAS's OWN entities — never a vendor. This is money MAS
+ * RECEIVED from its clients against its own invoices (accounts receivable collection),
+ * the same numbering pool as billing_invoice_snapshot.bill_no.
+ *
+ * Collection RUN headers — one row per batch of bills collected together in a single
+ * bank transaction. Mirrored in full (not finance-year scoped like budget/GRN): only
+ * 6,280 rows total, so there is no volume reason to window it, and "when did we last
+ * collect from this client" naturally reaches back further than the current FY.
  */
-async function syncPaymentRuns(hrms, bill) {
-  log('Sync 14: populating vendor_payment_run_snapshot from db_bill.tbl_payment ...');
+async function syncCollectionRuns(hrms, bill) {
+  log('Sync 14: populating client_bill_collection_run_snapshot from db_bill.tbl_payment ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, company_name, financial_year, branch_name, pay_type, pay_no, bank_name,
@@ -1164,23 +1170,31 @@ async function syncPaymentRuns(hrms, bill) {
   const cols = ['bill_source_id','company_name','financial_year','branch_name','pay_type','pay_no',
     'bank_name','pay_date','pay_amount','deposit_bank','no_of_bills','pay_type_date','paid_bill_refs',
     'raised_by','payment_file','is_approved','source_created_at','synced_at'];
-  const n = await insertBatch(hrms, 'vendor_payment_run_snapshot', rows, cols, cols.slice(1));
-  await pruneOrphans(hrms, 'vendor_payment_run_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  const n = await insertBatch(hrms, 'client_bill_collection_run_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'client_bill_collection_run_snapshot', rows.map(r => r.bill_source_id), '1=1');
   const value = rows.reduce((s, r) => s + Number(r.pay_amount || 0), 0);
-  log(`  vendor_payment_run_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh paid out across all runs`);
+  log(`  client_bill_collection_run_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh collected across all runs`);
 }
 
 /**
- * Sync 15 — vendor_bill_payment_snapshot, from db_bill.bill_pay_particulars.
+ * Sync 15 — client_bill_collection_snapshot, from db_bill.bill_pay_particulars.
  *
- * The actual "paid history" per bill: TDS deducted, net amount paid, pass/reject status.
+ * NOT vendor payments — see the note on syncCollectionRuns above. Verified live
+ * 2026-09-10: reconstructing bill_no + '/' + short finance_year (e.g. '03-01/18-19')
+ * matches billing_invoice_snapshot.bill_no (db_bill.tbl_invoice, MAS's own client
+ * invoices) on 79% of rows (8,793/11,123), with bill_client on the matched invoice
+ * being a real MAS client (Vodafone, Idea Cellular, Aircel, ...) and its grand_total
+ * matching this row's bill_amount exactly on every sampled pair. This is the
+ * collection-level detail: TDS the client deducted, net amount actually collected,
+ * pass/reject status, per client bill.
+ *
  * PaymentId (the declared FK to tbl_payment) is null on effectively every row sampled, so
  * it is mirrored verbatim as payment_ref rather than trusted as a join key — pay_no +
  * branch_name + financial_year is the closer (still not guaranteed-unique) correlation to
- * vendor_payment_run_snapshot.
+ * client_bill_collection_run_snapshot.
  */
-async function syncBillPayments(hrms, bill) {
-  log('Sync 15: populating vendor_bill_payment_snapshot from db_bill.bill_pay_particulars ...');
+async function syncBillCollections(hrms, bill) {
+  log('Sync 15: populating client_bill_collection_snapshot from db_bill.bill_pay_particulars ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT PaymentId, id, company_name, branch_name, financial_year, pay_type, pay_no, bank_name,
@@ -1230,18 +1244,22 @@ async function syncBillPayments(hrms, bill) {
     'bill_passed','tds_deducted','net_amount','payment_completeness','deduction','status','remarks',
     'pay_type_date','collection_id','raised_by','is_deleted','payment_file','is_dialdesk',
     'source_created_at','synced_at'];
-  const n = await insertBatch(hrms, 'vendor_bill_payment_snapshot', rows, cols, cols.slice(1));
-  await pruneOrphans(hrms, 'vendor_bill_payment_snapshot', rows.map(r => r.bill_source_id), '1=1');
-  const netPaid = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
+  const n = await insertBatch(hrms, 'client_bill_collection_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'client_bill_collection_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  const netCollected = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
   const tds = rows.reduce((s, r) => s + Number(r.tds_deducted || 0), 0);
   const partial = rows.filter(r => r.payment_completeness === 'partial').length;
-  log(`  vendor_bill_payment_snapshot: ${n} rows, Rs ${(netPaid / 100000).toFixed(2)} lakh net paid, `
-    + `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted, ${partial} flagged partial`);
+  log(`  client_bill_collection_snapshot: ${n} rows, Rs ${(netCollected / 100000).toFixed(2)} lakh net collected, `
+    + `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted by clients, ${partial} flagged partial`);
 }
 
-/** Sync 16 — vendor_bill_deduction_snapshot, from db_bill.other_deductions_bill. */
+/**
+ * Sync 16 — client_bill_collection_deduction_snapshot, from db_bill.other_deductions_bill.
+ * NOT vendor deductions — same reclassification as syncCollectionRuns above:
+ * company_name is MAS's own entity, not a vendor.
+ */
 async function syncOtherDeductions(hrms, bill) {
-  log('Sync 16: populating vendor_bill_deduction_snapshot from db_bill.other_deductions_bill ...');
+  log('Sync 16: populating client_bill_collection_deduction_snapshot from db_bill.other_deductions_bill ...');
   const now = new Date();
   const [src] = await bill.query(
     `SELECT id, company_name, branch_name, financial_year, pay_type, pay_no, pay_amount, bank_name,
@@ -1276,10 +1294,10 @@ async function syncOtherDeductions(hrms, bill) {
   const cols = ['bill_source_id','company_name','branch_name','financial_year','pay_type','pay_no',
     'pay_amount','bank_name','deposit_bank','pay_date','no_of_bills','pay_type_date','status','bill_no',
     'other_deduction','other_remarks','collection_id','raised_by','payment_file','source_created_at','synced_at'];
-  const n = await insertBatch(hrms, 'vendor_bill_deduction_snapshot', rows, cols, cols.slice(1));
-  await pruneOrphans(hrms, 'vendor_bill_deduction_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  const n = await insertBatch(hrms, 'client_bill_collection_deduction_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'client_bill_collection_deduction_snapshot', rows.map(r => r.bill_source_id), '1=1');
   const value = rows.reduce((s, r) => s + Number(r.other_deduction || 0), 0);
-  log(`  vendor_bill_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh deducted`);
+  log(`  client_bill_collection_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh deducted`);
 }
 
 /** Sync 17 — billing_client_ledger_snapshot, from db_bill.billing_ledger. */
@@ -1397,8 +1415,8 @@ async function main() {
     if (only === 'all' || only === 'credit_notes')  await syncCreditNotes(hrms, bill);
     if (only === 'all' || only === 'credit_lines')  await syncCreditNoteLines(hrms, bill);
     if (only === 'all' || only === 'prov_deduct')   await syncProvisionDeductions(hrms, bill);
-    if (only === 'all' || only === 'payment_runs')  await syncPaymentRuns(hrms, bill);
-    if (only === 'all' || only === 'bill_payments') await syncBillPayments(hrms, bill);
+    if (only === 'all' || only === 'collection_runs')   await syncCollectionRuns(hrms, bill);
+    if (only === 'all' || only === 'bill_collections')  await syncBillCollections(hrms, bill);
     if (only === 'all' || only === 'other_deductions') await syncOtherDeductions(hrms, bill);
     if (only === 'all' || only === 'billing_ledger')   await syncBillingLedger(hrms, bill);
     if (only === 'all' || only === 'opening_balance')  await syncOpeningBalance(hrms, bill);
