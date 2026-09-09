@@ -11,6 +11,7 @@ import {
   changeCandidateBranch,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
+import { resolveBandPct } from './band-package-ratio.service.js';
 import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
@@ -155,11 +156,10 @@ router.post(
   h(async (req, res) => {
     const { ctc, bandCode, isMetro } = req.body;
     if (!ctc || !bandCode) { res.status(400).json({ error: 'ctc and bandCode required' }); return; }
-    const [bands] = await db.execute<RowDataPacket[]>(
-      `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`, [bandCode],
-    ).catch(() => [[] as RowDataPacket[]]);
-    const band = (bands as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
-    const components = calculateSalary(Number(ctc), Number(band.basic_pct), Number(band.hra_pct), Boolean(isMetro));
+    // Same source as saveOffer() -- see band-package-ratio.service.ts -- so this
+    // preview never disagrees with what actually gets saved a moment later.
+    const band = await resolveBandPct(String(bandCode), Number(ctc) / 12);
+    const components = calculateSalary(Number(ctc), band.basicPct, band.hraPct, Boolean(isMetro));
     res.json({ ok: true, components });
   }),
 );

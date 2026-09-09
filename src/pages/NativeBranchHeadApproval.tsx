@@ -57,6 +57,12 @@ interface PendingOffer {
   offer_status: string;
   /** 1 when Payroll HR has validated this salary. Employee creation requires it. */
   payroll_validated?: number | boolean;
+  /** 1 when this CTC was let through outside the selected band's range on an
+   *  explicit exception (see saveOffer()'s band-range guard). Reads NULL/0 on
+   *  a normally-priced offer, and on any environment where migration
+   *  1702_offer_proposed_exception.sql has not yet run. */
+  is_proposed_exception?: number | boolean;
+  proposed_exception_reason?: string | null;
 }
 
 type DecisionRow = {
@@ -215,6 +221,21 @@ function OfferRow({
       <TableCell className="py-3 text-right tabular-nums whitespace-nowrap">
         <div className="font-semibold text-slate-900">{inr(offer.offered_ctc)}</div>
         <div className="text-[11px] text-slate-400">{inr(offer.gross)} gross</div>
+        {/* This CTC was let through outside the selected band's range on an
+            explicit HR-entered exception — see saveOffer()'s band-range guard.
+            Shown so the approver sees WHY the number looks off-band, not just
+            the number. Absent on every normally-priced offer. */}
+        {(offer.is_proposed_exception === 1 || offer.is_proposed_exception === true) && (
+          <div
+            className="mt-0.5 flex items-center justify-end gap-1 text-[11px] font-medium text-amber-700"
+            title={offer.proposed_exception_reason ? `Exception reason: ${offer.proposed_exception_reason}` : 'Marked as an out-of-band CTC exception, but no reason was recorded.'}
+          >
+            <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="max-w-[130px] truncate">
+              {offer.proposed_exception_reason || 'Exception (no reason given)'}
+            </span>
+          </div>
+        )}
       </TableCell>
       <TableCell className="py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
         {inr(offer.net_in_hand)}
