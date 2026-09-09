@@ -226,16 +226,18 @@ export async function listProcesses(userId: string, windowDays = 45) {
   const allowed = await readableProcessIds(userId);
   if (!allowed.size) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.process_id, p.process_name,
+    `SELECT a.process_id, p.process_name, p.process_code,
+            p.branch_id, bm.branch_name, bm.branch_code,
             COUNT(DISTINCT a.metric_key) metrics,
             MAX(a.score_date) latest,
             (SELECT COUNT(*) FROM employees e
               WHERE e.process_id = p.id AND e.active_status = 1) headcount
        FROM process_metric_actual a
        JOIN process_master p ON p.id = a.process_id AND p.active_status = 1
+       LEFT JOIN branch_master bm ON bm.id = p.branch_id
       WHERE a.actual_value IS NOT NULL
         AND a.score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-      GROUP BY a.process_id, p.process_name, p.id
+      GROUP BY a.process_id, p.process_name, p.process_code, p.id, p.branch_id, bm.branch_name, bm.branch_code
       ORDER BY metrics DESC, p.process_name`,
     [windowDays],
   );
@@ -269,6 +271,13 @@ export async function listProcesses(userId: string, windowDays = 45) {
       return {
         processId: String(r.process_id),
         processName: String(r.process_name),
+        processCode: r.process_code ? String(r.process_code) : null,
+        // A process without a branch assignment (some corporate/shared
+        // processes genuinely have none) reports honestly as unassigned
+        // rather than being silently dropped from a branch filter.
+        branchId: r.branch_id ? String(r.branch_id) : null,
+        branchName: r.branch_name ? String(r.branch_name) : null,
+        branchCode: r.branch_code ? String(r.branch_code) : null,
         metrics,
         // Never a negative: a metric can be BOTH automated (a source exists)
         // and manually corrected on some days, so "automated" is not a strict

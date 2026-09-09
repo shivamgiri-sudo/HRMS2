@@ -61,7 +61,8 @@ const AXIS_TICK = { fill: "#64748B", fontSize: 11 } as const;
 const GRID = { strokeDasharray: "3 3", stroke: "#E2E8F0" } as const;
 
 interface ProcessRow {
-  processId: string; processName: string; metrics: number;
+  processId: string; processName: string; processCode: string | null; metrics: number;
+  branchId: string | null; branchName: string | null; branchCode: string | null;
   headcount: number; latestDate: string | null; staleDays: number | null;
 }
 interface Reading {
@@ -1267,6 +1268,7 @@ function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
 export default function ProcessOperationsPage() {
   const qc = useQueryClient();
   const [active, setActive] = useState<string | null>(null);
+  const [branchFilter, setBranchFilter] = useState<string>("all");
   const [drill, setDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
@@ -1276,7 +1278,52 @@ export default function ProcessOperationsPage() {
     queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessRow[]>>("/api/process-operations/processes"),
   });
   const processes = listData?.data ?? [];
-  const current = active ?? processes[0]?.processId ?? null;
+
+  // Real branches only -- built from the processes actually in view, not
+  // imagined, per this codebase's own rule that dropdown options come from
+  // the observed domain. A process with no branch assignment (some
+  // corporate/shared processes genuinely have none) surfaces as its own
+  // honest "Unassigned" option rather than disappearing from the filter.
+  const branchOptions = useMemo(() => {
+    const seen = new Map<string, { id: string; label: string }>();
+    for (const p of processes) {
+      const id = p.branchId ?? "__unassigned";
+      if (!seen.has(id)) {
+        seen.set(id, {
+          id,
+          label: p.branchId ? `${p.branchName ?? "Unnamed branch"}${p.branchCode ? ` (${p.branchCode})` : ""}` : "Unassigned",
+        });
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [processes]);
+
+  const branchScopedProcesses = useMemo(() => {
+    if (branchFilter === "all") return processes;
+    return processes.filter((p) => (p.branchId ?? "__unassigned") === branchFilter);
+  }, [processes, branchFilter]);
+
+  const processOptions: SearchableOption[] = useMemo(
+    () => branchScopedProcesses.map((p) => ({
+      value: p.processId,
+      label: p.processName,
+      hint: p.processCode ?? undefined,
+    })),
+    [branchScopedProcesses],
+  );
+
+  // Picking a branch that doesn't hold the currently active process must
+  // clear that stale selection, not leave a process from a different branch
+  // silently on screen -- same "clear the child when the parent changes"
+  // rule this page's own manual-entry forms already follow.
+  useEffect(() => {
+    if (active && !branchScopedProcesses.some((p) => p.processId === active)) {
+      setActive(null);
+    }
+  }, [branchFilter, branchScopedProcesses, active]);
+
+  const current = active ?? branchScopedProcesses[0]?.processId ?? null;
+  const currentProcess = processes.find((p) => p.processId === current) ?? null;
 
   const { data: feedData } = useQuery({
     queryKey: ["process-operations", "feeds"],
@@ -1396,20 +1443,59 @@ export default function ProcessOperationsPage() {
             {feedHealth && <StoppedFeeds health={feedHealth} />}
             {feedHealth && <NeverReportedBanner groups={feedHealth.neverReported} />}
 
-            <div className="flex flex-wrap gap-1.5">
-              {processes.map((p) => {
-                const on = p.processId === current;
-                return (
-                  <button key={p.processId} onClick={() => setActive(p.processId)} aria-pressed={on}
-                    className={`cursor-pointer rounded-lg border px-2.5 py-1.5 text-[11px] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${on
-                      ? "text-white border-transparent shadow-sm"
-                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-400"}`}
-                    style={on ? { background: NAVY } : undefined}>
-                    <span className="font-semibold">{p.processName}</span>
-                    <span className={`ml-1.5 tabular-nums ${on ? "text-indigo-200" : "text-slate-400"}`}>{p.metrics}</span>
-                  </button>
-                );
-              })}
+            <div className="rounded-2xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 shadow-sm p-3.5">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1 block">
+                    Branch
+                  </label>
+                  <SearchableSelect
+                    aria-label="Filter by branch"
+                    options={[{ value: "all", label: "All branches", hint: `${processes.length}` }, ...branchOptions.map((b) => ({
+                      value: b.id, label: b.label,
+                      hint: `${processes.filter((p) => (p.branchId ?? "__unassigned") === b.id).length}`,
+                    }))]}
+                    value={branchFilter}
+                    onChange={setBranchFilter}
+                    placeholder="All branches"
+                    searchPlaceholder="Search branches…"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1 block">
+                    Process
+                  </label>
+                  <SearchableSelect
+                    aria-label="Select a process"
+                    options={processOptions}
+                    value={current ?? ""}
+                    onChange={(id) => setActive(id)}
+                    placeholder={branchScopedProcesses.length ? "Search processes by name or code…" : "No process in this branch"}
+                    searchPlaceholder="Type a process name or code…"
+                    emptyText="No process matches that search."
+                    disabled={!branchScopedProcesses.length}
+                  />
+                </div>
+              </div>
+
+              {currentProcess && (
+                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[12px] text-slate-500 dark:text-slate-400">
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
+                    {currentProcess.processName}
+                    {currentProcess.processCode && (
+                      <span className="font-mono text-[10px] font-normal text-slate-400 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">
+                        {currentProcess.processCode}
+                      </span>
+                    )}
+                  </span>
+                  <span>{currentProcess.branchName ?? "Unassigned branch"}</span>
+                  <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{currentProcess.headcount} active</span>
+                  <span className="tabular-nums">{currentProcess.metrics} metrics tracked</span>
+                  {branchScopedProcesses.length > 1 && (
+                    <span className="text-slate-400">{branchScopedProcesses.length} processes in this branch</span>
+                  )}
+                </div>
+              )}
             </div>
 
             {opsLoading || !ops ? (
