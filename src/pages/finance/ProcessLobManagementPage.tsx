@@ -450,7 +450,18 @@ export default function ProcessLobManagementPage() {
                           <tr key={row.processLobId ?? row.lobCode} className={row.rowType === "unallocated" ? "bg-rose-50/60" : "hover:bg-slate-50"}>
                             <td className="px-3 py-3"><p className="font-semibold text-slate-900">{row.lobName}</p><p className="text-xs text-slate-500">{row.lobCode}</p></td>
                             <td className="px-3 py-3">{row.contractedSeats}</td><td className="px-3 py-3">{row.billableSeats}</td><td className="px-3 py-3">{percent(row.seatFillPct)}</td><td className="px-3 py-3">{row.agentHeadcount}</td>
-                            <td className="px-3 py-3 font-semibold">{currency(row.recognizedRevenue)}</td><td className="px-3 py-3">{currency(row.agentSalary)}</td><td className="px-3 py-3">{currency(row.directVendorCost)}</td><td className="px-3 py-3">{currency(row.sharedCost)}</td><td className="px-3 py-3">{currency(row.contribution)}</td><td className={`px-3 py-3 font-semibold ${row.ebitda < 0 ? "text-rose-600" : "text-emerald-700"}`}>{currency(row.ebitda)}</td><td className="px-3 py-3">{percent(row.ebitdaMarginPct)}</td><td className="px-3 py-3">{currency(row.pbt)}</td><td className="px-3 py-3">{currency(row.pat)}</td><td className="px-3 py-3"><StatusBadge value={row.planStatus} /></td>
+                            <td className="px-3 py-3 font-semibold">
+                              <span className="inline-flex items-center gap-1">
+                                {currency(row.recognizedRevenue)}
+                                {row.dataStatus.delivery === "missing" ? (
+                                  <span
+                                    title={`${row.lobName} has no validated delivery actual for this period — this revenue figure is unverified, not a confirmed measurement.`}
+                                  >
+                                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-label="Delivery data missing" />
+                                  </span>
+                                ) : null}
+                              </span>
+                            </td><td className="px-3 py-3">{currency(row.agentSalary)}</td><td className="px-3 py-3">{currency(row.directVendorCost)}</td><td className="px-3 py-3">{currency(row.sharedCost)}</td><td className="px-3 py-3">{currency(row.contribution)}</td><td className={`px-3 py-3 font-semibold ${row.ebitda < 0 ? "text-rose-600" : "text-emerald-700"}`}>{currency(row.ebitda)}</td><td className="px-3 py-3">{percent(row.ebitdaMarginPct)}</td><td className="px-3 py-3">{currency(row.pbt)}</td><td className="px-3 py-3">{currency(row.pat)}</td><td className="px-3 py-3"><StatusBadge value={row.planStatus} /></td>
                           </tr>
                         ))}
                         {!processRows.length ? <tr><td colSpan={15} className="px-4 py-12 text-center text-slate-500">No LOB P&amp;L rows are available. Complete LOB setup, plan, rate and delivery first.</td></tr> : null}
