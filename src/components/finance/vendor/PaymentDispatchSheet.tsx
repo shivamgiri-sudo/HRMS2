@@ -1,7 +1,7 @@
 // src/components/finance/vendor/PaymentDispatchSheet.tsx
-import { useState, useEffect, Fragment } from "react";
+import { useEffect, useRef, useState, Fragment } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Send, LockKeyhole } from "lucide-react";
+import { Loader2, Send, LockKeyhole, Paperclip, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,21 @@ export interface VendorPayment {
   hold_reason?: string | null;
 }
 
+interface PaymentTransaction {
+  id: string;
+  sequence_no: number;
+  payment_mode: string;
+  payment_date: string;
+  bank_name?: string | null;
+  transaction_id?: string | null;
+  amount: number;
+  tds_amount?: number | null;
+  net_amount?: number | null;
+  remarks?: string | null;
+  proof_file_name?: string | null;
+  created_at: string;
+}
+
 interface Props {
   payment: VendorPayment | null;
   open: boolean;
@@ -63,6 +78,8 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
   const [utr, setUtr] = useState("");
   const [remarks, setRemarks] = useState("");
   const [holdReason, setHoldReason] = useState("");
+  const proofInputRef = useRef<HTMLInputElement>(null);
+  const [proofTargetId, setProofTargetId] = useState<string | null>(null);
 
   const banksQuery = useQuery({
     queryKey: ["vendor-payment-banks"],
@@ -109,6 +126,7 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
     onSuccess: () => {
       toast({ title: "Payment dispatched" });
       queryClient.invalidateQueries({ queryKey: ["vendor-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["vendor-payment-transactions", payment?.id] });
       onSaved();
       onOpenChange(false);
     },
@@ -131,11 +149,80 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // Installment history — the backend has tracked every partial payment against a GRN
+  // (vendor_payment_transaction, one row per dispatch, with its own proof file) since this
+  // module shipped, but no page anywhere ever rendered it. A vendor paid in 3 installments
+  // showed only the current aggregate paid/balance, with no way to see which installment was
+  // which, when, by what reference, or open its proof.
+  const transactionsQuery = useQuery({
+    queryKey: ["vendor-payment-transactions", payment?.id],
+    enabled: open && Boolean(payment?.id),
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: PaymentTransaction[] }>(
+        `/api/finance/vendor-payments/${payment!.id}/transactions`
+      );
+      return res.data ?? [];
+    },
+  });
+  const transactions = transactionsQuery.data ?? [];
+
+  const proofMutation = useMutation({
+    mutationFn: async ({ transactionRowId, file }: { transactionRowId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("proof", file);
+      return hrmsApi.postForm(
+        `/api/finance/vendor-payments/${payment!.id}/transactions/${transactionRowId}/upload-proof`,
+        formData
+      );
+    },
+    onSuccess: () => {
+      toast({ title: "Installment proof uploaded" });
+      setProofTargetId(null);
+      queryClient.invalidateQueries({ queryKey: ["vendor-payment-transactions", payment?.id] });
+    },
+    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  function onProofFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file && proofTargetId) proofMutation.mutate({ transactionRowId: proofTargetId, file });
+    e.target.value = "";
+  }
+
+  async function downloadProof(transactionRowId: string, filename: string) {
+    try {
+      const blob = await hrmsApi.getBlob(
+        `/api/finance/vendor-payments/${payment!.id}/transactions/${transactionRowId}/proof`
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast({
+        title: "Could not open proof",
+        description: e instanceof Error ? e.message : "Download failed",
+        variant: "destructive",
+      });
+    }
+  }
+
   if (!payment) return null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-[480px] flex-col gap-0 p-0">
+        <input
+          ref={proofInputRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,.webp"
+          className="hidden"
+          onChange={onProofFileSelected}
+        />
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-sm font-semibold">
             {payment.grn_number ?? payment.grn_request_id}
@@ -153,6 +240,9 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
           <TabsList className="mx-4 mt-3 w-fit">
             <TabsTrigger value="dispatch">Dispatch</TabsTrigger>
             <TabsTrigger value="hold">Hold</TabsTrigger>
+            <TabsTrigger value="history">
+              Installments {transactions.length > 0 ? `(${transactions.length})` : ""}
+            </TabsTrigger>
             <TabsTrigger value="details">Details</TabsTrigger>
           </TabsList>
 
@@ -259,6 +349,63 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
                 </Button>
               </div>
             </div>
+          </TabsContent>
+
+          {/* --- INSTALLMENT HISTORY TAB --- */}
+          <TabsContent value="history" className="flex-1 overflow-y-auto px-4 py-3">
+            {transactionsQuery.isLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              </div>
+            ) : transactions.length === 0 ? (
+              <p className="py-8 text-center text-xs text-slate-400">
+                No installments dispatched yet.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {transactions.map((t) => (
+                  <div key={t.id} className="rounded-md border border-slate-200 p-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-800">
+                        Installment #{t.sequence_no}
+                      </span>
+                      <span className="font-semibold tabular-nums text-slate-900">
+                        ₹{Number(t.amount ?? 0).toLocaleString("en-IN")}
+                      </span>
+                    </div>
+                    <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-slate-500">
+                      <span>{t.payment_mode}{t.bank_name ? ` · ${t.bank_name}` : ""}</span>
+                      <span className="text-right">{t.payment_date ? String(t.payment_date).slice(0, 10) : "-"}</span>
+                      {t.transaction_id && <span className="col-span-2 font-mono">{t.transaction_id}</span>}
+                      {(t.tds_amount != null && Number(t.tds_amount) > 0) && (
+                        <span className="col-span-2">
+                          TDS ₹{Number(t.tds_amount).toLocaleString("en-IN")} · Net ₹{Number(t.net_amount ?? 0).toLocaleString("en-IN")}
+                        </span>
+                      )}
+                      {t.remarks && <span className="col-span-2 italic text-slate-400">{t.remarks}</span>}
+                    </div>
+                    <div className="mt-1.5">
+                      {t.proof_file_name ? (
+                        <Button
+                          size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] text-blue-600"
+                          onClick={() => downloadProof(t.id, t.proof_file_name!)}
+                        >
+                          <Download className="mr-1 h-3 w-3" />{t.proof_file_name}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] text-slate-500"
+                          disabled={proofMutation.isPending}
+                          onClick={() => { setProofTargetId(t.id); proofInputRef.current?.click(); }}
+                        >
+                          <Paperclip className="mr-1 h-3 w-3" />Attach proof
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           {/* --- DETAILS TAB --- */}

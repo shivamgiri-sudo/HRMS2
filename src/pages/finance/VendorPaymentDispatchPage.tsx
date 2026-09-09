@@ -1,12 +1,9 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { LucideIcon } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  Banknote,
-  CheckCircle2,
   Download,
   FileText,
   Filter,
@@ -76,20 +73,6 @@ interface VendorPayment {
   payment_proof_file_name?: string | null;
 }
 
-interface PaymentTransaction {
-  id: string;
-  sequence_no: number;
-  payment_mode: string;
-  payment_date: string;
-  bank_name?: string | null;
-  transaction_id?: string | null;
-  amount: number;
-  remarks?: string | null;
-  proof_file_name?: string | null;
-  proof_file_mime?: string | null;
-  created_at: string;
-}
-
 interface BankMaster {
   id: string;
   bank_name: string;
@@ -101,16 +84,6 @@ interface BranchOption {
   name?: string;
 }
 
-interface DispatchDraft {
-  paymentMode: string;
-  paymentDate: string;
-  bankId: string;
-  transactionId: string;
-  paymentAmount: string;
-  remarks: string;
-  holdReason: string;
-}
-
 interface Filters {
   branchId: string;
   month: string;
@@ -120,18 +93,6 @@ interface Filters {
   search: string;
 }
 
-const PAYMENT_MODES = [
-  "Cheque",
-  "NEFT",
-  "RTGS",
-  "IMPS",
-  "UPI",
-  "Cash",
-  "Bank Transfer",
-  "Adjustment",
-  "Other",
-] as const;
-const BANK_MODES = new Set(["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Bank Transfer"]);
 const PAYMENT_STATUSES = [
   "Payment Pending",
   "Partially Paid",
@@ -169,18 +130,6 @@ function initialFilters(): Filters {
   };
 }
 
-function initialDraft(row: VendorPayment): DispatchDraft {
-  return {
-    paymentMode: row.payment_mode ?? "",
-    paymentDate: "",
-    bankId: row.bank_id ?? "",
-    transactionId: "",
-    paymentAmount: "",
-    remarks: "",
-    holdReason: "",
-  };
-}
-
 function agingDays(dueDate?: string | null) {
   if (!dueDate) return 0;
   return Math.floor((Date.now() - new Date(dueDate).getTime()) / 86_400_000);
@@ -204,22 +153,15 @@ async function downloadAuthenticated(path: string, filename: string) {
 
 export default function VendorPaymentDispatchPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const proofInputRef = useRef<HTMLInputElement>(null);
-  const [proofTarget, setProofTarget] = useState<{
-    paymentId: string;
-    transactionRowId: string;
-  } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(initialFilters());
-  const [drafts, setDrafts] = useState<Record<string, DispatchDraft>>({});
-  const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
   const [selected, setSelected] = useState<VendorPayment | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showAging, setShowAging] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
   const [ledgerVendorId, setLedgerVendorId] = useState("");
+  const [ledgerVendorSearch, setLedgerVendorSearch] = useState("");
 
   const { data: capabilityResponse, isLoading: capabilityLoading } = useQuery({
     queryKey: ["vendor-payment-capabilities"],
@@ -267,17 +209,6 @@ export default function VendorPaymentDispatchPage() {
   const total = Number((listResponse as any)?.total ?? 0);
   const pageSize = Number((listResponse as any)?.limit ?? 50);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const selectedPayment = rows.find((row) => row.id === selectedPaymentId) ?? null;
-
-  const { data: transactionResponse, isFetching: transactionsLoading } = useQuery({
-    queryKey: ["vendor-payment-transactions", selectedPaymentId],
-    enabled: Boolean(selectedPaymentId),
-    queryFn: () => hrmsApi.get<{ data: PaymentTransaction[] }>(
-      `/api/finance/vendor-payments/${selectedPaymentId}/transactions`
-    ),
-  });
-  const transactions: PaymentTransaction[] = (transactionResponse as any)?.data ?? [];
-
   const agingQuery = useQuery({
     queryKey: ["vendor-payments-aging", filters.branchId],
     enabled: showAging,
@@ -298,123 +229,20 @@ export default function VendorPaymentDispatchPage() {
   });
   const ledgerRows: any[] = (ledgerQuery.data as any)?.data ?? [];
 
-  useEffect(() => {
-    setDrafts((current) => {
-      const next = { ...current };
-      for (const row of rows) {
-        if (!next[row.id]) next[row.id] = initialDraft(row);
-      }
-      return next;
-    });
-  }, [rows]);
-
-  function updateDraft(id: string, patch: Partial<DispatchDraft>) {
-    const row = rows.find((item) => item.id === id);
-    if (!row) return;
-    setDrafts((current) => ({
-      ...current,
-      [id]: { ...(current[id] ?? initialDraft(row)), ...patch },
-    }));
-  }
-
-  function resetDraft(id: string) {
-    const row = rows.find((item) => item.id === id);
-    setDrafts((current) => {
-      const next = { ...current };
-      if (row) next[id] = initialDraft(row);
-      else delete next[id];
-      return next;
-    });
-  }
-
-  const dispatchMutation = useMutation({
-    mutationFn: (id: string) => {
-      const draft = drafts[id];
-      if (!draft) throw new Error("Payment dispatch row is not ready");
-      return hrmsApi.post(`/api/finance/vendor-payments/${id}/dispatch`, {
-        paymentMode: draft.paymentMode,
-        paymentDate: draft.paymentDate,
-        bankId: draft.bankId || undefined,
-        transactionId: draft.transactionId.trim() || undefined,
-        paymentAmount: Number(draft.paymentAmount),
-        remarks: draft.remarks.trim() || undefined,
-      });
-    },
-    onSuccess: (_response, id) => {
-      resetDraft(id);
-      setSelectedPaymentId(id);
-      void queryClient.invalidateQueries({ queryKey: ["vendor-payments"] });
-      void queryClient.invalidateQueries({ queryKey: ["vendor-payment-transactions", id] });
-      toast({ title: "Payment installment recorded" });
-    },
-    onError: (mutationError: Error) => {
-      toast({
-        title: "Payment dispatch failed",
-        description: mutationError.message,
-        variant: "destructive",
-      });
-    },
+  // Vendor picker for the Ledger panel — was a raw UUID paste box ("Vendor ID (paste from
+  // vendor master)"), which meant actually finding a vendor's account statement required first
+  // opening Vendor Management in another tab to copy an internal id. Same find-then-pick pattern
+  // as NativeVendorBankDetails.tsx's vendor picker.
+  const ledgerVendorQuery = useQuery({
+    queryKey: ["vendor-ledger-vendor-search", ledgerVendorSearch],
+    enabled: showLedger,
+    queryFn: () => hrmsApi.get<any>(
+      `/api/erp/vendors?q=${encodeURIComponent(ledgerVendorSearch)}&limit=50&is_active=1`
+    ),
+    staleTime: 60_000,
   });
-
-  const holdMutation = useMutation({
-    mutationFn: ({ id, hold }: { id: string; hold: boolean }) =>
-      hrmsApi.post(`/api/finance/vendor-payments/${id}/hold`, {
-        hold,
-        reason: drafts[id]?.holdReason.trim() || undefined,
-      }),
-    onSuccess: (_response, variables) => {
-      resetDraft(variables.id);
-      void queryClient.invalidateQueries({ queryKey: ["vendor-payments"] });
-      toast({ title: variables.hold ? "Payment placed on hold" : "Payment hold released" });
-    },
-    onError: (mutationError: Error) => {
-      toast({
-        title: "Hold action failed",
-        description: mutationError.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const proofMutation = useMutation({
-    mutationFn: ({
-      paymentId,
-      transactionRowId,
-      file,
-    }: {
-      paymentId: string;
-      transactionRowId: string;
-      file: File;
-    }) => {
-      const formData = new FormData();
-      formData.append("proof", file);
-      return hrmsApi.postForm(
-        `/api/finance/vendor-payments/${paymentId}/transactions/${transactionRowId}/upload-proof`,
-        formData
-      );
-    },
-    onSuccess: (_response, variables) => {
-      setProofTarget(null);
-      void queryClient.invalidateQueries({
-        queryKey: ["vendor-payment-transactions", variables.paymentId],
-      });
-      void queryClient.invalidateQueries({ queryKey: ["vendor-payments"] });
-      toast({ title: "Installment proof uploaded" });
-    },
-    onError: (mutationError: Error) => {
-      toast({
-        title: "Proof upload failed",
-        description: mutationError.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  function onProofSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file && proofTarget) proofMutation.mutate({ ...proofTarget, file });
-    event.target.value = "";
-  }
+  const ledgerVendorOptions: { id: string; vendor_code: string; vendor_name: string }[] =
+    (ledgerVendorQuery.data as any)?.data ?? (ledgerVendorQuery.data as any) ?? [];
 
   function clearFilters() {
     setFilters(initialFilters());
@@ -440,18 +268,6 @@ export default function VendorPaymentDispatchPage() {
     }
   }
 
-  async function downloadFile(path: string, filename: string) {
-    try {
-      await downloadAuthenticated(path, filename);
-    } catch (downloadError) {
-      toast({
-        title: "File could not be opened",
-        description: downloadError instanceof Error ? downloadError.message : "Download failed",
-        variant: "destructive",
-      });
-    }
-  }
-
   const summary = useMemo(() => rows.reduce(
     (totalRow, row) => ({
       due: totalRow.due + Number(row.due_amount ?? 0),
@@ -466,28 +282,10 @@ export default function VendorPaymentDispatchPage() {
     { due: 0, paid: 0, balance: 0, overdue: 0 }
   ), [rows]);
 
-  const summaryCards: Array<{
-    label: string;
-    value: number;
-    icon: LucideIcon;
-    className: string;
-  }> = [
-    { label: "Page due", value: summary.due, icon: FileText, className: "text-slate-700" },
-    { label: "Page paid", value: summary.paid, icon: CheckCircle2, className: "text-emerald-700" },
-    { label: "Page balance", value: summary.balance, icon: Banknote, className: "text-blue-700" },
-    { label: "Overdue balance", value: summary.overdue, icon: AlertTriangle, className: "text-rose-700" },
-  ];
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   return (
     <DashboardLayout>
-      <input
-        ref={proofInputRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp"
-        className="hidden"
-        onChange={onProofSelected}
-      />
       <div className="flex h-full flex-col">
         {/* ── Slim page header ── */}
         <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
@@ -766,14 +564,24 @@ export default function VendorPaymentDispatchPage() {
           <div className="flex items-center gap-2 mb-3">
             <p className="text-sm font-semibold text-slate-800">Vendor Account Statement</p>
             <Input
-              className="h-8 w-64 text-xs"
-              placeholder="Vendor ID (paste from vendor master)"
-              value={ledgerVendorId}
-              onChange={(e) => setLedgerVendorId(e.target.value.trim())}
+              className="h-8 w-48 text-xs"
+              placeholder="Search name or code…"
+              value={ledgerVendorSearch}
+              onChange={(e) => setLedgerVendorSearch(e.target.value)}
             />
+            <Select value={ledgerVendorId} onValueChange={setLedgerVendorId}>
+              <SelectTrigger className="h-8 w-64 text-xs">
+                <SelectValue placeholder={ledgerVendorQuery.isFetching ? "Loading…" : "Select vendor…"} />
+              </SelectTrigger>
+              <SelectContent>
+                {ledgerVendorOptions.map((v) => (
+                  <SelectItem key={v.id} value={v.id}>{v.vendor_code} — {v.vendor_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {ledgerQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
           </div>
-          {!ledgerVendorId && <p className="text-xs text-slate-400">Enter a vendor ID above to load their statement.</p>}
+          {!ledgerVendorId && <p className="text-xs text-slate-400">Search and select a vendor above to load their statement.</p>}
           {ledgerVendorId && ledgerRows.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full min-w-[900px] text-xs">

@@ -54,12 +54,23 @@ const billabilityRoles = ['super_admin','finance','payroll_head','payroll_branch
 // Must stay identical to ALLOWED_ROLES in backend/src/modules/client-billing/client-billing.routes.ts
 // and to the grant in backend/sql/migrations/1303_client_billing_page_access.sql.
 const clientBillingRoles = ['super_admin','admin','finance','finance_head','accounts_head'] as const;
+// Vendor Payment Dispatch backend (vendor-payment.routes.ts PAYMENT_READ_ROLES) already scopes
+// branch_admin/branch_head to their own branch (capabilities.readScope === 'branch') — they were
+// missing from the route gate here, so a user with only one of those roles was blocked by
+// ProtectedRoute before ever reaching a page the API was already built to serve them.
+const vendorPaymentRoles: string[] = [...financeRoles, 'branch_admin', 'branch_head'];
 
 export const financeRouteElements = (
   <>
       {/* ERP / Vendors / Procurement */}
       <Route path="/erp"        element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
-      <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','manager','accounts_head','finance_head']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
+      {/* 'manager' was on this gate but backend GET /api/erp/vendors (and the mapping-summary/
+          enforcement-config calls this page also makes) never granted it — a manager-only user
+          could open the page but every data call 403'd. Removed rather than widened backend
+          access, since nothing else here indicates 'manager' was meant to reach vendor/expense
+          data specifically (contrast vendorPaymentRoles above, where the backend explicitly
+          supports branch_admin/branch_head with a dedicated branch-scoped readScope). */}
+      <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','accounts_head','finance_head']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
       {/* Payee bank accounts. finance_head/accounts_head only — deliberately NOT admin,
           since hasOrgWideScope() lets `admin` past org-wide checks with no scope row. */}
       <Route path="/finance/vendor-bank-details" element={<ProtectedRoute roles={['finance_head','accounts_head']}><Gate pageCode="VENDOR_BANK_DETAILS"><NativeVendorBankDetails /></Gate></ProtectedRoute>} />
@@ -80,7 +91,7 @@ export const financeRouteElements = (
       <Route path="/finance/bank-directory"   element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_DIRECTORY"><BankDirectoryPage /></Gate></ProtectedRoute>} />
 
       {/* Finance */}
-      <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
+      <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={vendorPaymentRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />
       {/* Roles match migration 1104's grants and the API's VOUCHER_ROLES exactly. A salary
           voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}
