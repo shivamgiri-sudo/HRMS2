@@ -358,6 +358,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // no DB backing exists anywhere. See du-team-mapping-bulk.service.ts.
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
+  // Housing Premium's per-agent monthly sales Target & Achievement --
+  // found while auditing the same workbook used for Sale Raw; no DB
+  // backing exists anywhere. See housing-premium-agent-target-bulk.service.ts.
+  "import_housing_premium_agent_target_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -885,6 +889,14 @@ async function dispatchImport(
       "../bulk-upload/du-team-mapping-bulk.service.js"
     );
     const data = await importDuTeamMappingThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_premium_agent_target_batch") {
+    const { importHousingPremiumAgentTargetBatch } = await import(
+      "../bulk-upload/housing-premium-agent-target-bulk.service.js"
+    );
+    const data = await importHousingPremiumAgentTargetBatch(id, userId);
     return { success: true, data };
   }
 
