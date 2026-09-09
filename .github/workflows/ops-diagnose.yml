@@ -47,3 +47,18 @@ jobs:
         run: |
           curl -sS -H "Host: mcnhrms.teammas.in" -H "Content-Type: application/json" \
             -X POST https://127.0.0.1/api/auth/login -d '{}' -k -w "\nHTTP_STATUS:%{http_code}\n" || true
+
+      - name: Frontend deploy history — what is actually live and when did it land
+        shell: bash
+        run: |
+          echo "--- live frontend dir ---"
+          ls -la /var/www/HRMS2/frontend/dist 2>&1 | head -5 || ls -la /var/www/HRMS2/dist 2>&1 | head -5 || true
+          echo "--- recent deploy backups (name = swap timestamp) ---"
+          ls -1t /var/www/HRMS2/.deploy-backups 2>&1 | head -10 || true
+          echo "--- git HEAD actually checked out under the app tree ---"
+          cd /var/www/HRMS2 && git log -1 --format="%H %ci %s" 2>&1 || true
+          echo "--- chunk actually present in the live frontend index.html ---"
+          grep -oE 'assets/index-[a-zA-Z0-9_-]+\.js' /var/www/HRMS2/frontend/dist/index.html 2>&1 \
+            || grep -oE 'assets/index-[a-zA-Z0-9_-]+\.js' /var/www/HRMS2/dist/index.html 2>&1 || true
+          echo "--- does the on-disk chunk contain 'Change Branch'? ---"
+          find /var/www/HRMS2 -name "NativeHROnboardingRequests-*.js" -exec grep -l "Change Branch" {} \; 2>&1 || echo "not found on disk"
