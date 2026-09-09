@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { buildVoucherXml, type VoucherExportRow } from "../tally-export.service.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
+vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn().mockResolvedValue(undefined) }));
+
+import { buildVoucherXml, tallyExportService, type VoucherExportRow } from "../tally-export.service.js";
 
 /**
  * Tally XML sign-convention correctness (Payment Voucher System Phase 3).
@@ -76,5 +81,33 @@ describe("tally-export.service buildVoucherXml", () => {
     expect(xml).toContain("Payment &amp; &quot;Cheque&quot; &lt;bounced&gt;");
     expect(xml).toContain("A &amp; B Traders");
     expect(xml).not.toContain("<bounced>");
+  });
+});
+
+describe("tallyExportService.buildEnvelope isFinal", () => {
+  beforeEach(() => execute.mockReset());
+
+  it("is false when there are no rows at all", async () => {
+    execute.mockResolvedValueOnce([[]]);
+    const result = await tallyExportService.buildEnvelope("acct-1");
+    expect(result.isFinal).toBe(false);
+  });
+
+  it("is true only when every returned row's period is closed", async () => {
+    execute.mockResolvedValueOnce([[
+      { voucher_id: "v1", voucher_number: "PV1", voucher_type: "payment", entry_date: "2026-09-01", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 1000, credit_amount: 0, tds_deducted_amount: 0, period_status: "closed" },
+      { voucher_id: "v2", voucher_number: "PV2", voucher_type: "payment", entry_date: "2026-09-02", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 2000, credit_amount: 0, tds_deducted_amount: 0, period_status: "closed" },
+    ]]);
+    const result = await tallyExportService.buildEnvelope("acct-1");
+    expect(result.isFinal).toBe(true);
+  });
+
+  it("is false when the range mixes a closed and a still-open period", async () => {
+    execute.mockResolvedValueOnce([[
+      { voucher_id: "v1", voucher_number: "PV1", voucher_type: "payment", entry_date: "2026-09-01", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 1000, credit_amount: 0, tds_deducted_amount: 0, period_status: "closed" },
+      { voucher_id: "v2", voucher_number: "PV2", voucher_type: "payment", entry_date: "2026-09-15", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 2000, credit_amount: 0, tds_deducted_amount: 0, period_status: null },
+    ]]);
+    const result = await tallyExportService.buildEnvelope("acct-1");
+    expect(result.isFinal).toBe(false);
   });
 });

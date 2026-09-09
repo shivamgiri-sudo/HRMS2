@@ -28,6 +28,10 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
  *
  * Every export is logged (finance_action_audit_log) with entry count and total debit/credit,
  * per PRD §6.3, so a re-export can be checked against the original for tamper/mismatch.
+ *
+ * isFinal (Phase 4, bank-reconciliation-period.service.ts): an export is "final" only once
+ * every row in it belongs to a closed bank_reconciliation_period. Until then it's provisional
+ * — see buildEnvelope()'s docstring for the exact rule.
  */
 
 function xmlEscape(value: unknown): string {
@@ -59,6 +63,7 @@ export interface VoucherExportRow {
   net_amount: number;
   tds_ledger: string | null;
   tds_amount: number;
+  period_status: string | null;
 }
 
 async function fetchVoucherRows(bankAccountId: string, from?: string, to?: string): Promise<VoucherExportRow[]> {
@@ -73,12 +78,14 @@ async function fetchVoucherRows(bankAccountId: string, from?: string, to?: strin
     `SELECT bale.voucher_id, pv.voucher_number, pv.voucher_type, bale.entry_date, bale.narration,
             cba.tally_ledger_name AS bank_ledger, pam.tally_ledger_name AS party_ledger,
             bale.debit_amount, bale.credit_amount,
-            vpt.tds_deducted_amount
+            vpt.tds_deducted_amount,
+            brp.status AS period_status
        FROM bank_account_ledger_entry bale
        JOIN payment_voucher pv ON pv.id = bale.voucher_id
        JOIN company_bank_account cba ON cba.id = bale.bank_account_id
        JOIN payable_account_master pam ON pam.id = bale.payable_account_id
        LEFT JOIN vendor_payment_tracking vpt ON vpt.id = pv.linked_vendor_payment_id
+       LEFT JOIN bank_reconciliation_period brp ON brp.id = bale.reconciliation_period_id
       WHERE ${conditions.join(" AND ")} AND (bale.debit_amount > 0 OR bale.credit_amount > 0)
       ORDER BY bale.entry_date ASC, bale.created_at ASC`,
     params,
@@ -120,6 +127,7 @@ async function fetchVoucherRows(bankAccountId: string, from?: string, to?: strin
       net_amount: netAmount,
       tds_ledger: tdsLedger,
       tds_amount: tdsAmount,
+      period_status: row.period_status ? String(row.period_status) : null,
     });
   }
   return result;
@@ -172,13 +180,14 @@ export const tallyExportService = {
   /**
    * Builds the full ENVELOPE for one bank account's released vouchers in a date range.
    *
-   * `isFinal` is always false in this phase — bank_reconciliation does not exist yet, so no
-   * period can be "closed" and every export is provisional per PRD §6.3. Phase 4 wires this to
-   * `bank_reconciliation.status = 'closed'` for the covering period(s) once that table exists.
+   * `isFinal` is true only when EVERY row in the range belongs to a bank_reconciliation_period
+   * that is 'closed' (bank-reconciliation-period.service.ts's close() sets reconciliation_period_id
+   * on each entry it locks). A range that mixes a closed period with rows still outstanding in an
+   * open one stays provisional — never partially final — per PRD §6.3.
    */
   async buildEnvelope(bankAccountId: string, from?: string, to?: string) {
     const rows = await fetchVoucherRows(bankAccountId, from, to);
-    const isFinal = false; // See docstring — flipped in Phase 4.
+    const isFinal = rows.length > 0 && rows.every((r) => r.period_status === "closed");
     const watermark = isFinal ? "" : "\n  <!-- PROVISIONAL EXPORT: no bank_reconciliation for this period is closed yet. Not for final Tally posting. -->";
     const body = rows.map(buildVoucherXml).join("\n");
     const xml = `<ENVELOPE>${watermark}
