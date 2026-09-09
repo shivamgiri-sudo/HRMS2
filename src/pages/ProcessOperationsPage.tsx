@@ -179,6 +179,23 @@ interface ClapVoiceOfCustomer {
   };
 }
 
+interface WorkforceCorrelationPoint {
+  date: string;
+  agentClapPct: number | null;
+  auditedCalls: number;
+  activeHeadcount: number;
+  rampCohortPct: number | null;
+  presentHeadcount: number | null;
+  plannedHeadcount: number | null;
+}
+interface WorkforceCorrelation {
+  available: boolean; reason: string | null;
+  periodFrom: string | null; periodTo: string | null;
+  daily: WorkforceCorrelationPoint[];
+  weeklyAttrition: Array<{ weekStart: string; exits: number }>;
+  rosterCoverageDays: number;
+}
+
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
   conversion: { accent: C_BLUE, tint: "linear-gradient(135deg,#EFF6FF 0%,#DBEAFE 100%)", icon: Target },
   risk: { accent: C_RED, tint: "linear-gradient(135deg,#FEF2F2 0%,#FEE2E2 100%)", icon: ShieldAlert },
@@ -524,6 +541,144 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
             ) : <p className="text-[11px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
           </div>
         </div>
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Root Cause vs. Workforce — the question the CLAP panel above can't answer
+ * alone: is a rise in agent-attributed complaints a coaching problem, or is
+ * it what a green floor or an understaffed shift looks like from the
+ * customer's side? No correlation coefficient is computed here on purpose —
+ * with a handful of noisy weekly counts per process that would be false
+ * precision, not insight. This is a plain juxtaposition on a shared date
+ * axis; the reader's own eye does the judging.
+ */
+function WorkforceCorrelationPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "workforce-correlation", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<WorkforceCorrelation>>(
+      `/api/process-operations/${processId}/workforce-correlation?period=${period}`),
+  });
+  const wc = data?.data;
+
+  if (isLoading || !wc) {
+    return (
+      <ChartCard title="Root Cause vs. Workforce" subtitle="Agent-attributed complaints against staffing and tenure, same dates">
+        <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Lining up the two sides…
+        </div>
+      </ChartCard>
+    );
+  }
+  if (!wc.available || wc.daily.length < 3) {
+    return (
+      <ChartCard title="Root Cause vs. Workforce" subtitle="Agent-attributed complaints against staffing and tenure, same dates">
+        <p className="text-xs text-slate-400 italic px-3 py-4">
+          {wc.reason ?? "Not enough history yet to line these up."}
+        </p>
+      </ChartCard>
+    );
+  }
+
+  const rosterDays = wc.daily.length;
+  const hasRoster = wc.rosterCoverageDays > 0;
+
+  return (
+    <ChartCard title="Root Cause vs. Workforce"
+      subtitle="Agent-attributed complaint share against ramp-cohort tenure and staffing — same dates, side by side, not a claim of cause">
+      <div className="px-3 space-y-4">
+        {/* Row 1: agent-CLAP share vs. ramp-cohort tenure share -- both percentages, one axis */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+            Agent-attributed complaints vs. green-floor share
+          </p>
+          <div className="h-40">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={wc.daily} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+                <CartesianGrid {...GRID} vertical={false} />
+                <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
+                <YAxis domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE}
+                  formatter={(v: number, n: string) => [v === null ? "no data" : `${v.toFixed(1)}%`,
+                    n === "agentClapPct" ? "Agent-attributed calls" : "≤30-day tenure share"]} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
+                  formatter={(n: string) => n === "agentClapPct" ? "Agent-attributed calls" : "≤30-day tenure share"} />
+                <Line type="monotone" dataKey="agentClapPct" stroke={CLAP_META.Agent.color} strokeWidth={2}
+                  dot={false} isAnimationActive={false} connectNulls={false} />
+                <Line type="monotone" dataKey="rampCohortPct" stroke={C_AMBER} strokeWidth={2}
+                  strokeDasharray="4 2" dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Row 2: planned vs. present headcount -- both headcounts, one axis. Roster is real
+            but sparse; say so honestly instead of drawing a mostly-empty line as zero. */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+            Staffing: rostered vs. actually present
+          </p>
+          {hasRoster ? (
+            <>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={wc.daily} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+                    <CartesianGrid {...GRID} vertical={false} />
+                    <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                      tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
+                    <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE}
+                      formatter={(v: number, n: string) => [v === null ? "no roster data" : v,
+                        n === "plannedHeadcount" ? "Rostered" : "Present"]} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
+                      formatter={(n: string) => n === "plannedHeadcount" ? "Rostered" : "Present"} />
+                    <Line type="monotone" dataKey="plannedHeadcount" stroke={C_PURPLE} strokeWidth={2}
+                      dot={false} isAnimationActive={false} connectNulls={false} />
+                    <Line type="monotone" dataKey="presentHeadcount" stroke={C_BLUE} strokeWidth={2}
+                      strokeDasharray="4 2" dot={false} isAnimationActive={false} connectNulls={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[9.5px] text-slate-400 mt-1">
+                Roster has real published data for {wc.rosterCoverageDays} of {rosterDays} days shown — gaps are
+                where nothing was published, not zero staff.
+              </p>
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-400 italic py-2">
+              This process has no published roster for this period, so staffing can't be shown against actual
+              presence — that side stays blank rather than a guessed number.
+            </p>
+          )}
+        </div>
+
+        {/* Row 3: attrition, weekly -- its own count axis, its own chart */}
+        {wc.weeklyAttrition.length > 0 && (
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">Exits by week</p>
+            <div className="h-24">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={wc.weeklyAttrition} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+                  <CartesianGrid {...GRID} vertical={false} />
+                  <XAxis dataKey="weekStart" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                    tickFormatter={(v) => String(v).slice(5)} />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} width={20} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v, "Exits"]} />
+                  <Bar dataKey="exits" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        <p className="text-[9.5px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+          These lines are shown together, not correlated — with a handful of weekly events per process, a
+          computed correlation would be more confident than the data actually is. Read it by eye: do agent
+          complaints move with a green floor or a staffing gap, or don't they.
+        </p>
       </div>
     </ChartCard>
   );
@@ -2145,6 +2300,7 @@ export default function ProcessOperationsPage() {
                 )}
 
                 {current && <VoiceOfCustomerPanel processId={current} period={period} />}
+                {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]

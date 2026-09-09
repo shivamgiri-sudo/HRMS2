@@ -1338,3 +1338,174 @@ export async function getProcessVoiceOfCustomer(
     },
   };
 }
+
+/**
+ * Root Cause vs. Workforce — the question the CLAP panel above cannot answer on
+ * its own: is a spike in Agent-attributed complaints a coaching problem, or is
+ * it what understaffing or a green floor looks like from the customer's side?
+ *
+ * Mydashboards has the call-quality half of this; it has no workforce data.
+ * HRMS has both. Nothing here computes a correlation coefficient — with a
+ * handful of noisy weekly counts per process that would be false precision
+ * dressed up as rigor. Instead this returns the same-day series side by side
+ * so a human can see whether the lines actually move together, and says so
+ * honestly when a series has too little real data to plot (the roster table
+ * in particular carries a large synthetic batch that must be excluded, and
+ * even after that guard most processes have only a couple of weeks of real
+ * roster rows — see the provenance guard below).
+ */
+export interface WorkforceCorrelationPoint {
+  date: string;
+  agentClapPct: number | null;
+  auditedCalls: number;
+  activeHeadcount: number;
+  rampCohortPct: number | null;
+  presentHeadcount: number | null;
+  plannedHeadcount: number | null;
+}
+export interface WorkforceCorrelation {
+  available: boolean;
+  reason: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  daily: WorkforceCorrelationPoint[];
+  weeklyAttrition: Array<{ weekStart: string; exits: number }>;
+  rosterCoverageDays: number;
+}
+
+// A roster row with every provenance column null is part of the known
+// 412,032-row synthetic batch from 2026-06-11, not a real assignment.
+// See backend/src/modules/wfm/roster-analytics.routes.ts for the same guard.
+const REAL_ROSTER_GUARD =
+  "NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)";
+
+export async function getWorkforceCorrelation(
+  userId: string, processId: string, period: ReportPeriod = "trend",
+): Promise<WorkforceCorrelation | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): WorkforceCorrelation => ({
+    available: false, reason, periodFrom: null, periodTo: null,
+    daily: [], weeklyAttrition: [], rosterCoverageDays: 0,
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, date_of_joining, date_of_exit
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employees = (empRows as any[]).map((r) => ({
+    code: String(r.employee_code),
+    joined: r.date_of_joining ? isoDate(r.date_of_joining) : null,
+    exited: r.date_of_exit ? isoDate(r.date_of_exit) : null,
+  })).filter((e) => e.joined);
+  if (!employees.length) return unavailable("This process has no employees with a recorded joining date.");
+
+  const range = periodRange(period, new Date()) ?? (() => {
+    // "trend" has no calendar-aligned range of its own -- default the daily
+    // series to a bounded 30-day trailing window rather than an open scan.
+    const to = new Date();
+    const from = new Date(to); from.setDate(from.getDate() - 30);
+    return { from: isoDate(from), to: isoDate(to), priorFrom: isoDate(from), priorTo: isoDate(to) };
+  })();
+  const { from, to } = range;
+
+  const employeeCodes = employees.map((e) => e.code);
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  // Agent-attributed CLAP share per day -- reuses the exact taxonomy the VOC
+  // panel above already computes, just grouped by day instead of totalled.
+  const [clapDailyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(CallDate, '%Y-%m-%d') AS d,
+            SUM(CASE WHEN (${CLAP_CASE.replace(/q\./g, "")}) = 'Agent' THEN 1 ELSE 0 END) AS agent_n,
+            COUNT(*) AS total_n
+       FROM db_audit.call_quality_assessment
+      WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+        AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+      GROUP BY d`,
+    [...employeeCodes, from, to],
+  );
+  const clapByDay = new Map<string, { agent: number; total: number }>(
+    (clapDailyRows as any[]).map((r) => [String(r.d), { agent: Number(r.agent_n), total: Number(r.total_n) }]),
+  );
+
+  // Present headcount per day -- attendance_daily_record carries process_id
+  // directly, no employees join needed.
+  const [presentRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS d,
+            COUNT(DISTINCT CASE WHEN attendance_status IN ('present','half_day') THEN employee_id END) AS present_n
+       FROM attendance_daily_record
+      WHERE process_id = ? AND record_date BETWEEN ? AND ?
+      GROUP BY d`,
+    [processId, from, to],
+  );
+  const presentByDay = new Map<string, number>((presentRows as any[]).map((r) => [String(r.d), Number(r.present_n)]));
+
+  // Planned headcount per day from the live roster table, real rows only.
+  const [rosterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS d, COUNT(DISTINCT ra.employee_id) AS planned_n
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id
+      WHERE e.process_id = ? AND ra.roster_date BETWEEN ? AND ? AND ${REAL_ROSTER_GUARD}
+      GROUP BY d`,
+    [processId, from, to],
+  );
+  const plannedByDay = new Map<string, number>((rosterRows as any[]).map((r) => [String(r.d), Number(r.planned_n)]));
+  const rosterCoverageDays = plannedByDay.size;
+
+  // Daily active headcount / ramp-cohort share computed in JS from the small
+  // per-process employee list fetched once above -- cheaper and honester than
+  // a per-day query, and avoids the active_status trap: that flag is a live
+  // "as of now" state, not point-in-time, so a past day's active count has to
+  // come from date_of_joining/date_of_exit directly.
+  const daily: WorkforceCorrelationPoint[] = [];
+  const cursor = new Date(from + "T00:00:00");
+  const end = new Date(to + "T00:00:00");
+  while (cursor <= end) {
+    const d = isoDate(cursor);
+    let active = 0; let ramp = 0;
+    const rampCutoff = new Date(cursor); rampCutoff.setDate(rampCutoff.getDate() - 30);
+    for (const e of employees) {
+      if (e.joined! > d) continue;
+      if (e.exited && e.exited <= d) continue;
+      active += 1;
+      if (e.joined! >= isoDate(rampCutoff)) ramp += 1;
+    }
+    const clap = clapByDay.get(d);
+    daily.push({
+      date: d,
+      agentClapPct: clap && clap.total > 0 ? Math.round((clap.agent / clap.total) * 1000) / 10 : null,
+      auditedCalls: clap?.total ?? 0,
+      activeHeadcount: active,
+      rampCohortPct: active > 0 ? Math.round((ramp / active) * 1000) / 10 : null,
+      presentHeadcount: presentByDay.has(d) ? presentByDay.get(d)! : null,
+      plannedHeadcount: plannedByDay.has(d) ? plannedByDay.get(d)! : null,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // Attrition, bucketed by ISO week (Monday start), computed in JS from the
+  // same employee list -- no second query needed.
+  const weekStartOf = (iso: string): string => {
+    const dt = new Date(iso + "T00:00:00");
+    const dow = dt.getDay();
+    const sinceMonday = (dow + 6) % 7;
+    dt.setDate(dt.getDate() - sinceMonday);
+    return isoDate(dt);
+  };
+  const attritionByWeek = new Map<string, number>();
+  for (const e of employees) {
+    if (!e.exited || e.exited < from || e.exited > to) continue;
+    const wk = weekStartOf(e.exited);
+    attritionByWeek.set(wk, (attritionByWeek.get(wk) ?? 0) + 1);
+  }
+  const weeklyAttrition = [...attritionByWeek.entries()]
+    .map(([weekStart, exits]) => ({ weekStart, exits }))
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+
+  return {
+    available: true, reason: null, periodFrom: from, periodTo: to,
+    daily, weeklyAttrition, rosterCoverageDays,
+  };
+}
