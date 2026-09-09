@@ -9,6 +9,7 @@ import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertTriangle,
   Calculator,
@@ -3072,16 +3073,16 @@ export default function NativeHROnboardingRequests() {
                 </p>
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1.5">New Branch</label>
-                  <select
-                    className={SEL}
-                    value={branchModalNewId}
-                    onChange={(e) => setBranchModalNewId(e.target.value)}
-                  >
-                    <option value="">Select branch…</option>
-                    {allBranches.map((b: any) => (
-                      <option key={b.id} value={b.id}>{b.branch_name}</option>
-                    ))}
-                  </select>
+                  <Select value={branchModalNewId} onValueChange={setBranchModalNewId}>
+                    <SelectTrigger className={SEL}>
+                      <SelectValue placeholder="Select branch…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allBranches.map((b: any) => (
+                        <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1.5">Reason (required)</label>
