@@ -411,6 +411,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // while auditing the same workbook family; no DB backing exists
   // anywhere. See clovia-rechurn-calls-bulk.service.ts.
   "import_clovia_rechurn_calls_batch",
+  // Clovia's Quality Raw, per-chat/email QA audit scorecard -- found
+  // while auditing the same workbook family; no DB backing exists
+  // anywhere. See clovia-quality-audit-bulk.service.ts.
+  "import_clovia_quality_audit_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1041,6 +1045,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-rechurn-calls-bulk.service.js"
     );
     const data = await importCloviaRechurnCallsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_quality_audit_batch") {
+    const { importCloviaQualityAuditBatch } = await import(
+      "../bulk-upload/clovia-quality-audit-bulk.service.js"
+    );
+    const data = await importCloviaQualityAuditBatch(id, userId);
     return { success: true, data };
   }
 
