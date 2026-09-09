@@ -900,9 +900,27 @@ export default function NativeITProvisioningTracker() {
     resetForms();
     // Pre-populate if already has values
     if (request.official_email) setItForm(f => ({ ...f, officialEmail: request.official_email ?? "" }));
-    if (request.domain_account) setItForm(f => ({ ...f, domainAccount: request.domain_account ?? "" }));
+    if (request.domain_account) {
+      setItForm(f => ({ ...f, domainAccount: request.domain_account ?? "" }));
+    } else if (request.task_code === "IT_EMAIL_DOMAIN_ASSET" && request.employee_code) {
+      // Default Domain Account to this employee's own code — the same value already
+      // shown in the header above the form. A blank required field meant retyping the
+      // code by hand on every task in a queue, and on 2026-09-09 the value from the
+      // previous task in the queue was found to have carried over into this one instead
+      // of being updated (confirmed for both this field and Cosec User ID below, on two
+      // different employees, by two different staff). Defaulting to the real code means
+      // submitting without touching the field is now correct; still fully editable.
+      setItForm(f => ({ ...f, domainAccount: request.employee_code }));
+    }
     if (request.asset_tag)      setItForm(f => ({ ...f, assetTag: request.asset_tag ?? "" }));
     if (request.biometric_enrolled) setAdminForm(f => ({ ...f, biometricEnrolled: !!request.biometric_enrolled }));
+    if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD" && request.employee_code) {
+      // Same default as Domain Account above, for Cosec User ID. This field already fell
+      // back to the employee code server-side when left blank — the bug was staff typing
+      // a (wrong, carried-over) value into a box that would have been correct left empty.
+      // Filling it in up front removes the reason to type over it.
+      setAdminForm(f => ({ ...f, cosecUserId: request.employee_code }));
+    }
     if (request.id_card_printed)    setAdminForm(f => ({ ...f, idCardPrinted: !!request.id_card_printed }));
   }
 
@@ -938,6 +956,21 @@ export default function NativeITProvisioningTracker() {
           toast.error("Email must end with @teammas.in or @teammas.co.in");
           return;
         }
+        // Catches exactly the 2026-09-09 mix-up: a value left over from the previous
+        // task in the queue, submitted for this one instead of this employee's own
+        // code. Only compares this task's own field against this task's own employee —
+        // never against other employees' records — so it can't misfire on the many
+        // legacy employees whose real device/biometric IDs are legitimately unrelated
+        // to their employee code elsewhere in the system.
+        if (
+          request.employee_code &&
+          itForm.domainAccount.trim().toUpperCase() !== request.employee_code.toUpperCase() &&
+          !window.confirm(
+            `Domain Account "${itForm.domainAccount.trim()}" does not match ${request.employee_name}'s employee code (${request.employee_code}). Continue anyway?`
+          )
+        ) {
+          return;
+        }
         body = {
           official_email: itForm.officialEmail.trim() || null,
           domain_account: itForm.domainAccount.trim(),
@@ -947,9 +980,23 @@ export default function NativeITProvisioningTracker() {
             : `Domain: ${itForm.domainAccount} (no official email issued yet)`),
         };
       } else if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD") {
+        const cosecUserId = adminForm.cosecUserId.trim();
+        // Same self-consistency check as Domain Account above, and same reasoning: this
+        // field already falls back to the employee's own code server-side when left
+        // blank, so any typed value that disagrees with it is worth one confirm click.
+        if (
+          cosecUserId &&
+          request.employee_code &&
+          cosecUserId.toUpperCase() !== request.employee_code.toUpperCase() &&
+          !window.confirm(
+            `Cosec User ID "${cosecUserId}" does not match ${request.employee_name}'s employee code (${request.employee_code}). Continue anyway?`
+          )
+        ) {
+          return;
+        }
         body = {
           biometric_enrolled: adminForm.biometricEnrolled,
-          cosec_user_id: adminForm.cosecUserId.trim() || null,
+          cosec_user_id: cosecUserId || null,
           id_card_printed: adminForm.idCardPrinted,
           id_card_number: adminForm.idCardNumber.trim() || null,
           evidence_note: adminForm.evidenceNote.trim() || `Biometric: ${adminForm.biometricEnrolled ? "done" : "pending"}, ID Card: ${adminForm.idCardPrinted ? "issued" : "pending"}`,

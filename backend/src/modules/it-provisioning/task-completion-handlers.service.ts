@@ -118,11 +118,22 @@ export async function completeItProvisioningTask(
 
     // 2. Get employee's current user_id
     const [empRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT user_id, first_name, last_name FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT user_id, first_name, last_name, employee_code FROM employees WHERE id = ? LIMIT 1`,
       [task.employee_id]
     );
     const emp = empRows[0] as any;
     const existingUserId = emp?.user_id;
+    // Non-blocking: the frontend already asks the operator to confirm this exact
+    // mismatch before it submits, so reaching here with one is either a confirmed
+    // exception or a caller that bypassed the UI (CSV bulk upload, direct API call).
+    // Logged rather than rejected — domain_account is operator-entered free text, not
+    // a value this system controls, so refusing to save it would be a new failure mode
+    // of its own. See the 2026-09-09 incident this guards against.
+    if (emp?.employee_code && domainAccount.toUpperCase() !== String(emp.employee_code).toUpperCase()) {
+      console.warn(
+        `[TaskCompletion] IT_EMAIL_DOMAIN_ASSET domain_account "${domainAccount}" does not match employee_code "${emp.employee_code}" for employee ${task.employee_id} (task ${taskId})`
+      );
+    }
     // Tracks whether a NEW auth_user was created below, so the profile-photo email further
     // down (which only makes sense once someone can actually log in) fires on the right
     // condition rather than on "no email was given, so we skipped account creation".
@@ -365,6 +376,25 @@ export async function completeAdminProvisioningTask(
         `SELECT id FROM employee_biometric_enrollment WHERE employee_id = ? LIMIT 1`,
         [task.employee_id]
       );
+
+      // Non-blocking, and deliberately scoped to a FIRST-time enrollment only: many
+      // legacy employees carry a genuinely different, pre-existing cosec_user_id
+      // (an older device-numbering scheme, e.g. "AHMH2854") that has nothing to do
+      // with their employee_code and is correct as-is — warning on every later update
+      // to one of those rows would just be permanent, meaningless noise. A brand-new
+      // enrollment has no such history: it should always start out equal to the
+      // employee's own code (that's the ?? empCode fallback above), so an operator
+      // explicitly typing something else here is exactly the 2026-09-09 mistake this
+      // guards against, and the frontend already confirms it before submitting.
+      if (
+        (existingEnroll as any[]).length === 0 &&
+        input.cosec_user_id &&
+        input.cosec_user_id.toUpperCase() !== empCode.toUpperCase()
+      ) {
+        console.warn(
+          `[TaskCompletion] ADMIN_BIOMETRIC_ID_CARD cosec_user_id "${input.cosec_user_id}" does not match employee_code "${empCode}" for a first-time enrollment, employee ${task.employee_id} (task ${taskId})`
+        );
+      }
 
       if ((existingEnroll as any[]).length > 0) {
         await conn.execute(
