@@ -353,6 +353,11 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_lp_cdr_non_regional_batch",
   "import_lp_cr_report_regional_batch",
   "import_lp_cr_report_non_regional_batch",
+  // DU Digital's Agent ID -> MAS employee code directory, Korea/Thailand
+  // dashboards -- found while auditing the same workbooks used for DU APR;
+  // no DB backing exists anywhere. See du-team-mapping-bulk.service.ts.
+  "import_du_team_mapping_korea_batch",
+  "import_du_team_mapping_thailand_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -864,6 +869,22 @@ async function dispatchImport(
       "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
     );
     const data = await importLpCrReportNonRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_team_mapping_korea_batch") {
+    const { importDuTeamMappingKoreaBatch } = await import(
+      "../bulk-upload/du-team-mapping-bulk.service.js"
+    );
+    const data = await importDuTeamMappingKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_team_mapping_thailand_batch") {
+    const { importDuTeamMappingThailandBatch } = await import(
+      "../bulk-upload/du-team-mapping-bulk.service.js"
+    );
+    const data = await importDuTeamMappingThailandBatch(id, userId);
     return { success: true, data };
   }
 
