@@ -315,6 +315,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // real sample ("Clovia Email Tracker Sept'26.xlsb"); no DB backing exists
   // anywhere. See clovia-email-daily-bulk.service.ts.
   "import_clovia_email_daily_batch",
+  // Clovia Chat Performance, daily (Botlytics chat dump) — columns read
+  // verbatim from a real sample; no DB backing exists anywhere. See
+  // clovia-chat-daily-bulk.service.ts.
+  "import_clovia_chat_daily_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -722,6 +726,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-email-daily-bulk.service.js"
     );
     const data = await importCloviaEmailDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_chat_daily_batch") {
+    const { importCloviaChatDailyBatch } = await import(
+      "../bulk-upload/clovia-chat-daily-bulk.service.js"
+    );
+    const data = await importCloviaChatDailyBatch(id, userId);
     return { success: true, data };
   }
 
