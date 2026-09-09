@@ -415,6 +415,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // while auditing the same workbook family; no DB backing exists
   // anywhere. See clovia-quality-audit-bulk.service.ts.
   "import_clovia_quality_audit_batch",
+  // Bella Vita Repeat LOB's own APR sheet -- found while auditing the
+  // same dashboard used for the Repeat LOB sales fields; no DB backing
+  // exists anywhere. See bella-repeat-apr-daily-bulk.service.ts.
+  "import_bella_repeat_apr_daily_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1053,6 +1057,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-quality-audit-bulk.service.js"
     );
     const data = await importCloviaQualityAuditBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bella_repeat_apr_daily_batch") {
+    const { importBellaRepeatAprDailyBatch } = await import(
+      "../bulk-upload/bella-repeat-apr-daily-bulk.service.js"
+    );
+    const data = await importBellaRepeatAprDailyBatch(id, userId);
     return { success: true, data };
   }
 
