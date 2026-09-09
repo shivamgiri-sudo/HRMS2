@@ -307,6 +307,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // ticketing DB (molecular_db_email) does not exist anywhere in this project's
   // infrastructure. See email-ticket-daily-bulk.service.ts.
   "import_email_ticket_daily_batch",
+  // LP WebConsole APR — dialer_db.apr_5/apr_137_235/apr_bla_bli_blu (where this
+  // would otherwise land) are confirmed empty, a dead sync job. See
+  // lp-apr-daily-bulk.service.ts.
+  "import_lp_apr_daily_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -698,6 +702,14 @@ async function dispatchImport(
       "../bulk-upload/email-ticket-daily-bulk.service.js"
     );
     const data = await importEmailTicketDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_apr_daily_batch") {
+    const { importLpAprDailyBatch } = await import(
+      "../bulk-upload/lp-apr-daily-bulk.service.js"
+    );
+    const data = await importLpAprDailyBatch(id, userId);
     return { success: true, data };
   }
 
