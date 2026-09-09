@@ -403,6 +403,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // auditing the same workbook family; no DB backing exists anywhere.
   // See clovia-outbound-cdr-bulk.service.ts.
   "import_clovia_outbound_cdr_batch",
+  // Clovia's Feedback (CSAT/DSAT survey) -- found while auditing the same
+  // workbook family; no DB backing exists anywhere. See
+  // clovia-feedback-bulk.service.ts.
+  "import_clovia_feedback_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1017,6 +1021,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-outbound-cdr-bulk.service.js"
     );
     const data = await importCloviaOutboundCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_feedback_batch") {
+    const { importCloviaFeedbackBatch } = await import(
+      "../bulk-upload/clovia-feedback-bulk.service.js"
+    );
+    const data = await importCloviaFeedbackBatch(id, userId);
     return { success: true, data };
   }
 
