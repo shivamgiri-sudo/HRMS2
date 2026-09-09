@@ -319,6 +319,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // verbatim from a real sample; no DB backing exists anywhere. See
   // clovia-chat-daily-bulk.service.ts.
   "import_clovia_chat_daily_batch",
+  // Clovia CRM Disposition, per ticket — columns read verbatim from a real
+  // sample; no DB backing exists anywhere. See
+  // clovia-crm-disposition-bulk.service.ts.
+  "import_clovia_crm_disposition_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -734,6 +738,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-chat-daily-bulk.service.js"
     );
     const data = await importCloviaChatDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_crm_disposition_batch") {
+    const { importCloviaCrmDispositionBatch } = await import(
+      "../bulk-upload/clovia-crm-disposition-bulk.service.js"
+    );
+    const data = await importCloviaCrmDispositionBatch(id, userId);
     return { success: true, data };
   }
 
