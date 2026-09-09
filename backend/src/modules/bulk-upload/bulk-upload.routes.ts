@@ -335,6 +335,11 @@ const KNOWN_IMPORT_RPCS = new Set([
   // export, per its SOP, with no DB backing anywhere. See
   // housing-owner-call-logs-bulk.service.ts.
   "import_housing_owner_call_logs_batch",
+  // LP BPO Leads (M) export, Regional/Non Regional dashboards -- columns read
+  // verbatim from real samples; no DB backing exists anywhere. See
+  // lp-leads-bulk.service.ts.
+  "import_lp_leads_regional_batch",
+  "import_lp_leads_non_regional_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -782,6 +787,22 @@ async function dispatchImport(
       "../bulk-upload/housing-owner-call-logs-bulk.service.js"
     );
     const data = await importHousingOwnerCallLogsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_leads_regional_batch") {
+    const { importLpLeadsRegionalBatch } = await import(
+      "../bulk-upload/lp-leads-bulk.service.js"
+    );
+    const data = await importLpLeadsRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_leads_non_regional_batch") {
+    const { importLpLeadsNonRegionalBatch } = await import(
+      "../bulk-upload/lp-leads-bulk.service.js"
+    );
+    const data = await importLpLeadsNonRegionalBatch(id, userId);
     return { success: true, data };
   }
 
