@@ -174,7 +174,10 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-analytics"  element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-analytics-panel" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsPanel /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager','branch_wfm','manager','process_manager','team_leader','tl']}><Gate pageCode="WFM_ROSTER"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
+      {/* Own page code (TNI_ANALYSIS) as of 2026-09-09, not WFM_ROSTER: that code
+          gates a whole roster-planning module and carried no grant for trainer/qa,
+          the two roles this training-needs view exists for -- see 1711_tni_analysis_page.sql. */}
+      <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager','branch_wfm','manager','process_manager','team_leader','tl','trainer','qa']}><Gate pageCode="TNI_ANALYSIS"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-command-center" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterCommandCenter /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-interventions" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInterventionDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />

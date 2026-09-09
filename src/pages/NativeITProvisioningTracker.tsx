@@ -360,8 +360,8 @@ function BulkUploadDialog({ open, onClose }: { open: boolean; onClose: () => voi
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-            Upload a CSV with columns: <strong>employee_code</strong>, <strong>official_email</strong>, <strong>domain_account</strong>, asset_tag (optional).
-            Official email and domain account are mandatory for each row.
+            Upload a CSV with columns: <strong>employee_code</strong>, <strong>official_email</strong> (optional), <strong>domain_account</strong>, asset_tag (optional).
+            Domain account is mandatory for each row.
           </div>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => {
             const blob = new Blob([CSV_TEMPLATE], { type: "text/csv" });
@@ -423,7 +423,7 @@ function ITTaskForm({ form, setForm, disabled }: {
   return (
     <div className="space-y-3">
       <div>
-        <Label htmlFor="it-official-email">Official Email ID Created <span className="text-rose-500">*</span></Label>
+        <Label htmlFor="it-official-email">Official Email ID Created <span className="text-xs font-normal text-muted-foreground">(optional)</span></Label>
         <Input
           id="it-official-email"
           value={form.officialEmail}
@@ -432,6 +432,9 @@ function ITTaskForm({ form, setForm, disabled }: {
           disabled={disabled}
           className="mt-1 min-h-[44px]"
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Leave blank if no official email is being issued yet — the employee can still log in with their employee code. Login-account creation is deferred until an email is added here.
+        </p>
       </div>
       <div>
         <Label htmlFor="it-domain-account">Domain Account / AD Username <span className="text-rose-500">*</span></Label>
@@ -897,9 +900,27 @@ export default function NativeITProvisioningTracker() {
     resetForms();
     // Pre-populate if already has values
     if (request.official_email) setItForm(f => ({ ...f, officialEmail: request.official_email ?? "" }));
-    if (request.domain_account) setItForm(f => ({ ...f, domainAccount: request.domain_account ?? "" }));
+    if (request.domain_account) {
+      setItForm(f => ({ ...f, domainAccount: request.domain_account ?? "" }));
+    } else if (request.task_code === "IT_EMAIL_DOMAIN_ASSET" && request.employee_code) {
+      // Default Domain Account to this employee's own code — the same value already
+      // shown in the header above the form. A blank required field meant retyping the
+      // code by hand on every task in a queue, and on 2026-09-09 the value from the
+      // previous task in the queue was found to have carried over into this one instead
+      // of being updated (confirmed for both this field and Cosec User ID below, on two
+      // different employees, by two different staff). Defaulting to the real code means
+      // submitting without touching the field is now correct; still fully editable.
+      setItForm(f => ({ ...f, domainAccount: request.employee_code }));
+    }
     if (request.asset_tag)      setItForm(f => ({ ...f, assetTag: request.asset_tag ?? "" }));
     if (request.biometric_enrolled) setAdminForm(f => ({ ...f, biometricEnrolled: !!request.biometric_enrolled }));
+    if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD" && request.employee_code) {
+      // Same default as Domain Account above, for Cosec User ID. This field already fell
+      // back to the employee code server-side when left blank — the bug was staff typing
+      // a (wrong, carried-over) value into a box that would have been correct left empty.
+      // Filling it in up front removes the reason to type over it.
+      setAdminForm(f => ({ ...f, cosecUserId: request.employee_code }));
+    }
     if (request.id_card_printed)    setAdminForm(f => ({ ...f, idCardPrinted: !!request.id_card_printed }));
   }
 
@@ -923,24 +944,59 @@ export default function NativeITProvisioningTracker() {
       body = { reason: evidenceNote.trim() };
     } else if (mode === "action") {
       if (request.task_code === "IT_EMAIL_DOMAIN_ASSET") {
-        if (!itForm.officialEmail.trim() || !itForm.domainAccount.trim()) {
-          toast.error("Official Email and Domain Account are required");
+        // Official email is optional (owner decision) — Domain Account is the only hard
+        // requirement. When email is left blank, login-account creation for this employee is
+        // deferred (they can still log in via employee code once an account exists from
+        // elsewhere) rather than created with a blank/duplicate email.
+        if (!itForm.domainAccount.trim()) {
+          toast.error("Domain Account is required");
           return;
         }
-        if (!/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(itForm.officialEmail.trim())) {
+        if (itForm.officialEmail.trim() && !/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(itForm.officialEmail.trim())) {
           toast.error("Email must end with @teammas.in or @teammas.co.in");
           return;
         }
+        // Catches exactly the 2026-09-09 mix-up: a value left over from the previous
+        // task in the queue, submitted for this one instead of this employee's own
+        // code. Only compares this task's own field against this task's own employee —
+        // never against other employees' records — so it can't misfire on the many
+        // legacy employees whose real device/biometric IDs are legitimately unrelated
+        // to their employee code elsewhere in the system.
+        if (
+          request.employee_code &&
+          itForm.domainAccount.trim().toUpperCase() !== request.employee_code.toUpperCase() &&
+          !window.confirm(
+            `Domain Account "${itForm.domainAccount.trim()}" does not match ${request.employee_name}'s employee code (${request.employee_code}). Continue anyway?`
+          )
+        ) {
+          return;
+        }
         body = {
-          official_email: itForm.officialEmail.trim(),
+          official_email: itForm.officialEmail.trim() || null,
           domain_account: itForm.domainAccount.trim(),
           asset_tag: itForm.assetTag.trim() || null,
-          evidence_note: itForm.evidenceNote.trim() || `Email: ${itForm.officialEmail}, Domain: ${itForm.domainAccount}`,
+          evidence_note: itForm.evidenceNote.trim() || (itForm.officialEmail.trim()
+            ? `Email: ${itForm.officialEmail}, Domain: ${itForm.domainAccount}`
+            : `Domain: ${itForm.domainAccount} (no official email issued yet)`),
         };
       } else if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD") {
+        const cosecUserId = adminForm.cosecUserId.trim();
+        // Same self-consistency check as Domain Account above, and same reasoning: this
+        // field already falls back to the employee's own code server-side when left
+        // blank, so any typed value that disagrees with it is worth one confirm click.
+        if (
+          cosecUserId &&
+          request.employee_code &&
+          cosecUserId.toUpperCase() !== request.employee_code.toUpperCase() &&
+          !window.confirm(
+            `Cosec User ID "${cosecUserId}" does not match ${request.employee_name}'s employee code (${request.employee_code}). Continue anyway?`
+          )
+        ) {
+          return;
+        }
         body = {
           biometric_enrolled: adminForm.biometricEnrolled,
-          cosec_user_id: adminForm.cosecUserId.trim() || null,
+          cosec_user_id: cosecUserId || null,
           id_card_printed: adminForm.idCardPrinted,
           id_card_number: adminForm.idCardNumber.trim() || null,
           evidence_note: adminForm.evidenceNote.trim() || `Biometric: ${adminForm.biometricEnrolled ? "done" : "pending"}, ID Card: ${adminForm.idCardPrinted ? "issued" : "pending"}`,

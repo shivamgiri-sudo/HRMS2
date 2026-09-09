@@ -2,7 +2,8 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
-import { dateExpression } from "../kpi/kpi-studio.sources.js";
+import { dateExpression, buildProcessEmployeeBreakdownPlan, type SourceField, type DataSourceConfig } from "../kpi/kpi-studio.sources.js";
+import { evaluateFormula } from "../kpi/kpi-formula.engine.js";
 
 /**
  * Process Operations — every metric a process actually has, in one read.
@@ -879,4 +880,632 @@ export async function getMetricRawRows(
       totalRows: null, truncated: false, columns: [], rows: [],
     };
   }
+}
+
+/** Real designation names only. "TL"/"AM" below are picked out of these when
+ *  one genuinely matches — never a label invented for a person whose real
+ *  title is something else. Checked live: Bella-Vita Organic's own chain has
+ *  no Team Leader or Assistant Manager at all, its 17 analysts report
+ *  straight to a Sr. Manager — that gap is real, and pretending otherwise
+ *  would be worse than showing the actual titles. */
+const TL_PATTERN = /team\s*-?\s*lead|^\s*tl\s*$/i;
+const AM_PATTERN = /assistant\s*-?\s*manager|^\s*am\s*$/i;
+
+export interface AnalystScore {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  designation: string | null;
+  value: number | null;
+  /** True when this score came from process_metric_employee_actual (hand-entered) rather than the metric's own automated per-employee source. */
+  manual: boolean;
+  /** The real reporting chain, closest manager first — whatever titles actually exist, not a fabricated TL/AM pair. */
+  reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
+  /** Picked out of reportsTo when a real Team Leader / Assistant Manager exists in the chain. Null is honest when neither does. */
+  teamLeader: { employeeCode: string; name: string } | null;
+  assistantManager: { employeeCode: string; name: string } | null;
+}
+
+export interface MetricAnalystBreakdown {
+  available: boolean;
+  reason: string | null;
+  metricName: string | null;
+  unit: string | null;
+  direction: string | null;
+  targetValue: number | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  /** Worst first: direction-aware, so a reader meets whoever is dragging the number down before the rest. */
+  analysts: AnalystScore[];
+}
+
+/**
+ * The metric's own formula, recomputed per employee instead of collapsed
+ * across the whole process — the same SUM/SUM-across-the-range grain, the
+ * same field definitions, the same formula string, just grouped by person.
+ * Not a new source of truth: if this and the process tile ever disagreed,
+ * it would mean this query drifted from buildProcessQueryPlan's, which is
+ * exactly why buildProcessEmployeeBreakdownPlan shares its field-building
+ * and safe-identifier code rather than re-deriving it.
+ *
+ * Only meaningful for a metric attributed to individual employees
+ * ('employee' data sources) — a process-delivery-style metric that belongs
+ * to a whole client has no analyst to break down by, and says so rather
+ * than return an empty table that looks like zero analysts scored anything.
+ */
+export async function getMetricAnalystBreakdown(
+  userId: string, processId: string, metricKey: string, period: ReportPeriod = "trend",
+): Promise<MetricAnalystBreakdown | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): MetricAnalystBreakdown => ({
+    available: false, reason, metricName: null, unit: null, direction: null,
+    targetValue: null, periodFrom: null, periodTo: null, analysts: [],
+  });
+
+  const [metricRows] = await db.execute<RowDataPacket[]>(
+    `SELECT metric_name, unit, direction FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`,
+    [metricKey],
+  );
+  const metric = (metricRows as any[])[0] ?? null;
+
+  const [defRows] = await db.execute<RowDataPacket[]>(
+    `SELECT d.formula_expression, d.target_value, d.data_source_id
+       FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+      WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
+      ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
+      LIMIT 1`, [metricKey, processId],
+  );
+  const def = (defRows as any[])[0] ?? null;
+  if (!def?.data_source_id) return unavailable("This metric has no configured data source to recompute per analyst.");
+  if (!def?.formula_expression) return unavailable("This metric has no formula recorded — there is nothing to recompute per analyst.");
+
+  const [srcRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, source_code, source_name, source_type, source_object, date_column, date_format,
+            process_key_kind, process_key_column, process_key_value,
+            employee_key_column, employee_key_kind
+       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [def.data_source_id],
+  );
+  const src = (srcRows as any[])[0] as (DataSourceConfig & { date_format?: string | null }) | undefined;
+  if (!src) return unavailable("This metric's data source no longer exists.");
+  if ((src.process_key_kind ?? "none") !== "employee") {
+    return unavailable("This metric is measured at the whole-process level, not attributed to individual employees — there is no analyst to break it down by.");
+  }
+
+  const [fieldRows] = await db.execute<RowDataPacket[]>(
+    `SELECT field_name, source_column, aggregate_fn, source_expression, filter_json
+       FROM kpi_studio_source_field
+      WHERE data_source_id = ? AND active_status = 1
+      ORDER BY field_name`, [def.data_source_id],
+  );
+  const fields: SourceField[] = (fieldRows as any[]).map((f) => ({
+    field_name: String(f.field_name),
+    source_column: f.source_column ?? null,
+    aggregate_fn: f.aggregate_fn ?? null,
+    source_expression: f.source_expression ?? null,
+    filter_json: f.filter_json ?? null,
+  }));
+  if (!fields.length) return unavailable("This data source has no fields configured yet.");
+
+  // "trend" has no fixed calendar window (the card above shows the latest
+  // reading, not a range), so the breakdown uses the single most recent date
+  // this metric actually has a process-level reading for -- the exact day
+  // the tile is currently headlining, not an arbitrary trailing window.
+  let from: string;
+  let to: string;
+  const range = periodRange(period, new Date());
+  if (range) {
+    from = range.from; to = range.to;
+  } else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(score_date) latest FROM process_metric_actual
+        WHERE process_id = ? AND metric_key = ? AND actual_value IS NOT NULL`,
+      [processId, metricKey],
+    );
+    let latest = (latestRows as any[])[0]?.latest;
+    // A metric with an 'employee'-kind source can have no PROCESS-level
+    // reading at all (nobody rolls the per-employee numbers up into one
+    // figure) and still have real per-analyst data -- either automated or,
+    // for the small set of genuinely gap metrics, hand-entered into
+    // process_metric_employee_actual. Check that before giving up, or the
+    // deepest-level breakdown would be unreachable exactly for the metrics
+    // it exists to serve.
+    if (!latest) {
+      const [empLatestRows] = await db.execute<RowDataPacket[]>(
+        `SELECT MAX(score_date) latest FROM process_metric_employee_actual
+          WHERE process_id = ? AND metric_key = ? AND actual_value IS NOT NULL`,
+        [processId, metricKey],
+      );
+      latest = (empLatestRows as any[])[0]?.latest;
+    }
+    // Genuinely nothing has ever been recorded for this metric, at either
+    // grain -- not an error state for an 'employee'-kind metric (confirmed
+    // real and correctly configured above), just the honest "nobody has
+    // entered anything yet" state. Anchoring on today rather than returning
+    // unavailable is what lets the per-analyst upload UI actually appear for
+    // exactly the metrics it exists to serve; a fresh upload almost always
+    // targets today anyway, and the manual-fallback query below re-reads
+    // whatever date range is passed in, so this default costs nothing once
+    // a real entry exists.
+    const d = latest ? isoDate(latest) : isoDate(new Date());
+    from = d; to = d;
+  }
+
+  let plan: ReturnType<typeof buildProcessEmployeeBreakdownPlan>;
+  try {
+    plan = buildProcessEmployeeBreakdownPlan(src, fields, from, to, processId);
+  } catch (err) {
+    return unavailable((err as Error).message);
+  }
+
+  const direction = metric?.direction ?? null;
+  const targetValue = def.target_value === null ? null : Number(def.target_value);
+
+  let rows: RowDataPacket[];
+  try {
+    [rows] = await db.execute<RowDataPacket[]>(plan.sql, plan.params);
+  } catch (err) {
+    return unavailable(`Could not compute per-analyst scores: ${(err as Error).message}`);
+  }
+  const base = {
+    available: true as const, reason: null,
+    metricName: metric?.metric_name ? String(metric.metric_name) : metricKey,
+    unit: metric?.unit ?? null, direction, targetValue, periodFrom: from, periodTo: to,
+  };
+  let scored: Array<{ employeeId: string; employeeCode: string; name: string; value: number | null; manual: boolean }>;
+
+  if ((rows as any[]).length) {
+    scored = (rows as any[]).map((r) => {
+      const inputs: Record<string, number | string | null> = {};
+      for (const name of plan.fieldNames) inputs[name] = r[name] ?? null;
+      const evaluated = evaluateFormula(def.formula_expression, inputs);
+      return {
+        employeeId: String(r.__employee_id),
+        employeeCode: String(r.__employee_code ?? ""),
+        name: `${r.__first_name ?? ""} ${r.__last_name ?? ""}`.trim() || String(r.__employee_code ?? "Unknown"),
+        value: evaluated.value,
+        manual: false,
+      };
+    });
+  } else {
+    // No automated reading exists for this metric on this process at all --
+    // fall back to hand-entered per-analyst scores (process_metric_employee_actual),
+    // the deepest-level manual path for the small set of 'employee'-kind metrics
+    // verified to have no automated feed (see 1706_process_metric_employee_actual.sql).
+    // Latest entry per employee within the period, same "most recent wins"
+    // convention the process-level trend fallback above already uses. The moment
+    // an automated feed starts reporting rows for this (process, metric), the
+    // branch above takes over and this table is never consulted again for it.
+    const [manualRows] = await db.execute<RowDataPacket[]>(
+      `SELECT m.employee_id, e.employee_code, e.first_name, e.last_name, m.actual_value
+         FROM process_metric_employee_actual m
+         JOIN employees e ON e.id = m.employee_id
+         JOIN (
+           SELECT employee_id, MAX(score_date) AS max_date
+             FROM process_metric_employee_actual
+            WHERE process_id = ? AND metric_key = ? AND score_date >= ? AND score_date <= ?
+              AND actual_value IS NOT NULL
+            GROUP BY employee_id
+         ) latest ON latest.employee_id = m.employee_id AND latest.max_date = m.score_date
+        WHERE m.process_id = ? AND m.metric_key = ?`,
+      [processId, metricKey, from, to, processId, metricKey],
+    );
+    scored = (manualRows as any[]).map((r) => ({
+      employeeId: String(r.employee_id),
+      employeeCode: String(r.employee_code ?? ""),
+      name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || String(r.employee_code ?? "Unknown"),
+      value: r.actual_value === null ? null : Number(r.actual_value),
+      manual: true,
+    }));
+  }
+
+  if (!scored.length) return { ...base, analysts: [] };
+  const employeeIds = scored.map((s) => s.employeeId);
+
+  const [desigRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, d.designation_name
+       FROM employees e LEFT JOIN designation_master d ON d.id = e.designation_id
+      WHERE e.id IN (${employeeIds.map(() => "?").join(",")})`,
+    employeeIds,
+  );
+  const designationById = new Map<string, string | null>(
+    (desigRows as any[]).map((r) => [String(r.id), r.designation_name ? String(r.designation_name) : null]),
+  );
+
+  // The real reporting chain, capped at 6 levels and guarded against a cycle
+  // -- one genuinely exists in this data (two managers who report to each
+  // other), which a plain WITH RECURSIVE would otherwise spin on until MySQL's
+  // recursion limit killed the query.
+  const [chainRows] = await db.execute<RowDataPacket[]>(
+    `WITH RECURSIVE chain AS (
+       SELECT e.id AS start_id, e.id AS node_id, e.reporting_manager_id, 0 AS depth,
+              CAST(e.id AS CHAR(4000)) AS visited
+         FROM employees e
+        WHERE e.id IN (${employeeIds.map(() => "?").join(",")})
+        UNION ALL
+       SELECT c.start_id, m.id, m.reporting_manager_id, c.depth + 1,
+              CONCAT(c.visited, ',', m.id)
+         FROM employees m
+         JOIN chain c ON m.id = c.reporting_manager_id
+        WHERE c.depth < 6 AND FIND_IN_SET(m.id, c.visited) = 0
+     )
+     SELECT c.start_id, c.depth, e.employee_code, e.first_name, e.last_name, d.designation_name
+       FROM chain c
+       JOIN employees e ON e.id = c.node_id
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+      WHERE c.depth > 0
+      ORDER BY c.start_id, c.depth`,
+    employeeIds,
+  );
+  const chainByAnalyst = new Map<string, AnalystScore["reportsTo"]>();
+  for (const r of chainRows as any[]) {
+    const key = String(r.start_id);
+    const arr = chainByAnalyst.get(key) ?? [];
+    arr.push({
+      employeeCode: String(r.employee_code ?? ""),
+      name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim(),
+      designation: r.designation_name ? String(r.designation_name) : null,
+      depth: Number(r.depth),
+    });
+    chainByAnalyst.set(key, arr);
+  }
+
+  const analysts: AnalystScore[] = scored.map((s) => {
+    const chain = chainByAnalyst.get(s.employeeId) ?? [];
+    const tl = chain.find((c) => c.designation && TL_PATTERN.test(c.designation));
+    const am = chain.find((c) => c.designation && AM_PATTERN.test(c.designation));
+    return {
+      employeeId: s.employeeId, employeeCode: s.employeeCode, name: s.name,
+      designation: designationById.get(s.employeeId) ?? null,
+      value: s.value, manual: s.manual,
+      reportsTo: chain,
+      teamLeader: tl ? { employeeCode: tl.employeeCode, name: tl.name } : null,
+      assistantManager: am ? { employeeCode: am.employeeCode, name: am.name } : null,
+    };
+  });
+
+  // Worst first, direction-aware: the reader meets whoever is dragging the
+  // number down before the rest, the same convention this page's other
+  // "which one first" lists (StoppedFeeds, NeverReportedBanner) already use.
+  // A null score (no rows this period) sorts last -- absent, not zero.
+  analysts.sort((a, b) => {
+    if (a.value === null && b.value === null) return 0;
+    if (a.value === null) return 1;
+    if (b.value === null) return -1;
+    return direction === "lower_is_better" ? b.value - a.value : a.value - b.value;
+  });
+
+  return { ...base, analysts };
+}
+
+/**
+ * Voice of the Customer — real root-cause classification and verbatim quotes
+ * for a process's audited calls, reusing the CLAP taxonomy (Customer / Logistic
+ * / Agent / Product) already built and proven live in the sibling Mydashboards
+ * project (github.com/tausifansari-mcn/Mydashboards, inbound-quality module).
+ * The CASE expression below is copied verbatim from that project's
+ * CLAP_CASE_INBOUND, not reinvented — it classifies each audited call by its
+ * real recorded scenario/scenario1 fields, the same fields the call-quality
+ * auditor actually filled in, not a guess layered on afterward.
+ *
+ * Same read-only upstream-source pattern QA_QUALITY_PCT already uses: joins
+ * db_audit.call_quality_assessment.User (employee_code) to employees.process_id
+ * — never writes back, never duplicates Mydashboards' own tables, just reads
+ * the same real audit data through the same join this codebase already trusts.
+ *
+ * customer_voc_*_positive/negative are real AI-extracted verbatim quotes,
+ * populated only from 2026-07-17 onward and still sparse for Logistic/Product
+ * specifically (confirmed live) — an empty quote list for those categories is
+ * reported honestly, never backfilled with an Agent-category quote instead.
+ */
+const CLAP_CASE = `
+  CASE
+    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
+    WHEN q.scenario IN ('Return/Exchange','Return Request','Return & Exchange','Wrong product','Product Issue','Pricing','Refund Status','Refund issue','Refund Request','Tech issue','Policies and FAQs','Sale Done') THEN 'Product'
+    WHEN q.scenario IN ('Delivery Issue','Post Order','Order Status','Reverse Pickup Issue','Pending payment','Payment issues','Wallet issue') THEN 'Logistic'
+    WHEN q.scenario IN ('Needs Improvement','Hold Procedure','Transfer','') THEN 'Agent'
+    WHEN q.scenario IN ('Complaint','Repeat') THEN
+      CASE
+        WHEN q.scenario1 IS NULL OR q.scenario1 = '' THEN 'Product'
+        WHEN q.scenario1 LIKE '%Dispatch%' OR q.scenario1 LIKE '%Delivery%' OR q.scenario1 LIKE '%RTO%' OR q.scenario1 = 'Delivery Fail'
+          OR q.scenario1 LIKE '%Late dispatch%' OR q.scenario1 LIKE '%No communication%' OR q.scenario1 LIKE '%Fake remark%'
+          OR q.scenario1 LIKE '%Extra Charge%' OR q.scenario1 LIKE '%Misbehave%' OR q.scenario1 LIKE '%Delivery Boy%'
+          OR q.scenario1 LIKE '%Delivery Delay%' OR q.scenario1 LIKE '%POD%' OR q.scenario1 LIKE '%Courier%' THEN 'Logistic'
+        WHEN q.scenario1 LIKE '%Fraud%' THEN 'Agent'
+        ELSE 'Product'
+      END
+    ELSE 'Agent'
+  END`;
+
+export interface VocQuote { employeeCode: string; employeeName: string; callDate: string; quote: string }
+export interface ClapVoiceOfCustomer {
+  available: boolean;
+  reason: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  totalAuditedCalls: number;
+  /** Real root-cause split — who/what the customer's issue is actually about, not agent quality alone. */
+  clapBreakdown: Array<{ clap: "Customer" | "Logistic" | "Agent" | "Product"; count: number; pct: number }>;
+  quotes: {
+    agent: { positive: VocQuote[]; negative: VocQuote[] };
+    logistic: { positive: VocQuote[]; negative: VocQuote[] };
+    product: { positive: VocQuote[]; negative: VocQuote[] };
+  };
+}
+
+export async function getProcessVoiceOfCustomer(
+  userId: string, processId: string, period: ReportPeriod = "trend",
+): Promise<ClapVoiceOfCustomer | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapVoiceOfCustomer => ({
+    available: false, reason, periodFrom: null, periodTo: null, totalAuditedCalls: 0,
+    clapBreakdown: [], quotes: {
+      agent: { positive: [], negative: [] }, logistic: { positive: [], negative: [] }, product: { positive: [], negative: [] },
+    },
+  });
+
+  // Resolved ONCE, then used as an IN-list everywhere below, rather than
+  // joining db_audit.call_quality_assessment (460k+ row external table, live-
+  // verified) to employees per query. That join looked fine on a narrow
+  // single-day range (confirmed 345ms) but genuinely hangs on anything wider
+  // (confirmed directly: a 90-day-bounded join-based MAX did not return in
+  // 15s) -- MySQL can't push a cross-schema equi-join filter into an index
+  // range scan the way it can push a plain IN-list. A handful of employee
+  // codes against User's own index is fast at any window width (~3s worst
+  // case measured, vs. an outright hang).
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    // Bounded to the last 90 days, the same "recent enough to matter" window
+    // feed-health checks already use elsewhere on this page -- an honest
+    // "nothing recent" beats a scan of years-old rows nobody is looking at.
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [breakdownRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${CLAP_CASE.replace(/q\./g, "")} AS clap, COUNT(*) AS n
+       FROM db_audit.call_quality_assessment
+      WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+        AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+      GROUP BY clap`,
+    [...employeeCodes, from, to],
+  );
+  const total = (breakdownRows as any[]).reduce((s, r) => s + Number(r.n), 0);
+  if (!total) {
+    return { ...unavailable(
+      "This process has no call-quality audit configured, or none this period — Voice of the Customer only exists where calls are actually audited.",
+    ), available: true, periodFrom: from, periodTo: to };
+  }
+  const clapBreakdown = (breakdownRows as any[]).map((r) => ({
+    clap: String(r.clap) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"],
+    count: Number(r.n),
+    pct: Math.round((Number(r.n) / total) * 1000) / 10,
+  })).sort((a, b) => b.count - a.count);
+
+  const quoteQuery = async (col: string): Promise<VocQuote[]> => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT User AS employee_code, DATE_FORMAT(CallDate, '%Y-%m-%d') AS call_date, \`${col}\` AS quote
+         FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND \`${col}\` IS NOT NULL AND TRIM(\`${col}\`) != ''
+        ORDER BY CallDate DESC LIMIT 5`,
+      [...employeeCodes, from, to],
+    );
+    return (rows as any[]).map((r) => ({
+      employeeCode: String(r.employee_code),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      callDate: String(r.call_date), quote: String(r.quote),
+    }));
+  };
+
+  const [agentPos, agentNeg, logPos, logNeg, prodPos, prodNeg] = await Promise.all([
+    quoteQuery("customer_voc_agent_positive"), quoteQuery("customer_voc_agent_negative"),
+    quoteQuery("customer_voc_logistic_positive"), quoteQuery("customer_voc_logistic_negative"),
+    quoteQuery("customer_voc_product_positive"), quoteQuery("customer_voc_product_negative"),
+  ]);
+
+  return {
+    available: true, reason: null, periodFrom: from, periodTo: to, totalAuditedCalls: total,
+    clapBreakdown,
+    quotes: {
+      agent: { positive: agentPos, negative: agentNeg },
+      logistic: { positive: logPos, negative: logNeg },
+      product: { positive: prodPos, negative: prodNeg },
+    },
+  };
+}
+
+/**
+ * Root Cause vs. Workforce — the question the CLAP panel above cannot answer on
+ * its own: is a spike in Agent-attributed complaints a coaching problem, or is
+ * it what understaffing or a green floor looks like from the customer's side?
+ *
+ * Mydashboards has the call-quality half of this; it has no workforce data.
+ * HRMS has both. Nothing here computes a correlation coefficient — with a
+ * handful of noisy weekly counts per process that would be false precision
+ * dressed up as rigor. Instead this returns the same-day series side by side
+ * so a human can see whether the lines actually move together, and says so
+ * honestly when a series has too little real data to plot (the roster table
+ * in particular carries a large synthetic batch that must be excluded, and
+ * even after that guard most processes have only a couple of weeks of real
+ * roster rows — see the provenance guard below).
+ */
+export interface WorkforceCorrelationPoint {
+  date: string;
+  agentClapPct: number | null;
+  auditedCalls: number;
+  activeHeadcount: number;
+  rampCohortPct: number | null;
+  presentHeadcount: number | null;
+  plannedHeadcount: number | null;
+}
+export interface WorkforceCorrelation {
+  available: boolean;
+  reason: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  daily: WorkforceCorrelationPoint[];
+  weeklyAttrition: Array<{ weekStart: string; exits: number }>;
+  rosterCoverageDays: number;
+}
+
+// A roster row with every provenance column null is part of the known
+// 412,032-row synthetic batch from 2026-06-11, not a real assignment.
+// See backend/src/modules/wfm/roster-analytics.routes.ts for the same guard.
+const REAL_ROSTER_GUARD =
+  "NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)";
+
+export async function getWorkforceCorrelation(
+  userId: string, processId: string, period: ReportPeriod = "trend",
+): Promise<WorkforceCorrelation | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): WorkforceCorrelation => ({
+    available: false, reason, periodFrom: null, periodTo: null,
+    daily: [], weeklyAttrition: [], rosterCoverageDays: 0,
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, date_of_joining, date_of_exit
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employees = (empRows as any[]).map((r) => ({
+    code: String(r.employee_code),
+    joined: r.date_of_joining ? isoDate(r.date_of_joining) : null,
+    exited: r.date_of_exit ? isoDate(r.date_of_exit) : null,
+  })).filter((e) => e.joined);
+  if (!employees.length) return unavailable("This process has no employees with a recorded joining date.");
+
+  const range = periodRange(period, new Date()) ?? (() => {
+    // "trend" has no calendar-aligned range of its own -- default the daily
+    // series to a bounded 30-day trailing window rather than an open scan.
+    const to = new Date();
+    const from = new Date(to); from.setDate(from.getDate() - 30);
+    return { from: isoDate(from), to: isoDate(to), priorFrom: isoDate(from), priorTo: isoDate(to) };
+  })();
+  const { from, to } = range;
+
+  const employeeCodes = employees.map((e) => e.code);
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  // Agent-attributed CLAP share per day -- reuses the exact taxonomy the VOC
+  // panel above already computes, just grouped by day instead of totalled.
+  const [clapDailyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(CallDate, '%Y-%m-%d') AS d,
+            SUM(CASE WHEN (${CLAP_CASE.replace(/q\./g, "")}) = 'Agent' THEN 1 ELSE 0 END) AS agent_n,
+            COUNT(*) AS total_n
+       FROM db_audit.call_quality_assessment
+      WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+        AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+      GROUP BY d`,
+    [...employeeCodes, from, to],
+  );
+  const clapByDay = new Map<string, { agent: number; total: number }>(
+    (clapDailyRows as any[]).map((r) => [String(r.d), { agent: Number(r.agent_n), total: Number(r.total_n) }]),
+  );
+
+  // Present headcount per day -- attendance_daily_record carries process_id
+  // directly, no employees join needed.
+  const [presentRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS d,
+            COUNT(DISTINCT CASE WHEN attendance_status IN ('present','half_day') THEN employee_id END) AS present_n
+       FROM attendance_daily_record
+      WHERE process_id = ? AND record_date BETWEEN ? AND ?
+      GROUP BY d`,
+    [processId, from, to],
+  );
+  const presentByDay = new Map<string, number>((presentRows as any[]).map((r) => [String(r.d), Number(r.present_n)]));
+
+  // Planned headcount per day from the live roster table, real rows only.
+  const [rosterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS d, COUNT(DISTINCT ra.employee_id) AS planned_n
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id
+      WHERE e.process_id = ? AND ra.roster_date BETWEEN ? AND ? AND ${REAL_ROSTER_GUARD}
+      GROUP BY d`,
+    [processId, from, to],
+  );
+  const plannedByDay = new Map<string, number>((rosterRows as any[]).map((r) => [String(r.d), Number(r.planned_n)]));
+  const rosterCoverageDays = plannedByDay.size;
+
+  // Daily active headcount / ramp-cohort share computed in JS from the small
+  // per-process employee list fetched once above -- cheaper and honester than
+  // a per-day query, and avoids the active_status trap: that flag is a live
+  // "as of now" state, not point-in-time, so a past day's active count has to
+  // come from date_of_joining/date_of_exit directly.
+  const daily: WorkforceCorrelationPoint[] = [];
+  const cursor = new Date(from + "T00:00:00");
+  const end = new Date(to + "T00:00:00");
+  while (cursor <= end) {
+    const d = isoDate(cursor);
+    let active = 0; let ramp = 0;
+    const rampCutoff = new Date(cursor); rampCutoff.setDate(rampCutoff.getDate() - 30);
+    for (const e of employees) {
+      if (e.joined! > d) continue;
+      if (e.exited && e.exited <= d) continue;
+      active += 1;
+      if (e.joined! >= isoDate(rampCutoff)) ramp += 1;
+    }
+    const clap = clapByDay.get(d);
+    daily.push({
+      date: d,
+      agentClapPct: clap && clap.total > 0 ? Math.round((clap.agent / clap.total) * 1000) / 10 : null,
+      auditedCalls: clap?.total ?? 0,
+      activeHeadcount: active,
+      rampCohortPct: active > 0 ? Math.round((ramp / active) * 1000) / 10 : null,
+      presentHeadcount: presentByDay.has(d) ? presentByDay.get(d)! : null,
+      plannedHeadcount: plannedByDay.has(d) ? plannedByDay.get(d)! : null,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // Attrition, bucketed by ISO week (Monday start), computed in JS from the
+  // same employee list -- no second query needed.
+  const weekStartOf = (iso: string): string => {
+    const dt = new Date(iso + "T00:00:00");
+    const dow = dt.getDay();
+    const sinceMonday = (dow + 6) % 7;
+    dt.setDate(dt.getDate() - sinceMonday);
+    return isoDate(dt);
+  };
+  const attritionByWeek = new Map<string, number>();
+  for (const e of employees) {
+    if (!e.exited || e.exited < from || e.exited > to) continue;
+    const wk = weekStartOf(e.exited);
+    attritionByWeek.set(wk, (attritionByWeek.get(wk) ?? 0) + 1);
+  }
+  const weeklyAttrition = [...attritionByWeek.entries()]
+    .map(([weekStart, exits]) => ({ weekStart, exits }))
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+
+  return {
+    available: true, reason: null, periodFrom: from, periodTo: to,
+    daily, weeklyAttrition, rosterCoverageDays,
+  };
 }

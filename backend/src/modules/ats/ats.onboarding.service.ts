@@ -7,6 +7,7 @@ import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-hea
 import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-head-scope.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
+import { resolveBandPct } from './band-package-ratio.service.js';
 import {
   sendOnboardingTokenEmail,
   sendBankResubmitEmail,
@@ -908,17 +909,67 @@ export async function saveOffer(
     bhEmail = (bhRows as RowDataPacket[])[0]?.email ?? null;
   }
 
-  const [bandRows] = await db.execute<RowDataPacket[]>(
-    `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`,
-    [offerData.salary_band ?? 'D'],
-  ).catch(() => [[] as RowDataPacket[]]);
-  const band = (bandRows as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
+  // salary_band_master has no basic_pct/hra_pct columns -- that lookup always
+  // threw and silently defaulted to 40/40 for every band. Derive the split
+  // from salary_package_master instead: the canonical master Payroll Head's
+  // tools already read. See band-package-ratio.service.ts.
+  const band = await resolveBandPct(
+    typeof offerData.salary_band === 'string' ? offerData.salary_band : null,
+    Number(offerData.offered_ctc) / 12,
+  );
   const components: SalaryComponents = calculateSalary(
     Number(offerData.offered_ctc),
-    Number(band.basic_pct),
-    Number(band.hra_pct),
+    band.basicPct,
+    band.hraPct,
     false,
   );
+
+  // Persisted so an out-of-band CTC carries its justification with it, not just
+  // a transient flag the request forgets the moment it is handled -- an
+  // approver reading this offer later (Branch Head or Payroll Head) has no
+  // other way to know WHY it bypassed the band-range check below.
+  const isProposedException = Boolean(offerData.is_proposed_exception)
+    && String(offerData.proposed_reason ?? '').trim().length > 0;
+  const proposedExceptionReason = isProposedException
+    ? String(offerData.proposed_reason).trim().slice(0, 500)
+    : null;
+
+  // A submitted offer's CTC/gross/net feed straight into both the Branch Head
+  // and Payroll Head approval screens -- both read ats_employment_offer
+  // directly, so this is the one canonical place that value comes from.
+  // Nothing before this point rejected a non-positive or nonsensically low
+  // "Monthly CTC" -- a blank/zero field (client-side validation only checked
+  // truthiness, so the *string* "0" passed) or a fat-fingered figure like
+  // "16.5" instead of "16,500" was silently saved. That produced ₹0 (or
+  // near-₹0) CTC/gross rows with a negative net-in-hand once the flat
+  // professional-tax deduction was applied on top, mixed in with correctly
+  // priced offers in the same queue. Guarded once, here, for every caller.
+  if (submit) {
+    const monthlyCtc = components.offered_ctc;
+    if (!Number.isFinite(monthlyCtc) || monthlyCtc <= 0) {
+      throw Object.assign(
+        new Error('Monthly CTC must be greater than zero to submit an offer.'),
+        { statusCode: 400 },
+      );
+    }
+    if (!isProposedException) {
+      const [slabRows] = await db.execute<RowDataPacket[]>(
+        `SELECT slab_from, slab_to FROM salary_band_master WHERE band_code = ? AND active_status = 1`,
+        [offerData.salary_band ?? null],
+      ).catch(() => [[] as RowDataPacket[]]);
+      const slab = (slabRows as RowDataPacket[])[0];
+      if (slab && (monthlyCtc < Number(slab.slab_from) || monthlyCtc > Number(slab.slab_to))) {
+        throw Object.assign(
+          new Error(
+            `Monthly CTC ₹${monthlyCtc.toLocaleString('en-IN')} is outside Band ${offerData.salary_band}'s ` +
+            `range (₹${Number(slab.slab_from).toLocaleString('en-IN')}–₹${Number(slab.slab_to).toLocaleString('en-IN')}). ` +
+            `Pick a package from the salary master or correct the CTC.`
+          ),
+          { statusCode: 400 },
+        );
+      }
+    }
+  }
 
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
@@ -937,6 +988,7 @@ export async function saveOffer(
          da = ?, special_allowance = ?, other_allowance = ?, bonus = ?, gross = ?,
          pf_employee = ?, pf_employer = ?, esic_employee = ?, esic_employer = ?,
          professional_tax = ?, gratuity = ?, admin_charges = ?, net_in_hand = ?,
+         is_proposed_exception = ?, proposed_exception_reason = ?,
          status = ?, submitted_at = ?, updated_at = NOW()
        WHERE id = ?`,
       [
@@ -948,6 +1000,7 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        isProposedException ? 1 : 0, proposedExceptionReason,
         status, submittedAt,
         offerId,
       ],
@@ -961,8 +1014,9 @@ export async function saveOffer(
           salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance,
           other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, gratuity, admin_charges, net_in_hand,
+          is_proposed_exception, proposed_exception_reason,
           status, created_by, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         offerId, requestId, req.candidate_id,
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
@@ -973,6 +1027,7 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        isProposedException ? 1 : 0, proposedExceptionReason,
         status, createdBy, submittedAt,
       ],
     );
@@ -1090,6 +1145,12 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT o.id AS offer_id, o.offered_ctc, o.gross, o.net_in_hand,
             o.emp_type, o.date_of_joining, o.salary_band, o.status AS offer_status,
+            -- Surfaced so the approver can see WHY an out-of-band CTC was let
+            -- through saveOffer()'s band-range check, instead of just the
+            -- number with no context. NULL/0 on every offer raised the normal
+            -- way. See 1702_offer_proposed_exception.sql (not yet applied --
+            -- both columns read as NULL/0 until that migration runs).
+            o.is_proposed_exception, o.proposed_exception_reason,
             r.id AS request_id, r.branch_id,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.email, c.mobile,
             c.father_name, c.date_of_birth, c.profile_status,

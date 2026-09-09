@@ -57,6 +57,12 @@ interface PendingOffer {
   offer_status: string;
   /** 1 when Payroll HR has validated this salary. Employee creation requires it. */
   payroll_validated?: number | boolean;
+  /** 1 when this CTC was let through outside the selected band's range on an
+   *  explicit exception (see saveOffer()'s band-range guard). Reads NULL/0 on
+   *  a normally-priced offer, and on any environment where migration
+   *  1702_offer_proposed_exception.sql has not yet run. */
+  is_proposed_exception?: number | boolean;
+  proposed_exception_reason?: string | null;
 }
 
 type DecisionRow = {
@@ -128,6 +134,7 @@ function OfferRow({
   offer,
   acting,
   onAct,
+  onRejectClick,
   remark,
   onRemarkChange,
   onOpenJourney,
@@ -135,6 +142,7 @@ function OfferRow({
   offer: PendingOffer;
   acting: string | null;
   onAct: (id: string, action: 'approve' | 'reject', remark: string) => void;
+  onRejectClick: (offer: PendingOffer, remark: string) => void;
   remark: string;
   onRemarkChange: (offerId: string, value: string) => void;
   onOpenJourney: (candidateId: string) => void;
@@ -215,6 +223,21 @@ function OfferRow({
       <TableCell className="py-3 text-right tabular-nums whitespace-nowrap">
         <div className="font-semibold text-slate-900">{inr(offer.offered_ctc)}</div>
         <div className="text-[11px] text-slate-400">{inr(offer.gross)} gross</div>
+        {/* This CTC was let through outside the selected band's range on an
+            explicit HR-entered exception — see saveOffer()'s band-range guard.
+            Shown so the approver sees WHY the number looks off-band, not just
+            the number. Absent on every normally-priced offer. */}
+        {(offer.is_proposed_exception === 1 || offer.is_proposed_exception === true) && (
+          <div
+            className="mt-0.5 flex items-center justify-end gap-1 text-[11px] font-medium text-amber-700"
+            title={offer.proposed_exception_reason ? `Exception reason: ${offer.proposed_exception_reason}` : 'Marked as an out-of-band CTC exception, but no reason was recorded.'}
+          >
+            <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="max-w-[130px] truncate">
+              {offer.proposed_exception_reason || 'Exception (no reason given)'}
+            </span>
+          </div>
+        )}
       </TableCell>
       <TableCell className="py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
         {inr(offer.net_in_hand)}
@@ -263,7 +286,7 @@ function OfferRow({
             variant="outline"
             className="h-9 cursor-pointer border-rose-200 px-3 text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800"
             disabled={isActing}
-            onClick={() => onAct(offer.offer_id, 'reject', remark)}
+            onClick={() => onRejectClick(offer, remark)}
             aria-label={`Reject offer for ${offer.full_name}`}
           >
             <XCircle className="h-4 w-4" aria-hidden="true" />
@@ -288,6 +311,13 @@ export default function NativeBranchHeadApproval() {
   const [approvalSuccess, setApprovalSuccess] = useState<{ employeeCode: string; employeeName: string } | null>(null);
   const [remarks, setRemarks]         = useState<Record<string, string>>({});
   const [query, setQuery]             = useState('');
+
+  // Reject reason prompt — clicking Reject with no remark typed inline used to
+  // just show a page-level error banner above the table with no visible link
+  // to which row it was about, easy to miss on a long list. This surfaces the
+  // reason requirement immediately, right where the click happened.
+  const [rejectPromptOffer, setRejectPromptOffer] = useState<PendingOffer | null>(null);
+  const [rejectPromptReason, setRejectPromptReason] = useState('');
 
   // Client-side filter: the queue is a handful of rows, so a round trip per
   // keystroke would be slower and no more correct.
@@ -314,6 +344,26 @@ export default function NativeBranchHeadApproval() {
 
   const handleRemarkChange = (offerId: string, value: string) => {
     setRemarks(prev => ({ ...prev, [offerId]: value }));
+  };
+
+  // Reject button clicked on a row. If a remark was already typed inline, act
+  // immediately as before; otherwise open the prompt so the reason appears
+  // right at the point of rejection instead of failing silently into a banner.
+  const handleRejectClick = (offer: PendingOffer, remark: string) => {
+    if (remark.trim()) {
+      void act(offer.offer_id, 'reject', remark);
+      return;
+    }
+    setRejectPromptReason('');
+    setRejectPromptOffer(offer);
+  };
+
+  const confirmRejectPrompt = () => {
+    if (!rejectPromptOffer || !rejectPromptReason.trim()) return;
+    const offer = rejectPromptOffer;
+    const reason = rejectPromptReason.trim();
+    setRejectPromptOffer(null);
+    void act(offer.offer_id, 'reject', reason);
   };
 
   const act = async (offerId: string, action: 'approve' | 'reject', remark: string) => {
@@ -589,6 +639,7 @@ export default function NativeBranchHeadApproval() {
                           offer={o}
                           acting={acting}
                           onAct={act}
+                          onRejectClick={handleRejectClick}
                           remark={remarks[o.offer_id] || ''}
                           onRemarkChange={handleRemarkChange}
                           onOpenJourney={openJourney}
@@ -617,6 +668,68 @@ export default function NativeBranchHeadApproval() {
         open={Boolean(journeyCandidate)}
         onClose={closeJourney}
       />
+
+      {/* Reject reason prompt — appears the moment Reject is clicked with no
+          remark already typed, so the reason is captured right there instead
+          of a separate error banner elsewhere on the page. */}
+      {rejectPromptOffer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h3 className="font-bold text-slate-800">Reject Offer</h3>
+              <button
+                type="button"
+                onClick={() => setRejectPromptOffer(null)}
+                aria-label="Cancel rejection"
+              >
+                <X className="h-4 w-4 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <p className="text-sm text-slate-600">
+                Rejecting the offer for <strong>{rejectPromptOffer.full_name}</strong>
+                {' '}({rejectPromptOffer.candidate_code}). A reason is required — it is
+                visible to HR and recorded in the approval history.
+              </p>
+              <div>
+                <label className="mb-1.5 block text-xs font-bold text-slate-600">
+                  Rejection reason
+                </label>
+                <textarea
+                  value={rejectPromptReason}
+                  onChange={(e) => setRejectPromptReason(e.target.value)}
+                  placeholder="Why is this offer being rejected?"
+                  autoFocus
+                  rows={3}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+              </div>
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-[44px] flex-1 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                  disabled={!rejectPromptReason.trim() || acting === rejectPromptOffer.offer_id}
+                  onClick={confirmRejectPrompt}
+                >
+                  {acting === rejectPromptOffer.offer_id
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                    : <XCircle className="mr-2 h-4 w-4" aria-hidden="true" />}
+                  Reject Offer
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-[44px]"
+                  onClick={() => setRejectPromptOffer(null)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

@@ -8,6 +8,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
+import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -204,7 +205,11 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
   }
   const id = randomUUID();
   const batchNo = body.upload_batch_no || `BATCH-${Date.now()}`;
-  await db.execute(
+  // withDeadlockRetry is safe here: this is one autocommit statement (no explicit
+  // transaction), and it is idempotent on retry — a lost deadlock rolls the whole INSERT
+  // back (nothing partially written), and `id` was generated once above, so a retry
+  // replays the exact same row rather than creating a duplicate.
+  await withDeadlockRetry(() => db.execute(
     `INSERT INTO upload_batch (id, upload_batch_no, upload_type_code, original_file_name, file_path,
      file_size_bytes, total_rows, valid_rows, error_rows, batch_status, error_summary, metadata,
      uploaded_by, validated_by, validated_at)
@@ -216,7 +221,7 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
      req.authUser!.id,
      body.valid_rows > 0 ? req.authUser!.id : null,
      body.valid_rows > 0 ? new Date().toISOString().slice(0, 19).replace("T", " ") : null]
-  );
+  ));
   const [rows] = await db.execute<UploadBatchRow[]>("SELECT * FROM upload_batch WHERE id = ? LIMIT 1", [id]);
   res.status(201).json({ success: true, data: rows[0] ?? null });
 }));
@@ -248,11 +253,27 @@ router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm"
       row.error_messages ? JSON.stringify(row.error_messages) : null
     );
   }
-  await db.execute(
+  // withDeadlockRetry is safe here for the same reason as the /batches INSERT above:
+  // one autocommit statement, and every row's id was generated once above the retry, so
+  // a retry replays the identical INSERT rather than double-staging rows. This is the
+  // exact write that silently lost BATCH-1788948395588-R6909's 14 resubmitted rows to a
+  // deadlock — the batch header had already been created with "14 valid" before this
+  // statement ran, and when it lost the deadlock the rows were simply never saved, with
+  // nothing left to show for it beyond a batch that claimed rows it didn't have.
+  //
+  // Also the exact write behind losing 6 Onfido DOC_RAW files (~137k rows) the same week —
+  // that one was ER_LOCK_WAIT_TIMEOUT rather than ER_LOCK_DEADLOCK (both retried the same way
+  // here), from several ~2000-row chunk uploads landing minutes apart and colliding on this
+  // same table. A quick default backoff (100/200/300/400ms) is tuned for a momentary deadlock
+  // between two short statements; a lock-wait-timeout on a chunk this size reflects a real,
+  // possibly multi-second hold by a sibling chunk insert, so this call site gets a longer,
+  // more generous backoff and more attempts than the default — the client-side timeout on
+  // this endpoint (180s normal upload, 60s resubmit) has the headroom for it.
+  await withDeadlockRetry(() => db.execute(
     `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
      VALUES ${placeholders.join(", ")}`,
     values
-  );
+  ), { attempts: 6, delayMs: 400 });
   res.status(201).json({ success: true, count: rows.length });
 }));
 
@@ -303,6 +324,77 @@ const KNOWN_IMPORT_RPCS = new Set([
   // Per-process delivery actuals into process_delivery_actual, which the P&L already
   // reads but nothing has ever written. See process-delivery-bulk.service.ts.
   "import_process_delivery_batch",
+  // Molecular Email / Reginald Men Email daily ticket actuals — the underlying
+  // ticketing DB (molecular_db_email) does not exist anywhere in this project's
+  // infrastructure. See email-ticket-daily-bulk.service.ts.
+  "import_email_ticket_daily_batch",
+  // LP WebConsole APR — dialer_db.apr_5/apr_137_235/apr_bla_bli_blu (where this
+  // would otherwise land) are confirmed empty, a dead sync job. See
+  // lp-apr-daily-bulk.service.ts.
+  "import_lp_apr_daily_batch",
+  // Clovia Email Dashboard, daily per agent — columns read verbatim from a
+  // real sample ("Clovia Email Tracker Sept'26.xlsb"); no DB backing exists
+  // anywhere. See clovia-email-daily-bulk.service.ts.
+  "import_clovia_email_daily_batch",
+  // Clovia Chat Performance, daily (Botlytics chat dump) — columns read
+  // verbatim from a real sample; no DB backing exists anywhere. See
+  // clovia-chat-daily-bulk.service.ts.
+  "import_clovia_chat_daily_batch",
+  // Clovia CRM Disposition, per ticket — columns read verbatim from a real
+  // sample; no DB backing exists anywhere. See
+  // clovia-crm-disposition-bulk.service.ts.
+  "import_clovia_crm_disposition_batch",
+  // Housing Premium's "Sale Raw" -- per its SOP, a manually-updated Google
+  // Sheet with no DB backing anywhere. See
+  // housing-premium-sale-raw-bulk.service.ts.
+  "import_housing_premium_sale_raw_batch",
+  // Housing Owner's "Sale Raw" -- per its SOP, sale data pasted "up to the
+  // Discount % column" into a Google Sheet with no DB backing anywhere. See
+  // housing-owner-sale-raw-bulk.service.ts.
+  "import_housing_owner_sale_raw_batch",
+  // Housing Owner's "Call Logs" -- a cleaned Tata Dialer Agent Performance
+  // export, per its SOP, with no DB backing anywhere. See
+  // housing-owner-call-logs-bulk.service.ts.
+  "import_housing_owner_call_logs_batch",
+  // LP BPO Leads (M) export, Regional/Non Regional dashboards -- columns read
+  // verbatim from real samples; no DB backing exists anywhere. See
+  // lp-leads-bulk.service.ts.
+  "import_lp_leads_regional_batch",
+  "import_lp_leads_non_regional_batch",
+  // DU Digital's Agents Time details export, Korea/Thailand dashboards --
+  // columns read verbatim from real samples; no DB backing exists anywhere.
+  // See du-apr-daily-bulk.service.ts.
+  "import_du_apr_korea_batch",
+  "import_du_apr_thailand_batch",
+  // LP's BPO CR Reports (call log) and Mascallnet NRGN Call History
+  // exports, Regional/Non Regional dashboards -- columns read verbatim
+  // from real samples; no DB backing exists anywhere. See
+  // lp-cdr-cr-report-bulk.service.ts.
+  "import_lp_cdr_regional_batch",
+  "import_lp_cdr_non_regional_batch",
+  "import_lp_cr_report_regional_batch",
+  "import_lp_cr_report_non_regional_batch",
+  // DU Digital's Agent ID -> MAS employee code directory, Korea/Thailand
+  // dashboards -- found while auditing the same workbooks used for DU APR;
+  // no DB backing exists anywhere. See du-team-mapping-bulk.service.ts.
+  "import_du_team_mapping_korea_batch",
+  "import_du_team_mapping_thailand_batch",
+  // Housing Premium's per-agent monthly sales Target & Achievement --
+  // found while auditing the same workbook used for Sale Raw; no DB
+  // backing exists anywhere. See housing-premium-agent-target-bulk.service.ts.
+  "import_housing_premium_agent_target_batch",
+  // Housing Premium's CDR call log -- found while auditing the same
+  // workbook used for Sale Raw; no DB backing exists anywhere. See
+  // housing-premium-cdr-bulk.service.ts.
+  "import_housing_premium_cdr_batch",
+  // Clovia's Team Allignment roster -- found while auditing the same
+  // workbook family used for Chat Performance/CRM Disposition; no DB
+  // backing exists anywhere. See clovia-team-alignment-bulk.service.ts.
+  "import_clovia_team_alignment_batch",
+  // Clovia's APR-Utilization Raw, per-agent per-day productivity -- found
+  // while auditing the same workbook family; no DB backing exists
+  // anywhere. See clovia-apr-daily-bulk.service.ts.
+  "import_clovia_apr_daily_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -376,6 +468,45 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')`,
     [id]
   );
+
+  /*
+   * Guard against BATCH-1788948395588-R6909's failure mode: a batch that claims valid
+   * rows (from its own creation payload) but has ZERO rows actually staged in
+   * upload_batch_row — at ANY status, not just 'valid'/'pending' — used to run the
+   * import anyway, find nothing to do, and report a clean "imported, 0 rows" success,
+   * because every importer only checks for ERRORS, never for whether it did anything
+   * at all. Root cause there was the staging INSERT (POST /batches/:id/rows) losing a
+   * database deadlock after the batch header already claimed "14 valid" — the two are
+   * separate requests, so one can succeed while the other silently fails.
+   *
+   * This must NOT fire for the ordinary, legitimate case of re-importing a batch whose
+   * rows already all got consumed by an earlier successful run — those rows still
+   * exist, just as 'imported'/'error', which is exactly why `pending` above is 0 for
+   * that case too. The only reliable way to tell "nothing left to do" apart from
+   * "nothing was ever there" is whether upload_batch_row holds ANY row for this batch,
+   * regardless of status — so that is checked separately, only in this already-rare
+   * pending===0 branch.
+   */
+  if (Number((pending as RowDataPacket[])[0]?.n ?? 0) === 0) {
+    const [batchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT valid_rows FROM upload_batch WHERE id = ? LIMIT 1`, [id]
+    );
+    const [stagedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM upload_batch_row WHERE upload_batch_id = ?`, [id]
+    );
+    const validRows = Number((batchRows as RowDataPacket[])[0]?.valid_rows ?? 0);
+    const stagedCount = Number((stagedRows as RowDataPacket[])[0]?.n ?? 0);
+    if (validRows > 0 && stagedCount === 0) {
+      const message = `This batch claims ${validRows} valid row(s), but none were ever saved to the `
+        + `database — the upload's row-staging step likely failed or timed out partway through. `
+        + `There is nothing here to import. Re-upload the file (or redo Edit & Resubmit) instead.`;
+      await db.execute(
+        `UPDATE upload_batch SET batch_status = 'validation_failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+        [message.slice(0, 1000), id]
+      );
+      return res.status(409).json({ success: false, error: message });
+    }
+  }
 
   startBatchJob(
     id,
@@ -686,6 +817,182 @@ async function dispatchImport(
       "../bulk-upload/process-delivery-bulk.service.js"
     );
     const data = await importProcessDeliveryBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_email_ticket_daily_batch") {
+    const { importEmailTicketDailyBatch } = await import(
+      "../bulk-upload/email-ticket-daily-bulk.service.js"
+    );
+    const data = await importEmailTicketDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_apr_daily_batch") {
+    const { importLpAprDailyBatch } = await import(
+      "../bulk-upload/lp-apr-daily-bulk.service.js"
+    );
+    const data = await importLpAprDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_email_daily_batch") {
+    const { importCloviaEmailDailyBatch } = await import(
+      "../bulk-upload/clovia-email-daily-bulk.service.js"
+    );
+    const data = await importCloviaEmailDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_chat_daily_batch") {
+    const { importCloviaChatDailyBatch } = await import(
+      "../bulk-upload/clovia-chat-daily-bulk.service.js"
+    );
+    const data = await importCloviaChatDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_crm_disposition_batch") {
+    const { importCloviaCrmDispositionBatch } = await import(
+      "../bulk-upload/clovia-crm-disposition-bulk.service.js"
+    );
+    const data = await importCloviaCrmDispositionBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_premium_sale_raw_batch") {
+    const { importHousingPremiumSaleRawBatch } = await import(
+      "../bulk-upload/housing-premium-sale-raw-bulk.service.js"
+    );
+    const data = await importHousingPremiumSaleRawBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_owner_sale_raw_batch") {
+    const { importHousingOwnerSaleRawBatch } = await import(
+      "../bulk-upload/housing-owner-sale-raw-bulk.service.js"
+    );
+    const data = await importHousingOwnerSaleRawBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_owner_call_logs_batch") {
+    const { importHousingOwnerCallLogsBatch } = await import(
+      "../bulk-upload/housing-owner-call-logs-bulk.service.js"
+    );
+    const data = await importHousingOwnerCallLogsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_leads_regional_batch") {
+    const { importLpLeadsRegionalBatch } = await import(
+      "../bulk-upload/lp-leads-bulk.service.js"
+    );
+    const data = await importLpLeadsRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_leads_non_regional_batch") {
+    const { importLpLeadsNonRegionalBatch } = await import(
+      "../bulk-upload/lp-leads-bulk.service.js"
+    );
+    const data = await importLpLeadsNonRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_apr_korea_batch") {
+    const { importDuAprKoreaBatch } = await import(
+      "../bulk-upload/du-apr-daily-bulk.service.js"
+    );
+    const data = await importDuAprKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_apr_thailand_batch") {
+    const { importDuAprThailandBatch } = await import(
+      "../bulk-upload/du-apr-daily-bulk.service.js"
+    );
+    const data = await importDuAprThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cdr_regional_batch") {
+    const { importLpCdrRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCdrRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cdr_non_regional_batch") {
+    const { importLpCdrNonRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCdrNonRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cr_report_regional_batch") {
+    const { importLpCrReportRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCrReportRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cr_report_non_regional_batch") {
+    const { importLpCrReportNonRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCrReportNonRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_team_mapping_korea_batch") {
+    const { importDuTeamMappingKoreaBatch } = await import(
+      "../bulk-upload/du-team-mapping-bulk.service.js"
+    );
+    const data = await importDuTeamMappingKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_team_mapping_thailand_batch") {
+    const { importDuTeamMappingThailandBatch } = await import(
+      "../bulk-upload/du-team-mapping-bulk.service.js"
+    );
+    const data = await importDuTeamMappingThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_premium_agent_target_batch") {
+    const { importHousingPremiumAgentTargetBatch } = await import(
+      "../bulk-upload/housing-premium-agent-target-bulk.service.js"
+    );
+    const data = await importHousingPremiumAgentTargetBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_premium_cdr_batch") {
+    const { importHousingPremiumCdrBatch } = await import(
+      "../bulk-upload/housing-premium-cdr-bulk.service.js"
+    );
+    const data = await importHousingPremiumCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_team_alignment_batch") {
+    const { importCloviaTeamAlignmentBatch } = await import(
+      "../bulk-upload/clovia-team-alignment-bulk.service.js"
+    );
+    const data = await importCloviaTeamAlignmentBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_apr_daily_batch") {
+    const { importCloviaAprDailyBatch } = await import(
+      "../bulk-upload/clovia-apr-daily-bulk.service.js"
+    );
+    const data = await importCloviaAprDailyBatch(id, userId);
     return { success: true, data };
   }
 

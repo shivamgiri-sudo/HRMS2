@@ -102,7 +102,15 @@ const BULK_UPLOAD_BUCKET = "hrms-bulk-uploads";
 // practical request size long before that — one file this size in a single POST is
 // megabytes of JSON and risks the same silent-timeout failure the comment below already
 // worked around once for smaller files.
-const STAGE_CHUNK_SIZE = 2000;
+//
+// 2000 -> 1000 (2026-09-09): a 2000-row single INSERT holds its locks on
+// upload_batch_row for long enough that several Onfido DOC_RAW files uploaded minutes apart
+// collided and lost the DB's patience — "Lock wait timeout exceeded", the whole chunk's rows
+// never saved, 6 files (~137k rows) silently staged as zero rows despite the batch header
+// claiming otherwise. The backend now retries a lost lock conflict on this exact write (see
+// withDeadlockRetry in bulk-upload.routes.ts), but a smaller chunk means a shorter lock hold
+// in the first place — fewer collisions to need retrying, not just a faster recovery from one.
+const STAGE_CHUNK_SIZE = 1000;
 
 const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   EMPLOYEE_MASTER: "import_upload_batch",
@@ -2638,14 +2646,22 @@ function BatchRowsDialog({
       });
       const newBatchId = batchRes.data.id;
 
-      // 2. Stage the (edited) failed rows
+      // 2. Stage the (edited) failed rows. This is the exact call that silently lost
+      // BATCH-1788948395588-R6909's 14 resubmitted rows: the batch header (step 1, just
+      // above) had already been created and shown "14 valid" by the time this INSERT hit
+      // a database deadlock, and the default 30s timeout meant the browser gave up and
+      // moved on before the server even finished failing — so no error ever surfaced,
+      // and the batch was left claiming rows it never actually saved. The server now
+      // retries a lost deadlock on this write automatically (see withDeadlockRetry in
+      // bulk-upload.routes.ts), but that retry needs headroom to run before the browser
+      // gives up on it — 60s matches the import call's own timeout just below.
       const stagingPayload = failedRows.map((row) => ({
         row_no: row.row_no,
         raw_data: Object.fromEntries(dataKeys.map((k) => [k, getCellValue(row, k)])),
         row_status: "pending",
         error_messages: [],
       }));
-      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload);
+      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload, 60000);
 
       // 3. Run import. It answers 202 and keeps working, so wait it out by polling
       // rather than by holding the request open past the proxy timeout.

@@ -79,8 +79,14 @@ describe("importShiftRosterBatch transaction handling", () => {
         employee_code: "MAS001", week_start_date: "2026-08-17",
         mon_shift: "09:00-18:00",
       }) }],
-      // SELECT employees
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      // 1. Batch employee resolution (was: one SELECT per row; now one for the whole file) —
+      // employee_code is now part of the SELECT list, since the batched query keys its result
+      // map off it.
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      // 2. Batch payroll-lock check (was: one SELECT per day, inside the employee's lock; now
+      // one SELECT for every (employee, date) pair the whole file could touch, up front) ->
+      // nothing locked
+      [],
       // SELECT weekly_roster_cycle (none found)
       [],
       // INSERT weekly_roster_cycle
@@ -88,9 +94,6 @@ describe("importShiftRosterBatch transaction handling", () => {
       // Area 2: SELECT INFORMATION_SCHEMA.TABLES (isRestPolicyFeatureActive,
       // once per row before the day loop) -> wfm_rest_policy doesn't exist yet,
       // so every day's rest-check below is skipped -- no further Area 2 queries
-      [],
-      // Closure #2: SELECT attendance_daily_record (checkEmployeeDateNotLocked,
-      // inside the employee's lock, per day) -> not locked
       [],
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
@@ -139,11 +142,11 @@ describe("importShiftRosterBatch transaction handling", () => {
         employee_code: "MAS001", week_start_date: "2026-08-17",
         mon_shift: "09:00-18:00", notes: "o'brien's note",
       }) }],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }], // batch employee resolution
+      [], // batch payroll-lock check -> nothing locked
       [],
       [],
       [], // Area 2: isRestPolicyFeatureActive -> wfm_rest_policy doesn't exist yet
-      [], // Closure #2: checkEmployeeDateNotLocked -> not locked
       [{ id: "shift-1" }],
       [],
       [], // schema probe -> no versioning columns
@@ -181,11 +184,11 @@ describe("importShiftRosterBatch transaction handling", () => {
         employee_code: "MAS001", week_start_date: "2026-08-17",
         mon_shift: "09:00-18:00",
       }) }],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }], // batch employee resolution
+      [], // batch payroll-lock check -> nothing locked
       [],
       [],
       [], // isRestPolicyFeatureActive -> inactive
-      [], // checkEmployeeDateNotLocked -> not locked
       [{ id: "shift-1" }], // resolveShiftTemplate
       [], // existing wfm_roster_assignment before-value
       [], // shift-versioning schema probe
@@ -215,16 +218,16 @@ describe("importShiftRosterBatch transaction handling", () => {
         employee_code: "MAS001", week_start_date: "2026-08-17",
         mon_shift: "22:00-07:00",
       }) }],
-      // SELECT employees
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      // 1. Batch employee resolution
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      // 2. Batch payroll-lock check -> nothing locked
+      [],
       // SELECT weekly_roster_cycle (none found)
       [],
       // INSERT weekly_roster_cycle
       [],
       // Area 2: isRestPolicyFeatureActive -> wfm_rest_policy EXISTS this time
       [{ TABLE_NAME: "wfm_rest_policy" }],
-      // Closure #2: checkEmployeeDateNotLocked -> not locked
-      [],
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
       // resolveRestPolicy scopes: employee, process, branch, organization
@@ -255,11 +258,13 @@ describe("importShiftRosterBatch transaction handling", () => {
         employee_code: "MAS001", week_start_date: "2026-08-17",
         mon_shift: "09:00-18:00",
       }) }],
-      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }], // batch employee resolution
+      // Batch payroll-lock check -> Monday 2026-08-17 is locked. The batch query asks about
+      // every day of the week (not just Monday), but only the locked ones need to come back.
+      [{ employee_id: "emp-1", record_date: "2026-08-17", is_locked: 1 }],
       [],
       [],
       [], // isRestPolicyFeatureActive -> inactive, wouldn't matter either way here
-      [{ is_locked: 1 }], // checkEmployeeDateNotLocked -> locked
       [],
       [],
     );

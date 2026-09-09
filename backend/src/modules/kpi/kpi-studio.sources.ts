@@ -637,6 +637,66 @@ export function buildProcessQueryPlan(
   return { sql, params, fieldNames: names };
 }
 
+/**
+ * The per-analyst sibling of buildProcessQueryPlan: same date range, same
+ * process, but ONE ROW PER EMPLOYEE instead of one row per day — the whole
+ * range collapsed into a single aggregate per person, the same SUM/SUM-across-
+ * the-range grain every other number on this page uses (never a mean of daily
+ * ratios, which misstates whoever carries uneven volume).
+ *
+ * Only meaningful for an 'employee' source: 'column' and 'constant' sources
+ * describe data that belongs to a whole client, with no employee to break it
+ * down by, so this throws for those rather than return a table that looks
+ * like a per-agent breakdown but silently isn't one.
+ */
+export function buildProcessEmployeeBreakdownPlan(
+  source: DataSourceConfig,
+  fields: readonly SourceField[],
+  dateFrom: string,
+  dateTo: string,
+  processId: string,
+): { sql: string; params: unknown[]; fieldNames: string[] } {
+  if (!source.source_object) throw new Error(`Data source ${source.source_code} has no table configured`);
+  if (!source.date_column) throw new Error(`Data source ${source.source_code} has no date column configured`);
+  if ((source.process_key_kind ?? 'none') !== 'employee') {
+    throw new Error(
+      `Data source ${source.source_code} is not attributed to individual employees, so it has no ` +
+        `analyst-level breakdown to show — only a whole-process total.`,
+    );
+  }
+  if (source.source_type === 'integration_connector') {
+    throw new Error(
+      `Data source ${source.source_code} looks the process up from the employee, which only works ` +
+        `for a table in this system's own database.`,
+    );
+  }
+  if (!source.employee_key_column) {
+    throw new Error(`Data source ${source.source_code} names no employee column to break down by`);
+  }
+
+  const table = assertSafeIdentifier(source.source_object, 'source table');
+  const dateColumn = assertSafeIdentifier(source.date_column, 'date column');
+  const employeeColumn = assertSafeIdentifier(source.employee_key_column, 'employee key column');
+  const employeeSide = source.employee_key_kind === 'employee_id' ? 'id' : 'employee_code';
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format, 's.');
+  const { sql: fieldSelect, names, params: fieldParams } = buildFieldSelect(fields, 's.');
+  const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
+
+  const sql = `
+    SELECT e.id AS __employee_id, e.employee_code AS __employee_code,
+           e.first_name AS __first_name, e.last_name AS __last_name,
+           e.designation_id AS __designation_id,
+           ${fieldSelect}
+      FROM ${quotedTable} s
+      JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeColumn}\`
+     WHERE ${dateExpr} >= ? AND ${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)
+       AND e.process_id = ?
+     GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.designation_id
+  `;
+
+  return { sql, params: [...fieldParams, dateFrom, dateTo, processId], fieldNames: names };
+}
+
 /** date (YYYY-MM-DD) -> field name -> value, for one process. */
 export type ProcessFieldValues = Map<string, Map<string, number | null>>;
 

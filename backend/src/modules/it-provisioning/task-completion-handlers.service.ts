@@ -75,16 +75,26 @@ export async function completeItProvisioningTask(
   input: ItCompletionInput,
   actorUserId: string
 ): Promise<void> {
+  // Official email is now OPTIONAL (owner decision) — domain_account is the only hard
+  // requirement for this task. When officialEmail is blank, everything below that depends on
+  // it (employees.official_email, auth_user creation/update) is skipped rather than run with
+  // an empty value: auth_user.email is NOT NULL and UNIQUE, so writing '' for a second
+  // email-less employee would crash on the duplicate key rather than merely "work without an
+  // email". Login still works without ever reaching this branch — authService.login() already
+  // accepts employee_code as an alternate identifier to email (auth.service.ts) — but an
+  // auth_user row (and its password) has to exist first, so an employee with neither an
+  // official email nor a pre-existing user_id simply has login-account creation deferred until
+  // one is supplied (e.g. by reopening this task later).
   const officialEmail = input.official_email.trim().toLowerCase();
   const domainAccount = input.domain_account.trim();
 
-  if (!officialEmail || !domainAccount) {
+  if (!domainAccount) {
     throw Object.assign(
-      new Error('official_email and domain_account are required for IT tasks'),
+      new Error('domain_account is required for IT tasks'),
       { statusCode: 400 }
     );
   }
-  if (!OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
+  if (officialEmail && !OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
     throw Object.assign(
       new Error('official_email must end with @teammas.in or @teammas.co.in'),
       { statusCode: 400 }
@@ -97,28 +107,55 @@ export async function completeItProvisioningTask(
   try {
     await conn.beginTransaction();
 
-    // 1. Update employees.official_email
-    await conn.execute(
-      `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
-      [officialEmail, task.employee_id]
-    );
+    // 1. Update employees.official_email — only when one was actually given. An empty write
+    // here would stomp a real address the employee already has on file for no reason.
+    if (officialEmail) {
+      await conn.execute(
+        `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
+        [officialEmail, task.employee_id]
+      );
+    }
 
     // 2. Get employee's current user_id
     const [empRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT user_id, first_name, last_name FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT user_id, first_name, last_name, employee_code FROM employees WHERE id = ? LIMIT 1`,
       [task.employee_id]
     );
     const emp = empRows[0] as any;
     const existingUserId = emp?.user_id;
+    // Non-blocking: the frontend already asks the operator to confirm this exact
+    // mismatch before it submits, so reaching here with one is either a confirmed
+    // exception or a caller that bypassed the UI (CSV bulk upload, direct API call).
+    // Logged rather than rejected — domain_account is operator-entered free text, not
+    // a value this system controls, so refusing to save it would be a new failure mode
+    // of its own. See the 2026-09-09 incident this guards against.
+    if (emp?.employee_code && domainAccount.toUpperCase() !== String(emp.employee_code).toUpperCase()) {
+      console.warn(
+        `[TaskCompletion] IT_EMAIL_DOMAIN_ASSET domain_account "${domainAccount}" does not match employee_code "${emp.employee_code}" for employee ${task.employee_id} (task ${taskId})`
+      );
+    }
+    // Tracks whether a NEW auth_user was created below, so the profile-photo email further
+    // down (which only makes sense once someone can actually log in) fires on the right
+    // condition rather than on "no email was given, so we skipped account creation".
+    let createdNewAuthUser = false;
 
     if (existingUserId) {
-      // Update existing auth_user email to official email
-      await conn.execute(
-        `UPDATE auth_user SET email = ?, updated_at = NOW() WHERE id = ?`,
-        [officialEmail, existingUserId]
-      );
-    } else {
-      // Create auth_user with official email — this is the employee's first login credential
+      // Update existing auth_user email to official email — only if one was given. Employee
+      // already has login access via employee_code (auth.service.ts's login() accepts either),
+      // so leaving their current auth_user.email untouched when IT submits without one is
+      // correct, not a gap.
+      if (officialEmail) {
+        await conn.execute(
+          `UPDATE auth_user SET email = ?, updated_at = NOW() WHERE id = ?`,
+          [officialEmail, existingUserId]
+        );
+      }
+    } else if (officialEmail) {
+      // Create auth_user with official email — this is the employee's first login credential.
+      // Only reachable with a non-empty officialEmail: auth_user.email is NOT NULL and UNIQUE,
+      // so this path is skipped entirely (not run with '') when no email was given — see the
+      // comment on officialEmail above for why. The employee's login account creation is
+      // deferred until an email is supplied, e.g. by reopening this task later.
       const bcrypt = await import('bcryptjs');
       const newAuthUserId = randomUUID();
       // Temp password: Mas@XXXXXX — employee must change on first login
@@ -135,6 +172,7 @@ export async function completeItProvisioningTask(
         `UPDATE employees SET user_id = ?, updated_at = NOW() WHERE id = ?`,
         [newAuthUserId, task.employee_id]
       );
+      createdNewAuthUser = true;
 
       // Store credential hint in employee_documents (doc_type = 'it_credentials')
       // This gives IT a record that credentials were issued without storing plaintext.
@@ -160,6 +198,8 @@ export async function completeItProvisioningTask(
         ]
       );
     }
+    // else: no existingUserId and no officialEmail — nothing to do here. Domain account and
+    // asset assignment (below) still proceed; login-account creation is deferred.
 
     // 3. Asset allocation using existing asset_master + asset_assignment tables
     if (input.asset_tag) {
@@ -200,7 +240,9 @@ export async function completeItProvisioningTask(
       );
     }
 
-    // 4. Mark task actioned with structured fields
+    // 4. Mark task actioned with structured fields. officialEmail || null so an
+    // email-less completion records NULL rather than '' — this column is nullable and
+    // unconstrained (unlike auth_user.email above), but NULL still reads better than ''.
     await conn.execute(
       `UPDATE it_provisioning_request
        SET status = 'actioned', actioned_by = ?, actioned_at = NOW(),
@@ -208,7 +250,7 @@ export async function completeItProvisioningTask(
            asset_tag = COALESCE(?, asset_tag),
            updated_at = NOW()
        WHERE id = ?`,
-      [actorUserId, officialEmail, domainAccount, input.asset_tag ?? null, taskId]
+      [actorUserId, officialEmail || null, domainAccount, input.asset_tag ?? null, taskId]
     );
 
     await conn.commit();
@@ -222,9 +264,9 @@ export async function completeItProvisioningTask(
       employee_id: task.employee_id,
       change_summary: {
         task_id: taskId,
-        official_email: officialEmail,
+        official_email: officialEmail || null,
         domain_account: domainAccount,
-        auth_user_created: !existingUserId,
+        auth_user_created: createdNewAuthUser,
         asset_assigned: !!input.asset_tag,
       },
     });
@@ -234,7 +276,10 @@ export async function completeItProvisioningTask(
     // When a new auth_user account was just created, send the profile photo
     // upload email now — the employee can finally log in and act on it.
     // dispatchJoinProvisioningTasks defers this email when user_id is null.
-    if (!existingUserId) {
+    // Gated on createdNewAuthUser rather than !existingUserId: an email-less completion can
+    // leave existingUserId falsy too (login-account creation deferred, not done), and that
+    // case must not fire a "log in now" email for an account that doesn't exist yet.
+    if (createdNewAuthUser) {
       try {
         const [photoCheckRows] = await db.execute<RowDataPacket[]>(
           `SELECT user_id, photo_url, personal_email, official_email, email, first_name FROM employees WHERE id = ? LIMIT 1`,
@@ -331,6 +376,25 @@ export async function completeAdminProvisioningTask(
         `SELECT id FROM employee_biometric_enrollment WHERE employee_id = ? LIMIT 1`,
         [task.employee_id]
       );
+
+      // Non-blocking, and deliberately scoped to a FIRST-time enrollment only: many
+      // legacy employees carry a genuinely different, pre-existing cosec_user_id
+      // (an older device-numbering scheme, e.g. "AHMH2854") that has nothing to do
+      // with their employee_code and is correct as-is — warning on every later update
+      // to one of those rows would just be permanent, meaningless noise. A brand-new
+      // enrollment has no such history: it should always start out equal to the
+      // employee's own code (that's the ?? empCode fallback above), so an operator
+      // explicitly typing something else here is exactly the 2026-09-09 mistake this
+      // guards against, and the frontend already confirms it before submitting.
+      if (
+        (existingEnroll as any[]).length === 0 &&
+        input.cosec_user_id &&
+        input.cosec_user_id.toUpperCase() !== empCode.toUpperCase()
+      ) {
+        console.warn(
+          `[TaskCompletion] ADMIN_BIOMETRIC_ID_CARD cosec_user_id "${input.cosec_user_id}" does not match employee_code "${empCode}" for a first-time enrollment, employee ${task.employee_id} (task ${taskId})`
+        );
+      }
 
       if ((existingEnroll as any[]).length > 0) {
         await conn.execute(

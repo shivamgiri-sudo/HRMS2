@@ -15,6 +15,12 @@
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=budget
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=grn
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=particulars
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=payment_runs
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=bill_payments
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=other_deductions
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=billing_ledger
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=opening_balance
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --only=bill_no_master
  *
  * Budget, GRN and invoice lines mirror the CURRENT financial year from April by default.
  * Override with --from=YYYY-MM.
@@ -1103,6 +1109,250 @@ async function syncGrnLines(hrms, bill) {
   log(`  grn_entry_line_snapshot: ${n} rows (${withCc} carry a cost centre, ${scoped.length - withCc} do not)`);
 }
 
+/**
+ * Sync 14 — vendor_payment_run_snapshot, from db_bill.tbl_payment.
+ *
+ * Payment RUN headers — one row per batch of bills paid together in a single bank
+ * transaction. Mirrored in full (not finance-year scoped like budget/GRN): only 6,280
+ * rows total, so there is no volume reason to window it, and a "when did we last pay
+ * this vendor" question naturally reaches back further than the current FY.
+ */
+async function syncPaymentRuns(hrms, bill) {
+  log('Sync 14: populating vendor_payment_run_snapshot from db_bill.tbl_payment ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT id, company_name, financial_year, branch_name, pay_type, pay_no, bank_name,
+            pays_date, pay_amount, deposit_bank, no_of_bills, pay_type_dates,
+            pay_of_these_bills, username, createdate, PaymentFile, Approve_Payment
+       FROM tbl_payment ORDER BY id`);
+  log(`  db_bill.tbl_payment rows: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    company_name: trim(r.company_name),
+    financial_year: trim(r.financial_year),
+    branch_name: trim(r.branch_name),
+    pay_type: trim(r.pay_type),
+    pay_no: r.pay_no ?? null,
+    bank_name: trim(r.bank_name),
+    pay_date: safeDate(r.pays_date),
+    pay_amount: safeDec(r.pay_amount),
+    deposit_bank: trim(r.deposit_bank),
+    no_of_bills: r.no_of_bills ?? null,
+    pay_type_date: safeDateTime(r.pay_type_dates),
+    paid_bill_refs: trim(r.pay_of_these_bills),
+    raised_by: trim(r.username),
+    payment_file: trim(r.PaymentFile),
+    is_approved: r.Approve_Payment == null ? null : (Number(r.Approve_Payment) === 1 ? 1 : 0),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','company_name','financial_year','branch_name','pay_type','pay_no',
+    'bank_name','pay_date','pay_amount','deposit_bank','no_of_bills','pay_type_date','paid_bill_refs',
+    'raised_by','payment_file','is_approved','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'vendor_payment_run_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'vendor_payment_run_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  const value = rows.reduce((s, r) => s + Number(r.pay_amount || 0), 0);
+  log(`  vendor_payment_run_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh paid out across all runs`);
+}
+
+/**
+ * Sync 15 — vendor_bill_payment_snapshot, from db_bill.bill_pay_particulars.
+ *
+ * The actual "paid history" per bill: TDS deducted, net amount paid, pass/reject status.
+ * PaymentId (the declared FK to tbl_payment) is null on effectively every row sampled, so
+ * it is mirrored verbatim as payment_ref rather than trusted as a join key — pay_no +
+ * branch_name + financial_year is the closer (still not guaranteed-unique) correlation to
+ * vendor_payment_run_snapshot.
+ */
+async function syncBillPayments(hrms, bill) {
+  log('Sync 15: populating vendor_bill_payment_snapshot from db_bill.bill_pay_particulars ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT PaymentId, id, company_name, branch_name, financial_year, pay_type, pay_no, bank_name,
+            pay_dates, pay_amount, deposit_bank, no_of_bills, bill_no, bill_amount, bill_passed,
+            tds_ded, net_amount, deduction, status, remarks, pay_type_dates, collection_id,
+            username, delete_status, createdate, PaymentFile, dialdesk
+       FROM bill_pay_particulars ORDER BY id`);
+  log(`  db_bill.bill_pay_particulars rows: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    payment_ref: trim(r.PaymentId),
+    company_name: trim(r.company_name),
+    branch_name: trim(r.branch_name),
+    financial_year: trim(r.financial_year),
+    pay_type: trim(r.pay_type),
+    pay_no: trim(r.pay_no),
+    bank_name: trim(r.bank_name),
+    pay_date_raw: trim(r.pay_dates),
+    pay_amount: safeDec(r.pay_amount),
+    deposit_bank: trim(r.deposit_bank),
+    no_of_bills: trim(r.no_of_bills),
+    bill_no: trim(r.bill_no),
+    bill_amount: safeDec(r.bill_amount),
+    bill_passed: trim(r.bill_passed),
+    tds_deducted: safeDec(r.tds_ded),
+    net_amount: safeDec(r.net_amount),
+    deduction: safeDec(r.deduction),
+    status: trim(r.status),
+    remarks: trim(r.remarks)?.slice(0, 500) ?? null,
+    pay_type_date: safeDateTime(r.pay_type_dates),
+    collection_id: trim(r.collection_id),
+    raised_by: trim(r.username),
+    is_deleted: Number(r.delete_status) === 1 ? 1 : 0,
+    payment_file: trim(r.PaymentFile),
+    is_dialdesk: r.dialdesk == null ? null : (Number(r.dialdesk) === 1 ? 1 : 0),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','payment_ref','company_name','branch_name','financial_year','pay_type',
+    'pay_no','bank_name','pay_date_raw','pay_amount','deposit_bank','no_of_bills','bill_no','bill_amount',
+    'bill_passed','tds_deducted','net_amount','deduction','status','remarks','pay_type_date',
+    'collection_id','raised_by','is_deleted','payment_file','is_dialdesk','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'vendor_bill_payment_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'vendor_bill_payment_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  const netPaid = rows.reduce((s, r) => s + Number(r.net_amount || 0), 0);
+  const tds = rows.reduce((s, r) => s + Number(r.tds_deducted || 0), 0);
+  log(`  vendor_bill_payment_snapshot: ${n} rows, Rs ${(netPaid / 100000).toFixed(2)} lakh net paid, `
+    + `Rs ${(tds / 100000).toFixed(2)} lakh TDS deducted`);
+}
+
+/** Sync 16 — vendor_bill_deduction_snapshot, from db_bill.other_deductions_bill. */
+async function syncOtherDeductions(hrms, bill) {
+  log('Sync 16: populating vendor_bill_deduction_snapshot from db_bill.other_deductions_bill ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT id, company_name, branch_name, financial_year, pay_type, pay_no, pay_amount, bank_name,
+            deposit_bank, pays_date, no_of_bills, pay_type_dates, status, bill_no, other_deduction,
+            other_remarks, collection_id, username, createdate, PaymentFile
+       FROM other_deductions_bill ORDER BY id`);
+  log(`  db_bill.other_deductions_bill rows: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    company_name: trim(r.company_name),
+    branch_name: trim(r.branch_name),
+    financial_year: trim(r.financial_year),
+    pay_type: trim(r.pay_type),
+    pay_no: trim(r.pay_no),
+    pay_amount: safeDec(r.pay_amount),
+    bank_name: trim(r.bank_name),
+    deposit_bank: trim(r.deposit_bank),
+    pay_date: safeDateTime(r.pays_date),
+    no_of_bills: r.no_of_bills ?? null,
+    pay_type_date: safeDateTime(r.pay_type_dates),
+    status: r.status == null ? null : (Number(r.status) === 1 ? 1 : 0),
+    bill_no: trim(r.bill_no),
+    other_deduction: safeDec(r.other_deduction),
+    other_remarks: trim(r.other_remarks)?.slice(0, 500) ?? null,
+    collection_id: trim(r.collection_id),
+    raised_by: trim(r.username),
+    payment_file: trim(r.PaymentFile),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','company_name','branch_name','financial_year','pay_type','pay_no',
+    'pay_amount','bank_name','deposit_bank','pay_date','no_of_bills','pay_type_date','status','bill_no',
+    'other_deduction','other_remarks','collection_id','raised_by','payment_file','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'vendor_bill_deduction_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'vendor_bill_deduction_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  const value = rows.reduce((s, r) => s + Number(r.other_deduction || 0), 0);
+  log(`  vendor_bill_deduction_snapshot: ${n} rows, Rs ${(value / 100000).toFixed(2)} lakh deducted`);
+}
+
+/** Sync 17 — billing_client_ledger_snapshot, from db_bill.billing_ledger. */
+async function syncBillingLedger(hrms, bill) {
+  log('Sync 17: populating billing_client_ledger_snapshot from db_bill.billing_ledger ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT led_id, fin_year, fin_month, clientId, subs, talk_time, topup, setup_cost
+       FROM billing_ledger ORDER BY led_id`);
+  log(`  db_bill.billing_ledger rows: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.led_id,
+    finance_year: trim(r.fin_year),
+    finance_month: trim(r.fin_month),
+    client_source_id: r.clientId ?? null,
+    subscription_amt: safeDec(r.subs),
+    talktime_amt: safeDec(r.talk_time),
+    topup_amt: safeDec(r.topup),
+    setup_cost_amt: safeDec(r.setup_cost),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','finance_year','finance_month','client_source_id','subscription_amt',
+    'talktime_amt','topup_amt','setup_cost_amt','synced_at'];
+  const n = await insertBatch(hrms, 'billing_client_ledger_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_client_ledger_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  log(`  billing_client_ledger_snapshot: ${n} rows`);
+}
+
+/** Sync 18 — billing_opening_balance_snapshot, from db_bill.billing_opening_balance (current only). */
+async function syncOpeningBalance(hrms, bill) {
+  log('Sync 18: populating billing_opening_balance_snapshot from db_bill.billing_opening_balance ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT op_id, clientId, op_bal, cs_bal, op_dd, bill_start_date, fr_val, fv_st_rl,
+            bill_end_date, subs_val, adv_val, as_on_date, created_at, updated_at
+       FROM billing_opening_balance ORDER BY op_id`);
+  log(`  db_bill.billing_opening_balance rows: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.op_id,
+    client_source_id: r.clientId ?? null,
+    opening_balance: safeDec(r.op_bal),
+    cs_balance: safeDec(r.cs_bal),
+    opening_dd: trim(r.op_dd),
+    bill_start_date: safeDate(r.bill_start_date),
+    bill_end_date: safeDate(r.bill_end_date),
+    fr_val: trim(r.fr_val),
+    fv_st_rl: trim(r.fv_st_rl),
+    subscription_val: safeDec(r.subs_val),
+    advance_val: safeDec(r.adv_val),
+    as_on_date: safeDateTime(r.as_on_date),
+    source_created_at: safeDateTime(r.created_at),
+    source_updated_at: safeDateTime(r.updated_at),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','client_source_id','opening_balance','cs_balance','opening_dd',
+    'bill_start_date','bill_end_date','fr_val','fv_st_rl','subscription_val','advance_val',
+    'as_on_date','source_created_at','source_updated_at','synced_at'];
+  const n = await insertBatch(hrms, 'billing_opening_balance_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'billing_opening_balance_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  log(`  billing_opening_balance_snapshot: ${n} rows`);
+}
+
+/** Sync 19 — bill_no_master_snapshot, from db_bill.bill_no_master. */
+async function syncBillNoMaster(hrms, bill) {
+  log('Sync 19: populating bill_no_master_snapshot from db_bill.bill_no_master ...');
+  const now = new Date();
+  const [src] = await bill.query(
+    `SELECT id, company_name, finance_year, bill_no, RTGS, cost_center, proforma_bill_no,
+            createdate, active, month_year
+       FROM bill_no_master ORDER BY id`);
+  log(`  db_bill.bill_no_master rows: ${src.length}`);
+
+  const rows = src.map(r => ({
+    bill_source_id: r.id,
+    company_name: trim(r.company_name),
+    finance_year: trim(r.finance_year),
+    bill_no: r.bill_no ?? null,
+    is_rtgs: r.RTGS == null ? null : (Number(r.RTGS) === 1 ? 1 : 0),
+    cost_centre_source_id: r.cost_center ?? null,
+    proforma_bill_no: trim(r.proforma_bill_no),
+    month_year: trim(r.month_year),
+    is_active: r.active == null ? null : (Number(r.active) === 1 ? 1 : 0),
+    source_created_at: safeDateTime(r.createdate),
+    synced_at: now,
+  }));
+  const cols = ['bill_source_id','company_name','finance_year','bill_no','is_rtgs','cost_centre_source_id',
+    'proforma_bill_no','month_year','is_active','source_created_at','synced_at'];
+  const n = await insertBatch(hrms, 'bill_no_master_snapshot', rows, cols, cols.slice(1));
+  await pruneOrphans(hrms, 'bill_no_master_snapshot', rows.map(r => r.bill_source_id), '1=1');
+  log(`  bill_no_master_snapshot: ${n} rows`);
+}
+
 async function main() {
   const only = process.argv.find(a => a.startsWith('--only='))?.split('=')[1] ?? 'all';
 
@@ -1126,6 +1376,12 @@ async function main() {
     if (only === 'all' || only === 'credit_notes')  await syncCreditNotes(hrms, bill);
     if (only === 'all' || only === 'credit_lines')  await syncCreditNoteLines(hrms, bill);
     if (only === 'all' || only === 'prov_deduct')   await syncProvisionDeductions(hrms, bill);
+    if (only === 'all' || only === 'payment_runs')  await syncPaymentRuns(hrms, bill);
+    if (only === 'all' || only === 'bill_payments') await syncBillPayments(hrms, bill);
+    if (only === 'all' || only === 'other_deductions') await syncOtherDeductions(hrms, bill);
+    if (only === 'all' || only === 'billing_ledger')   await syncBillingLedger(hrms, bill);
+    if (only === 'all' || only === 'opening_balance')  await syncOpeningBalance(hrms, bill);
+    if (only === 'all' || only === 'bill_no_master')   await syncBillNoMaster(hrms, bill);
 
     log('Done.');
   } finally {

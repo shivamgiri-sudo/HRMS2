@@ -564,38 +564,52 @@ export async function createEmployeeFromCandidate(
       });
 
     // Promote the candidate's mandatory onboarding Live Selfie to employee
-    // avatar_url/photo_url (non-blocking). Previously this read
-    // ats_candidate.selfie_url — the legacy short-form's flat field, not the
-    // real onboarding document — and self-admittedly no-op'd whenever that
-    // value was an auth-gated /api/files/candidate/ URL, which is the normal
-    // case. The correct source is the candidate_onboarding_document row
-    // (doc_type "Live Selfie") the mandatory-gate onboarding flow writes.
-    try {
-      const [selfieDocRows] = await db.execute<RowDataPacket[]>(
-        `SELECT file_path FROM candidate_onboarding_document
-          WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
-          ORDER BY uploaded_at DESC LIMIT 1`,
-        [candidateId]
-      );
-      const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
-      const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
+    // avatar_url/photo_url. Previously this read ats_candidate.selfie_url — the
+    // legacy short-form's flat field, not the real onboarding document — and
+    // self-admittedly no-op'd whenever that value was an auth-gated
+    // /api/files/candidate/ URL, which is the normal case. The correct source is
+    // the candidate_onboarding_document row (doc_type "Live Selfie") the
+    // mandatory-gate onboarding flow writes.
+    //
+    // Genuinely fire-and-forget now, not just labelled that way. This block was
+    // commented "(non-blocking)" while still sitting behind an `await` — the two
+    // AWAITED calls inside it, cropFaceForProfilePhoto -> detectFaceBbox, run a
+    // TensorFlow.js/WASM face-detection model (@vladmandic/face-api) that lazily
+    // loads three neural nets from disk and initializes the WASM backend on the
+    // FIRST call after every process restart. That cold load routinely takes
+    // 10-30+ seconds — and while it runs, it also occupies Node's single event
+    // loop, so unrelated concurrent requests (a reject on a different offer, a
+    // second approve) queue up behind it too, not just this one. That is
+    // Branch Head's "offer approve/reject take a long time, sometimes 30s
+    // timeout" on /ats/offer-approvals. dispatchJoinProvisioningTasks just below
+    // was already moved off this same blocking pattern for exactly this
+    // failure mode ("was causing 30+ second timeouts for Branch Head") — this
+    // step is the one survivor of that fix.
+    (async () => {
+      try {
+        const [selfieDocRows] = await db.execute<RowDataPacket[]>(
+          `SELECT file_path FROM candidate_onboarding_document
+            WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
+            ORDER BY uploaded_at DESC LIMIT 1`,
+          [candidateId]
+        );
+        const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
+        const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
 
-      if (resolvedPath) {
-        const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
-        await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
-        result.warnings.push('Onboarding Live Selfie auto-cropped and promoted to employee avatar');
-      } else if (storedPath) {
-        // Row exists but the file isn't reachable on this machine (see
-        // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
-        // path-resolution class of already-missing files).
-        console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
-        result.warnings.push('Onboarding Live Selfie not promoted — source file missing on disk');
-      } else {
-        result.warnings.push('Onboarding Live Selfie not promoted — no Live Selfie document on file');
+        if (resolvedPath) {
+          const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
+          await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
+          console.log(`[EmployeeOrchestrator] Onboarding Live Selfie auto-cropped and promoted to employee avatar for ${employeeCode}`);
+        } else if (storedPath) {
+          // Row exists but the file isn't reachable on this machine (see
+          // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
+          // path-resolution class of already-missing files).
+          console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
+        }
+      } catch (selfieErr) {
+        console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
       }
-    } catch (selfieErr) {
-      console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
-    }
+    })();
 
     // RULE 9: Provisioning failure doesn't block creation — fire-and-forget so
     // sequential SMTP sends inside dispatchJoinProvisioningTasks do not hold

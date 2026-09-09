@@ -156,7 +156,11 @@ weekoffPreferenceRouter.get("/weekoff-preferences", h(async (req, res) => {
     // All-access roles: super_admin, ceo, payroll, finance
     const isAllAccess = await hasRole(userId, "super_admin", "ceo", "payroll", "finance");
     // Branch-scoped roles: admin, hr, wfm, branch_manager see their branch only
-    const isBranchScope = await hasRole(userId, "admin", "hr", "wfm", "branch_manager", "manager", "assistant_manager", "tl");
+    // "team_leader" alongside the legacy "tl" alias -- hasRole() matches
+    // role_key literally, no synonym expansion, and live data shows 9 real
+    // accounts hold "team_leader" against only 2 holding "tl" (same gap
+    // found and fixed in attendance-daily-scoped.routes.ts).
+    const isBranchScope = await hasRole(userId, "admin", "hr", "wfm", "branch_manager", "manager", "assistant_manager", "tl", "team_leader");
     if (!isAllAccess && !isBranchScope) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }

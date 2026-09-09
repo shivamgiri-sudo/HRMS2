@@ -6,9 +6,9 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Clock, Database,
-  Download, Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sparkles,
-  Target, Upload, Users, Users2, X,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronRight, Clock,
+  Database, Download, Filter, Headphones, Lightbulb, Loader2, Minus, PenLine, Radio,
+  ShieldAlert, Sparkles, Target, Upload, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -82,7 +82,7 @@ interface FeedRow {
 }
 interface NeverReportedGroup {
   metricKey: string; metricName: string; sourceObject: string;
-  processCount: number; processNames: string[];
+  processCount: number; processNames: string[]; processIds: string[];
   uploadTypeCode: string | null; uploadTypeName: string | null;
   existingSourceRows: number | null;
 }
@@ -151,6 +151,49 @@ interface Drilldown {
     date: string; value: number | null; numerator: number | null;
     denominator: number | null; note: string | null; source: string | null;
   }>;
+}
+
+interface AnalystScore {
+  employeeId: string; employeeCode: string; name: string; designation: string | null;
+  value: number | null; manual: boolean;
+  reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
+  teamLeader: { employeeCode: string; name: string } | null;
+  assistantManager: { employeeCode: string; name: string } | null;
+}
+interface AnalystBreakdown {
+  available: boolean; reason: string | null;
+  metricName: string | null; unit: string | null; direction: string | null; targetValue: number | null;
+  periodFrom: string | null; periodTo: string | null;
+  analysts: AnalystScore[];
+}
+
+interface VocQuote { employeeCode: string; employeeName: string; callDate: string; quote: string }
+interface ClapVoiceOfCustomer {
+  available: boolean; reason: string | null;
+  periodFrom: string | null; periodTo: string | null; totalAuditedCalls: number;
+  clapBreakdown: Array<{ clap: "Customer" | "Logistic" | "Agent" | "Product"; count: number; pct: number }>;
+  quotes: {
+    agent: { positive: VocQuote[]; negative: VocQuote[] };
+    logistic: { positive: VocQuote[]; negative: VocQuote[] };
+    product: { positive: VocQuote[]; negative: VocQuote[] };
+  };
+}
+
+interface WorkforceCorrelationPoint {
+  date: string;
+  agentClapPct: number | null;
+  auditedCalls: number;
+  activeHeadcount: number;
+  rampCohortPct: number | null;
+  presentHeadcount: number | null;
+  plannedHeadcount: number | null;
+}
+interface WorkforceCorrelation {
+  available: boolean; reason: string | null;
+  periodFrom: string | null; periodTo: string | null;
+  daily: WorkforceCorrelationPoint[];
+  weeklyAttrition: Array<{ weekStart: string; exits: number }>;
+  rosterCoverageDays: number;
 }
 
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
@@ -383,6 +426,261 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
         <p className="text-[8.5px] text-slate-400 mt-0.5 truncate">{targetCaption(r)}</p>
       )}
     </button>
+  );
+}
+
+const CLAP_META: Record<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"], { color: string; icon: string }> = {
+  Customer: { color: "#3B82F6", icon: "👤" },
+  Logistic: { color: "#F59E0B", icon: "🚚" },
+  Agent:    { color: "#E11D48", icon: "🎧" },
+  Product:  { color: "#10B981", icon: "📦" },
+};
+
+/**
+ * Real root-cause classification (CLAP: Customer/Logistic/Agent/Product) and
+ * verbatim customer quotes for a process's audited calls -- not a metric
+ * percentage, the actual reason behind it. The taxonomy and the underlying
+ * data are the same ones already proven live in the sibling Mydashboards
+ * project; this reads the same upstream db_audit source, never a copy of it.
+ */
+function VoiceOfCustomerPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "voice-of-customer", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapVoiceOfCustomer>>(
+      `/api/process-operations/${processId}/voice-of-customer?period=${period}`),
+  });
+  const [category, setCategory] = useState<"agent" | "logistic" | "product">("agent");
+  const voc = data?.data;
+
+  if (isLoading || !voc) {
+    return (
+      <ChartCard title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
+        <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading what customers actually said…
+        </div>
+      </ChartCard>
+    );
+  }
+  if (!voc.available || !voc.clapBreakdown.length) {
+    return (
+      <ChartCard title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
+        <p className="text-xs text-slate-400 italic px-3 py-4">
+          {voc.reason ?? "Not available for this process."}
+        </p>
+      </ChartCard>
+    );
+  }
+
+  const quotesForCategory = voc.quotes[category];
+  return (
+    <ChartCard title="Voice of the Customer"
+      subtitle={`${voc.totalAuditedCalls.toLocaleString("en-IN")} audited call${voc.totalAuditedCalls === 1 ? "" : "s"} — what's actually behind them, not just a score`}>
+      <div className="px-3">
+        {/* CLAP breakdown -- real root cause, not agent quality alone */}
+        <div className="flex h-6 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
+          {voc.clapBreakdown.map((c) => (
+            <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
+              style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
+          {voc.clapBreakdown.map((c) => (
+            <span key={c.clap} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: CLAP_META[c.clap].color }} />
+              {CLAP_META[c.clap].icon} {c.clap} {c.pct}%
+            </span>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-400 mt-1.5">
+          Every audited call classified by its real recorded scenario — Agent means the call turned on
+          agent behaviour itself (needs improvement, hold procedure, fraud complaint), not just "someone
+          called." Customer/Product/Logistic mean the root issue lay elsewhere.
+        </p>
+
+        {/* Category selector -- only Agent/Logistic/Product carry verbatim quotes */}
+        <div className="flex gap-1.5 mt-3">
+          {(["agent", "logistic", "product"] as const).map((cat) => {
+            const meta = CLAP_META[(cat.charAt(0).toUpperCase() + cat.slice(1)) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"]];
+            const n = voc.quotes[cat].positive.length + voc.quotes[cat].negative.length;
+            return (
+              <button key={cat} type="button" onClick={() => setCategory(cat)}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold border transition cursor-pointer ${
+                  category === cat ? "text-white" : "text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
+                style={category === cat ? { background: meta.color, borderColor: meta.color } : undefined}>
+                {meta.icon} {cat[0].toUpperCase() + cat.slice(1)} {n > 0 && <span className="opacity-80">({n})</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mt-2.5 mb-1">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
+            {quotesForCategory.positive.length ? (
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {quotesForCategory.positive.map((q, i) => (
+                  <div key={i} className="rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-2.5 py-1.5">
+                    <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
+                    <p className="text-[9.5px] text-slate-400 mt-1">{q.employeeName} ({q.employeeCode}) · {q.callDate}</p>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-[11px] text-slate-400 italic">No positive quotes recorded for this category this period.</p>}
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-red-600 mb-1.5">What went wrong</p>
+            {quotesForCategory.negative.length ? (
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {quotesForCategory.negative.map((q, i) => (
+                  <div key={i} className="rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-2.5 py-1.5">
+                    <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
+                    <p className="text-[9.5px] text-slate-400 mt-1">{q.employeeName} ({q.employeeCode}) · {q.callDate}</p>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-[11px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
+          </div>
+        </div>
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Root Cause vs. Workforce — the question the CLAP panel above can't answer
+ * alone: is a rise in agent-attributed complaints a coaching problem, or is
+ * it what a green floor or an understaffed shift looks like from the
+ * customer's side? No correlation coefficient is computed here on purpose —
+ * with a handful of noisy weekly counts per process that would be false
+ * precision, not insight. This is a plain juxtaposition on a shared date
+ * axis; the reader's own eye does the judging.
+ */
+function WorkforceCorrelationPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "workforce-correlation", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<WorkforceCorrelation>>(
+      `/api/process-operations/${processId}/workforce-correlation?period=${period}`),
+  });
+  const wc = data?.data;
+
+  if (isLoading || !wc) {
+    return (
+      <ChartCard title="Root Cause vs. Workforce" subtitle="Agent-attributed complaints against staffing and tenure, same dates">
+        <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Lining up the two sides…
+        </div>
+      </ChartCard>
+    );
+  }
+  if (!wc.available || wc.daily.length < 3) {
+    return (
+      <ChartCard title="Root Cause vs. Workforce" subtitle="Agent-attributed complaints against staffing and tenure, same dates">
+        <p className="text-xs text-slate-400 italic px-3 py-4">
+          {wc.reason ?? "Not enough history yet to line these up."}
+        </p>
+      </ChartCard>
+    );
+  }
+
+  const rosterDays = wc.daily.length;
+  const hasRoster = wc.rosterCoverageDays > 0;
+
+  return (
+    <ChartCard title="Root Cause vs. Workforce"
+      subtitle="Agent-attributed complaint share against ramp-cohort tenure and staffing — same dates, side by side, not a claim of cause">
+      <div className="px-3 space-y-4">
+        {/* Row 1: agent-CLAP share vs. ramp-cohort tenure share -- both percentages, one axis */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+            Agent-attributed complaints vs. green-floor share
+          </p>
+          <div className="h-40">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={wc.daily} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+                <CartesianGrid {...GRID} vertical={false} />
+                <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
+                <YAxis domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE}
+                  formatter={(v: number, n: string) => [v === null ? "no data" : `${v.toFixed(1)}%`,
+                    n === "agentClapPct" ? "Agent-attributed calls" : "≤30-day tenure share"]} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
+                  formatter={(n: string) => n === "agentClapPct" ? "Agent-attributed calls" : "≤30-day tenure share"} />
+                <Line type="monotone" dataKey="agentClapPct" stroke={CLAP_META.Agent.color} strokeWidth={2}
+                  dot={false} isAnimationActive={false} connectNulls={false} />
+                <Line type="monotone" dataKey="rampCohortPct" stroke={C_AMBER} strokeWidth={2}
+                  strokeDasharray="4 2" dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Row 2: planned vs. present headcount -- both headcounts, one axis. Roster is real
+            but sparse; say so honestly instead of drawing a mostly-empty line as zero. */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+            Staffing: rostered vs. actually present
+          </p>
+          {hasRoster ? (
+            <>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={wc.daily} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+                    <CartesianGrid {...GRID} vertical={false} />
+                    <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                      tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
+                    <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE}
+                      formatter={(v: number, n: string) => [v === null ? "no roster data" : v,
+                        n === "plannedHeadcount" ? "Rostered" : "Present"]} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
+                      formatter={(n: string) => n === "plannedHeadcount" ? "Rostered" : "Present"} />
+                    <Line type="monotone" dataKey="plannedHeadcount" stroke={C_PURPLE} strokeWidth={2}
+                      dot={false} isAnimationActive={false} connectNulls={false} />
+                    <Line type="monotone" dataKey="presentHeadcount" stroke={C_BLUE} strokeWidth={2}
+                      strokeDasharray="4 2" dot={false} isAnimationActive={false} connectNulls={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[9.5px] text-slate-400 mt-1">
+                Roster has real published data for {wc.rosterCoverageDays} of {rosterDays} days shown — gaps are
+                where nothing was published, not zero staff.
+              </p>
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-400 italic py-2">
+              This process has no published roster for this period, so staffing can't be shown against actual
+              presence — that side stays blank rather than a guessed number.
+            </p>
+          )}
+        </div>
+
+        {/* Row 3: attrition, weekly -- its own count axis, its own chart */}
+        {wc.weeklyAttrition.length > 0 && (
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">Exits by week</p>
+            <div className="h-24">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={wc.weeklyAttrition} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+                  <CartesianGrid {...GRID} vertical={false} />
+                  <XAxis dataKey="weekStart" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
+                    tickFormatter={(v) => String(v).slice(5)} />
+                  <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} width={20} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v, "Exits"]} />
+                  <Bar dataKey="exits" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        <p className="text-[9.5px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+          These lines are shown together, not correlated — with a handful of weekly events per process, a
+          computed correlation would be more confident than the data actually is. Read it by eye: do agent
+          complaints move with a green floor or a staffing gap, or don't they.
+        </p>
+      </div>
+    </ChartCard>
   );
 }
 
@@ -662,6 +960,370 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
 }
 
 /**
+ * The deepest level of the drill-down: not a row of raw data, a row per
+ * PERSON — name, employee code, their own score on this exact metric, real
+ * designation, and the real reporting chain (Team Leader / Assistant Manager
+ * picked out of it when one genuinely exists, honestly absent when it
+ * doesn't — see the backend's TL_PATTERN/AM_PATTERN comment). Only meaningful
+ * for a metric attributed to individual employees; a whole-process metric
+ * says so rather than render an empty table.
+ */
+interface EmployeeImportOutcome {
+  row: number; employeeCode: string; scoreDate: string; value: number | null;
+  ok: boolean; message?: string;
+}
+
+/**
+ * The deepest-level manual path: hand-enter a score per analyst for a metric
+ * that genuinely has no automated per-employee feed. Only ever shown when the
+ * backend has already confirmed this metric IS 'employee'-kind but has zero
+ * automated rows this period — never offered for a whole-process metric
+ * (nothing to attribute to) or one that already has real per-employee data
+ * (an upload here would just never be read; see getMetricAnalystBreakdown's
+ * fallback ordering).
+ */
+function EmployeeUploadBox({ processId, metricKey, period, onSaved }: {
+  processId: string; metricKey: string; period: ReportPeriod; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [preview, setPreview] = useState<EmployeeImportOutcome[] | null>(null);
+  const [previewDryRun, setPreviewDryRun] = useState(true);
+
+  const parseRows = (text: string) => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const body = lines.length && /^employee[_ ]?code\s*,/i.test(lines[0]) ? lines.slice(1) : lines;
+    return body.map((line) => {
+      const [employeeCode, scoreDate, value, ...noteParts] = line.split(",").map((c) => c.trim());
+      return { employeeCode, scoreDate, value, note: noteParts.join(",") || undefined };
+    });
+  };
+  const run = (dryRun: boolean) =>
+    hrmsApi.post<HrmsEnvelope<{ imported: number; errors: Array<{ row: number; message: string }>; outcomes: EmployeeImportOutcome[] }>>(
+      `/api/process-data-source/${processId}/metric/${metricKey}/employee-import`,
+      { rows: parseRows(pasted), dry_run: dryRun },
+    );
+  const check = useMutation({
+    mutationFn: () => run(true),
+    onSuccess: (res) => { setPreview(res.data.outcomes); setPreviewDryRun(true); },
+    onError: (err: unknown) => toast({
+      title: "Could not check rows", variant: "destructive",
+      description: err instanceof Error ? err.message : "Request failed",
+    }),
+  });
+  const doImport = useMutation({
+    mutationFn: () => run(false),
+    onSuccess: (res) => {
+      setPreview(res.data.outcomes); setPreviewDryRun(false);
+      const failed = res.data.errors.length;
+      toast({
+        title: `${res.data.imported} row${res.data.imported === 1 ? "" : "s"} saved`,
+        description: failed ? `${failed} row${failed === 1 ? "" : "s"} rejected — see the list below.` : undefined,
+        variant: failed ? "destructive" : undefined,
+      });
+      onSaved();
+    },
+    onError: (err: unknown) => toast({
+      title: "Import failed", variant: "destructive",
+      description: err instanceof Error ? err.message : "Request failed",
+    }),
+  });
+  const readyCount = preview?.filter((o) => o.ok).length ?? 0;
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+        <Upload size={11} />Add per-analyst values by hand
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/60 dark:bg-slate-800/30">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+          Paste rows: <code className="font-mono text-[10px] bg-white dark:bg-slate-900 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700">employee_code,date,value,note</code>
+        </p>
+        <button type="button" onClick={() => { setOpen(false); setPasted(""); setPreview(null); }}
+          className="text-slate-400 hover:text-slate-600 cursor-pointer"><X size={13} /></button>
+      </div>
+      <textarea value={pasted} onChange={(e) => { setPasted(e.target.value); setPreview(null); }}
+        rows={4} placeholder={"MAS12345,2026-09-09,78.5\nMAS12346,2026-09-09,64.0,typed from the weekly QA sheet"}
+        className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[11px] font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" />
+      <p className="text-[10px] text-slate-400 mt-1">
+        Each row is one analyst's score for one day — never a whole-process average split across people.
+        This is only used when no automated reading exists; a real feed starting later takes over automatically.
+      </p>
+      <div className="flex items-center gap-2 mt-2">
+        <button type="button" disabled={!pasted.trim() || check.isPending}
+          onClick={() => check.mutate()}
+          className="rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold px-3 py-1.5 hover:bg-slate-300 dark:hover:bg-slate-600 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {check.isPending ? "Checking…" : "Check rows"}
+        </button>
+        <button type="button" disabled={!preview || !previewDryRun || readyCount === 0 || doImport.isPending}
+          onClick={() => doImport.mutate()}
+          className="rounded-lg bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 hover:bg-blue-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {doImport.isPending ? "Saving…" : `Save ${readyCount || ""} row${readyCount === 1 ? "" : "s"}`}
+        </button>
+      </div>
+      {preview && (
+        <div className="mt-2 rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <table className="w-full text-[10px]">
+            <thead className="bg-white dark:bg-slate-900 text-slate-400">
+              <tr>
+                <th className="text-left px-2 py-1 font-semibold">Employee code</th>
+                <th className="text-left px-2 py-1 font-semibold">Date</th>
+                <th className="text-right px-2 py-1 font-semibold">Value</th>
+                <th className="text-left px-2 py-1 font-semibold">{previewDryRun ? "Ready?" : "Saved?"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.map((o) => (
+                <tr key={o.row} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-2 py-1 font-mono">{o.employeeCode || "—"}</td>
+                  <td className="px-2 py-1">{o.scoreDate || "—"}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{o.value === null ? "no data" : o.value}</td>
+                  <td className="px-2 py-1" style={{ color: o.ok ? C_GREEN : C_RED }}>
+                    {o.ok ? (previewDryRun ? "ready" : "saved") : (o.message ?? "rejected")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnalystBreakdownPanel({ processId, metricKey, period }: {
+  processId: string; metricKey: string; period: ReportPeriod;
+}) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<AnalystBreakdown>>(
+      `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
+  });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const ab = data?.data;
+  const invalidateBreakdown = () => qc.invalidateQueries({
+    queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
+  });
+
+  const passes = (v: number | null, target: number | null, direction: string | null) => {
+    if (v === null || target === null || !direction) return null;
+    return direction === "higher_is_better" ? v >= target : v <= target;
+  };
+
+  return (
+    <section>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 inline-flex items-center gap-1">
+        <Users size={11} />Analyst-wise score — the deepest level of this drill-down
+      </div>
+      {isLoading || !ab ? (
+        <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading each analyst's own score…
+        </div>
+      ) : !ab.available ? (
+        <p className="text-xs text-slate-400 italic py-1">{ab.reason ?? "Not available for this metric."}</p>
+      ) : ab.analysts.length === 0 ? (
+        <div>
+          <p className="text-xs text-slate-400 italic py-1">
+            No analyst has a reading for this metric in this period — not that everyone scored zero.
+          </p>
+          <EmployeeUploadBox processId={processId} metricKey={metricKey} period={period} onSaved={invalidateBreakdown} />
+        </div>
+      ) : (
+        <div>
+          <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-96 overflow-y-auto">
+            <table className="w-full text-[11px]">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1.5 font-semibold">Analyst</th>
+                  <th className="text-left px-2 py-1.5 font-semibold">Employee code</th>
+                  <th className="text-right px-2 py-1.5 font-semibold">Score</th>
+                  <th className="text-left px-2 py-1.5 font-semibold">Team Leader</th>
+                  <th className="text-left px-2 py-1.5 font-semibold">Assistant Manager</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ab.analysts.map((a) => {
+                  const pass = passes(a.value, ab.targetValue, ab.direction);
+                  const open = expandedId === a.employeeId;
+                  return (
+                    <Fragment key={a.employeeId}>
+                      <tr onClick={() => setExpandedId(open ? null : a.employeeId)}
+                        aria-expanded={open}
+                        title="Show this analyst's full reporting chain"
+                        className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${open ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
+                        <td className="px-2 py-1.5 text-slate-700 dark:text-slate-300">
+                          <span className="inline-flex items-center gap-1">
+                            <ChevronRight size={11} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+                            <span className="font-medium">{a.name}</span>
+                            {a.manual && (
+                              <PenLine size={10} className="text-purple-500 shrink-0"
+                                aria-label="Typed in by hand — no automated feed for this metric" />
+                            )}
+                          </span>
+                          {a.designation && <span className="block text-[10px] text-slate-400 pl-4">{a.designation}</span>}
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-slate-500">{a.employeeCode || "—"}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold"
+                          style={{ color: a.value === null ? undefined : pass === null ? undefined : pass ? C_GREEN : C_RED }}>
+                          {a.value === null ? <span className="text-slate-400 italic font-normal">no data</span> : formatValue(a.value, ab.unit)}
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">
+                          {a.teamLeader ? `${a.teamLeader.name} (${a.teamLeader.employeeCode})` : <span className="text-slate-400 italic">none on record</span>}
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">
+                          {a.assistantManager ? `${a.assistantManager.name} (${a.assistantManager.employeeCode})` : <span className="text-slate-400 italic">none on record</span>}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
+                          <td colSpan={5} className="px-2 py-2">
+                            {a.reportsTo.length ? (
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                <span className="text-slate-400 shrink-0">Full reporting chain:</span>
+                                {a.reportsTo.map((m, i) => (
+                                  <span key={`${m.employeeCode}-${i}`} className="inline-flex items-center gap-1">
+                                    {i > 0 && <span className="text-slate-300">→</span>}
+                                    <span className="rounded-full px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                                      {m.name} ({m.employeeCode}){m.designation ? ` · ${m.designation}` : ""}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-slate-400 italic">
+                                No one is recorded as this analyst's manager — the reporting chain stops here.
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1.5">
+            Sorted worst first. Team Leader / Assistant Manager are pulled from each analyst's real
+            reporting chain — "none on record" means that layer genuinely doesn't exist for them, not a loading gap.
+            {ab.analysts.some((a) => a.manual) && (
+              <> The <PenLine size={9} className="inline text-purple-500 mx-0.5" />
+                mark means that score was typed in by hand — this metric has no automated per-employee feed yet.</>
+            )}
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Honest, derived-only read of what the numbers say: never a canned verdict,
+ * every line traces to a real value already on screen (the latest reading vs.
+ * the one before it, the configured target, and — when this metric has one —
+ * the per-analyst breakdown). A category with nothing to report says so
+ * rather than show a filler line.
+ */
+function InsightsPanel({ d, processId, metricKey, period }: {
+  d: Drilldown; processId: string; metricKey: string; period: ReportPeriod;
+}) {
+  // Same query key as AnalystBreakdownPanel -- react-query dedupes this into
+  // the one request already in flight/cached for that panel, not a second
+  // network round-trip, so the worst-performer/target-gap lines below stay
+  // exactly consistent with the analyst table sitting right underneath them.
+  const { data: abData } = useQuery({
+    queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<AnalystBreakdown>>(
+      `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
+  });
+  const ab = abData?.data;
+  const target = d.definition?.targetValue ?? null;
+  const direction = d.direction;
+  const passes = (v: number | null) => {
+    if (v === null || target === null || !direction) return null;
+    return direction === "higher_is_better" ? v >= target : v <= target;
+  };
+  const latest = d.readings[0] ?? null;
+  const prev = d.readings.find((r) => r.value !== null && r.date !== latest?.date) ?? null;
+  const latestPass = latest ? passes(latest.value) : null;
+  const delta = latest?.value != null && prev?.value != null ? latest.value - prev.value : null;
+  const improving = delta !== null ? (direction === "higher_is_better" ? delta > 0 : delta < 0) : null;
+
+  const scored = (ab?.available ? ab.analysts : []).filter((a) => a.value !== null);
+  const worst = scored[0] ?? null; // backend already sorts worst-first
+  const best = scored.length ? scored[scored.length - 1] : null;
+  const worstPass = worst ? passes(worst.value) : null;
+  const bestPass = best ? passes(best.value) : null;
+  const failingCount = target !== null && direction
+    ? scored.filter((a) => !passes(a.value)).length : null;
+  const passingCount = failingCount !== null ? scored.length - failingCount : null;
+
+  const good: string[] = [];
+  const alert: string[] = [];
+  const actions: string[] = [];
+
+  if (latest && latestPass === true) good.push(`Latest reading (${latest.date}) meets target at ${formatValue(latest.value, d.unit)}.`);
+  if (latest && latestPass === false) alert.push(`Latest reading (${latest.date}) is missing target: ${formatValue(latest.value, d.unit)} vs ${formatValue(target, d.unit)}.`);
+  if (improving === true) good.push(`Moving the right way vs. the previous reading (${prev?.date}).`);
+  if (improving === false) alert.push(`Moving the wrong way vs. the previous reading (${prev?.date}).`);
+  if (!latest) alert.push("No reading has ever been recorded for this metric on this process.");
+  if (target === null) actions.push("No target is configured for this metric — set one so \"pass/fail\" is meaningful here.");
+
+  if (passingCount !== null && passingCount > 0) good.push(`${passingCount} of ${scored.length} analysts are meeting target.`);
+  if (best && bestPass === true) good.push(`${best.name} (${best.employeeCode}) is the strongest performer at ${formatValue(best.value, ab?.unit ?? d.unit)}.`);
+  if (failingCount !== null && failingCount > 0) alert.push(`${failingCount} of ${scored.length} analysts are missing target.`);
+  if (worst && worstPass === false) {
+    alert.push(`${worst.name} (${worst.employeeCode}) is furthest from target at ${formatValue(worst.value, ab?.unit ?? d.unit)}.`);
+    if (worst.teamLeader) {
+      actions.push(`Loop in ${worst.teamLeader.name} (${worst.teamLeader.employeeCode}), ${worst.name}'s Team Leader, on the gap.`);
+    } else {
+      actions.push(`${worst.name} has no Team Leader on record to escalate through — worth checking the reporting chain.`);
+    }
+  }
+  if (failingCount !== null && failingCount > 1) {
+    actions.push(`Review the ${failingCount} analysts below target together — a shared root cause is more likely than ${failingCount} unrelated ones.`);
+  }
+
+  const Block = ({ title, icon: Icon, color, items, emptyText }: {
+    title: string; icon: typeof CheckCircle2; color: string; items: string[]; emptyText: string;
+  }) => (
+    <div className="rounded-lg border pl-2.5" style={{ borderColor: `${color}30`, borderLeftWidth: 3, borderLeftColor: color }}>
+      <div className="flex items-center gap-1.5 py-1.5 pr-2 text-[10px] font-bold uppercase tracking-wide" style={{ color }}>
+        <Icon size={11} />{title}
+      </div>
+      <div className="pb-2 pr-2 space-y-1">
+        {items.length ? items.map((t, i) => (
+          <p key={i} className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">{t}</p>
+        )) : <p className="text-[11px] text-slate-400 italic">{emptyText}</p>}
+      </div>
+    </div>
+  );
+
+  return (
+    <section>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+        Insights — what the numbers actually say
+      </div>
+      <div className="space-y-2.5">
+        <Block title="Good things" icon={CheckCircle2} color={C_GREEN} items={good}
+          emptyText="Nothing currently qualifies as a good-news line for this metric." />
+        <Block title="High alert" icon={AlertTriangle} color={C_RED} items={alert}
+          emptyText="Nothing currently rises to a high-alert line for this metric." />
+        <Block title="Actionable points" icon={Lightbulb} color={C_AMBER} items={actions}
+          emptyText="No specific action is indicated beyond the usual monitoring." />
+      </div>
+    </section>
+  );
+}
+
+/**
  * The drill-down drawer: the formula, the source it reads, the filter on every
  * field, and each daily reading with the parts it divided.
  */
@@ -704,7 +1366,7 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
   );
   return (
     <Sheet open={Boolean(metricKey)} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 overflow-y-auto">
+      <SheetContent side="right" className="w-full sm:max-w-[63rem] p-0 overflow-y-auto">
         <div className="sticky top-0 z-10 px-5 py-3 flex items-start gap-3" style={{ background: NAVY }}>
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-white truncate">{d?.metricName ?? metricKey}</h2>
@@ -787,6 +1449,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                 not that the value was zero.
               </p>
             </section>
+
+            {metricKey && <AnalystBreakdownPanel processId={processId} metricKey={metricKey} period={period} />}
+
+            {metricKey && <InsightsPanel d={d} processId={processId} metricKey={metricKey} period={period} />}
 
             <section className="rounded-xl border border-slate-200 dark:border-slate-800">
               <button type="button" onClick={() => setShowDetails((v) => !v)}
@@ -1272,7 +1938,23 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
  * process, because the dominant case here is one dead table wearing dozens of
  * process names, not dozens of independent problems.
  */
-function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
+/** metric_key,date,value,note — the same 4 columns the bulk-paste box already
+ *  parses, so a filled-in template pastes straight in with zero translation. */
+function downloadFillInTemplate(g: NeverReportedGroup, processName: string) {
+  const days = 14;
+  const rows: Array<Record<string, unknown>> = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    rows.push({ metric_key: g.metricKey, date: d.toISOString().slice(0, 10), value: "", note: "" });
+  }
+  const safeProcess = processName.replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+  downloadCsv(`${g.metricKey}_${safeProcess}_template.csv`, ["metric_key", "date", "value", "note"], rows);
+}
+
+function NeverReportedBanner({ groups, currentProcessId, currentProcessName }: {
+  groups: NeverReportedGroup[]; currentProcessId: string | null; currentProcessName: string | null;
+}) {
   // Same reasoning as StoppedFeeds: collapsed by default so this doesn't
   // push the actual dashboard off the first screen. The headline count is
   // the part worth seeing unconditionally; the per-metric breakdown (with
@@ -1340,6 +2022,14 @@ function NeverReportedBanner({ groups }: { groups: NeverReportedGroup[] }) {
                       Manual upload available — Bulk Upload Hub → "{g.uploadTypeName}"
                     </span>
                   </div>
+                )}
+                {currentProcessId && currentProcessName && g.processIds.includes(currentProcessId) && (
+                  <button type="button"
+                    onClick={() => downloadFillInTemplate(g, currentProcessName)}
+                    title={`A blank 14-day CSV for ${g.metricKey} — same 4 columns "Add a reading" → Bulk paste already reads, fill in real values and paste it back in for ${currentProcessName}`}
+                    className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition cursor-pointer">
+                    <Download size={10} />Blank template for {currentProcessName}
+                  </button>
                 )}
               </div>
             ))}
@@ -1529,7 +2219,10 @@ export default function ProcessOperationsPage() {
         ) : (
           <>
             {feedHealth && <StoppedFeeds health={feedHealth} />}
-            {feedHealth && <NeverReportedBanner groups={feedHealth.neverReported} />}
+            {feedHealth && (
+              <NeverReportedBanner groups={feedHealth.neverReported}
+                currentProcessId={current} currentProcessName={currentProcess?.processName ?? null} />
+            )}
 
             <div className="rounded-2xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 shadow-sm p-3.5">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
@@ -1605,6 +2298,9 @@ export default function ProcessOperationsPage() {
                 {charts.length > 0 && (
                   <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
                 )}
+
+                {current && <VoiceOfCustomerPanel processId={current} period={period} />}
+                {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]

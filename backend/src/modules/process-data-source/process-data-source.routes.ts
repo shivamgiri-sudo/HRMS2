@@ -109,6 +109,32 @@ router.post("/:processId/import", requireAuth, requireRole(...WRITER_ROLES), h(a
   });
 }));
 
+/**
+ * The deepest-level manual path: per-analyst values for a metric with no
+ * automated per-employee feed. Scoped to one metric (unlike /import, which
+ * takes any metric per row) because the caller is always
+ * AnalystBreakdownPanel, already looking at exactly one metric.
+ */
+router.post("/:processId/metric/:metricKey/employee-import", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
+  const { processId, metricKey } = req.params;
+  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+    return res.status(403).json(OUT_OF_SCOPE);
+  }
+  const body = req.body as { rows?: svc.EmployeeImportRow[]; dry_run?: boolean };
+  const rows = body.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ success: false, code: "NO_ROWS", message: "Send a non-empty rows array." });
+  }
+  if (rows.length > 500) {
+    return res.status(400).json({ success: false, code: "TOO_MANY_ROWS", message: "Import at most 500 rows at a time." });
+  }
+  const dryRun = body.dry_run === true;
+  res.json({
+    success: true,
+    data: await svc.importEmployeeMetricRows({ userId: req.authUser!.id, processId, metricKey, rows, dryRun }),
+  });
+}));
+
 router.post("/:processId/connector-refresh", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
   const { processId } = req.params;
   if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
