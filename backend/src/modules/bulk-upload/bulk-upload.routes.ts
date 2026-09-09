@@ -327,6 +327,14 @@ const KNOWN_IMPORT_RPCS = new Set([
   // Sheet with no DB backing anywhere. See
   // housing-premium-sale-raw-bulk.service.ts.
   "import_housing_premium_sale_raw_batch",
+  // Housing Owner's "Sale Raw" -- per its SOP, sale data pasted "up to the
+  // Discount % column" into a Google Sheet with no DB backing anywhere. See
+  // housing-owner-sale-raw-bulk.service.ts.
+  "import_housing_owner_sale_raw_batch",
+  // Housing Owner's "Call Logs" -- a cleaned Tata Dialer Agent Performance
+  // export, per its SOP, with no DB backing anywhere. See
+  // housing-owner-call-logs-bulk.service.ts.
+  "import_housing_owner_call_logs_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -758,6 +766,22 @@ async function dispatchImport(
       "../bulk-upload/housing-premium-sale-raw-bulk.service.js"
     );
     const data = await importHousingPremiumSaleRawBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_owner_sale_raw_batch") {
+    const { importHousingOwnerSaleRawBatch } = await import(
+      "../bulk-upload/housing-owner-sale-raw-bulk.service.js"
+    );
+    const data = await importHousingOwnerSaleRawBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_owner_call_logs_batch") {
+    const { importHousingOwnerCallLogsBatch } = await import(
+      "../bulk-upload/housing-owner-call-logs-bulk.service.js"
+    );
+    const data = await importHousingOwnerCallLogsBatch(id, userId);
     return { success: true, data };
   }
 
