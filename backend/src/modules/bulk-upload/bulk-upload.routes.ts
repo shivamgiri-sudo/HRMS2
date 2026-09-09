@@ -340,6 +340,11 @@ const KNOWN_IMPORT_RPCS = new Set([
   // lp-leads-bulk.service.ts.
   "import_lp_leads_regional_batch",
   "import_lp_leads_non_regional_batch",
+  // DU Digital's Agents Time details export, Korea/Thailand dashboards --
+  // columns read verbatim from real samples; no DB backing exists anywhere.
+  // See du-apr-daily-bulk.service.ts.
+  "import_du_apr_korea_batch",
+  "import_du_apr_thailand_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -803,6 +808,22 @@ async function dispatchImport(
       "../bulk-upload/lp-leads-bulk.service.js"
     );
     const data = await importLpLeadsNonRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_apr_korea_batch") {
+    const { importDuAprKoreaBatch } = await import(
+      "../bulk-upload/du-apr-daily-bulk.service.js"
+    );
+    const data = await importDuAprKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_apr_thailand_batch") {
+    const { importDuAprThailandBatch } = await import(
+      "../bulk-upload/du-apr-daily-bulk.service.js"
+    );
+    const data = await importDuAprThailandBatch(id, userId);
     return { success: true, data };
   }
 
