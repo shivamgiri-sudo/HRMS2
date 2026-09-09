@@ -7,7 +7,7 @@ import { SearchableSelect, type SearchableOption } from "@/components/ui/searcha
 import { useToast } from "@/hooks/use-toast";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Clock, Database,
-  Download, Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sigma, Sparkles,
+  Download, Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sparkles,
   Target, Upload, Users, Users2, X,
 } from "lucide-react";
 import {
@@ -221,16 +221,17 @@ function ChartCard({ title, subtitle, children }: {
   );
 }
 
-function Sparkline({ trend, color }: { trend: Reading["trend"]; color: string }) {
+function Sparkline({ trend, color, big }: { trend: Reading["trend"]; color: string; big?: boolean }) {
   // Only points carrying a number: a gap must read as a gap. connectNulls would
   // draw a straight line through a day nobody measured.
   const points = useMemo(() => trend.filter((p) => p.value !== null), [trend]);
   const gid = useMemo(() => `g${Math.random().toString(36).slice(2, 9)}`, []);
+  const h = big ? "h-16" : "h-8";
   if (points.length < 2) {
-    return <div className="h-8 flex items-end text-[9px] text-slate-400">not enough history</div>;
+    return <div className={`${h} flex items-end text-[9px] text-slate-400`}>not enough history</div>;
   }
   return (
-    <div className="h-8 -mx-0.5">
+    <div className={`${h} -mx-0.5`}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={points} margin={{ top: 2, right: 1, bottom: 0, left: 1 }}>
           <defs>
@@ -250,9 +251,11 @@ function Sparkline({ trend, color }: { trend: Reading["trend"]; color: string })
 }
 
 /**
- * A KPI tile in the reference style — gradient ground, corner orb, icon chip,
- * value in the section's accent — and, unlike theirs, a button. Every figure on
- * this page opens its own root-cause drawer.
+ * Was the uniform gradient KPI tile every metric rendered as, regardless of
+ * whether it was fine or failing. Replaced by HeroKpiCard (below) for the one
+ * metric per section actually worth that much space, and MiniKpiChip for
+ * everything else -- same click-through, same status colouring, no wall of
+ * identically-sized tiles. Kept as a title for the shared delta-hover copy.
  */
 const DELTA_TITLE: Record<ReportPeriod, string> = {
   trend: "Against the average of everything older than a week",
@@ -261,90 +264,124 @@ const DELTA_TITLE: Record<ReportPeriod, string> = {
   mtd: "Against the same days-of-month last month",
 };
 
-function KpiCard({ r, staleAfter, accent, tint, period, onOpen }: {
-  r: Reading; staleAfter: number; accent: string; tint: string; period: ReportPeriod; onOpen: () => void;
+/**
+ * The one metric in a section most worth a reader's attention first: the one
+ * with a real configured target that is currently failing it, ranked by how
+ * far off target it is (relative gap, direction-aware) rather than
+ * whichever happened to come first in the API response. Returns null when
+ * nothing in the section has a failing target -- a hero is never forced
+ * onto a section that doesn't have one; it just renders as a flat strip.
+ */
+function heroOf(metrics: Reading[]): Reading | null {
+  const failing = metrics.filter((m) => targetStatus(m) === "fail");
+  if (!failing.length) return null;
+  const gap = (r: Reading) => (r.value === null || !r.targetValue) ? 0 : Math.abs(r.value - r.targetValue) / Math.abs(r.targetValue);
+  return failing.reduce((worst, m) => (gap(m) > gap(worst) ? m : worst));
+}
+
+/**
+ * The section's one enlarged tile — same data KpiCard would show, same
+ * click-through, just given the room a metric that's actually failing its
+ * target deserves: a bigger number, a bigger trend, and a name for what's
+ * wrong instead of making a reader spot it among a wall of equals.
+ */
+function HeroKpiCard({ r, staleAfter, period, onOpen }: {
+  r: Reading; staleAfter: number; period: ReportPeriod; onOpen: () => void;
 }) {
   const stale = r.staleDays !== null && r.staleDays > staleAfter;
   const d = deltaOf(r);
-  // Pass/fail against a REAL configured target, the way the reference
-  // dashboards colour theirs -- red/green on the number itself, not just the
-  // trend arrow. Falls back to the section's identity colour when no target is
-  // set, which is most metrics here; a fabricated threshold would be worse
-  // than none.
-  const status = targetStatus(r);
-  const statusPill = status === "pass"
-    ? "bg-emerald-100 text-emerald-700"
-    : status === "fail"
-      ? "bg-red-100 text-red-700"
-      : null;
   const caption = targetCaption(r);
   return (
-    <button type="button" onClick={onOpen}
-      title="Open the full working behind this number"
-      className="group relative text-left rounded-xl overflow-hidden shadow-sm border border-white/40 dark:border-slate-800 cursor-pointer transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
-      style={{ background: tint }}>
-      <div aria-hidden className="absolute top-0 right-0 w-16 h-16 rounded-full opacity-10 -translate-y-5 translate-x-5"
-        style={{ background: accent }} />
-      <div className="relative p-3">
-        <div className="flex items-start gap-1.5 mb-1.5 min-h-[2.2rem]">
-          <div className="p-1 rounded-lg bg-white/60 backdrop-blur-sm shrink-0">
-            <Sigma size={12} style={{ color: accent }} />
-          </div>
-          <p className="text-[9.5px] font-semibold text-slate-600 uppercase tracking-wide leading-tight">
-            {r.label}
-          </p>
-          <div className="ml-auto flex shrink-0 gap-1">
-            {r.source === "manual" && (
-              <span title="This reading was typed in by hand, not written by an automated feed"
-                className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-purple-700">
-                <PenLine className="h-2 w-2" />manual
-              </span>
-            )}
-            {r.provisional && (
-              <span title="Today is still in progress — this will move as the day fills in"
-                className="rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-blue-700">today</span>
-            )}
-            {stale && (
-              <span title={`Last reading ${r.staleDays} days ago — history, not current`}
-                className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-amber-700">
-                <Clock className="h-2 w-2" />{r.staleDays}d
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-baseline gap-1.5 flex-wrap">
-          {statusPill ? (
-            <span className={`inline-block rounded-full px-2 py-0.5 text-base font-black leading-none tabular-nums ${statusPill}`}>
-              {formatValue(r.value, r.unit)}
-            </span>
-          ) : (
-            <span className={`text-lg font-black leading-none ${r.value === null ? "text-slate-400 text-sm font-normal italic" : ""}`}
-              style={r.value === null ? undefined : { color: accent }}>
-              {formatValue(r.value, r.unit)}
+    <button type="button" onClick={onOpen} title="Open the full working behind this number"
+      className="group relative text-left rounded-2xl overflow-hidden border cursor-pointer transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 h-full flex flex-col p-4"
+      style={{ borderColor: `${C_RED}40`, background: `linear-gradient(160deg, ${C_RED}12, transparent 65%)` }}>
+      <div className="flex items-start gap-1.5 mb-1">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: C_RED }}>
+          <AlertTriangle size={11} className="shrink-0" />Needs attention
+        </span>
+        <div className="ml-auto flex shrink-0 gap-1">
+          {r.source === "manual" && (
+            <span title="This reading was typed in by hand, not written by an automated feed"
+              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-purple-700">
+              <PenLine className="h-2 w-2" />manual
             </span>
           )}
-          {d && (
-            <span title={DELTA_TITLE[period]}
-              className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums ${
-                d.good === null ? "text-slate-500" : d.good ? "text-emerald-600" : "text-red-600"}`}>
-              {d.delta === 0 ? <Minus className="h-2.5 w-2.5" />
-                : d.delta > 0 ? <ArrowUpRight className="h-2.5 w-2.5" /> : <ArrowDownRight className="h-2.5 w-2.5" />}
-              {d.delta === 0 ? "flat" : Math.abs(d.delta).toFixed(1)}
+          {r.provisional && (
+            <span title="Today is still in progress — this will move as the day fills in"
+              className="rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-blue-700">today</span>
+          )}
+          {stale && (
+            <span title={`Last reading ${r.staleDays} days ago — history, not current`}
+              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-amber-700">
+              <Clock className="h-2 w-2" />{r.staleDays}d
             </span>
           )}
         </div>
-
-        {caption ? (
-          <p className="text-[9px] text-slate-600 font-semibold mt-0.5 truncate">{caption}</p>
-        ) : r.numerator !== null && r.denominator !== null && r.denominator > 0 ? (
-          <p className="text-[9px] text-slate-600 font-semibold mt-0.5 tabular-nums truncate">
-            {Math.round(r.numerator).toLocaleString()} of {Math.round(r.denominator).toLocaleString()}
-          </p>
-        ) : <p className="text-[9px] mt-0.5">&nbsp;</p>}
-
-        <Sparkline trend={r.trend} color={status === "fail" ? C_RED : status === "pass" ? C_GREEN : accent} />
       </div>
+      <p className="text-[11px] font-semibold text-slate-600 leading-tight mb-1.5">{r.label}</p>
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="text-[34px] font-black leading-none tabular-nums" style={{ color: C_RED }}>
+          {formatValue(r.value, r.unit)}
+        </span>
+        {d && (
+          <span title={DELTA_TITLE[period]}
+            className={`inline-flex items-center gap-0.5 text-[11px] font-bold tabular-nums ${
+              d.good === null ? "text-slate-500" : d.good ? "text-emerald-600" : "text-red-600"}`}>
+            {d.delta === 0 ? <Minus className="h-3 w-3" />
+              : d.delta > 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+            {d.delta === 0 ? "flat" : Math.abs(d.delta).toFixed(1)}
+          </span>
+        )}
+      </div>
+      {caption && <p className="text-[11px] font-semibold mt-0.5" style={{ color: C_RED }}>{caption}</p>}
+      <div className="mt-auto pt-2"><Sparkline trend={r.trend} color={C_RED} big /></div>
+    </button>
+  );
+}
+
+/**
+ * A section metric that isn't the one thing currently wrong: a small,
+ * dense, flowing chip rather than a full tile — the same click-through and
+ * the same status colour, just sized for "everything else is fine, here's
+ * the number" instead of competing for the same visual weight as the one
+ * metric that actually needs a look.
+ */
+function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
+  r: Reading; accent: string; staleAfter: number; onOpen: () => void;
+}) {
+  const stale = r.staleDays !== null && r.staleDays > staleAfter;
+  const status = targetStatus(r);
+  const color = status === "fail" ? C_RED : status === "pass" ? C_GREEN : accent;
+  const d = deltaOf(r);
+  return (
+    <button type="button" onClick={onOpen} title="Open the full working behind this number"
+      className="shrink-0 text-left rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 min-w-[122px] max-w-[168px] cursor-pointer transition-all duration-200 hover:shadow-sm hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
+      <div className="flex items-center gap-1 min-h-[1.4em]">
+        <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide leading-tight truncate">
+          {r.label}
+        </p>
+        <div className="ml-auto flex shrink-0 gap-0.5">
+          {r.source === "manual" && <PenLine className="h-2 w-2 text-purple-500" aria-label="Typed in by hand" />}
+          {stale && <Clock className="h-2 w-2 text-amber-600" aria-label={`Last reading ${r.staleDays} days ago`} />}
+        </div>
+      </div>
+      <div className="flex items-baseline gap-1 mt-0.5">
+        <span className={`text-sm font-bold tabular-nums ${r.value === null ? "text-slate-400 text-xs font-normal italic" : ""}`}
+          style={r.value === null ? undefined : { color }}>
+          {formatValue(r.value, r.unit)}
+        </span>
+        {d && (
+          <span className={`text-[9px] font-bold ${d.good === null ? "text-slate-400" : d.good ? "text-emerald-600" : "text-red-600"}`}>
+            {d.delta === 0 ? "flat" : (d.delta > 0 ? "↑" : "↓") + Math.abs(d.delta).toFixed(1)}
+          </span>
+        )}
+      </div>
+      {/* The colour alone says pass/fail; this says against what -- dropped
+          silently here once already, restored because a red chip with no
+          target is a verdict with no evidence. */}
+      {targetCaption(r) && (
+        <p className="text-[8.5px] text-slate-400 mt-0.5 truncate">{targetCaption(r)}</p>
+      )}
     </button>
   );
 }
@@ -1571,12 +1608,20 @@ export default function ProcessOperationsPage() {
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]
-                  : [])].map((s) => {
+                  : [])].map((s, idx) => {
                   const style = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
                   const Icon = style.icon;
+                  // One hero when the section actually has something failing its
+                  // target, everything else as a flowing strip -- not a uniform
+                  // grid of equally-weighted tiles regardless of whether a metric
+                  // is fine or in trouble. Alternating band tint (not per-tile
+                  // borders) is what separates one section from the next.
+                  const hero = heroOf(s.metrics);
+                  const rest = hero ? s.metrics.filter((m) => m.metricKey !== hero.metricKey) : s.metrics;
                   return (
-                    <section key={s.key} className="space-y-2">
-                      <div className="flex items-center gap-2 px-0.5">
+                    <section key={s.key}
+                      className={`rounded-2xl p-3.5 md:p-4 -mx-1 ${idx % 2 === 1 ? "bg-white/70 dark:bg-slate-900/40" : ""}`}>
+                      <div className="flex items-center gap-2 px-0.5 mb-3">
                         <span className="p-1 rounded-lg" style={{ background: `${style.accent}1A` }}>
                           <Icon className="h-3.5 w-3.5" style={{ color: style.accent }} />
                         </span>
@@ -1586,12 +1631,17 @@ export default function ProcessOperationsPage() {
                           <p className="text-[10px] text-slate-400 truncate hidden md:block ml-2">{s.blurb}</p>
                         )}
                       </div>
-                      <div className="grid gap-2.5 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-                        {s.metrics.map((r) => (
-                          <KpiCard key={r.metricKey} r={r} staleAfter={ops.staleAfterDays}
-                            accent={style.accent} tint={style.tint} period={period}
-                            onOpen={() => setDrill(r.metricKey)} />
-                        ))}
+                      <div className={hero ? "grid gap-3 lg:grid-cols-[260px_1fr] items-stretch" : ""}>
+                        {hero && (
+                          <HeroKpiCard r={hero} staleAfter={ops.staleAfterDays} period={period}
+                            onOpen={() => setDrill(hero.metricKey)} />
+                        )}
+                        <div className="flex flex-wrap content-start gap-2">
+                          {rest.map((r) => (
+                            <MiniKpiChip key={r.metricKey} r={r} accent={style.accent} staleAfter={ops.staleAfterDays}
+                              onOpen={() => setDrill(r.metricKey)} />
+                          ))}
+                        </div>
                       </div>
                     </section>
                   );
