@@ -35,6 +35,18 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 const ALLOWED_ROLES = ["admin", "hr", ...dashboardConsumerRoles("QUALITY_DASHBOARD")] as const;
 
 /**
+ * TNI (Training Needs Identification) specifically -- a trainer is exactly who
+ * this exists for, and 11 real trainer/qa accounts currently cannot reach it
+ * (verified live 2026-09-09): the frontend route's role list omits "trainer"
+ * entirely, and separately the page it's gated behind (WFM_ROSTER) carries no
+ * grant for trainer or qa at all. Deliberately NOT added to ALLOWED_ROLES
+ * itself, which also gates 20+ other endpoints on this router (fraud-signals,
+ * sales-intelligence, agent-risk, roi, scores...) that a trainer has no
+ * business seeing just to reach training-needs data.
+ */
+const TNI_ROLES = [...ALLOWED_ROLES, "trainer"] as const;
+
+/**
  * Resolve caller's data scope:
  * - admin/hr/ceo/qa/quality_analyst → full access (no filter)
  * - process_manager/manager → scoped to their assigned process campaign_ids
@@ -123,7 +135,7 @@ function dateDefaults(query: Record<string, unknown>): { from: string; to: strin
  */
 
 // GET /api/quality-dashboard/tni-analysis?from=&to=&client_id=
-router.get("/tni-analysis", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/tni-analysis", requireRole(...TNI_ROLES), h(async (req, res) => {
   const { from, to } = dateDefaults(req.query);
   const clientId = typeof req.query.client_id === "string" && req.query.client_id.trim()
     ? req.query.client_id.trim()
@@ -135,7 +147,7 @@ router.get("/tni-analysis", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
 }));
 
 // GET /api/quality-dashboard/tni-agent-params?from=&to=&agent_code=&param=&client_id=
-router.get("/tni-agent-params", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/tni-agent-params", requireRole(...TNI_ROLES), h(async (req, res) => {
   const { from, to } = dateDefaults(req.query);
   const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
   const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
@@ -167,7 +179,7 @@ router.get("/tni-agent-params", requireRole(...ALLOWED_ROLES), h(async (req, res
 // tracked, assignable finding" without a separate page. `param` here is one of
 // the 19 raw column names the page already drills into; only six of them map
 // onto a tni_finding parameter_key, and the rest correctly return no match.
-router.get("/tni-finding", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/tni-finding", requireRole(...TNI_ROLES), h(async (req, res) => {
   const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
   const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
   if (!agentCode || !param) {
