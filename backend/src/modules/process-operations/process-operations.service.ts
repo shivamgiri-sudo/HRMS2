@@ -897,6 +897,8 @@ export interface AnalystScore {
   name: string;
   designation: string | null;
   value: number | null;
+  /** True when this score came from process_metric_employee_actual (hand-entered) rather than the metric's own automated per-employee source. */
+  manual: boolean;
   /** The real reporting chain, closest manager first — whatever titles actually exist, not a fabricated TL/AM pair. */
   reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
   /** Picked out of reportsTo when a real Team Leader / Assistant Manager exists in the chain. Null is honest when neither does. */
@@ -1002,9 +1004,32 @@ export async function getMetricAnalystBreakdown(
         WHERE process_id = ? AND metric_key = ? AND actual_value IS NOT NULL`,
       [processId, metricKey],
     );
-    const latest = (latestRows as any[])[0]?.latest;
-    if (!latest) return unavailable("No reading exists yet for this metric to break down.");
-    const d = isoDate(latest);
+    let latest = (latestRows as any[])[0]?.latest;
+    // A metric with an 'employee'-kind source can have no PROCESS-level
+    // reading at all (nobody rolls the per-employee numbers up into one
+    // figure) and still have real per-analyst data -- either automated or,
+    // for the small set of genuinely gap metrics, hand-entered into
+    // process_metric_employee_actual. Check that before giving up, or the
+    // deepest-level breakdown would be unreachable exactly for the metrics
+    // it exists to serve.
+    if (!latest) {
+      const [empLatestRows] = await db.execute<RowDataPacket[]>(
+        `SELECT MAX(score_date) latest FROM process_metric_employee_actual
+          WHERE process_id = ? AND metric_key = ? AND actual_value IS NOT NULL`,
+        [processId, metricKey],
+      );
+      latest = (empLatestRows as any[])[0]?.latest;
+    }
+    // Genuinely nothing has ever been recorded for this metric, at either
+    // grain -- not an error state for an 'employee'-kind metric (confirmed
+    // real and correctly configured above), just the honest "nobody has
+    // entered anything yet" state. Anchoring on today rather than returning
+    // unavailable is what lets the per-analyst upload UI actually appear for
+    // exactly the metrics it exists to serve; a fresh upload almost always
+    // targets today anyway, and the manual-fallback query below re-reads
+    // whatever date range is passed in, so this default costs nothing once
+    // a real entry exists.
+    const d = latest ? isoDate(latest) : isoDate(new Date());
     from = d; to = d;
   }
 
@@ -1029,19 +1054,54 @@ export async function getMetricAnalystBreakdown(
     metricName: metric?.metric_name ? String(metric.metric_name) : metricKey,
     unit: metric?.unit ?? null, direction, targetValue, periodFrom: from, periodTo: to,
   };
-  if (!(rows as any[]).length) return { ...base, analysts: [] };
+  let scored: Array<{ employeeId: string; employeeCode: string; name: string; value: number | null; manual: boolean }>;
 
-  const scored = (rows as any[]).map((r) => {
-    const inputs: Record<string, number | string | null> = {};
-    for (const name of plan.fieldNames) inputs[name] = r[name] ?? null;
-    const evaluated = evaluateFormula(def.formula_expression, inputs);
-    return {
-      employeeId: String(r.__employee_id),
-      employeeCode: String(r.__employee_code ?? ""),
-      name: `${r.__first_name ?? ""} ${r.__last_name ?? ""}`.trim() || String(r.__employee_code ?? "Unknown"),
-      value: evaluated.value,
-    };
-  });
+  if ((rows as any[]).length) {
+    scored = (rows as any[]).map((r) => {
+      const inputs: Record<string, number | string | null> = {};
+      for (const name of plan.fieldNames) inputs[name] = r[name] ?? null;
+      const evaluated = evaluateFormula(def.formula_expression, inputs);
+      return {
+        employeeId: String(r.__employee_id),
+        employeeCode: String(r.__employee_code ?? ""),
+        name: `${r.__first_name ?? ""} ${r.__last_name ?? ""}`.trim() || String(r.__employee_code ?? "Unknown"),
+        value: evaluated.value,
+        manual: false,
+      };
+    });
+  } else {
+    // No automated reading exists for this metric on this process at all --
+    // fall back to hand-entered per-analyst scores (process_metric_employee_actual),
+    // the deepest-level manual path for the small set of 'employee'-kind metrics
+    // verified to have no automated feed (see 1706_process_metric_employee_actual.sql).
+    // Latest entry per employee within the period, same "most recent wins"
+    // convention the process-level trend fallback above already uses. The moment
+    // an automated feed starts reporting rows for this (process, metric), the
+    // branch above takes over and this table is never consulted again for it.
+    const [manualRows] = await db.execute<RowDataPacket[]>(
+      `SELECT m.employee_id, e.employee_code, e.first_name, e.last_name, m.actual_value
+         FROM process_metric_employee_actual m
+         JOIN employees e ON e.id = m.employee_id
+         JOIN (
+           SELECT employee_id, MAX(score_date) AS max_date
+             FROM process_metric_employee_actual
+            WHERE process_id = ? AND metric_key = ? AND score_date >= ? AND score_date <= ?
+              AND actual_value IS NOT NULL
+            GROUP BY employee_id
+         ) latest ON latest.employee_id = m.employee_id AND latest.max_date = m.score_date
+        WHERE m.process_id = ? AND m.metric_key = ?`,
+      [processId, metricKey, from, to, processId, metricKey],
+    );
+    scored = (manualRows as any[]).map((r) => ({
+      employeeId: String(r.employee_id),
+      employeeCode: String(r.employee_code ?? ""),
+      name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || String(r.employee_code ?? "Unknown"),
+      value: r.actual_value === null ? null : Number(r.actual_value),
+      manual: true,
+    }));
+  }
+
+  if (!scored.length) return { ...base, analysts: [] };
   const employeeIds = scored.map((s) => s.employeeId);
 
   const [desigRows] = await db.execute<RowDataPacket[]>(
@@ -1099,7 +1159,7 @@ export async function getMetricAnalystBreakdown(
     return {
       employeeId: s.employeeId, employeeCode: s.employeeCode, name: s.name,
       designation: designationById.get(s.employeeId) ?? null,
-      value: s.value,
+      value: s.value, manual: s.manual,
       reportsTo: chain,
       teamLeader: tl ? { employeeCode: tl.employeeCode, name: tl.name } : null,
       assistantManager: am ? { employeeCode: am.employeeCode, name: am.name } : null,

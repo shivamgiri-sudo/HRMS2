@@ -155,7 +155,7 @@ interface Drilldown {
 
 interface AnalystScore {
   employeeId: string; employeeCode: string; name: string; designation: string | null;
-  value: number | null;
+  value: number | null; manual: boolean;
   reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
   teamLeader: { employeeCode: string; name: string } | null;
   assistantManager: { employeeCode: string; name: string } | null;
@@ -684,9 +684,139 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
  * for a metric attributed to individual employees; a whole-process metric
  * says so rather than render an empty table.
  */
+interface EmployeeImportOutcome {
+  row: number; employeeCode: string; scoreDate: string; value: number | null;
+  ok: boolean; message?: string;
+}
+
+/**
+ * The deepest-level manual path: hand-enter a score per analyst for a metric
+ * that genuinely has no automated per-employee feed. Only ever shown when the
+ * backend has already confirmed this metric IS 'employee'-kind but has zero
+ * automated rows this period — never offered for a whole-process metric
+ * (nothing to attribute to) or one that already has real per-employee data
+ * (an upload here would just never be read; see getMetricAnalystBreakdown's
+ * fallback ordering).
+ */
+function EmployeeUploadBox({ processId, metricKey, period, onSaved }: {
+  processId: string; metricKey: string; period: ReportPeriod; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [preview, setPreview] = useState<EmployeeImportOutcome[] | null>(null);
+  const [previewDryRun, setPreviewDryRun] = useState(true);
+
+  const parseRows = (text: string) => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const body = lines.length && /^employee[_ ]?code\s*,/i.test(lines[0]) ? lines.slice(1) : lines;
+    return body.map((line) => {
+      const [employeeCode, scoreDate, value, ...noteParts] = line.split(",").map((c) => c.trim());
+      return { employeeCode, scoreDate, value, note: noteParts.join(",") || undefined };
+    });
+  };
+  const run = (dryRun: boolean) =>
+    hrmsApi.post<HrmsEnvelope<{ imported: number; errors: Array<{ row: number; message: string }>; outcomes: EmployeeImportOutcome[] }>>(
+      `/api/process-data-source/${processId}/metric/${metricKey}/employee-import`,
+      { rows: parseRows(pasted), dry_run: dryRun },
+    );
+  const check = useMutation({
+    mutationFn: () => run(true),
+    onSuccess: (res) => { setPreview(res.data.outcomes); setPreviewDryRun(true); },
+    onError: (err: unknown) => toast({
+      title: "Could not check rows", variant: "destructive",
+      description: err instanceof Error ? err.message : "Request failed",
+    }),
+  });
+  const doImport = useMutation({
+    mutationFn: () => run(false),
+    onSuccess: (res) => {
+      setPreview(res.data.outcomes); setPreviewDryRun(false);
+      const failed = res.data.errors.length;
+      toast({
+        title: `${res.data.imported} row${res.data.imported === 1 ? "" : "s"} saved`,
+        description: failed ? `${failed} row${failed === 1 ? "" : "s"} rejected — see the list below.` : undefined,
+        variant: failed ? "destructive" : undefined,
+      });
+      onSaved();
+    },
+    onError: (err: unknown) => toast({
+      title: "Import failed", variant: "destructive",
+      description: err instanceof Error ? err.message : "Request failed",
+    }),
+  });
+  const readyCount = preview?.filter((o) => o.ok).length ?? 0;
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+        <Upload size={11} />Add per-analyst values by hand
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/60 dark:bg-slate-800/30">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+          Paste rows: <code className="font-mono text-[10px] bg-white dark:bg-slate-900 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700">employee_code,date,value,note</code>
+        </p>
+        <button type="button" onClick={() => { setOpen(false); setPasted(""); setPreview(null); }}
+          className="text-slate-400 hover:text-slate-600 cursor-pointer"><X size={13} /></button>
+      </div>
+      <textarea value={pasted} onChange={(e) => { setPasted(e.target.value); setPreview(null); }}
+        rows={4} placeholder={"MAS12345,2026-09-09,78.5\nMAS12346,2026-09-09,64.0,typed from the weekly QA sheet"}
+        className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[11px] font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" />
+      <p className="text-[10px] text-slate-400 mt-1">
+        Each row is one analyst's score for one day — never a whole-process average split across people.
+        This is only used when no automated reading exists; a real feed starting later takes over automatically.
+      </p>
+      <div className="flex items-center gap-2 mt-2">
+        <button type="button" disabled={!pasted.trim() || check.isPending}
+          onClick={() => check.mutate()}
+          className="rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold px-3 py-1.5 hover:bg-slate-300 dark:hover:bg-slate-600 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {check.isPending ? "Checking…" : "Check rows"}
+        </button>
+        <button type="button" disabled={!preview || !previewDryRun || readyCount === 0 || doImport.isPending}
+          onClick={() => doImport.mutate()}
+          className="rounded-lg bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 hover:bg-blue-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          {doImport.isPending ? "Saving…" : `Save ${readyCount || ""} row${readyCount === 1 ? "" : "s"}`}
+        </button>
+      </div>
+      {preview && (
+        <div className="mt-2 rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <table className="w-full text-[10px]">
+            <thead className="bg-white dark:bg-slate-900 text-slate-400">
+              <tr>
+                <th className="text-left px-2 py-1 font-semibold">Employee code</th>
+                <th className="text-left px-2 py-1 font-semibold">Date</th>
+                <th className="text-right px-2 py-1 font-semibold">Value</th>
+                <th className="text-left px-2 py-1 font-semibold">{previewDryRun ? "Ready?" : "Saved?"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.map((o) => (
+                <tr key={o.row} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-2 py-1 font-mono">{o.employeeCode || "—"}</td>
+                  <td className="px-2 py-1">{o.scoreDate || "—"}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{o.value === null ? "no data" : o.value}</td>
+                  <td className="px-2 py-1" style={{ color: o.ok ? C_GREEN : C_RED }}>
+                    {o.ok ? (previewDryRun ? "ready" : "saved") : (o.message ?? "rejected")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AnalystBreakdownPanel({ processId, metricKey, period }: {
   processId: string; metricKey: string; period: ReportPeriod;
 }) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
     queryFn: () => hrmsApi.get<HrmsEnvelope<AnalystBreakdown>>(
@@ -694,6 +824,9 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const ab = data?.data;
+  const invalidateBreakdown = () => qc.invalidateQueries({
+    queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
+  });
 
   const passes = (v: number | null, target: number | null, direction: string | null) => {
     if (v === null || target === null || !direction) return null;
@@ -712,9 +845,12 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
       ) : !ab.available ? (
         <p className="text-xs text-slate-400 italic py-1">{ab.reason ?? "Not available for this metric."}</p>
       ) : ab.analysts.length === 0 ? (
-        <p className="text-xs text-slate-400 italic py-1">
-          No analyst has a reading for this metric in this period — not that everyone scored zero.
-        </p>
+        <div>
+          <p className="text-xs text-slate-400 italic py-1">
+            No analyst has a reading for this metric in this period — not that everyone scored zero.
+          </p>
+          <EmployeeUploadBox processId={processId} metricKey={metricKey} period={period} onSaved={invalidateBreakdown} />
+        </div>
       ) : (
         <div>
           <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-96 overflow-y-auto">
@@ -742,6 +878,10 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                           <span className="inline-flex items-center gap-1">
                             <ChevronRight size={11} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
                             <span className="font-medium">{a.name}</span>
+                            {a.manual && (
+                              <PenLine size={10} className="text-purple-500 shrink-0"
+                                aria-label="Typed in by hand — no automated feed for this metric" />
+                            )}
                           </span>
                           {a.designation && <span className="block text-[10px] text-slate-400 pl-4">{a.designation}</span>}
                         </td>
@@ -789,6 +929,10 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
           <p className="text-[10px] text-slate-400 mt-1.5">
             Sorted worst first. Team Leader / Assistant Manager are pulled from each analyst's real
             reporting chain — "none on record" means that layer genuinely doesn't exist for them, not a loading gap.
+            {ab.analysts.some((a) => a.manual) && (
+              <> The <PenLine size={9} className="inline text-purple-500 mx-0.5" />
+                mark means that score was typed in by hand — this metric has no automated per-employee feed yet.</>
+            )}
           </p>
         </div>
       )}

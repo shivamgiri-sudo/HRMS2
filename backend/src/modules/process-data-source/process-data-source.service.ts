@@ -301,3 +301,152 @@ export async function importMetricRows(input: {
   }
   return { imported: input.dryRun ? 0 : imported, errors, outcomes, dryRun: Boolean(input.dryRun) };
 }
+
+/**
+ * Write side for process_metric_employee_actual — the deepest-level manual
+ * path, for the handful of 'employee'-kind metrics verified to have a real
+ * configuration but no automated per-employee feed (see
+ * 1706_process_metric_employee_actual.sql for the exact verified list).
+ *
+ * Only meaningful for a metric whose data source is genuinely 'employee'-kind
+ * — a whole-process metric has no per-analyst breakdown to fill in the first
+ * place, so this rejects those rather than accept a value nobody can attribute.
+ * Never checks whether an automated feed already exists for this metric: that
+ * ordering is enforced entirely by getMetricAnalystBreakdown (automated rows,
+ * when present, are used and this table is never even queried) so a save here
+ * can never silently override real data — at worst it writes a row nothing
+ * ever reads.
+ */
+async function assertEmployeeMetricValueValid(input: {
+  processId: string;
+  metricKey: string;
+  employeeCode: string;
+  scoreDate: string;
+}): Promise<{ employeeId: string }> {
+  if (!ISO_DATE.test(input.scoreDate)) throw new Error("Date must be YYYY-MM-DD");
+
+  const [defRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ds.process_key_kind
+       FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+       JOIN kpi_studio_data_source ds ON ds.id = d.data_source_id
+      WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
+      ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
+      LIMIT 1`,
+    [input.metricKey, input.processId],
+  );
+  const kind = (defRows as any[])[0]?.process_key_kind ?? null;
+  if (kind !== "employee") {
+    throw new Error(
+      `${input.metricKey} is not attributed to individual employees for this process — there is no analyst to save this value against.`,
+    );
+  }
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE employee_code = ? AND process_id = ? LIMIT 1`,
+    [input.employeeCode, input.processId],
+  );
+  const employeeId = (empRows as any[])[0]?.id;
+  if (!employeeId) {
+    throw new Error(`${input.employeeCode} is not an employee of this process.`);
+  }
+  return { employeeId: String(employeeId) };
+}
+
+export async function saveEmployeeMetricValue(input: {
+  userId: string;
+  processId: string;
+  metricKey: string;
+  employeeCode: string;
+  scoreDate: string;
+  value: number | null;
+  note?: string | null;
+}): Promise<{ ok: true }> {
+  const { employeeId } = await assertEmployeeMetricValueValid(input);
+
+  await db.execute(
+    `INSERT INTO process_metric_employee_actual
+       (id, process_id, employee_id, metric_key, score_date, actual_value, source, note, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?)
+     ON DUPLICATE KEY UPDATE
+       actual_value = VALUES(actual_value),
+       source       = 'manual',
+       note         = VALUES(note),
+       created_by   = VALUES(created_by)`,
+    [
+      randomUUID(), input.processId, employeeId, input.metricKey, input.scoreDate,
+      input.value, input.note?.trim() || null, input.userId,
+    ],
+  );
+  return { ok: true };
+}
+
+export interface EmployeeImportRow {
+  employeeCode: string;
+  scoreDate: string;
+  value: string | number | null;
+  note?: string | null;
+}
+
+export interface EmployeeImportRowOutcome {
+  row: number;
+  employeeCode: string;
+  scoreDate: string;
+  value: number | null;
+  ok: boolean;
+  message?: string;
+}
+
+/** Same dry-run-then-real-write shape as importMetricRows, scoped to one
+ *  metric+process (the context AnalystBreakdownPanel always has), keyed by
+ *  employee code — the identifier a human filling in a CSV actually has on
+ *  hand, resolved to the real employee id server-side. */
+export async function importEmployeeMetricRows(input: {
+  userId: string;
+  processId: string;
+  metricKey: string;
+  rows: EmployeeImportRow[];
+  dryRun?: boolean;
+}): Promise<{
+  imported: number;
+  errors: Array<{ row: number; message: string }>;
+  outcomes: EmployeeImportRowOutcome[];
+  dryRun: boolean;
+}> {
+  const errors: Array<{ row: number; message: string }> = [];
+  const outcomes: EmployeeImportRowOutcome[] = [];
+  let imported = 0;
+
+  for (let index = 0; index < input.rows.length; index++) {
+    const row = input.rows[index];
+    const raw = row?.value;
+    const trimmed = typeof raw === "string" ? raw.trim() : raw;
+    const value =
+      trimmed === "" || trimmed === null || trimmed === undefined || Number.isNaN(Number(trimmed))
+        ? null
+        : Number(trimmed);
+    const employeeCode = String(row?.employeeCode ?? "").trim();
+    const scoreDate = String(row?.scoreDate ?? "").trim();
+
+    try {
+      if (input.dryRun) {
+        await assertEmployeeMetricValueValid({
+          processId: input.processId, metricKey: input.metricKey, employeeCode, scoreDate,
+        });
+        outcomes.push({ row: index + 1, employeeCode, scoreDate, value, ok: true });
+      } else {
+        await saveEmployeeMetricValue({
+          userId: input.userId, processId: input.processId, metricKey: input.metricKey,
+          employeeCode, scoreDate, value, note: row?.note ?? null,
+        });
+        outcomes.push({ row: index + 1, employeeCode, scoreDate, value, ok: true });
+      }
+      imported++;
+    } catch (err) {
+      const message = (err as Error).message;
+      errors.push({ row: index + 1, message });
+      outcomes.push({ row: index + 1, employeeCode, scoreDate, value, ok: false, message });
+    }
+  }
+  return { imported: input.dryRun ? 0 : imported, errors, outcomes, dryRun: Boolean(input.dryRun) };
+}
