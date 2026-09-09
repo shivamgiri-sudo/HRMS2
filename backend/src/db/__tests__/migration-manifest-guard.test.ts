@@ -211,6 +211,17 @@ describe("migration manifest — duplicates", () => {
     // owner approval and are registered here so a rebuilt database gets them
     // too. Renaming them to free numbers is the one thing that would break:
     // schema_migrations now carries these exact filenames as applied.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(69);
+    //
+    // 69 -> 82 (2026-09-09): merging worktree-payment-voucher-phase1 (Payment
+    // Voucher System, Phases 1-5) into main. Same shape as every jump above —
+    // the branch's own 1701-1707 (company_bank_account through
+    // bank_ledger_report_page_access) collided with main's independently
+    // numbered 1701-1707 (LP APR/offer-exception/Clovia/Housing), and its later
+    // 1708/1712/1713 (bank_reconciliation_period, bank_reconciliation_page_access,
+    // finance_masters_page_access) each collided with one of main's own
+    // concurrently-numbered files. All are real, already-applied-or-approved
+    // migrations tracked by distinct full filenames; renaming any of them is
+    // the one thing that would break schema_migrations' by-filename tracking.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(82);
   });
 });
