@@ -259,6 +259,7 @@ import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { companyBankAccountRouter } from "./modules/finance/company-bank-account.routes.js";
 import { payableAccountRouter } from "./modules/finance/payable-account.routes.js";
 import { paymentVoucherRouter } from "./modules/finance/payment-voucher.routes.js";
+import { bankReconciliationRouter } from "./modules/finance/bank-reconciliation.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
@@ -642,6 +643,7 @@ app.use("/api/finance/imprest", imprestRouter);
 app.use("/api/finance/bank-accounts", companyBankAccountRouter);
 app.use("/api/finance/payable-accounts", payableAccountRouter);
 app.use("/api/finance/payment-vouchers", paymentVoucherRouter);
+app.use("/api/finance/bank-reconciliation", bankReconciliationRouter);
 // Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
 // not be reachable through a path that a broader finance router also serves.
 app.use("/api/finance/payroll", salaryVoucherRouter);
