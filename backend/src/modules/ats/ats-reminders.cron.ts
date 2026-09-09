@@ -22,6 +22,7 @@ import { env } from "../../config/env.js";
 import { triggerOnboardingStuck, triggerJoiningDocsIncomplete } from "../work-inbox/work-inbox.triggers.js";
 import { computeBranchReport } from "./ats-daily-report.service.js";
 import { buildDailyReportEmail } from "./ats-daily-report.template.js";
+import { canonicalBranch } from "./ats-vocabulary.js";
 import nodemailer from "nodemailer";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -288,14 +289,27 @@ export async function runDailyHiringReport(forDate?: string, testEmail?: string)
   // three if the lookup fails: a report that sends the old shape beats one that throws.
   let BRANCHES: string[];
   try {
+    // applied_for_branch is free text, and several branches are recorded under a site
+    // nickname instead of the canonical branch_master name (e.g. 1,862 candidates as
+    // "Okaya Centre" rather than "NOIDA-2" — see ats-vocabulary.ts). An exact-match EXISTS
+    // here would only include a branch whose canonical name happens to have at least one
+    // candidate under that exact spelling — silently correct today (each real branch still
+    // has some canonically-spelled rows) but a landmine for a branch that ends up with only
+    // alias-spelled candidates. Resolve through canonicalBranch() instead, in JS, since the
+    // alias table has no SQL-side equivalent to join against.
     const [branchRows] = await db.execute<RowDataPacket[]>(
-      `SELECT b.branch_name
-         FROM branch_master b
-        WHERE b.active_status = 1
-          AND EXISTS (SELECT 1 FROM ats_candidate c WHERE c.applied_for_branch = b.branch_name)
-        ORDER BY b.branch_name`,
+      `SELECT b.branch_name FROM branch_master b WHERE b.active_status = 1 ORDER BY b.branch_name`,
     );
-    BRANCHES = (branchRows as any[]).map((r) => String(r.branch_name));
+    const [candidateBranchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT applied_for_branch FROM ats_candidate
+        WHERE applied_for_branch IS NOT NULL AND applied_for_branch <> ''`,
+    );
+    const candidateCanonicalBranches = new Set(
+      (candidateBranchRows as any[]).map((r) => canonicalBranch(r.applied_for_branch)),
+    );
+    BRANCHES = (branchRows as any[])
+      .map((r) => String(r.branch_name))
+      .filter((name) => candidateCanonicalBranches.has(name));
     if (BRANCHES.length === 0) throw new Error('no active branches with candidates');
   } catch (e) {
     console.error('[ats-daily-report] branch lookup failed, using the original fixed list:', (e as Error).message);
