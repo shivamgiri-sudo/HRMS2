@@ -41,10 +41,15 @@ export function parseCount(raw: unknown): number {
 }
 
 /**
- * Accepts three shapes: HH:MM:SS text, a day-fraction decimal (0 <= n <= 3,
+ * Accepts three shapes: HH:MM:SS text, a day-fraction decimal (0 <= n < 1,
  * the source's own native format), or an already-converted raw seconds
- * value. The 0-3 day cutoff comfortably separates "fraction of a day" from
- * "seconds" for any realistic per-agent daily duration.
+ * value. The cutoff is 1, not some larger number: a fraction of a single
+ * day can never reach or exceed 1.0 by definition, so any value >= 1 is
+ * unambiguously already-seconds -- a real bug here (an earlier <= 3 cutoff)
+ * misread a plain 2-or-3-second duration as "2 or 3 days", caught live
+ * while verifying clovia-ib-cdr-bulk.service.ts and fixed in all three
+ * places that copied the same heuristic (this file, clovia-apr-daily-bulk.
+ * service.ts, clovia-ib-cdr-bulk.service.ts).
  */
 export function parseSecondsFlexible(raw: unknown): number {
   const v = String(raw ?? "").trim();
@@ -60,7 +65,7 @@ export function parseSecondsFlexible(raw: unknown): number {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return 0;
-  return n <= 3 ? Math.round(n * 86400) : Math.round(n);
+  return n < 1 ? Math.round(n * 86400) : Math.round(n);
 }
 
 /** The source's Utilization % is a plain fraction (0.1503 = 15.04%), not a pre-multiplied percentage. */

@@ -27,7 +27,16 @@ export function parseNullableInt(raw: unknown): number | null {
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-/** Accepts a day-fraction decimal (0 <= n <= 3) or an already-converted raw seconds value. */
+/**
+ * Accepts a day-fraction decimal (0 <= n < 1) or an already-converted raw
+ * seconds value. The cutoff is 1, not some larger number: a fraction of a
+ * single day can never reach or exceed 1.0 by definition, so any value
+ * >= 1 is unambiguously already-seconds -- a real bug here (an earlier
+ * <= 3 cutoff) misread a plain 2-or-3-second duration as "2 or 3 days",
+ * caught live while verifying clovia-ib-cdr-bulk.service.ts and fixed in
+ * all three places that copied the same heuristic (this file,
+ * du-apr-daily-bulk.service.ts, clovia-ib-cdr-bulk.service.ts).
+ */
 export function parseSecondsFlexible(raw: unknown): number | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
@@ -39,7 +48,7 @@ export function parseSecondsFlexible(raw: unknown): number | null {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return null;
-  return n <= 3 ? Math.round(n * 86400) : Math.round(n);
+  return n < 1 ? Math.round(n * 86400) : Math.round(n);
 }
 
 /** Utilization/CSAT arrive as plain fractions (0.4427... = 44.28%), same convention as DU APR. */
