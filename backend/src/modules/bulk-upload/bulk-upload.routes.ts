@@ -303,6 +303,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // Per-process delivery actuals into process_delivery_actual, which the P&L already
   // reads but nothing has ever written. See process-delivery-bulk.service.ts.
   "import_process_delivery_batch",
+  // Molecular Email / Reginald Men Email daily ticket actuals — the underlying
+  // ticketing DB (molecular_db_email) does not exist anywhere in this project's
+  // infrastructure. See email-ticket-daily-bulk.service.ts.
+  "import_email_ticket_daily_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -686,6 +690,14 @@ async function dispatchImport(
       "../bulk-upload/process-delivery-bulk.service.js"
     );
     const data = await importProcessDeliveryBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_email_ticket_daily_batch") {
+    const { importEmailTicketDailyBatch } = await import(
+      "../bulk-upload/email-ticket-daily-bulk.service.js"
+    );
+    const data = await importEmailTicketDailyBatch(id, userId);
     return { success: true, data };
   }
 
