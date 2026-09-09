@@ -2,7 +2,8 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
-import { dateExpression } from "../kpi/kpi-studio.sources.js";
+import { dateExpression, buildProcessEmployeeBreakdownPlan, type SourceField, type DataSourceConfig } from "../kpi/kpi-studio.sources.js";
+import { evaluateFormula } from "../kpi/kpi-formula.engine.js";
 
 /**
  * Process Operations — every metric a process actually has, in one read.
@@ -879,4 +880,242 @@ export async function getMetricRawRows(
       totalRows: null, truncated: false, columns: [], rows: [],
     };
   }
+}
+
+/** Real designation names only. "TL"/"AM" below are picked out of these when
+ *  one genuinely matches — never a label invented for a person whose real
+ *  title is something else. Checked live: Bella-Vita Organic's own chain has
+ *  no Team Leader or Assistant Manager at all, its 17 analysts report
+ *  straight to a Sr. Manager — that gap is real, and pretending otherwise
+ *  would be worse than showing the actual titles. */
+const TL_PATTERN = /team\s*-?\s*lead|^\s*tl\s*$/i;
+const AM_PATTERN = /assistant\s*-?\s*manager|^\s*am\s*$/i;
+
+export interface AnalystScore {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  designation: string | null;
+  value: number | null;
+  /** The real reporting chain, closest manager first — whatever titles actually exist, not a fabricated TL/AM pair. */
+  reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
+  /** Picked out of reportsTo when a real Team Leader / Assistant Manager exists in the chain. Null is honest when neither does. */
+  teamLeader: { employeeCode: string; name: string } | null;
+  assistantManager: { employeeCode: string; name: string } | null;
+}
+
+export interface MetricAnalystBreakdown {
+  available: boolean;
+  reason: string | null;
+  metricName: string | null;
+  unit: string | null;
+  direction: string | null;
+  targetValue: number | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  /** Worst first: direction-aware, so a reader meets whoever is dragging the number down before the rest. */
+  analysts: AnalystScore[];
+}
+
+/**
+ * The metric's own formula, recomputed per employee instead of collapsed
+ * across the whole process — the same SUM/SUM-across-the-range grain, the
+ * same field definitions, the same formula string, just grouped by person.
+ * Not a new source of truth: if this and the process tile ever disagreed,
+ * it would mean this query drifted from buildProcessQueryPlan's, which is
+ * exactly why buildProcessEmployeeBreakdownPlan shares its field-building
+ * and safe-identifier code rather than re-deriving it.
+ *
+ * Only meaningful for a metric attributed to individual employees
+ * ('employee' data sources) — a process-delivery-style metric that belongs
+ * to a whole client has no analyst to break down by, and says so rather
+ * than return an empty table that looks like zero analysts scored anything.
+ */
+export async function getMetricAnalystBreakdown(
+  userId: string, processId: string, metricKey: string, period: ReportPeriod = "trend",
+): Promise<MetricAnalystBreakdown | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): MetricAnalystBreakdown => ({
+    available: false, reason, metricName: null, unit: null, direction: null,
+    targetValue: null, periodFrom: null, periodTo: null, analysts: [],
+  });
+
+  const [metricRows] = await db.execute<RowDataPacket[]>(
+    `SELECT metric_name, unit, direction FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`,
+    [metricKey],
+  );
+  const metric = (metricRows as any[])[0] ?? null;
+
+  const [defRows] = await db.execute<RowDataPacket[]>(
+    `SELECT d.formula_expression, d.target_value, d.data_source_id
+       FROM kpi_studio_definition d
+       JOIN kpi_metric_master m ON m.id = d.metric_id
+      WHERE m.metric_code = ? AND d.process_id = ? AND d.active_status = 1
+      ORDER BY (d.effective_to IS NULL) DESC, d.effective_from DESC
+      LIMIT 1`, [metricKey, processId],
+  );
+  const def = (defRows as any[])[0] ?? null;
+  if (!def?.data_source_id) return unavailable("This metric has no configured data source to recompute per analyst.");
+  if (!def?.formula_expression) return unavailable("This metric has no formula recorded — there is nothing to recompute per analyst.");
+
+  const [srcRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, source_code, source_name, source_type, source_object, date_column, date_format,
+            process_key_kind, process_key_column, process_key_value,
+            employee_key_column, employee_key_kind
+       FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [def.data_source_id],
+  );
+  const src = (srcRows as any[])[0] as (DataSourceConfig & { date_format?: string | null }) | undefined;
+  if (!src) return unavailable("This metric's data source no longer exists.");
+  if ((src.process_key_kind ?? "none") !== "employee") {
+    return unavailable("This metric is measured at the whole-process level, not attributed to individual employees — there is no analyst to break it down by.");
+  }
+
+  const [fieldRows] = await db.execute<RowDataPacket[]>(
+    `SELECT field_name, source_column, aggregate_fn, source_expression, filter_json
+       FROM kpi_studio_source_field
+      WHERE data_source_id = ? AND active_status = 1
+      ORDER BY field_name`, [def.data_source_id],
+  );
+  const fields: SourceField[] = (fieldRows as any[]).map((f) => ({
+    field_name: String(f.field_name),
+    source_column: f.source_column ?? null,
+    aggregate_fn: f.aggregate_fn ?? null,
+    source_expression: f.source_expression ?? null,
+    filter_json: f.filter_json ?? null,
+  }));
+  if (!fields.length) return unavailable("This data source has no fields configured yet.");
+
+  // "trend" has no fixed calendar window (the card above shows the latest
+  // reading, not a range), so the breakdown uses the single most recent date
+  // this metric actually has a process-level reading for -- the exact day
+  // the tile is currently headlining, not an arbitrary trailing window.
+  let from: string;
+  let to: string;
+  const range = periodRange(period, new Date());
+  if (range) {
+    from = range.from; to = range.to;
+  } else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(score_date) latest FROM process_metric_actual
+        WHERE process_id = ? AND metric_key = ? AND actual_value IS NOT NULL`,
+      [processId, metricKey],
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No reading exists yet for this metric to break down.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  let plan: ReturnType<typeof buildProcessEmployeeBreakdownPlan>;
+  try {
+    plan = buildProcessEmployeeBreakdownPlan(src, fields, from, to, processId);
+  } catch (err) {
+    return unavailable((err as Error).message);
+  }
+
+  const direction = metric?.direction ?? null;
+  const targetValue = def.target_value === null ? null : Number(def.target_value);
+
+  let rows: RowDataPacket[];
+  try {
+    [rows] = await db.execute<RowDataPacket[]>(plan.sql, plan.params);
+  } catch (err) {
+    return unavailable(`Could not compute per-analyst scores: ${(err as Error).message}`);
+  }
+  const base = {
+    available: true as const, reason: null,
+    metricName: metric?.metric_name ? String(metric.metric_name) : metricKey,
+    unit: metric?.unit ?? null, direction, targetValue, periodFrom: from, periodTo: to,
+  };
+  if (!(rows as any[]).length) return { ...base, analysts: [] };
+
+  const scored = (rows as any[]).map((r) => {
+    const inputs: Record<string, number | string | null> = {};
+    for (const name of plan.fieldNames) inputs[name] = r[name] ?? null;
+    const evaluated = evaluateFormula(def.formula_expression, inputs);
+    return {
+      employeeId: String(r.__employee_id),
+      employeeCode: String(r.__employee_code ?? ""),
+      name: `${r.__first_name ?? ""} ${r.__last_name ?? ""}`.trim() || String(r.__employee_code ?? "Unknown"),
+      value: evaluated.value,
+    };
+  });
+  const employeeIds = scored.map((s) => s.employeeId);
+
+  const [desigRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, d.designation_name
+       FROM employees e LEFT JOIN designation_master d ON d.id = e.designation_id
+      WHERE e.id IN (${employeeIds.map(() => "?").join(",")})`,
+    employeeIds,
+  );
+  const designationById = new Map<string, string | null>(
+    (desigRows as any[]).map((r) => [String(r.id), r.designation_name ? String(r.designation_name) : null]),
+  );
+
+  // The real reporting chain, capped at 6 levels and guarded against a cycle
+  // -- one genuinely exists in this data (two managers who report to each
+  // other), which a plain WITH RECURSIVE would otherwise spin on until MySQL's
+  // recursion limit killed the query.
+  const [chainRows] = await db.execute<RowDataPacket[]>(
+    `WITH RECURSIVE chain AS (
+       SELECT e.id AS start_id, e.id AS node_id, e.reporting_manager_id, 0 AS depth,
+              CAST(e.id AS CHAR(4000)) AS visited
+         FROM employees e
+        WHERE e.id IN (${employeeIds.map(() => "?").join(",")})
+        UNION ALL
+       SELECT c.start_id, m.id, m.reporting_manager_id, c.depth + 1,
+              CONCAT(c.visited, ',', m.id)
+         FROM employees m
+         JOIN chain c ON m.id = c.reporting_manager_id
+        WHERE c.depth < 6 AND FIND_IN_SET(m.id, c.visited) = 0
+     )
+     SELECT c.start_id, c.depth, e.employee_code, e.first_name, e.last_name, d.designation_name
+       FROM chain c
+       JOIN employees e ON e.id = c.node_id
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+      WHERE c.depth > 0
+      ORDER BY c.start_id, c.depth`,
+    employeeIds,
+  );
+  const chainByAnalyst = new Map<string, AnalystScore["reportsTo"]>();
+  for (const r of chainRows as any[]) {
+    const key = String(r.start_id);
+    const arr = chainByAnalyst.get(key) ?? [];
+    arr.push({
+      employeeCode: String(r.employee_code ?? ""),
+      name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim(),
+      designation: r.designation_name ? String(r.designation_name) : null,
+      depth: Number(r.depth),
+    });
+    chainByAnalyst.set(key, arr);
+  }
+
+  const analysts: AnalystScore[] = scored.map((s) => {
+    const chain = chainByAnalyst.get(s.employeeId) ?? [];
+    const tl = chain.find((c) => c.designation && TL_PATTERN.test(c.designation));
+    const am = chain.find((c) => c.designation && AM_PATTERN.test(c.designation));
+    return {
+      employeeId: s.employeeId, employeeCode: s.employeeCode, name: s.name,
+      designation: designationById.get(s.employeeId) ?? null,
+      value: s.value,
+      reportsTo: chain,
+      teamLeader: tl ? { employeeCode: tl.employeeCode, name: tl.name } : null,
+      assistantManager: am ? { employeeCode: am.employeeCode, name: am.name } : null,
+    };
+  });
+
+  // Worst first, direction-aware: the reader meets whoever is dragging the
+  // number down before the rest, the same convention this page's other
+  // "which one first" lists (StoppedFeeds, NeverReportedBanner) already use.
+  // A null score (no rows this period) sorts last -- absent, not zero.
+  analysts.sort((a, b) => {
+    if (a.value === null && b.value === null) return 0;
+    if (a.value === null) return 1;
+    if (b.value === null) return -1;
+    return direction === "lower_is_better" ? b.value - a.value : a.value - b.value;
+  });
+
+  return { ...base, analysts };
 }

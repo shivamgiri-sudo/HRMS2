@@ -6,9 +6,9 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Clock, Database,
-  Download, Filter, Headphones, Loader2, Minus, PenLine, Radio, ShieldAlert, Sparkles,
-  Target, Upload, Users, Users2, X,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronRight, Clock,
+  Database, Download, Filter, Headphones, Lightbulb, Loader2, Minus, PenLine, Radio,
+  ShieldAlert, Sparkles, Target, Upload, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -151,6 +151,20 @@ interface Drilldown {
     date: string; value: number | null; numerator: number | null;
     denominator: number | null; note: string | null; source: string | null;
   }>;
+}
+
+interface AnalystScore {
+  employeeId: string; employeeCode: string; name: string; designation: string | null;
+  value: number | null;
+  reportsTo: Array<{ employeeCode: string; name: string; designation: string | null; depth: number }>;
+  teamLeader: { employeeCode: string; name: string } | null;
+  assistantManager: { employeeCode: string; name: string } | null;
+}
+interface AnalystBreakdown {
+  available: boolean; reason: string | null;
+  metricName: string | null; unit: string | null; direction: string | null; targetValue: number | null;
+  periodFrom: string | null; periodTo: string | null;
+  analysts: AnalystScore[];
 }
 
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
@@ -662,6 +676,226 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
 }
 
 /**
+ * The deepest level of the drill-down: not a row of raw data, a row per
+ * PERSON — name, employee code, their own score on this exact metric, real
+ * designation, and the real reporting chain (Team Leader / Assistant Manager
+ * picked out of it when one genuinely exists, honestly absent when it
+ * doesn't — see the backend's TL_PATTERN/AM_PATTERN comment). Only meaningful
+ * for a metric attributed to individual employees; a whole-process metric
+ * says so rather than render an empty table.
+ */
+function AnalystBreakdownPanel({ processId, metricKey, period }: {
+  processId: string; metricKey: string; period: ReportPeriod;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<AnalystBreakdown>>(
+      `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
+  });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const ab = data?.data;
+
+  const passes = (v: number | null, target: number | null, direction: string | null) => {
+    if (v === null || target === null || !direction) return null;
+    return direction === "higher_is_better" ? v >= target : v <= target;
+  };
+
+  return (
+    <section>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 inline-flex items-center gap-1">
+        <Users size={11} />Analyst-wise score — the deepest level of this drill-down
+      </div>
+      {isLoading || !ab ? (
+        <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading each analyst's own score…
+        </div>
+      ) : !ab.available ? (
+        <p className="text-xs text-slate-400 italic py-1">{ab.reason ?? "Not available for this metric."}</p>
+      ) : ab.analysts.length === 0 ? (
+        <p className="text-xs text-slate-400 italic py-1">
+          No analyst has a reading for this metric in this period — not that everyone scored zero.
+        </p>
+      ) : (
+        <div>
+          <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-96 overflow-y-auto">
+            <table className="w-full text-[11px]">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1.5 font-semibold">Analyst</th>
+                  <th className="text-left px-2 py-1.5 font-semibold">Employee code</th>
+                  <th className="text-right px-2 py-1.5 font-semibold">Score</th>
+                  <th className="text-left px-2 py-1.5 font-semibold">Team Leader</th>
+                  <th className="text-left px-2 py-1.5 font-semibold">Assistant Manager</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ab.analysts.map((a) => {
+                  const pass = passes(a.value, ab.targetValue, ab.direction);
+                  const open = expandedId === a.employeeId;
+                  return (
+                    <Fragment key={a.employeeId}>
+                      <tr onClick={() => setExpandedId(open ? null : a.employeeId)}
+                        aria-expanded={open}
+                        title="Show this analyst's full reporting chain"
+                        className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${open ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
+                        <td className="px-2 py-1.5 text-slate-700 dark:text-slate-300">
+                          <span className="inline-flex items-center gap-1">
+                            <ChevronRight size={11} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+                            <span className="font-medium">{a.name}</span>
+                          </span>
+                          {a.designation && <span className="block text-[10px] text-slate-400 pl-4">{a.designation}</span>}
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-slate-500">{a.employeeCode || "—"}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold"
+                          style={{ color: a.value === null ? undefined : pass === null ? undefined : pass ? C_GREEN : C_RED }}>
+                          {a.value === null ? <span className="text-slate-400 italic font-normal">no data</span> : formatValue(a.value, ab.unit)}
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">
+                          {a.teamLeader ? `${a.teamLeader.name} (${a.teamLeader.employeeCode})` : <span className="text-slate-400 italic">none on record</span>}
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">
+                          {a.assistantManager ? `${a.assistantManager.name} (${a.assistantManager.employeeCode})` : <span className="text-slate-400 italic">none on record</span>}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
+                          <td colSpan={5} className="px-2 py-2">
+                            {a.reportsTo.length ? (
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                <span className="text-slate-400 shrink-0">Full reporting chain:</span>
+                                {a.reportsTo.map((m, i) => (
+                                  <span key={`${m.employeeCode}-${i}`} className="inline-flex items-center gap-1">
+                                    {i > 0 && <span className="text-slate-300">→</span>}
+                                    <span className="rounded-full px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                                      {m.name} ({m.employeeCode}){m.designation ? ` · ${m.designation}` : ""}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-slate-400 italic">
+                                No one is recorded as this analyst's manager — the reporting chain stops here.
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1.5">
+            Sorted worst first. Team Leader / Assistant Manager are pulled from each analyst's real
+            reporting chain — "none on record" means that layer genuinely doesn't exist for them, not a loading gap.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Honest, derived-only read of what the numbers say: never a canned verdict,
+ * every line traces to a real value already on screen (the latest reading vs.
+ * the one before it, the configured target, and — when this metric has one —
+ * the per-analyst breakdown). A category with nothing to report says so
+ * rather than show a filler line.
+ */
+function InsightsPanel({ d, processId, metricKey, period }: {
+  d: Drilldown; processId: string; metricKey: string; period: ReportPeriod;
+}) {
+  // Same query key as AnalystBreakdownPanel -- react-query dedupes this into
+  // the one request already in flight/cached for that panel, not a second
+  // network round-trip, so the worst-performer/target-gap lines below stay
+  // exactly consistent with the analyst table sitting right underneath them.
+  const { data: abData } = useQuery({
+    queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<AnalystBreakdown>>(
+      `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
+  });
+  const ab = abData?.data;
+  const target = d.definition?.targetValue ?? null;
+  const direction = d.direction;
+  const passes = (v: number | null) => {
+    if (v === null || target === null || !direction) return null;
+    return direction === "higher_is_better" ? v >= target : v <= target;
+  };
+  const latest = d.readings[0] ?? null;
+  const prev = d.readings.find((r) => r.value !== null && r.date !== latest?.date) ?? null;
+  const latestPass = latest ? passes(latest.value) : null;
+  const delta = latest?.value != null && prev?.value != null ? latest.value - prev.value : null;
+  const improving = delta !== null ? (direction === "higher_is_better" ? delta > 0 : delta < 0) : null;
+
+  const scored = (ab?.available ? ab.analysts : []).filter((a) => a.value !== null);
+  const worst = scored[0] ?? null; // backend already sorts worst-first
+  const best = scored.length ? scored[scored.length - 1] : null;
+  const worstPass = worst ? passes(worst.value) : null;
+  const bestPass = best ? passes(best.value) : null;
+  const failingCount = target !== null && direction
+    ? scored.filter((a) => !passes(a.value)).length : null;
+  const passingCount = failingCount !== null ? scored.length - failingCount : null;
+
+  const good: string[] = [];
+  const alert: string[] = [];
+  const actions: string[] = [];
+
+  if (latest && latestPass === true) good.push(`Latest reading (${latest.date}) meets target at ${formatValue(latest.value, d.unit)}.`);
+  if (latest && latestPass === false) alert.push(`Latest reading (${latest.date}) is missing target: ${formatValue(latest.value, d.unit)} vs ${formatValue(target, d.unit)}.`);
+  if (improving === true) good.push(`Moving the right way vs. the previous reading (${prev?.date}).`);
+  if (improving === false) alert.push(`Moving the wrong way vs. the previous reading (${prev?.date}).`);
+  if (!latest) alert.push("No reading has ever been recorded for this metric on this process.");
+  if (target === null) actions.push("No target is configured for this metric — set one so \"pass/fail\" is meaningful here.");
+
+  if (passingCount !== null && passingCount > 0) good.push(`${passingCount} of ${scored.length} analysts are meeting target.`);
+  if (best && bestPass === true) good.push(`${best.name} (${best.employeeCode}) is the strongest performer at ${formatValue(best.value, ab?.unit ?? d.unit)}.`);
+  if (failingCount !== null && failingCount > 0) alert.push(`${failingCount} of ${scored.length} analysts are missing target.`);
+  if (worst && worstPass === false) {
+    alert.push(`${worst.name} (${worst.employeeCode}) is furthest from target at ${formatValue(worst.value, ab?.unit ?? d.unit)}.`);
+    if (worst.teamLeader) {
+      actions.push(`Loop in ${worst.teamLeader.name} (${worst.teamLeader.employeeCode}), ${worst.name}'s Team Leader, on the gap.`);
+    } else {
+      actions.push(`${worst.name} has no Team Leader on record to escalate through — worth checking the reporting chain.`);
+    }
+  }
+  if (failingCount !== null && failingCount > 1) {
+    actions.push(`Review the ${failingCount} analysts below target together — a shared root cause is more likely than ${failingCount} unrelated ones.`);
+  }
+
+  const Block = ({ title, icon: Icon, color, items, emptyText }: {
+    title: string; icon: typeof CheckCircle2; color: string; items: string[]; emptyText: string;
+  }) => (
+    <div className="rounded-lg border pl-2.5" style={{ borderColor: `${color}30`, borderLeftWidth: 3, borderLeftColor: color }}>
+      <div className="flex items-center gap-1.5 py-1.5 pr-2 text-[10px] font-bold uppercase tracking-wide" style={{ color }}>
+        <Icon size={11} />{title}
+      </div>
+      <div className="pb-2 pr-2 space-y-1">
+        {items.length ? items.map((t, i) => (
+          <p key={i} className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug">{t}</p>
+        )) : <p className="text-[11px] text-slate-400 italic">{emptyText}</p>}
+      </div>
+    </div>
+  );
+
+  return (
+    <section>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">
+        Insights — what the numbers actually say
+      </div>
+      <div className="space-y-2.5">
+        <Block title="Good things" icon={CheckCircle2} color={C_GREEN} items={good}
+          emptyText="Nothing currently qualifies as a good-news line for this metric." />
+        <Block title="High alert" icon={AlertTriangle} color={C_RED} items={alert}
+          emptyText="Nothing currently rises to a high-alert line for this metric." />
+        <Block title="Actionable points" icon={Lightbulb} color={C_AMBER} items={actions}
+          emptyText="No specific action is indicated beyond the usual monitoring." />
+      </div>
+    </section>
+  );
+}
+
+/**
  * The drill-down drawer: the formula, the source it reads, the filter on every
  * field, and each daily reading with the parts it divided.
  */
@@ -704,7 +938,7 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
   );
   return (
     <Sheet open={Boolean(metricKey)} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 overflow-y-auto">
+      <SheetContent side="right" className="w-full sm:max-w-[63rem] p-0 overflow-y-auto">
         <div className="sticky top-0 z-10 px-5 py-3 flex items-start gap-3" style={{ background: NAVY }}>
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-white truncate">{d?.metricName ?? metricKey}</h2>
@@ -787,6 +1021,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                 not that the value was zero.
               </p>
             </section>
+
+            {metricKey && <AnalystBreakdownPanel processId={processId} metricKey={metricKey} period={period} />}
+
+            {metricKey && <InsightsPanel d={d} processId={processId} metricKey={metricKey} period={period} />}
 
             <section className="rounded-xl border border-slate-200 dark:border-slate-800">
               <button type="button" onClick={() => setShowDetails((v) => !v)}
