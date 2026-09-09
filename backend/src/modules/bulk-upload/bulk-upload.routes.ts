@@ -407,6 +407,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // workbook family; no DB backing exists anywhere. See
   // clovia-feedback-bulk.service.ts.
   "import_clovia_feedback_batch",
+  // Clovia's Rechurn Calls, abandoned-call follow-up tracking -- found
+  // while auditing the same workbook family; no DB backing exists
+  // anywhere. See clovia-rechurn-calls-bulk.service.ts.
+  "import_clovia_rechurn_calls_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1029,6 +1033,14 @@ async function dispatchImport(
       "../bulk-upload/clovia-feedback-bulk.service.js"
     );
     const data = await importCloviaFeedbackBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_rechurn_calls_batch") {
+    const { importCloviaRechurnCallsBatch } = await import(
+      "../bulk-upload/clovia-rechurn-calls-bulk.service.js"
+    );
+    const data = await importCloviaRechurnCallsBatch(id, userId);
     return { success: true, data };
   }
 
