@@ -345,6 +345,14 @@ const KNOWN_IMPORT_RPCS = new Set([
   // See du-apr-daily-bulk.service.ts.
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  // LP's BPO CR Reports (call log) and Mascallnet NRGN Call History
+  // exports, Regional/Non Regional dashboards -- columns read verbatim
+  // from real samples; no DB backing exists anywhere. See
+  // lp-cdr-cr-report-bulk.service.ts.
+  "import_lp_cdr_regional_batch",
+  "import_lp_cdr_non_regional_batch",
+  "import_lp_cr_report_regional_batch",
+  "import_lp_cr_report_non_regional_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -824,6 +832,38 @@ async function dispatchImport(
       "../bulk-upload/du-apr-daily-bulk.service.js"
     );
     const data = await importDuAprThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cdr_regional_batch") {
+    const { importLpCdrRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCdrRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cdr_non_regional_batch") {
+    const { importLpCdrNonRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCdrNonRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cr_report_regional_batch") {
+    const { importLpCrReportRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCrReportRegionalBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_cr_report_non_regional_batch") {
+    const { importLpCrReportNonRegionalBatch } = await import(
+      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
+    );
+    const data = await importLpCrReportNonRegionalBatch(id, userId);
     return { success: true, data };
   }
 
