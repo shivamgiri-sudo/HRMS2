@@ -1,6 +1,6 @@
 import type { FC, SVGProps } from "react";
 import {
-  Activity, BarChart3, Bell, Briefcase, Building2, Calendar, Database, FlaskConical,
+  Activity, BarChart3, Bell, BookOpen, Briefcase, Building2, Calendar, Database, FlaskConical,
   CalendarClock, CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
   FileText, GitBranch, Gauge, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
@@ -422,6 +422,8 @@ export const navGroups: NavGroup[] = [
           { label: "Payment Vouchers", href: "/finance/payment-vouchers", icon: ic(IndianRupee), pageCode: "FINANCE_PAYMENT_VOUCHERS", description: "Raise → CEO approve → release", roles: ["super_admin","finance_head","ceo","accounts_head","branch_head","admin","finance"] },
           { label: "Bank Ledger", href: "/finance/bank-ledger", icon: ic(IndianRupee), pageCode: "FINANCE_BANK_LEDGER", description: "Credit/Debit report per account", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
           { label: "Bank Reconciliation", href: "/finance/bank-reconciliation", icon: ic(Landmark), pageCode: "FINANCE_BANK_RECONCILIATION", description: "Match statements, post adjustments, close periods", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
+          { label: "Ledger Heads", href: "/finance/ledger-heads", icon: ic(BookOpen), pageCode: "FINANCE_LEDGER_HEADS", description: "Chart-of-accounts entries for vouchers and adjustments", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
+          { label: "Bank Directory", href: "/finance/bank-directory", icon: ic(Building2), pageCode: "FINANCE_BANK_DIRECTORY", description: "Banks offered when adding a company bank account", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
           { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
           { label: "Finance Masters", href: "/finance/masters", icon: ic(Settings2), pageCode: "FINANCE_MASTERS", roles: ["super_admin","finance_head","branch_admin"], description: "Expense heads/sub-heads, vendor approval queue and vendor-to-head mapping" },
           { label: "Procurement", href: "/procurement", icon: ic(ShoppingCart), pageCode: "PROCUREMENT", description: "Procurement requests" },

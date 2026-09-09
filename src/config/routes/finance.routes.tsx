@@ -37,6 +37,8 @@ const CompanyBankAccountsPage      = lazy(() => import("@/pages/finance/CompanyB
 const PaymentVouchersPage          = lazy(() => import("@/pages/finance/PaymentVouchersPage"));
 const BankLedgerReportPage         = lazy(() => import("@/pages/finance/BankLedgerReportPage"));
 const BankReconciliationPage       = lazy(() => import("@/pages/finance/BankReconciliationPage"));
+const LedgerHeadsPage              = lazy(() => import("@/pages/finance/LedgerHeadsPage"));
+const BankDirectoryPage            = lazy(() => import("@/pages/finance/BankDirectoryPage"));
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 // Branch roles raise GRNs — the backend already grants them GRN write access and
@@ -74,6 +76,8 @@ export const financeRouteElements = (
       <Route path="/finance/payment-vouchers" element={<ProtectedRoute roles={['super_admin','finance_head','ceo','accounts_head','branch_head','admin','finance']}><Gate pageCode="FINANCE_PAYMENT_VOUCHERS"><PaymentVouchersPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/bank-ledger"      element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_LEDGER"><BankLedgerReportPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/bank-reconciliation" element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_RECONCILIATION"><BankReconciliationPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/ledger-heads"     element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_LEDGER_HEADS"><LedgerHeadsPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/bank-directory"   element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_DIRECTORY"><BankDirectoryPage /></Gate></ProtectedRoute>} />
 
       {/* Finance */}
       <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
