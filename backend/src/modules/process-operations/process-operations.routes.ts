@@ -115,6 +115,25 @@ router.get("/:processId/metric/:metricKey/by-analyst", requireAuth, requireRole(
   res.json({ success: true, data });
 }));
 
+/**
+ * Voice of the Customer for the whole process (not one metric): the real CLAP
+ * root-cause split (Customer/Logistic/Agent/Product) and verbatim customer
+ * quotes for audited calls, reusing the taxonomy already proven live in the
+ * sibling Mydashboards project against the same upstream db_audit source.
+ *
+ * Declared before /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getProcessVoiceOfCustomer(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
 router.get("/:processId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const days = Number(req.query.days);
   // Clamped rather than trusted: an unbounded window here is a full-table scan

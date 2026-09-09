@@ -167,6 +167,18 @@ interface AnalystBreakdown {
   analysts: AnalystScore[];
 }
 
+interface VocQuote { employeeCode: string; employeeName: string; callDate: string; quote: string }
+interface ClapVoiceOfCustomer {
+  available: boolean; reason: string | null;
+  periodFrom: string | null; periodTo: string | null; totalAuditedCalls: number;
+  clapBreakdown: Array<{ clap: "Customer" | "Logistic" | "Agent" | "Product"; count: number; pct: number }>;
+  quotes: {
+    agent: { positive: VocQuote[]; negative: VocQuote[] };
+    logistic: { positive: VocQuote[]; negative: VocQuote[] };
+    product: { positive: VocQuote[]; negative: VocQuote[] };
+  };
+}
+
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
   conversion: { accent: C_BLUE, tint: "linear-gradient(135deg,#EFF6FF 0%,#DBEAFE 100%)", icon: Target },
   risk: { accent: C_RED, tint: "linear-gradient(135deg,#FEF2F2 0%,#FEE2E2 100%)", icon: ShieldAlert },
@@ -397,6 +409,123 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
         <p className="text-[8.5px] text-slate-400 mt-0.5 truncate">{targetCaption(r)}</p>
       )}
     </button>
+  );
+}
+
+const CLAP_META: Record<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"], { color: string; icon: string }> = {
+  Customer: { color: "#3B82F6", icon: "👤" },
+  Logistic: { color: "#F59E0B", icon: "🚚" },
+  Agent:    { color: "#E11D48", icon: "🎧" },
+  Product:  { color: "#10B981", icon: "📦" },
+};
+
+/**
+ * Real root-cause classification (CLAP: Customer/Logistic/Agent/Product) and
+ * verbatim customer quotes for a process's audited calls -- not a metric
+ * percentage, the actual reason behind it. The taxonomy and the underlying
+ * data are the same ones already proven live in the sibling Mydashboards
+ * project; this reads the same upstream db_audit source, never a copy of it.
+ */
+function VoiceOfCustomerPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "voice-of-customer", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapVoiceOfCustomer>>(
+      `/api/process-operations/${processId}/voice-of-customer?period=${period}`),
+  });
+  const [category, setCategory] = useState<"agent" | "logistic" | "product">("agent");
+  const voc = data?.data;
+
+  if (isLoading || !voc) {
+    return (
+      <ChartCard title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
+        <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading what customers actually said…
+        </div>
+      </ChartCard>
+    );
+  }
+  if (!voc.available || !voc.clapBreakdown.length) {
+    return (
+      <ChartCard title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
+        <p className="text-xs text-slate-400 italic px-3 py-4">
+          {voc.reason ?? "Not available for this process."}
+        </p>
+      </ChartCard>
+    );
+  }
+
+  const quotesForCategory = voc.quotes[category];
+  return (
+    <ChartCard title="Voice of the Customer"
+      subtitle={`${voc.totalAuditedCalls.toLocaleString("en-IN")} audited call${voc.totalAuditedCalls === 1 ? "" : "s"} — what's actually behind them, not just a score`}>
+      <div className="px-3">
+        {/* CLAP breakdown -- real root cause, not agent quality alone */}
+        <div className="flex h-6 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
+          {voc.clapBreakdown.map((c) => (
+            <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
+              style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
+          {voc.clapBreakdown.map((c) => (
+            <span key={c.clap} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: CLAP_META[c.clap].color }} />
+              {CLAP_META[c.clap].icon} {c.clap} {c.pct}%
+            </span>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-400 mt-1.5">
+          Every audited call classified by its real recorded scenario — Agent means the call turned on
+          agent behaviour itself (needs improvement, hold procedure, fraud complaint), not just "someone
+          called." Customer/Product/Logistic mean the root issue lay elsewhere.
+        </p>
+
+        {/* Category selector -- only Agent/Logistic/Product carry verbatim quotes */}
+        <div className="flex gap-1.5 mt-3">
+          {(["agent", "logistic", "product"] as const).map((cat) => {
+            const meta = CLAP_META[(cat.charAt(0).toUpperCase() + cat.slice(1)) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"]];
+            const n = voc.quotes[cat].positive.length + voc.quotes[cat].negative.length;
+            return (
+              <button key={cat} type="button" onClick={() => setCategory(cat)}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold border transition cursor-pointer ${
+                  category === cat ? "text-white" : "text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
+                style={category === cat ? { background: meta.color, borderColor: meta.color } : undefined}>
+                {meta.icon} {cat[0].toUpperCase() + cat.slice(1)} {n > 0 && <span className="opacity-80">({n})</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mt-2.5 mb-1">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
+            {quotesForCategory.positive.length ? (
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {quotesForCategory.positive.map((q, i) => (
+                  <div key={i} className="rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-2.5 py-1.5">
+                    <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
+                    <p className="text-[9.5px] text-slate-400 mt-1">{q.employeeName} ({q.employeeCode}) · {q.callDate}</p>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-[11px] text-slate-400 italic">No positive quotes recorded for this category this period.</p>}
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-red-600 mb-1.5">What went wrong</p>
+            {quotesForCategory.negative.length ? (
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {quotesForCategory.negative.map((q, i) => (
+                  <div key={i} className="rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-2.5 py-1.5">
+                    <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
+                    <p className="text-[9.5px] text-slate-400 mt-1">{q.employeeName} ({q.employeeCode}) · {q.callDate}</p>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-[11px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
+          </div>
+        </div>
+      </div>
+    </ChartCard>
   );
 }
 
@@ -2014,6 +2143,8 @@ export default function ProcessOperationsPage() {
                 {charts.length > 0 && (
                   <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
                 )}
+
+                {current && <VoiceOfCustomerPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]

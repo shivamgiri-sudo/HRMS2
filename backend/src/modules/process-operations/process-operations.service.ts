@@ -1179,3 +1179,162 @@ export async function getMetricAnalystBreakdown(
 
   return { ...base, analysts };
 }
+
+/**
+ * Voice of the Customer — real root-cause classification and verbatim quotes
+ * for a process's audited calls, reusing the CLAP taxonomy (Customer / Logistic
+ * / Agent / Product) already built and proven live in the sibling Mydashboards
+ * project (github.com/tausifansari-mcn/Mydashboards, inbound-quality module).
+ * The CASE expression below is copied verbatim from that project's
+ * CLAP_CASE_INBOUND, not reinvented — it classifies each audited call by its
+ * real recorded scenario/scenario1 fields, the same fields the call-quality
+ * auditor actually filled in, not a guess layered on afterward.
+ *
+ * Same read-only upstream-source pattern QA_QUALITY_PCT already uses: joins
+ * db_audit.call_quality_assessment.User (employee_code) to employees.process_id
+ * — never writes back, never duplicates Mydashboards' own tables, just reads
+ * the same real audit data through the same join this codebase already trusts.
+ *
+ * customer_voc_*_positive/negative are real AI-extracted verbatim quotes,
+ * populated only from 2026-07-17 onward and still sparse for Logistic/Product
+ * specifically (confirmed live) — an empty quote list for those categories is
+ * reported honestly, never backfilled with an Agent-category quote instead.
+ */
+const CLAP_CASE = `
+  CASE
+    WHEN q.scenario IN ('Query','General Query','General Queries','Feedback','Unclear','Short Call/Blank Call','Customer Profile','Brand','Marketing','Content','Collaboration Request') THEN 'Customer'
+    WHEN q.scenario IN ('Return/Exchange','Return Request','Return & Exchange','Wrong product','Product Issue','Pricing','Refund Status','Refund issue','Refund Request','Tech issue','Policies and FAQs','Sale Done') THEN 'Product'
+    WHEN q.scenario IN ('Delivery Issue','Post Order','Order Status','Reverse Pickup Issue','Pending payment','Payment issues','Wallet issue') THEN 'Logistic'
+    WHEN q.scenario IN ('Needs Improvement','Hold Procedure','Transfer','') THEN 'Agent'
+    WHEN q.scenario IN ('Complaint','Repeat') THEN
+      CASE
+        WHEN q.scenario1 IS NULL OR q.scenario1 = '' THEN 'Product'
+        WHEN q.scenario1 LIKE '%Dispatch%' OR q.scenario1 LIKE '%Delivery%' OR q.scenario1 LIKE '%RTO%' OR q.scenario1 = 'Delivery Fail'
+          OR q.scenario1 LIKE '%Late dispatch%' OR q.scenario1 LIKE '%No communication%' OR q.scenario1 LIKE '%Fake remark%'
+          OR q.scenario1 LIKE '%Extra Charge%' OR q.scenario1 LIKE '%Misbehave%' OR q.scenario1 LIKE '%Delivery Boy%'
+          OR q.scenario1 LIKE '%Delivery Delay%' OR q.scenario1 LIKE '%POD%' OR q.scenario1 LIKE '%Courier%' THEN 'Logistic'
+        WHEN q.scenario1 LIKE '%Fraud%' THEN 'Agent'
+        ELSE 'Product'
+      END
+    ELSE 'Agent'
+  END`;
+
+export interface VocQuote { employeeCode: string; employeeName: string; callDate: string; quote: string }
+export interface ClapVoiceOfCustomer {
+  available: boolean;
+  reason: string | null;
+  periodFrom: string | null;
+  periodTo: string | null;
+  totalAuditedCalls: number;
+  /** Real root-cause split — who/what the customer's issue is actually about, not agent quality alone. */
+  clapBreakdown: Array<{ clap: "Customer" | "Logistic" | "Agent" | "Product"; count: number; pct: number }>;
+  quotes: {
+    agent: { positive: VocQuote[]; negative: VocQuote[] };
+    logistic: { positive: VocQuote[]; negative: VocQuote[] };
+    product: { positive: VocQuote[]; negative: VocQuote[] };
+  };
+}
+
+export async function getProcessVoiceOfCustomer(
+  userId: string, processId: string, period: ReportPeriod = "trend",
+): Promise<ClapVoiceOfCustomer | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapVoiceOfCustomer => ({
+    available: false, reason, periodFrom: null, periodTo: null, totalAuditedCalls: 0,
+    clapBreakdown: [], quotes: {
+      agent: { positive: [], negative: [] }, logistic: { positive: [], negative: [] }, product: { positive: [], negative: [] },
+    },
+  });
+
+  // Resolved ONCE, then used as an IN-list everywhere below, rather than
+  // joining db_audit.call_quality_assessment (460k+ row external table, live-
+  // verified) to employees per query. That join looked fine on a narrow
+  // single-day range (confirmed 345ms) but genuinely hangs on anything wider
+  // (confirmed directly: a 90-day-bounded join-based MAX did not return in
+  // 15s) -- MySQL can't push a cross-schema equi-join filter into an index
+  // range scan the way it can push a plain IN-list. A handful of employee
+  // codes against User's own index is fast at any window width (~3s worst
+  // case measured, vs. an outright hang).
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    // Bounded to the last 90 days, the same "recent enough to matter" window
+    // feed-health checks already use elsewhere on this page -- an honest
+    // "nothing recent" beats a scan of years-old rows nobody is looking at.
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [breakdownRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${CLAP_CASE.replace(/q\./g, "")} AS clap, COUNT(*) AS n
+       FROM db_audit.call_quality_assessment
+      WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+        AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+      GROUP BY clap`,
+    [...employeeCodes, from, to],
+  );
+  const total = (breakdownRows as any[]).reduce((s, r) => s + Number(r.n), 0);
+  if (!total) {
+    return { ...unavailable(
+      "This process has no call-quality audit configured, or none this period — Voice of the Customer only exists where calls are actually audited.",
+    ), available: true, periodFrom: from, periodTo: to };
+  }
+  const clapBreakdown = (breakdownRows as any[]).map((r) => ({
+    clap: String(r.clap) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"],
+    count: Number(r.n),
+    pct: Math.round((Number(r.n) / total) * 1000) / 10,
+  })).sort((a, b) => b.count - a.count);
+
+  const quoteQuery = async (col: string): Promise<VocQuote[]> => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT User AS employee_code, DATE_FORMAT(CallDate, '%Y-%m-%d') AS call_date, \`${col}\` AS quote
+         FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND \`${col}\` IS NOT NULL AND TRIM(\`${col}\`) != ''
+        ORDER BY CallDate DESC LIMIT 5`,
+      [...employeeCodes, from, to],
+    );
+    return (rows as any[]).map((r) => ({
+      employeeCode: String(r.employee_code),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      callDate: String(r.call_date), quote: String(r.quote),
+    }));
+  };
+
+  const [agentPos, agentNeg, logPos, logNeg, prodPos, prodNeg] = await Promise.all([
+    quoteQuery("customer_voc_agent_positive"), quoteQuery("customer_voc_agent_negative"),
+    quoteQuery("customer_voc_logistic_positive"), quoteQuery("customer_voc_logistic_negative"),
+    quoteQuery("customer_voc_product_positive"), quoteQuery("customer_voc_product_negative"),
+  ]);
+
+  return {
+    available: true, reason: null, periodFrom: from, periodTo: to, totalAuditedCalls: total,
+    clapBreakdown,
+    quotes: {
+      agent: { positive: agentPos, negative: agentNeg },
+      logistic: { positive: logPos, negative: logNeg },
+      product: { positive: prodPos, negative: prodNeg },
+    },
+  };
+}
