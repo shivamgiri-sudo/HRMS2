@@ -30,6 +30,7 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
+import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startMobilityTransferWorker } from "./workers/mobility-transfer.worker.js";
@@ -422,6 +423,20 @@ async function initializeRuntime() {
   console.log(
     `[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`,
   );
+
+  // Fire-and-forget: load the face-detection models (TensorFlow.js/WASM +
+  // three neural nets from disk) now, during boot, rather than paying that
+  // 10-30s cold-start cost on whichever offer approval happens to be first to
+  // trigger it after this process starts — see the comment in
+  // employee-creation-orchestrator.service.ts's Live Selfie promotion step for
+  // the incident this is the other half of the fix for. Not awaited: must
+  // never add to the boot window health checks are already timed against.
+  warmUpFaceDetectionModels().then((available) => {
+    console.log(`[face-match] model warm-up ${available ? "complete" : "unavailable (models not found on disk)"}`);
+  }).catch((err) => {
+    console.warn("[face-match] model warm-up failed (non-blocking):", err instanceof Error ? err.message : err);
+  });
+
   startServer();
 }
 
