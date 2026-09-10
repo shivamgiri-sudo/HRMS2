@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useEffect } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -683,7 +683,7 @@ function FatalCallsPanel({ processId, period }: { processId: string; period: Rep
       `/api/process-operations/${processId}/fatal-calls?period=${period}`),
   });
   const fc = data?.data;
-  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
+  const { openCall, drawer } = useCallDetailDrawer(processId);
 
   return (
     <ChartCard title="Fatal calls"
@@ -708,7 +708,7 @@ function FatalCallsPanel({ processId, period }: { processId: string; period: Rep
             <div className="max-h-56 overflow-y-auto">
               {fc.calls.map((c, i) => (
                 <button key={i} type="button"
-                  onClick={() => c.hasTranscript && setSelectedCall({ employeeCode: c.employeeCode, callDate: c.callDate })}
+                  onClick={() => c.hasTranscript && openCall({ employeeCode: c.employeeCode, callDate: c.callDate })}
                   disabled={!c.hasTranscript}
                   title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
                   className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 text-[10.5px] border-t border-red-100 dark:border-red-900/50 first:border-t-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:bg-red-50/70 dark:hover:bg-red-950/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
@@ -722,10 +722,7 @@ function FatalCallsPanel({ processId, period }: { processId: string; period: Rep
           </div>
         )}
       </div>
-      {selectedCall && (
-        <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
-          callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
-      )}
+      {drawer}
     </ChartCard>
   );
 }
@@ -749,7 +746,7 @@ function ScenarioBreakdownRow({ processId, period, category }: {
   });
   const sb = data?.data;
   const [expandedScenario, setExpandedScenario] = useState<string | null>(null);
-  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
+  const { openCall, drawer } = useCallDetailDrawer(processId);
 
   if (isLoading) {
     return (
@@ -791,16 +788,13 @@ function ScenarioBreakdownRow({ processId, period, category }: {
               </button>
               {open && (
                 <ScenarioCallsList processId={processId} period={period} clap={clap} scenario={s.scenario}
-                  onSelectCall={setSelectedCall} />
+                  onSelectCall={openCall} />
               )}
             </Fragment>
           );
         })}
       </div>
-      {selectedCall && (
-        <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
-          callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
-      )}
+      {drawer}
     </div>
   );
 }
@@ -847,6 +841,29 @@ function ScenarioCallsList({ processId, period, clap, scenario, onSelectCall }: 
       ))}
     </div>
   );
+}
+
+/**
+ * The open/close state + drawer render that all three CallDetailDrawer
+ * consumers (CLAP scenario drill, Fatal Calls, an analyst's own recent
+ * calls) were each independently carrying -- the exact same four lines of
+ * `useState` + conditional render, tripled. CallDetailDrawer itself was
+ * already the one real shared component; this just stops re-deriving the
+ * state that opens it. `openCall` is stable across renders (useCallback),
+ * so passing it straight into a child's onSelectCall prop never causes an
+ * extra re-render of that child.
+ */
+function useCallDetailDrawer(processId: string): {
+  openCall: (call: { employeeCode: string; callDate: string }) => void;
+  drawer: React.ReactNode;
+} {
+  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
+  const openCall = useCallback((call: { employeeCode: string; callDate: string }) => setSelectedCall(call), []);
+  const drawer = selectedCall ? (
+    <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
+      callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
+  ) : null;
+  return { openCall, drawer };
 }
 
 /**
@@ -1935,7 +1952,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
       `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
+  const { openCall, drawer } = useCallDetailDrawer(processId);
   const ab = data?.data;
   const invalidateBreakdown = () => qc.invalidateQueries({
     queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
@@ -2045,7 +2062,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                             )}
                             {a.employeeCode && (
                               <EmployeeRecentCallsRow processId={processId} employeeCode={a.employeeCode} period={period}
-                                onSelectCall={setSelectedCall} />
+                                onSelectCall={openCall} />
                             )}
                           </td>
                         </tr>
@@ -2066,10 +2083,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
           </p>
         </div>
       )}
-      {selectedCall && (
-        <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
-          callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
-      )}
+      {drawer}
     </section>
   );
 }
