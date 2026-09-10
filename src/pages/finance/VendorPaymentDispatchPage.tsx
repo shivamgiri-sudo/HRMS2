@@ -87,6 +87,7 @@ interface BranchOption {
 interface Filters {
   branchId: string;
   month: string;
+  financialYear: string;
   paymentStatus: string;
   dueDateFrom: string;
   dueDateTo: string;
@@ -123,11 +124,22 @@ function initialFilters(): Filters {
   return {
     branchId: "",
     month: "",
+    financialYear: "",
     paymentStatus: "",
     dueDateFrom: "",
     dueDateTo: "",
     search: "",
   };
+}
+
+function financialYearOptions(): string[] {
+  const now = new Date();
+  const currentStartYear = now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+  const options: string[] = [];
+  for (let year = currentStartYear + 1; year >= 2017; year--) {
+    options.push(`${year}-${String((year + 1) % 100).padStart(2, "0")}`);
+  }
+  return options;
 }
 
 function agingDays(dueDate?: string | null) {
@@ -358,6 +370,23 @@ export default function VendorPaymentDispatchPage() {
               value={filters.month}
               onChange={(v) => { setFilters((c) => ({ ...c, month: v })); setPage(1); }}
             />
+            <Select
+              value={filters.financialYear || "_all"}
+              onValueChange={(value) => {
+                setFilters((c) => ({ ...c, financialYear: value === "_all" ? "" : value }));
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="h-7 w-28 text-xs">
+                <SelectValue placeholder="All years" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_all">All years</SelectItem>
+                {financialYearOptions().map((fy) => (
+                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select
               value={filters.paymentStatus || "_all"}
               onValueChange={(value) => {
