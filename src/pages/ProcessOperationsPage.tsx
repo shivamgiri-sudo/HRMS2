@@ -254,6 +254,9 @@ interface AchtCategorization { available: boolean; reason: string | null; rows: 
 interface CriticalSignal { key: string; label: string; emoji: string; count: number; pct: number; }
 interface CriticalSignals { available: boolean; reason: string | null; totalExamined: number; signals: CriticalSignal[]; }
 
+interface DailyQualityScore { date: string; avgScore: number | null; auditCount: number; }
+interface DailyQualityTrend { available: boolean; reason: string | null; targetPct: number; days: DailyQualityScore[]; }
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1080,6 +1083,69 @@ function CriticalSignalsPanel({ processId, period }: { processId: string; period
               </div>
             ))}
           </div>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Last 7 days vs target -- daily quality score bars, color-banded exactly
+ * like the reference UI's legend: green >= target, amber within 10pp below
+ * it, red further below. Ported from Mydashboards' getDailyScores.
+ */
+function DailyQualityTrendPanel({ processId }: { processId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "daily-quality-trend", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<DailyQualityTrend>>(
+      `/api/process-operations/${processId}/daily-quality-trend?days=7`),
+  });
+  const trend = data?.data;
+  const chartData = useMemo(
+    () => trend?.days.map((d) => ({
+      date: d.date.slice(5), score: d.avgScore, audits: d.auditCount,
+    })) ?? [],
+    [trend],
+  );
+  const barColor = (score: number | null, target: number) => {
+    if (score === null) return "#E2E8F0";
+    if (score >= target) return C_GREEN;
+    if (score >= target - 10) return C_AMBER;
+    return C_RED;
+  };
+
+  return (
+    <ChartCard title="Last 7 days vs target" subtitle={trend ? `Daily quality score against Target ${trend.targetPct}%` : undefined}>
+      <div className="px-3 pb-1">
+        {isLoading || !trend ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading daily trend…
+          </div>
+        ) : !trend.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{trend.reason}</p>
+        ) : (
+          <>
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+                  <ReferenceLine y={trend.targetPct} stroke={C_GREEN} strokeDasharray="4 3" strokeWidth={1.5} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE}
+                    formatter={(v: number, name: string) => name === "score" ? [`${v}%`, "Score"] : [v, "Audits"]} />
+                  <Bar dataKey="score" radius={[3, 3, 0, 0]}>
+                    {chartData.map((d, i) => <Cell key={i} fill={barColor(d.score, trend.targetPct)} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex items-center gap-3 text-[9.5px] text-slate-500 pt-1">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: C_GREEN }} />&ge;{trend.targetPct}% (On target)</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: C_AMBER }} />{trend.targetPct - 10}&ndash;{trend.targetPct - 1}%</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: C_RED }} />&lt;{trend.targetPct - 10}%</span>
+            </div>
+          </>
         )}
       </div>
     </ChartCard>
@@ -3767,6 +3833,7 @@ export default function ProcessOperationsPage() {
                 {current && <ScoreComponentsPanel processId={current} period={period} />}
                 {current && <AchtCategorizationPanel processId={current} period={period} />}
                 {current && <CriticalSignalsPanel processId={current} period={period} />}
+                {current && <DailyQualityTrendPanel processId={current} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

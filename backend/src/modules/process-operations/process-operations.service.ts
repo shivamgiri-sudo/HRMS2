@@ -2391,6 +2391,83 @@ export async function getCriticalSignals(
   return { available: true, reason: null, totalExamined: total, signals };
 }
 
+export interface DailyQualityScore { date: string; avgScore: number | null; auditCount: number; }
+export interface DailyQualityTrend {
+  available: boolean; reason: string | null;
+  targetPct: number;
+  days: DailyQualityScore[];
+}
+
+/**
+ * Last N Days vs Target -- ported from Mydashboards' getDailyScores: one
+ * quality-score reading per day (average over non-fatal calls, matching
+ * every other CQ-style score on this page), always including every day in
+ * the window even with zero audits (zero-filled, not skipped) so the chart
+ * never silently compresses a gap into an adjacent bar. targetPct=95 is a
+ * fixed constant, matching the reference UI's "Target 95%" -- not read from
+ * kpi_metric_master, since this is the same fixed line the upstream product
+ * itself hardcodes for this specific view (distinct from a KPI Studio target
+ * that could vary per process).
+ */
+export async function getDailyQualityTrend(
+  userId: string, processId: string, days = 7,
+): Promise<DailyQualityTrend | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const clampedDays = Math.min(31, Math.max(1, Math.trunc(days)));
+  const unavailable = (reason: string): DailyQualityTrend => ({ available: false, reason, targetPct: 95, days: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const [latestRows] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+      WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+        AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+    employeeCodes,
+  );
+  const latest = (latestRows as any[])[0]?.latest;
+  if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+  const endDate = isoDate(latest);
+
+  const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(q.CallDate, '%Y-%m-%d') call_date,
+            ROUND(AVG(CASE WHEN NOT (${fatalSql}) THEN q.quality_percentage END), 1) avg_score,
+            COUNT(*) audit_count
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= DATE_SUB(?, INTERVAL ? DAY)
+        AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY call_date
+      ORDER BY call_date ASC`,
+    [...employeeCodes, endDate, clampedDays - 1, endDate],
+  );
+
+  const byDate = new Map<string, any>((rows as any[]).map((r) => [String(r.call_date), r]));
+  const days_: DailyQualityScore[] = [];
+  const end = new Date(`${endDate}T00:00:00Z`);
+  for (let i = clampedDays - 1; i >= 0; i--) {
+    const d = new Date(end); d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const r = byDate.get(key);
+    days_.push({
+      date: key,
+      avgScore: r?.avg_score !== undefined && r?.avg_score !== null ? Number(r.avg_score) : null,
+      auditCount: r ? Number(r.audit_count) : 0,
+    });
+  }
+
+  return { available: true, reason: null, targetPct: 95, days: days_ };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{

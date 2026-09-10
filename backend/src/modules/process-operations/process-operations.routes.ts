@@ -324,6 +324,22 @@ router.get("/:processId/critical-signals", requireAuth, requireRole(...VIEWER_RO
 }));
 
 /**
+ * Daily quality trend vs target (last N days). Declared before /:processId
+ * for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/daily-quality-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const days = Number(req.query.days) || 7;
+  const data = await svc.getDailyQualityTrend(req.authUser!.id, req.params.processId, days);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
  * One analyst's own recent audited calls -- third real consumer of
  * CallDetailDrawer, reached from AnalystBreakdownPanel's per-employee
  * expansion (any metric, not just quality ones). Declared before
