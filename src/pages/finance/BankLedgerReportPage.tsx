@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type LedgerRow = {
   entry_date: string;
@@ -83,6 +84,7 @@ export default function BankLedgerReportPage() {
   const selectedAccount = (accountsQuery.data ?? []).find((a: any) => a.id === bankAccountId);
 
   return (
+    <DashboardLayout>
     <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
       <div className="overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm">
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -201,5 +203,6 @@ export default function BankLedgerReportPage() {
         </div>
       </div>
     </div>
+    </DashboardLayout>
   );
 }

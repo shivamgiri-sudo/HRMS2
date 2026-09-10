@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type BankAccount = { id: string; account_name: string };
 type PayableAccount = { id: string; account_name: string };
@@ -243,6 +244,7 @@ export default function BankReconciliationPage() {
   }, [closedPeriods]);
 
   return (
+    <DashboardLayout>
     <div className="space-y-6 p-6">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 to-blue-500 p-6 text-white shadow-sm">
         <div className="flex items-center gap-3">
@@ -610,6 +612,7 @@ export default function BankReconciliationPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </DashboardLayout>
   );
 }
 

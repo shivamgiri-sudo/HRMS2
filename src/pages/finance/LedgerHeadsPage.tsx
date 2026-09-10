@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type LedgerHead = {
   id: string;
@@ -61,6 +62,7 @@ export default function LedgerHeadsPage() {
   const heads = listQuery.data ?? [];
 
   return (
+    <DashboardLayout>
     <div className="space-y-6 p-6">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 to-blue-500 p-6 text-white shadow-sm">
         <div className="flex items-center justify-between">
@@ -146,5 +148,6 @@ export default function LedgerHeadsPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </DashboardLayout>
   );
 }

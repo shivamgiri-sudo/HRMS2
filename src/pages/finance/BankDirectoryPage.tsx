@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type Bank = {
   id: string;
@@ -55,6 +56,7 @@ export default function BankDirectoryPage() {
   const banks = listQuery.data ?? [];
 
   return (
+    <DashboardLayout>
     <div className="space-y-6 p-6">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 to-blue-500 p-6 text-white shadow-sm">
         <div className="flex items-center justify-between">
@@ -135,5 +137,6 @@ export default function BankDirectoryPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </DashboardLayout>
   );
 }
