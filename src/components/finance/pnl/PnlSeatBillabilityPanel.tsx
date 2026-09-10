@@ -14,10 +14,10 @@ function money(value: number) {
 }
 
 function billabilityTone(pct: number | null) {
-  if (pct === null) return "text-[#7d7979]";
+  if (pct === null) return "text-muted-foreground";
   if (pct >= 95) return "text-emerald-700";
   if (pct >= 80) return "text-amber-700";
-  return "text-[#ec3013]";
+  return "text-primary";
 }
 
 export function PnlSeatBillabilityPanel({ filters }: { filters?: PnlSeatBillabilityFilters }) {
@@ -34,17 +34,17 @@ export function PnlSeatBillabilityPanel({ filters }: { filters?: PnlSeatBillabil
   }
 
   return (
-    <Card className="rounded-none border border-[#d7d3d3] shadow-none">
+    <Card className="rounded-none border border-border shadow-none">
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-[#201e1d]">
+          <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-foreground">
             Seat count &amp; billability by cost centre
           </CardTitle>
-          <Badge variant="outline" className="border-[#201e1d] text-[10px] font-bold uppercase tracking-wide text-[#201e1d]">
+          <Badge variant="outline" className="border-foreground/30 text-[10px] font-bold uppercase tracking-wide text-foreground">
             {data.coverage.configuredCount}/{data.coverage.totalActiveCostCentres} configured
           </Badge>
         </div>
-        <p className="text-xs text-[#7d7979]">
+        <p className="text-xs text-muted-foreground">
           Billability% = live active headcount ÷ mandated_seats. {data.coverage.notConfiguredCount} active cost
           centre{data.coverage.notConfiguredCount === 1 ? "" : "s"} carry no mandated seat count and are flagged
           "Not configured" rather than shown at 0%.
@@ -52,7 +52,7 @@ export function PnlSeatBillabilityPanel({ filters }: { filters?: PnlSeatBillabil
       </CardHeader>
       <CardContent className="overflow-x-auto p-0">
         <table className="w-full min-w-[760px] text-xs">
-          <thead className="border-b-2 border-[#201e1d] bg-[#f8f4f4] text-left text-[10px] font-extrabold uppercase tracking-wide text-[#7d7979]">
+          <thead className="border-b-2 border-border bg-muted text-left text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-3 py-2">Cost centre</th>
               <th className="px-3 py-2">Process</th>
@@ -62,16 +62,16 @@ export function PnlSeatBillabilityPanel({ filters }: { filters?: PnlSeatBillabil
               <th className="px-3 py-2 text-right">Approved seat rate</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#eae7e7]">
+          <tbody className="divide-y divide-border">
             {data.costCentres.map((row) => (
               <tr key={row.costCentreId}>
-                <td className="px-3 py-2 font-semibold text-[#201e1d]">{row.costCentreName}</td>
-                <td className="px-3 py-2 text-[#605d5d]">{row.processName ?? "—"}</td>
+                <td className="px-3 py-2 font-semibold text-foreground">{row.costCentreName}</td>
+                <td className="px-3 py-2 text-muted-foreground">{row.processName ?? "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{row.mandatedSeats ?? "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{row.actualHeadcount}</td>
                 <td className={`px-3 py-2 text-right font-bold tabular-nums ${billabilityTone(row.billabilityPct)}`}>
                   {row.seatConfigStatus === "not_configured" ? (
-                    <Badge variant="outline" className="border-[#bab6b6] text-[10px] font-bold uppercase text-[#7d7979]">
+                    <Badge variant="outline" className="border-input text-[10px] font-bold uppercase text-muted-foreground">
                       Not configured
                     </Badge>
                   ) : (

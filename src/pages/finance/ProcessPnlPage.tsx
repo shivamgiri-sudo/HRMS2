@@ -42,7 +42,7 @@ const matrixIssueFilters: ProcessPnlIssueFilter[] = [
 const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
 
 const tabTriggerClass =
-  "rounded-none border-b-[3px] border-transparent px-4 py-3 text-[13px] font-extrabold text-[#605d5d] data-[state=active]:border-[#ec3013] data-[state=active]:bg-transparent data-[state=active]:text-[#201e1d] data-[state=active]:shadow-none";
+  "rounded-none border-b-[3px] border-transparent px-4 py-3 text-[13px] font-extrabold text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
 /**
  * The month the page opens on.
@@ -279,25 +279,25 @@ export default function ProcessPnlPage() {
 
   return (
     <DashboardLayout>
-      <div className="flex h-full flex-col bg-[#f3f2f2] text-[#201e1d]">
+      <div className="flex h-full flex-col bg-background text-foreground">
         {/* Page header — dense finance masthead, styled after the Process P&L reference:
-            #201e1d ink, #ec3013 accent rule, uppercase eyebrow over a large title. */}
+            MAS Blue primary accent and standard shadcn foreground/muted tokens, uppercase eyebrow over a large title. */}
         <div
-          className="flex flex-col gap-2 border-b border-[#d7d3d3] bg-[#f8f4f4] px-4 py-3 shrink-0 sm:flex-row sm:items-end sm:justify-between"
+          className="flex flex-col gap-2 border-b border-border bg-muted px-4 py-3 shrink-0 sm:flex-row sm:items-end sm:justify-between"
           aria-label="Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT"
         >
           <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#7d7979]">
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
               Finance · Profitability command centre
             </p>
-            <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-[#201e1d]">Process P&amp;L</h1>
+            <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-foreground">Process P&amp;L</h1>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {summary && (
               <>
-                <div className="border-l-[3px] border-[#ec3013] pl-2.5">
-                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#7d7979]">Recognized revenue</p>
-                  <p className="text-lg font-extrabold tabular-nums text-[#201e1d]">{formatCurrency(revenueV, true)}</p>
+                <div className="border-l-[3px] border-primary pl-2.5">
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground">Recognized revenue</p>
+                  <p className="text-lg font-extrabold tabular-nums text-foreground">{formatCurrency(revenueV, true)}</p>
                 </div>
                 {kpiSource === "statement" && (
                   // Never switch engines silently: without this the process-level configuration
@@ -310,32 +310,32 @@ export default function ProcessPnlPage() {
                   </span>
                 )}
                 {(summary.kpis.lossMakingProcesses ?? 0) > 0 && (
-                  <span className="bg-[#ec3013] px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.06em] text-[#f3f2f2]">
+                  <span className="bg-primary px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.06em] text-primary-foreground">
                     {summary.kpis.lossMakingProcesses} at risk
                   </span>
                 )}
               </>
             )}
             {bpoQuery.dataUpdatedAt > 0 && (
-              <span className="text-[11px] text-[#7d7979]">
+              <span className="text-[11px] text-muted-foreground">
                 Data as of {new Date(bpoQuery.dataUpdatedAt).toLocaleTimeString()}
                 {" · "}
-                <button type="button" className="underline hover:text-[#201e1d]" onClick={() => void bpoQuery.refetch()}>Refresh</button>
+                <button type="button" className="underline hover:text-foreground" onClick={() => void bpoQuery.refetch()}>Refresh</button>
               </span>
             )}
-            <Button size="sm" variant="outline" className="h-8 rounded-none border-[#201e1d] text-[#201e1d] hover:bg-[#eae7e7]" onClick={() => void downloadBpoPnlExport(filters)}>
+            <Button size="sm" variant="outline" className="h-8 rounded-none border-foreground/30 text-foreground hover:bg-muted" onClick={() => void downloadBpoPnlExport(filters)}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export
             </Button>
-            <Button size="sm" asChild className="h-8 rounded-none bg-[#ec3013] text-[#f3f2f2] hover:bg-[#ae1800]">
+            <Button size="sm" asChild className="h-8 rounded-none bg-primary text-primary-foreground hover:bg-primary/90">
               <Link to={`/finance/branch-budget?period=${period}`}>Branch budget</Link>
             </Button>
           </div>
         </div>
 
         {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2 border-b-2 border-[#201e1d] bg-white px-4 py-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 border-b-2 border-border bg-card px-4 py-2 shrink-0">
           <div className="flex items-center gap-1">
-            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-[#eae7e7]" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-muted" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <MonthYearPicker
@@ -343,12 +343,12 @@ export default function ProcessPnlPage() {
               onChange={(v) => updateFilters({ period: v })}
               className="w-52"
             />
-            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-[#eae7e7]" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-muted" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
           <select
-            className="flex h-8 rounded-none border border-[#bab6b6] bg-white px-2 py-0 text-xs"
+            className="flex h-8 rounded-none border border-input bg-card px-2 py-0 text-xs"
             value={branchId}
             onChange={(e) => updateFilters({ branchId: e.target.value || undefined })}
           >
@@ -358,7 +358,7 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <select
-            className="flex h-8 rounded-none border border-[#bab6b6] bg-white px-2 py-0 text-xs"
+            className="flex h-8 rounded-none border border-input bg-card px-2 py-0 text-xs"
             value={clientId}
             onChange={(e) => updateFilters({ clientId: e.target.value || undefined })}
           >
@@ -375,7 +375,7 @@ export default function ProcessPnlPage() {
           />
           <Button
             size="sm"
-            className="h-8 rounded-none bg-[#ec3013] text-[#f3f2f2] hover:bg-[#ae1800]"
+            className="h-8 rounded-none bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => updateFilters({ search: draftSearch || undefined })}
           >
             Apply
@@ -383,7 +383,7 @@ export default function ProcessPnlPage() {
         </div>
 
         {/* Always-visible KPI strip */}
-        <div className="border-b-2 border-[#201e1d] bg-[#f8f4f4] shrink-0 overflow-x-auto">
+        <div className="border-b-2 border-border bg-muted shrink-0 overflow-x-auto">
           {bpoQuery.isLoading ? (
             <div className="flex gap-2 p-2">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-36 rounded-xl shrink-0" />)}
@@ -400,7 +400,7 @@ export default function ProcessPnlPage() {
 
         {/* Tab layout: CEO Overview (default) + Process Matrix + Alerts & Reconciliation */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
-          <TabsList className="h-auto w-full shrink-0 justify-start gap-0 rounded-none border-b-2 border-[#201e1d] bg-white px-4 py-0">
+          <TabsList className="h-auto w-full shrink-0 justify-start gap-0 rounded-none border-b-2 border-border bg-card px-4 py-0">
             <TabsTrigger value="overview" className={tabTriggerClass}>CEO Overview</TabsTrigger>
             <TabsTrigger value="live" className={tabTriggerClass}>Live P&amp;L</TabsTrigger>
             <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
@@ -450,12 +450,44 @@ export default function ProcessPnlPage() {
                   onBranchChange={(id) => updateFilters({ branchId: id })}
                 />
 
+                {/* Cost mix — Agent salary / DSC / BMC as a share of recognized revenue, from the
+                    same kpiItems figures already computed above (statement-fallback aware, so it
+                    never shows a mix built from mismatched sources). Real data, zero new backend
+                    calls: this is the same agentSalaryV/dscV/bmcV/revenueV already on the page. */}
+                {summary && revenueV > 0 && (
+                  <div className="border border-border bg-card px-4 py-3">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
+                      Cost mix (% of recognized revenue)
+                    </p>
+                    <div className="mt-2 flex h-6 w-full overflow-hidden rounded-sm border border-border">
+                      {[
+                        { label: "Agent salary", value: agentSalaryV, fill: "bg-primary" },
+                        { label: "DSC", value: dscV, fill: "bg-amber-500" },
+                        { label: "BMC", value: bmcV, fill: "bg-rose-500" },
+                      ].map((seg) => (
+                        <div
+                          key={seg.label}
+                          className={seg.fill}
+                          style={{ width: `${Math.max(0, Math.min(100, pct(seg.value, revenueV)))}%` }}
+                          title={`${seg.label}: ${pct(seg.value, revenueV).toFixed(1)}% of revenue (${formatCurrency(seg.value, true)})`}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                      <span><span className="inline-block h-2 w-2 rounded-full bg-primary" /> Agent salary {pct(agentSalaryV, revenueV).toFixed(1)}%</span>
+                      <span><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> DSC {pct(dscV, revenueV).toFixed(1)}%</span>
+                      <span><span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> BMC {pct(bmcV, revenueV).toFixed(1)}%</span>
+                      <span>Operating profit {pct(opV, revenueV).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Revenue/cost/margin trend + headcount-vs-revenue trend, over the real months
                     of invoicing data only (see PnlTrendCharts's own doc comment). */}
                 <PnlTrendCharts filters={{ branchId: branchId || undefined }} />
 
                 {/* YTD summary strip */}
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <div className="rounded-2xl border border-slate-200 bg-card px-4 py-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-700">
                       Year-to-Date Summary {ytdQuery.data ? `(FY ${ytdQuery.data.fy} · ${ytdQuery.data.months.length} month${ytdQuery.data.months.length !== 1 ? "s" : ""})` : ""}

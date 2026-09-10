@@ -26,9 +26,13 @@ describe("pnl trend hook + chart", () => {
     expect(trendHook).toContain("/api/finance/pnl/trend");
   });
 
-  it("never hardcodes a 12-month label — the span is derived from realMonths", () => {
-    expect(trendChart).not.toMatch(/12[- ]month/i);
-    expect(trendChart).not.toMatch(/last 12 months/i);
+  it("defaults to a real trailing-12-month window, not the full multi-year dump", () => {
+    // 2026-09-11 restructure: the default chart must show exactly the trailing 12 real calendar
+    // months from today (mas_hrms live months backfilled with real db_bill months), with the full
+    // multi-year history and YoY reachable behind an explicit toggle — never loaded by default.
+    expect(trendChart).toContain("lastNPeriods(12)");
+    expect(trendChart).toContain("trailing12");
+    expect(trendChart).toContain("showFullHistory");
     expect(trendChart).toContain("data.realMonths");
     expect(trendChart).toContain("spanLabel(");
   });
@@ -76,8 +80,18 @@ describe("pnl trend db_bill history + YoY (2026-09-10 extension)", () => {
     expect(trendChart).toContain("Year-over-year cumulative profit");
   });
 
-  it("does not attempt a per-process breakdown for the unreliable db_bill mapping", () => {
+  it("does not attempt a per-process COST breakdown for the unreliable cost_centre_master mapping", () => {
     expect(historyService).toContain("COMPANY-GRAIN ONLY");
+  });
+
+  it("2026-09-11: builds a per-process REVENUE breakdown from tbl_invoice.cost_process directly", () => {
+    // Re-investigated harder: cost_centre_master.process_id is too sparse (47/941), but
+    // tbl_invoice.cost_process sits on the invoice row itself and matches process_master.process_name
+    // directly for the large majority of rows — see getDbBillHistoryByProcess's doc comment.
+    expect(historyService).toContain("getDbBillHistoryByProcess");
+    expect(historyService).toContain("cost_process");
+    expect(trendService).toContain("getDbBillHistoryByProcess");
+    expect(trendService).toContain("processHistoryRevenue");
   });
 });
 

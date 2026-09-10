@@ -39,10 +39,10 @@ export function PnlReceivablesAgeingPanel({ filters }: { filters?: PnlReceivable
   }));
 
   return (
-    <Card className="rounded-none border border-[#d7d3d3] shadow-none">
+    <Card className="rounded-none border border-border shadow-none">
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-[#201e1d]">
+          <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-foreground">
             Receivable ageing (unpaid invoices)
           </CardTitle>
           <Badge
@@ -53,7 +53,7 @@ export function PnlReceivablesAgeingPanel({ filters }: { filters?: PnlReceivable
             <AlertTriangle className="h-3 w-3" /> Data quality unconfirmed
           </Badge>
         </div>
-        <p className="text-xs text-[#7d7979]">
+        <p className="text-xs text-muted-foreground">
           As of {data.asOfDate} · buckets are days since invoice_date, not days overdue (no due_date
           column exists) · total unpaid {money(data.grandTotal)}
         </p>
@@ -64,24 +64,24 @@ export function PnlReceivablesAgeingPanel({ filters }: { filters?: PnlReceivable
         </p>
         <div className="grid grid-cols-4 gap-2">
           {(["0-30", "31-60", "61-90", "90+"] as const).map((bucket) => (
-            <div key={bucket} className="border border-[#eae7e7] px-2 py-2 text-center">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-[#7d7979]">{bucket} days</p>
-              <p className="text-sm font-extrabold tabular-nums text-[#201e1d]">{money(data.totals[bucket])}</p>
+            <div key={bucket} className="border border-border px-2 py-2 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{bucket} days</p>
+              <p className="text-sm font-extrabold tabular-nums text-foreground">{money(data.totals[bucket])}</p>
             </div>
           ))}
         </div>
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 8, bottom: 5, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eae7e7" />
-              <XAxis type="number" tickFormatter={(v) => money(Number(v))} tick={{ fontSize: 10 }} stroke="#605d5d" />
-              <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} stroke="#605d5d" />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(214 32% 89%)" />
+              <XAxis type="number" tickFormatter={(v) => money(Number(v))} tick={{ fontSize: 10 }} stroke="hsl(215 20% 35%)" />
+              <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} stroke="hsl(215 20% 35%)" />
               <Tooltip formatter={(value: number, name: string) => [money(Number(value)), name]} contentStyle={{ fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="0-30" stackId="a" fill="#0080FF" />
+              <Bar dataKey="0-30" stackId="a" fill="hsl(212 74% 41%)" />
               <Bar dataKey="31-60" stackId="a" fill="#F59E0B" />
               <Bar dataKey="61-90" stackId="a" fill="#EA580C" />
-              <Bar dataKey="90+" stackId="a" fill="#EC3013" />
+              <Bar dataKey="90+" stackId="a" fill="#DC2626" />
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -43,6 +43,11 @@ export interface PnlTrendData {
     caveat: string;
   };
   yoy: PnlTrendYoyYear[];
+  /**
+   * Historical (pre-live) REVENUE ONLY per process, matched from db_bill's tbl_invoice.cost_process
+   * directly against process_master.process_name. No cost/margin — see backend doc comment.
+   */
+  processHistoryRevenue: { processId: string; processName: string; months: { period: string; revenue: number }[] }[];
 }
 
 export interface PnlTrendFilters {

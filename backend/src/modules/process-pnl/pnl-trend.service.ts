@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getDbBillHistory } from "./pnl-trend-history.service.js";
+import { getDbBillHistory, getDbBillHistoryByProcess } from "./pnl-trend-history.service.js";
 
 /**
  * Revenue / cost / margin trend, and headcount-vs-revenue trend, per process across the months
@@ -84,6 +84,15 @@ export interface PnlTrendResult {
   };
   /** Year-over-year cumulative profit (margin), built from companyHistory + company combined. */
   yoy: PnlTrendYoyYear[];
+  /**
+   * Historical (pre-live) REVENUE ONLY per process, matched from db_bill's tbl_invoice.cost_process
+   * directly against process_master.process_name (never cost_centre_master.process_id — see
+   * pnl-trend-history.service.ts's getDbBillHistoryByProcess for why). No cost/margin here: db_bill
+   * has no per-process cost attribution for this era. Empty when a branch/process filter is applied
+   * (db_bill's own process labelling can't be cross-checked against branch), same restriction as
+   * companyHistory.
+   */
+  processHistoryRevenue: { processId: string; processName: string; months: { period: string; revenue: number }[] }[];
 }
 
 async function getRealMonths(): Promise<string[]> {
@@ -119,6 +128,7 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
         caveat: "No mas_hrms real month yet; history merge skipped.",
       },
       yoy: [],
+      processHistoryRevenue: [],
     };
   }
 
@@ -251,6 +261,35 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
 
   const yoy = buildYoy([...companyHistory, ...company]);
 
+  // Per-process historical REVENUE, matched from db_bill's tbl_invoice.cost_process directly
+  // against process_master.process_name — see getDbBillHistoryByProcess()'s doc comment for the
+  // evidence this is real (86% row coverage) and why it is revenue-only (no per-process cost side
+  // exists in db_bill for this era). Unfiltered-only, same restriction as companyHistory.
+  let processHistoryRevenue: PnlTrendResult["processHistoryRevenue"] = [];
+  if (!filters.branchId && !filters.processId) {
+    try {
+      const [processRows] = await db.query<RowDataPacket[]>(`SELECT id, process_name FROM process_master`);
+      const byNormalizedName = new Map<string, { id: string; name: string }>();
+      for (const row of processRows) {
+        const norm = String(row.process_name ?? "").trim().toUpperCase();
+        if (norm && !byNormalizedName.has(norm)) {
+          byNormalizedName.set(norm, { id: String(row.id), name: String(row.process_name) });
+        }
+      }
+      const historyByProcess = await getDbBillHistoryByProcess();
+      for (const entry of historyByProcess) {
+        const match = byNormalizedName.get(entry.processName.trim().toUpperCase());
+        if (!match) continue; // db_bill cost_process value has no process_master counterpart
+        processHistoryRevenue.push({ processId: match.id, processName: match.name, months: entry.months });
+      }
+      processHistoryRevenue.sort((a, b) => a.processName.localeCompare(b.processName));
+    } catch (error) {
+      // Leave processHistoryRevenue empty rather than fail the whole trend response — this is an
+      // additive enrichment, not a required field.
+      processHistoryRevenue = [];
+    }
+  }
+
   return {
     realMonths,
     dataStatus: {
@@ -263,6 +302,7 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
     companyHistory,
     historyDataStatus,
     yoy,
+    processHistoryRevenue,
   };
 }
 

@@ -36,7 +36,7 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
               ? "border-amber-200 bg-amber-50 text-amber-800"
               : item.tone === "danger"
               ? "border-rose-200 bg-rose-50 text-rose-800"
-              : "border-slate-200 bg-white text-slate-700";
+              : "border-border bg-card text-muted-foreground";
 
           return (
             <div key={item.label} className={`shrink-0 rounded-xl border px-3 py-1.5 ${chipColor}`}>
@@ -51,18 +51,18 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
 
   // Flat bordered-cell strip modelled on the Process P&L redesign reference: a single
   // grid of uppercase micro-labels over large tabular-nums figures, the "good"/primary
-  // tile carrying the #ec3013 accent as a top rule rather than a rounded, shadowed card.
+  // tile carrying the primary (MAS Blue) accent as a top rule rather than a rounded, shadowed card.
   return (
-    <div className="grid grid-cols-2 border border-[#d7d3d3] bg-white sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+    <div className="grid grid-cols-2 border border-border bg-card sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
       {items.map((item) => {
         const toneColor =
           item.tone === "good"
-            ? "text-[#201e1d]"
+            ? "text-foreground"
             : item.tone === "warning"
-            ? "text-[#7c1405]"
+            ? "text-amber-700"
             : item.tone === "danger"
-            ? "text-[#ae1800]"
-            : "text-[#201e1d]";
+            ? "text-rose-700"
+            : "text-foreground";
 
         const renderedValue =
           item.kind === "currency"
@@ -74,11 +74,11 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
         return (
           <div
             key={item.label}
-            className={`border-b border-r border-[#d7d3d3] px-4 py-3 last:border-r-0 ${
-              item.tone === "good" ? "border-t-[3px] border-t-[#ec3013]" : ""
+            className={`border-b border-r border-border px-4 py-3 last:border-r-0 ${
+              item.tone === "good" ? "border-t-[3px] border-t-primary" : ""
             }`}
           >
-            <p className="whitespace-nowrap text-[10px] font-extrabold uppercase tracking-[0.11em] text-[#7d7979]">
+            <p className="whitespace-nowrap text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
               {item.label}
             </p>
             <p className={`mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none tracking-tight tabular-nums ${toneColor}`}>

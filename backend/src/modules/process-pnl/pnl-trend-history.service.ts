@@ -77,6 +77,17 @@ export interface PnlTrendHistoryMonth {
   source: "db_bill";
 }
 
+/** Revenue-only, per-process historical series (no cost side — see getDbBillHistoryByProcess). */
+export interface PnlTrendHistoryProcessMonth {
+  period: string;
+  revenue: number;
+}
+
+export interface PnlTrendHistoryProcess {
+  processName: string;
+  months: PnlTrendHistoryProcessMonth[];
+}
+
 export interface PnlTrendHistoryResult {
   months: PnlTrendHistoryMonth[];
   revenueRealRange: [string, string] | null;
@@ -153,10 +164,62 @@ export async function getDbBillHistory(excludePeriods: Set<string> = new Set()):
     overlapRange,
     caveat:
       "Historical data from legacy db_bill system; revenue and cost definitions may differ slightly " +
-      "from the current live (mas_hrms) system. Company-wide totals only (full sums across all cost " +
-      "centres) — a reliable per-process breakdown is not possible for this era because " +
-      "cost_centre_master.process_id covers a small and inconsistent share of db_bill cost centres " +
-      "(roughly 4% of rows overall, ranging 12%-46% of monthly revenue depending on the month), so " +
-      "restricting to mapped cost centres would manufacture false growth rather than show a real trend.",
+      "from the current live (mas_hrms) system. Company-wide COST totals only (full sums across all " +
+      "cost centres, via cost_centre_master.process_id, which is too sparse to break cost down by " +
+      "process for this era). REVENUE, however, is available per process — see " +
+      "getDbBillHistoryByProcess() below, which uses tbl_invoice.cost_process directly.",
   };
+}
+
+const REAL_REVENUE_MONTH_PROCESS_INVOICE_THRESHOLD = 5;
+
+/**
+ * Per-process historical REVENUE (not cost/margin — db_bill's cost side has no per-process
+ * attribution, see getDbBillHistory's caveat above), sourced from tbl_invoice.cost_process
+ * directly — never from cost_centre_master.process_id.
+ *
+ * WHY THIS EXISTS AND WHY IT IS DIFFERENT FROM THE PRIOR (COMPANY-ONLY) CONCLUSION. The prior pass
+ * only tried cost_centre_master.process_id (populated for 47/941 rows — too sparse) and concluded no
+ * reliable per-process db_bill breakdown was possible. That check never looked at tbl_invoice's own
+ * cost_process column, which sits directly on the invoice row (no join needed) and is far more
+ * complete: 9,581/11,130 rows (86%) carry a non-blank cost_process, verified 2026-09-11 via
+ * `SELECT COUNT(*) FROM tbl_invoice WHERE cost_process IS NOT NULL AND cost_process <> ''`.
+ *
+ * VALUE MATCH (evidence). cost_process values are process names, not client names — e.g.
+ * "UPSELLING & CROSSELLING", "DIALDESK", "CS-OTHERS", "INBOUND CUSTOMER SERVICES", "BACK OFFICE",
+ * "background verification" — and 34 distinct values were checked one-by-one against
+ * `mas_hrms.process_master.process_name` on 2026-09-11: every one of the top-30-by-revenue
+ * cost_process values has an exact (case/whitespace-normalized) match in process_master, e.g.
+ * "background verification" -> Rs 96.43 Cr across 380 invoices, 2018-08 to 2026-08;
+ * "UPSELLING & CROSSELLING" -> Rs 46.18 Cr across 1,084 invoices, 2015-07 to 2026-09;
+ * "DIALDESK" -> Rs 12.42 Cr across 2,521 invoices, 2016-12 to 2026-09.
+ * This is matched here by UPPER(TRIM(...)) against process_master.process_name at query time in
+ * pnl-trend.service.ts (which has access to the mas_hrms process_master table); this function only
+ * returns the raw db_bill-side series keyed by the literal cost_process string.
+ *
+ * WHAT THIS DOES NOT FIX. `cost_process` still has no COST counterpart on the salary_data side
+ * (salary_data has no process/cost_process column at all), so a true per-process P&L (revenue AND
+ * cost) for the pre-2026-04 era remains not buildable — only the revenue half is real here. This is
+ * the same distinction process_master.process_name-matched revenue always required: never presented
+ * as a full per-process margin trend for this era.
+ */
+export async function getDbBillHistoryByProcess(): Promise<PnlTrendHistoryProcess[]> {
+  const rows = await billQuery<{ cost_process: string; period: string; revenue: string | number; n: number }>(
+    `SELECT TRIM(cost_process) AS cost_process, DATE_FORMAT(invoiceDate, '%Y-%m') AS period,
+            SUM(total) AS revenue, COUNT(*) AS n
+       FROM tbl_invoice
+      WHERE status = 0 AND invoiceDate IS NOT NULL AND cost_process IS NOT NULL AND TRIM(cost_process) <> ''
+      GROUP BY TRIM(cost_process), period
+     HAVING n >= ${REAL_REVENUE_MONTH_PROCESS_INVOICE_THRESHOLD}
+      ORDER BY cost_process, period`
+  );
+
+  const byProcess = new Map<string, PnlTrendHistoryProcessMonth[]>();
+  for (const row of rows) {
+    const key = row.cost_process;
+    const list = byProcess.get(key) ?? [];
+    list.push({ period: row.period, revenue: n(row.revenue) });
+    byProcess.set(key, list);
+  }
+  return Array.from(byProcess.entries()).map(([processName, months]) => ({ processName, months }));
 }
