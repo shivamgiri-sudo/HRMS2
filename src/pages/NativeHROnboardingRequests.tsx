@@ -1015,6 +1015,9 @@ export default function NativeHROnboardingRequests() {
       const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
         ctc: Number(offer.offered_ctc) * 12,
         bandCode: offer.salary_band,
+        pf_eligible: offer.pf_eligible,
+        esi_eligible: offer.esi_eligible,
+        branch_id: selected?.branch_id ?? null,
       });
       setSalaryPreview(r.components ?? null);
     } catch (e: any) {
