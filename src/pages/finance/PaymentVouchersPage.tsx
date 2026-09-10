@@ -22,6 +22,7 @@ import { useHasRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Voucher = {
   id: string;
@@ -40,7 +41,7 @@ type Voucher = {
   amount: number;
   remarks: string | null;
   reason: string | null;
-  status: "draft" | "raised" | "ceo_approved" | "rejected" | "released";
+  status: "draft" | "raised" | "ceo_approved" | "rejected" | "released" | "changes_requested";
   raised_by: string | null;
   raised_at: string | null;
   ceo_approved_by: string | null;
@@ -51,6 +52,7 @@ type Voucher = {
   payment_date: string | null;
   transaction_ref: string | null;
   rejection_reason: string | null;
+  changes_requested_note: string | null;
   created_at: string;
   approval_events?: Array<{ action: string; actor_user_id: string; actor_role: string; created_at: string; remarks: string | null }>;
   audit_log?: Array<{ action_type: string; created_at: string }>;
@@ -75,9 +77,11 @@ const STATUS_TONE: Record<Voucher["status"], string> = {
   ceo_approved: "border-blue-200 bg-blue-50 text-blue-800",
   released: "border-emerald-200 bg-emerald-50 text-emerald-800",
   rejected: "border-rose-200 bg-rose-50 text-rose-800",
+  changes_requested: "border-orange-200 bg-orange-50 text-orange-800",
 };
 const STATUS_LABEL: Record<Voucher["status"], string> = {
   draft: "Draft", raised: "Awaiting CEO", ceo_approved: "Awaiting Release", released: "Released", rejected: "Rejected",
+  changes_requested: "Changes Requested",
 };
 
 type StageState = "done" | "current" | "rejected" | "upcoming";
@@ -132,27 +136,30 @@ function ApprovalTrack({ stages }: { stages: Stage[] }) {
 
 const emptyRaiseForm = {
   sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation",
+  vendorId: "",
   bankAccountId: "",
   payableAccountId: "",
   linkedVendorPaymentId: "",
   linkedImprestManagerId: "",
   amount: "",
   remarks: "",
-  reason: "",
 };
 
 export default function PaymentVouchersPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const canRaise = useHasRole("finance_head", "super_admin");
   const canApprove = useHasRole("ceo", "super_admin");
   const canRelease = useHasRole("accounts_head", "super_admin");
 
-  const [tab, setTab] = useState<"all" | "raised" | "ceo_approved" | "released" | "rejected">("all");
+  const [tab, setTab] = useState<"all" | "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested">("all");
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [raiseForm, setRaiseForm] = useState(emptyRaiseForm);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState("");
+  const [changesNote, setChangesNote] = useState("");
+  const [resubmitBankAccountId, setResubmitBankAccountId] = useState("");
   const [releaseForm, setReleaseForm] = useState({ paymentMode: "", paymentDate: new Date().toISOString().slice(0, 10), transactionRef: "" });
 
   const vouchersQuery = useQuery({
@@ -167,7 +174,7 @@ export default function PaymentVouchersPage() {
   const bankAccountsQuery = useQuery({
     queryKey: ["payment-voucher-bank-accounts"],
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/bank-accounts")).data ?? [],
-    enabled: raiseOpen,
+    enabled: raiseOpen || !!detailId,
   });
   const payableAccountsQuery = useQuery({
     queryKey: ["payment-voucher-payable-accounts"],
@@ -182,6 +189,17 @@ export default function PaymentVouchersPage() {
     },
     enabled: raiseOpen && raiseForm.sourceType === "vendor_grn",
   });
+  const vendorOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const row of vendorDuesQuery.data ?? []) {
+      if (row.vendor_id && !seen.has(row.vendor_id)) seen.set(row.vendor_id, row.vendor_name ?? row.vendor_id);
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [vendorDuesQuery.data]);
+  const filteredDues = useMemo(
+    () => (vendorDuesQuery.data ?? []).filter((r: any) => !raiseForm.vendorId || r.vendor_id === raiseForm.vendorId),
+    [vendorDuesQuery.data, raiseForm.vendorId],
+  );
   const imprestManagersQuery = useQuery({
     queryKey: ["payment-voucher-imprest-managers"],
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/imprest/managers")).data ?? [],
@@ -216,7 +234,6 @@ export default function PaymentVouchersPage() {
       linkedImprestManagerId: raiseForm.sourceType === "imprest_allocation" ? raiseForm.linkedImprestManagerId : undefined,
       amount: Number(raiseForm.amount),
       remarks: raiseForm.remarks?.trim() || undefined,
-      reason: raiseForm.reason?.trim() || undefined,
     })).data,
     onSuccess: () => {
       toast({ title: "Voucher raised" });
@@ -235,6 +252,18 @@ export default function PaymentVouchersPage() {
   const rejectMutation = useMutation({
     mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/reject`, { note: rejectNote?.trim() || undefined })).data,
     onSuccess: () => { toast({ title: "Voucher rejected" }); invalidate(); setRejectNote(""); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  const requestChangesMutation = useMutation({
+    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/request-changes`, { note: changesNote.trim() })).data,
+    onSuccess: () => { toast({ title: "Changes requested" }); invalidate(); setChangesNote(""); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  const resubmitMutation = useMutation({
+    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/resubmit`, {
+      bankAccountId: resubmitBankAccountId || undefined,
+    })).data,
+    onSuccess: () => { toast({ title: "Voucher resubmitted" }); invalidate(); setResubmitBankAccountId(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
   const releaseMutation = useMutation({
@@ -280,6 +309,7 @@ export default function PaymentVouchersPage() {
           <TabsTrigger value="all" className="cursor-pointer">All</TabsTrigger>
           <TabsTrigger value="raised" className="cursor-pointer">Awaiting CEO</TabsTrigger>
           <TabsTrigger value="ceo_approved" className="cursor-pointer">Awaiting Release</TabsTrigger>
+          <TabsTrigger value="changes_requested" className="cursor-pointer">Changes Requested</TabsTrigger>
           <TabsTrigger value="released" className="cursor-pointer">Released</TabsTrigger>
           <TabsTrigger value="rejected" className="cursor-pointer">Rejected</TabsTrigger>
         </TabsList>
@@ -334,21 +364,31 @@ export default function PaymentVouchersPage() {
             </div>
 
             {raiseForm.sourceType === "vendor_grn" ? (
-              <div>
-                <Label>Vendor GRN (net balance shown)</Label>
+              <div className="space-y-3">
+                <div>
+                  <Label>Vendor</Label>
+                  <Select value={raiseForm.vendorId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, linkedVendorPaymentId: "", amount: "" }))}>
+                    <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select vendor" /></SelectTrigger>
+                    <SelectContent>
+                      {vendorOptions.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Label>Outstanding GRN (net balance shown)</Label>
                 <Select
                   value={raiseForm.linkedVendorPaymentId}
                   onValueChange={(v) => {
-                    const row = (vendorDuesQuery.data ?? []).find((r: any) => r.id === v);
+                    const row = filteredDues.find((r: any) => r.id === v);
                     const netBalance = row ? Number(row.balance_amount) - Number(row.tds_deducted_amount ?? 0) : 0;
                     setRaiseForm((f) => ({ ...f, linkedVendorPaymentId: v, amount: netBalance > 0 ? String(netBalance) : f.amount }));
                   }}
+                  disabled={!raiseForm.vendorId}
                 >
-                  <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select GRN" /></SelectTrigger>
+                  <SelectTrigger className="cursor-pointer"><SelectValue placeholder={raiseForm.vendorId ? "Select GRN" : "Select a vendor first"} /></SelectTrigger>
                   <SelectContent>
-                    {(vendorDuesQuery.data ?? []).map((r: any) => (
+                    {filteredDues.map((r: any) => (
                       <SelectItem key={r.id} value={r.id}>
-                        {r.grn_number ?? r.id} — {r.vendor_name} — {money(r.balance_amount)}
+                        {r.grn_number ?? r.id} — {money(r.balance_amount)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -408,10 +448,6 @@ export default function PaymentVouchersPage() {
             <div>
               <Label>Remarks</Label>
               <Textarea value={raiseForm.remarks} onChange={(e) => setRaiseForm((f) => ({ ...f, remarks: e.target.value }))} rows={2} />
-            </div>
-            <div>
-              <Label>Reason</Label>
-              <Textarea value={raiseForm.reason} onChange={(e) => setRaiseForm((f) => ({ ...f, reason: e.target.value }))} rows={2} />
             </div>
           </div>
           <DialogFooter>
@@ -488,9 +524,32 @@ export default function PaymentVouchersPage() {
                         Approve
                       </Button>
                     </div>
+                    <Textarea placeholder="What needs to change? (e.g. use a different bank account)" value={changesNote} onChange={(e) => setChangesNote(e.target.value)} rows={2} />
+                    <Button variant="outline" className="cursor-pointer border-amber-200 text-amber-700 hover:bg-amber-50" disabled={!changesNote.trim() || requestChangesMutation.isPending} onClick={() => requestChangesMutation.mutate(detailQuery.data!.id)}>
+                      Request Changes
+                    </Button>
                     <Textarea placeholder="Rejection reason (if rejecting)" value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} rows={2} />
                     <Button variant="outline" className="cursor-pointer border-rose-200 text-rose-700 hover:bg-rose-50" disabled={rejectMutation.isPending} onClick={() => rejectMutation.mutate(detailQuery.data!.id)}>
                       Reject
+                    </Button>
+                  </section>
+                )}
+
+                {detailQuery.data.status === "changes_requested" && String(detailQuery.data.raised_by) === String(user?.id) && (
+                  <section className="space-y-2 rounded-xl border border-orange-100 bg-orange-50/50 p-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-orange-700">CEO Requested Changes</h3>
+                    <p className="text-sm text-gray-700">{detailQuery.data.changes_requested_note}</p>
+                    <Label>Bank Account</Label>
+                    <Select value={resubmitBankAccountId} onValueChange={setResubmitBankAccountId}>
+                      <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Keep current, or pick a new one" /></SelectTrigger>
+                      <SelectContent>
+                        {(bankAccountsQuery.data ?? []).map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.account_name} — {a.account_number_masked}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={resubmitMutation.isPending} onClick={() => resubmitMutation.mutate(detailQuery.data!.id)}>
+                      Resubmit for CEO Approval
                     </Button>
                   </section>
                 )}
