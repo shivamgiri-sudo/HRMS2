@@ -7,6 +7,8 @@ import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../sha
 import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
+import { inboxService } from "../inbox/inbox.service.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 
 /**
  * Payment Voucher — the authorization + release chain (PRD §3.4, §6.5, §6.6).
@@ -299,6 +301,20 @@ export const paymentVoucherService = {
       change_summary: { voucher_number: voucherNumber, amount, source_type: input.sourceType },
     }).catch(() => undefined);
 
+    const ceoRecipients = await resolveRoleHolderUserIds("ceo", null);
+    for (const userId of ceoRecipients) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "payment_voucher_pending_approval",
+        title: `[ACTION REQUIRED] Payment Voucher ${voucherNumber} — ₹${amount}`,
+        description: input.remarks?.trim() || "Awaiting your approval.",
+        entity_type: "payment_voucher",
+        entity_id: id,
+        action_url: "/finance/payment-vouchers",
+        priority: "high",
+      }).catch(() => undefined);
+    }
+
     return this.get(id);
   },
 
@@ -306,9 +322,12 @@ export const paymentVoucherService = {
     id: string,
     actorUserId: string,
     actorRole: string | undefined,
-    decision: "approve" | "reject",
+    decision: "approve" | "reject" | "request_changes",
     note?: string | null,
   ) {
+    if (decision === "request_changes" && !note?.trim()) {
+      throw new PaymentVoucherError("A note explaining what needs to change is required.");
+    }
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -328,14 +347,21 @@ export const paymentVoucherService = {
         );
       }
 
-      const newStatus = decision === "approve" ? "ceo_approved" : "rejected";
-      const [result] = await connection.execute<ResultSetHeader>(
-        `UPDATE payment_voucher
-            SET status = ?, ceo_approved_by = ?, ceo_approved_at = NOW(),
-                rejection_reason = ?
-          WHERE id = ? AND status = 'raised'`,
-        [newStatus, actorUserId, decision === "reject" ? (note?.trim() || "Rejected by CEO") : null, id],
-      );
+      const newStatus = decision === "approve" ? "ceo_approved" : decision === "reject" ? "rejected" : "changes_requested";
+      const [result] = decision === "request_changes"
+        ? await connection.execute<ResultSetHeader>(
+            `UPDATE payment_voucher
+                SET status = ?, changes_requested_by = ?, changes_requested_at = NOW(), changes_requested_note = ?
+              WHERE id = ? AND status = 'raised'`,
+            [newStatus, actorUserId, note!.trim(), id],
+          )
+        : await connection.execute<ResultSetHeader>(
+            `UPDATE payment_voucher
+                SET status = ?, ceo_approved_by = ?, ceo_approved_at = NOW(),
+                    rejection_reason = ?
+              WHERE id = ? AND status = 'raised'`,
+            [newStatus, actorUserId, decision === "reject" ? (note?.trim() || "Rejected by CEO") : null, id],
+          );
       if (result.affectedRows !== 1) {
         throw new PaymentVoucherError("Voucher was already decided by someone else", 409);
       }
@@ -354,7 +380,10 @@ export const paymentVoucherService = {
         },
         connection,
       );
-      await writeVoucherAudit(connection, `PAYMENT_VOUCHER_${decision.toUpperCase()}D`, id, actorUserId, actorRole, {
+      const actionLabel = decision === "approve" ? "PAYMENT_VOUCHER_APPROVED"
+        : decision === "reject" ? "PAYMENT_VOUCHER_REJECTED"
+        : "PAYMENT_VOUCHER_CHANGES_REQUESTED";
+      await writeVoucherAudit(connection, actionLabel, id, actorUserId, actorRole, {
         decision,
         note: note ?? null,
       });
@@ -367,14 +396,130 @@ export const paymentVoucherService = {
       connection.release();
     }
 
+    const actionLabel = decision === "approve" ? "PAYMENT_VOUCHER_APPROVED"
+      : decision === "reject" ? "PAYMENT_VOUCHER_REJECTED"
+      : "PAYMENT_VOUCHER_CHANGES_REQUESTED";
     await logSensitiveAction({
       actor_user_id: actorUserId,
       actor_role: actorRole,
-      action_type: `PAYMENT_VOUCHER_${decision.toUpperCase()}D`,
+      action_type: actionLabel,
       module_key: "FINANCE",
       entity_type: "payment_voucher",
       entity_id: id,
     }).catch(() => undefined);
+
+    if (decision === "approve") {
+      const recipients = await resolveRoleHolderUserIds("accounts_head", null);
+      for (const userId of recipients) {
+        await inboxService.createItem({
+          user_id: userId,
+          type: "payment_voucher_ready_for_release",
+          title: `[ACTION REQUIRED] Payment Voucher ready to release`,
+          description: `CEO-approved and awaiting release.`,
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
+      }
+    } else if (decision === "request_changes") {
+      const raisedBy = String((await this.get(id))?.raised_by ?? "");
+      if (raisedBy) {
+        await inboxService.createItem({
+          user_id: raisedBy,
+          type: "payment_voucher_changes_requested",
+          title: `[ACTION REQUIRED] CEO requested changes to a voucher`,
+          description: note!.trim(),
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
+      }
+    }
+
+    return this.get(id);
+  },
+
+  async resubmit(
+    id: string,
+    actorUserId: string,
+    actorRole: string | undefined,
+    updates: { bankAccountId?: string; payableAccountId?: string; amount?: number; remarks?: string | null },
+  ) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[voucher]] = await connection.execute<RowDataPacket[]>(
+        `SELECT * FROM payment_voucher WHERE id = ? FOR UPDATE`,
+        [id],
+      );
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
+      const v = voucher as any;
+      if (v.status !== "changes_requested") {
+        throw new PaymentVoucherError(`Voucher is not awaiting resubmission (status: ${v.status})`, 409);
+      }
+      if (String(v.raised_by) !== String(actorUserId)) {
+        throw new PaymentVoucherError("Only the person who raised this voucher may resubmit it.", 403);
+      }
+
+      const bankAccountId = updates.bankAccountId ?? v.bank_account_id;
+      if (updates.bankAccountId) {
+        const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id, active_status FROM company_bank_account WHERE id = ?`,
+          [bankAccountId],
+        );
+        if (!bankAccount) throw new PaymentVoucherError("Bank account not found", 404);
+        if (!(bankAccount as any).active_status) throw new PaymentVoucherError("This bank account is closed");
+      }
+      const amount = updates.amount != null ? roundMoney(Number(updates.amount)) : Number(v.amount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new PaymentVoucherError("Amount must be a positive number");
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE payment_voucher
+            SET status = 'raised', bank_account_id = ?, payable_account_id = ?, amount = ?, remarks = ?,
+                ceo_approved_by = NULL, ceo_approved_at = NULL, rejection_reason = NULL,
+                changes_requested_by = NULL, changes_requested_at = NULL, changes_requested_note = NULL,
+                raised_at = NOW()
+          WHERE id = ? AND status = 'changes_requested'`,
+        [
+          bankAccountId,
+          updates.payableAccountId ?? v.payable_account_id,
+          amount,
+          updates.remarks !== undefined ? (updates.remarks?.trim() || null) : v.remarks,
+          id,
+        ],
+      );
+      if (result.affectedRows !== 1) throw new PaymentVoucherError("Voucher state changed before resubmission", 409);
+
+      await recordFinanceApprovalEvent(
+        { entityType: "payment_voucher", entityId: id, action: "resubmit", toStatus: "raised", actorUserId, actorRole: actorRole ?? "finance_head", remarks: updates.remarks ?? null },
+        connection,
+      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_RESUBMITTED", id, actorUserId, actorRole, { bank_account_id: bankAccountId, amount });
+
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId, actor_role: actorRole, action_type: "PAYMENT_VOUCHER_RESUBMITTED",
+      module_key: "FINANCE", entity_type: "payment_voucher", entity_id: id,
+    }).catch(() => undefined);
+
+    const ceoRecipients = await resolveRoleHolderUserIds("ceo", null);
+    for (const userId of ceoRecipients) {
+      await inboxService.createItem({
+        user_id: userId, type: "payment_voucher_pending_approval",
+        title: `[ACTION REQUIRED] Payment Voucher resubmitted for approval`,
+        description: "Resubmitted after requested changes.",
+        entity_type: "payment_voucher", entity_id: id, action_url: "/finance/payment-vouchers", priority: "high",
+      }).catch(() => undefined);
+    }
 
     return this.get(id);
   },
@@ -621,6 +766,12 @@ export const paymentVoucherService = {
         change_summary: { released_via_voucher: id },
       }).catch(() => undefined);
     }
+
+    await inboxService.resolveItems({
+      entity_type: "payment_voucher",
+      entity_id: id,
+      types: ["payment_voucher_ready_for_release"],
+    }).catch(() => undefined);
 
     return this.get(id);
   },

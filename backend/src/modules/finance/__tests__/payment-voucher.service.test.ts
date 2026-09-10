@@ -17,8 +17,15 @@ vi.mock("../../../shared/financeApprovalEvent.js", () => ({
 vi.mock("../vendor-payment-ledger.service.js", () => ({ vendorPaymentLedgerService: { dispatch } }));
 vi.mock("../imprest-ledger.service.js", () => ({ imprestLedgerService: { post: vi.fn() } }));
 vi.mock("../imprest.service.js", () => ({ imprestService: {} }));
+vi.mock("../../inbox/inbox.service.js", () => ({
+  inboxService: { createItem: vi.fn().mockResolvedValue(undefined), resolveItems: vi.fn().mockResolvedValue(0) },
+}));
+vi.mock("../../../shared/recipient-resolver.js", () => ({
+  resolveRoleHolderUserIds: vi.fn().mockResolvedValue(["accounts-head-1"]),
+}));
 
 import { paymentVoucherService } from "../payment-voucher.service.js";
+import { inboxService } from "../../inbox/inbox.service.js";
 
 function mockConnection() {
   return {
@@ -114,5 +121,90 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
 
     const tdsLookupCalls = conn.execute.mock.calls.filter((c) => String(c[0]).includes("TDS Payable"));
     expect(tdsLookupCalls).toHaveLength(0);
+  });
+});
+
+describe("paymentVoucherService.ceoApprove — request_changes", () => {
+  it("requires a note", async () => {
+    await expect(
+      paymentVoucherService.ceoApprove("pv-1", "ceo-1", "ceo", "request_changes", ""),
+    ).rejects.toThrow(/note/i);
+  });
+
+  it("sets status='changes_requested' and records who/when/why", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised", ceo_approved_by: null }]]) // SELECT FOR UPDATE
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE
+      .mockResolvedValueOnce([{}]); // writeVoucherAudit
+
+    await paymentVoucherService.ceoApprove("pv-1", "ceo-1", "ceo", "request_changes", "Please use the HDFC account instead");
+
+    expect(conn.execute).toHaveBeenCalledWith(
+      expect.stringMatching(/SET status = \?, changes_requested_by = \?, changes_requested_at = NOW\(\), changes_requested_note = \?/),
+      expect.arrayContaining(["changes_requested", "ceo-1", "Please use the HDFC account instead", "pv-1"]),
+    );
+  });
+
+  it("notifies the person who raised the voucher", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised", ceo_approved_by: null }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+
+    await paymentVoucherService.ceoApprove("pv-1", "ceo-1", "ceo", "request_changes", "Use a different account");
+
+    expect(inboxService.createItem).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: "fh-1", type: "payment_voucher_changes_requested", entity_type: "payment_voucher", entity_id: "pv-1" }),
+    );
+  });
+});
+
+describe("paymentVoucherService.ceoApprove — approve, notifies Accounts Head", () => {
+  it("creates an inbox item for every accounts_head role holder", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised" }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+
+    await paymentVoucherService.ceoApprove("pv-1", "ceo-1", "ceo", "approve");
+
+    expect(inboxService.createItem).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: "accounts-head-1", type: "payment_voucher_ready_for_release", entity_type: "payment_voucher", entity_id: "pv-1" }),
+    );
+  });
+});
+
+describe("paymentVoucherService.resubmit", () => {
+  it("only the original raiser may resubmit", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "changes_requested", raised_by: "fh-1" }]]);
+
+    await expect(
+      paymentVoucherService.resubmit("pv-1", "someone-else", "finance_head", {}),
+    ).rejects.toThrow(/may resubmit/i);
+  });
+
+  it("moves the voucher back to 'raised' and clears the CEO decision fields", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "changes_requested", raised_by: "fh-1", bank_account_id: "acct-1" }]])
+      .mockResolvedValueOnce([[{ id: "acct-2", active_status: 1 }]]) // new bank account check
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE
+      .mockResolvedValueOnce([{}]); // writeVoucherAudit
+
+    await paymentVoucherService.resubmit("pv-1", "fh-1", "finance_head", { bankAccountId: "acct-2" });
+
+    expect(conn.execute).toHaveBeenCalledWith(
+      expect.stringMatching(/SET status = 'raised'.*ceo_approved_by = NULL.*changes_requested_by = NULL/s),
+      expect.anything(),
+    );
   });
 });
