@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 
 /**
  * A rejection the caller caused and can fix, tagged with the status it deserves.
@@ -412,6 +413,9 @@ export const vendorPaymentLedgerService = {
         );
         if (!ledgerBankAccount) throw requestError(404, "Bank account not found");
         if (!(ledgerBankAccount as any).active_status) throw requestError(400, "This bank account is closed");
+        // Covers both inserts below (the debit and, if any, the TDS memo) — same account, same
+        // paymentDate.
+        await assertNotInClosedPeriod(connection, companyBankAccountId, payload.paymentDate);
 
         const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
           `SELECT running_balance FROM bank_account_ledger_entry

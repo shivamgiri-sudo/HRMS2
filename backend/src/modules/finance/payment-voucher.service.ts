@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
 import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
+import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
@@ -666,6 +667,9 @@ export const paymentVoucherService = {
       );
       if (!bankAccount) throw new PaymentVoucherError("Bank account not found", 404);
       if (!(bankAccount as any).active_status) throw new PaymentVoucherError("This bank account is closed");
+      // Every bank_account_ledger_entry insert below (vendor_grn/TDS-memo/imprest/general lanes,
+      // all sharing this one paymentDate) needs the same guard — one call here covers all of them.
+      await assertNotInClosedPeriod(connection, v.bank_account_id, paymentDate);
 
       const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
         `SELECT running_balance FROM bank_account_ledger_entry

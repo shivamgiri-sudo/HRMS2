@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 
 /**
  * Matching engine (Bank Reconciliation, Phase 4). Three ways a bank_statement_line resolves:
@@ -96,6 +97,7 @@ export const bankReconciliationMatchService = {
     // Same discipline as payment-voucher.service.ts's release(): lock the account row, read the
     // last running_balance, compute the new one, insert. FOR UPDATE serializes concurrent posts.
     await db.execute(`SELECT id FROM company_bank_account WHERE id = ? FOR UPDATE`, [input.bankAccountId]);
+    await assertNotInClosedPeriod(db, input.bankAccountId, String(line.txn_date).slice(0, 10));
     const [[last]] = await db.execute<RowDataPacket[]>(
       `SELECT running_balance FROM bank_account_ledger_entry WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
       [input.bankAccountId],

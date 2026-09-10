@@ -60,6 +60,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
     conn.execute
       .mockResolvedValueOnce([[VOUCHER_ROW]]) // SELECT voucher FOR UPDATE
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]]) // bank account
+      .mockResolvedValueOnce([[]]) // assertNotInClosedPeriod — no closed period covers this date
       .mockResolvedValueOnce([[{ running_balance: 100000 }]]) // last ledger entry
       .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none, falls back to linked_vendor_payment_id
       .mockResolvedValueOnce([{}]) // INSERT bank_account_ledger_entry (cash movement)
@@ -88,6 +89,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
     conn.execute
       .mockResolvedValueOnce([[VOUCHER_ROW]])
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[]]) // assertNotInClosedPeriod — no closed period covers this date
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none
       .mockResolvedValueOnce([{}]) // cash movement entry
@@ -113,6 +115,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
     conn.execute
       .mockResolvedValueOnce([[VOUCHER_ROW]])
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[]]) // assertNotInClosedPeriod — no closed period covers this date
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none
       .mockResolvedValueOnce([{}]) // cash movement entry
@@ -135,6 +138,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
     conn.execute
       .mockResolvedValueOnce([[VOUCHER_ROW]])
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[]]) // assertNotInClosedPeriod — no closed period covers this date
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[ // two allocations for this voucher
         { vendor_payment_tracking_id: "vpt-1", allocated_amount: "3000.00" },
@@ -160,6 +164,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
     conn.execute
       .mockResolvedValueOnce([[VOUCHER_ROW]])
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[]]) // assertNotInClosedPeriod — no closed period covers this date
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]]) // no allocation rows -> single fallback
       .mockResolvedValueOnce([{}])
@@ -238,6 +243,7 @@ describe("paymentVoucherService.release — Finance Head releases their own rais
     conn.execute
       .mockResolvedValueOnce([[VOUCHER_ROW]]) // raised_by: "fh-1"
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[]]) // assertNotInClosedPeriod — no closed period covers this date
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{}])

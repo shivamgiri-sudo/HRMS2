@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
+import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 
 /**
  * Imprest Manager master (Requirement 8) and Imprest Allocation (Requirement 6).
@@ -576,6 +577,7 @@ export const imprestService = {
           );
           if (!bankAccount) throw new Error("Bank account not found");
           if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+          await assertNotInClosedPeriod(connection, companyBankAccountId, input.allocationDate);
 
           const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
             `SELECT running_balance FROM bank_account_ledger_entry
@@ -713,6 +715,7 @@ export const imprestService = {
           );
           if (!bankAccount) throw new Error("Bank account not found");
           if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+          await assertNotInClosedPeriod(connection, companyBankAccountId, String(allocation.allocation_date).slice(0, 10));
 
           const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
             `SELECT running_balance FROM bank_account_ledger_entry

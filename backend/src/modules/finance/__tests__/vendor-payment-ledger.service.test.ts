@@ -55,6 +55,10 @@ function mockConnection(opts: {
         : opts.companyBankAccount;
       return [account ? [{ id: "acct-1", ...account }] : []];
     }
+    if (text.includes("FROM bank_reconciliation_period")) {
+      // assertNotInClosedPeriod's own lookup — no closed period covers the test date by default.
+      return [[]];
+    }
     if (text.includes("FROM bank_account_ledger_entry") && text.includes("running_balance")) {
       return [opts.lastLedgerBalance != null ? [{ running_balance: opts.lastLedgerBalance }] : []];
     }
