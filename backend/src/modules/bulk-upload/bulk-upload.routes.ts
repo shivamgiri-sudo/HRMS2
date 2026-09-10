@@ -410,6 +410,9 @@ const KNOWN_IMPORT_RPCS = new Set([
   // Tagging file, found in the same local folder. See
   // bla-bli-blu-auto-callback-bulk.service.ts / bla-bli-blu-after-hour-
   // bulk.service.ts.
+  // Reginald Men Abandoned Cart Dashboard's real Live Sales Google Form
+  // export -- see sql/1752 / reginald-abandoned-cart-sales-bulk.service.ts.
+  "import_reginald_abandoned_cart_sales_batch",
   "import_bla_bli_blu_auto_callback_batch",
   "import_bla_bli_blu_after_hour_batch",
   // Bla Bli Blu's real Smartping CDR export -- disposition/outcome fields
@@ -1029,6 +1032,14 @@ async function dispatchImport(
       "../bulk-upload/gnc-sale-masmis-bulk.service.js"
     );
     const data = await importGncSaleMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_reginald_abandoned_cart_sales_batch") {
+    const { importReginaldAbandonedCartSalesBatch } = await import(
+      "../bulk-upload/reginald-abandoned-cart-sales-bulk.service.js"
+    );
+    const data = await importReginaldAbandonedCartSalesBatch(id, userId);
     return { success: true, data };
   }
 
