@@ -7,8 +7,8 @@ import { SearchableSelect, type SearchableOption } from "@/components/ui/searcha
 import { useToast } from "@/hooks/use-toast";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronRight, Clock,
-  Database, Download, Filter, Headphones, Lightbulb, Loader2, Minus, PenLine, Radio,
-  ShieldAlert, Sparkles, Target, Upload, Users, Users2, X,
+  Database, Download, Filter, Headphones, Lightbulb, Loader2, Minus, Package, PenLine, Radio,
+  ShieldAlert, Sparkles, Target, Truck, Upload, User, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -390,7 +390,7 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
         <div className="ml-auto flex shrink-0 gap-1">
           {r.source === "manual" && (
             <span title="This reading was typed in by hand, not written by an automated feed"
-              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-purple-700">
+              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9.5px] font-bold bg-white/70 text-purple-700">
               <PenLine className="h-2 w-2" />manual
             </span>
           )}
@@ -398,14 +398,14 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
             const fresh = freshnessCaption(r);
             return (
               <span title={fresh?.full ?? "Today is still in progress — this will move as the day fills in"}
-                className="rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-blue-700">
+                className="rounded px-1 py-0.5 text-[9.5px] font-bold bg-white/70 text-blue-700">
                 {fresh ? `today · ${fresh.short}` : "today"}
               </span>
             );
           })()}
           {stale && (
             <span title={`Last reading ${r.staleDays} days ago — history, not current`}
-              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-amber-700">
+              className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9.5px] font-bold bg-white/70 text-amber-700">
               <Clock className="h-2 w-2" />{r.staleDays}d
             </span>
           )}
@@ -457,7 +457,7 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
           {r.source === "manual" && <PenLine className="h-2 w-2 text-purple-500" aria-label="Typed in by hand" />}
           {r.provisional && (
             <span title={freshnessCaption(r)?.full ?? "Today is still in progress — this will move as the day fills in"}
-              className="text-[7.5px] font-bold text-blue-600 whitespace-nowrap">
+              className="text-[9px] font-bold text-blue-600 whitespace-nowrap">
               {freshnessCaption(r)?.short ?? "today"}
             </span>
           )}
@@ -479,17 +479,17 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
           silently here once already, restored because a red chip with no
           target is a verdict with no evidence. */}
       {targetCaption(r) && (
-        <p className="text-[8.5px] text-slate-400 mt-0.5 truncate">{targetCaption(r)}</p>
+        <p className="text-[9.5px] text-slate-400 mt-0.5 truncate">{targetCaption(r)}</p>
       )}
     </button>
   );
 }
 
-const CLAP_META: Record<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"], { color: string; icon: string }> = {
-  Customer: { color: "#3B82F6", icon: "👤" },
-  Logistic: { color: "#F59E0B", icon: "🚚" },
-  Agent:    { color: "#E11D48", icon: "🎧" },
-  Product:  { color: "#10B981", icon: "📦" },
+const CLAP_META: Record<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"], { color: string; icon: typeof User }> = {
+  Customer: { color: "#3B82F6", icon: User },
+  Logistic: { color: "#F59E0B", icon: Truck },
+  Agent:    { color: "#E11D48", icon: Headphones },
+  Product:  { color: "#10B981", icon: Package },
 };
 
 /**
@@ -540,12 +540,15 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
           ))}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
-          {voc.clapBreakdown.map((c) => (
-            <span key={c.clap} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-              <span className="w-2 h-2 rounded-full inline-block" style={{ background: CLAP_META[c.clap].color }} />
-              {CLAP_META[c.clap].icon} {c.clap} {c.pct}%
-            </span>
-          ))}
+          {voc.clapBreakdown.map((c) => {
+            const Icon = CLAP_META[c.clap].icon;
+            return (
+              <span key={c.clap} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                <Icon className="h-3 w-3 shrink-0" style={{ color: CLAP_META[c.clap].color }} />
+                {c.clap} {c.pct}%
+              </span>
+            );
+          })}
         </div>
         <p className="text-[10px] text-slate-400 mt-1.5">
           Every audited call classified by its real recorded scenario — Agent means the call turned on
@@ -557,13 +560,15 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
         <div className="flex gap-1.5 mt-3">
           {(["agent", "logistic", "product"] as const).map((cat) => {
             const meta = CLAP_META[(cat.charAt(0).toUpperCase() + cat.slice(1)) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"]];
+            const Icon = meta.icon;
             const n = voc.quotes[cat].positive.length + voc.quotes[cat].negative.length;
             return (
               <button key={cat} type="button" onClick={() => setCategory(cat)}
-                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold border transition cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
                   category === cat ? "text-white" : "text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
                 style={category === cat ? { background: meta.color, borderColor: meta.color } : undefined}>
-                {meta.icon} {cat[0].toUpperCase() + cat.slice(1)} {n > 0 && <span className="opacity-80">({n})</span>}
+                <Icon className="h-3 w-3 shrink-0" />
+                {cat[0].toUpperCase() + cat.slice(1)} {n > 0 && <span className="opacity-80">({n})</span>}
               </button>
             );
           })}

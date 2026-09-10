@@ -379,6 +379,16 @@ const KNOWN_IMPORT_RPCS = new Set([
   // found while auditing the same workbook used for Sale Raw; no DB
   // backing exists anywhere. See housing-premium-agent-target-bulk.service.ts.
   "import_housing_premium_agent_target_batch",
+  // Housing Owner's per-agent monthly Incentive payout -- found while
+  // auditing the same workbook used for Sale Raw/Call Logs; source is
+  // partially corrupted (broken-formula cells), only clean cells are
+  // imported. See housing-owner-incentive-bulk.service.ts.
+  "import_housing_owner_incentive_batch",
+  // Housing Owner's CRM lead/opportunity pipeline log (Look up Data) --
+  // found while auditing the same workbook; the largest single sheet
+  // found this session (398,363 rows). See
+  // housing-owner-lead-pipeline-bulk.service.ts.
+  "import_housing_owner_lead_pipeline_batch",
   // GNC's Agent Productivity Report -- same report shape Mydashboards' own
   // GNC APR Upload writes to db_masmis.gnc_apr, confirmed live real but
   // stale (last row 2026-05-30). See gnc-apr-daily-bulk.service.ts.
@@ -941,6 +951,22 @@ async function dispatchImport(
       "../bulk-upload/housing-premium-agent-target-bulk.service.js"
     );
     const data = await importHousingPremiumAgentTargetBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_owner_incentive_batch") {
+    const { importHousingOwnerIncentiveBatch } = await import(
+      "../bulk-upload/housing-owner-incentive-bulk.service.js"
+    );
+    const data = await importHousingOwnerIncentiveBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_housing_owner_lead_pipeline_batch") {
+    const { importHousingOwnerLeadPipelineBatch } = await import(
+      "../bulk-upload/housing-owner-lead-pipeline-bulk.service.js"
+    );
+    const data = await importHousingOwnerLeadPipelineBatch(id, userId);
     return { success: true, data };
   }
 
