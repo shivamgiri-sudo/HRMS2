@@ -1353,6 +1353,65 @@ export async function getProcessVoiceOfCustomer(
   };
 }
 
+export interface ClapDailyHeatmap {
+  available: boolean; reason: string | null;
+  days: Array<{
+    date: string; total: number;
+    counts: { Customer: number; Logistic: number; Agent: number; Product: number };
+  }>;
+}
+
+/**
+ * Day x CLAP-category matrix (Mydashboards' heat-cell pivot idiom) -- which
+ * days actually carried a spike of Agent-attributed (or Logistic/Product/
+ * Customer) calls, not just the period-aggregated share the breakdown bar
+ * already shows. Deliberately NOT tied to the page's period selector
+ * (trend/today/wtd/mtd) -- a heatmap's whole point is showing a pattern
+ * across days, so a single-day "trend" window would be meaningless here;
+ * this always looks at the real last 14 days, same CLAP_CASE classification
+ * already proven correct in the breakdown/scenario work above.
+ */
+export async function getClapDailyHeatmap(
+  userId: string, processId: string,
+): Promise<ClapDailyHeatmap | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapDailyHeatmap => ({ available: false, reason, days: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(q.CallDate, '%Y-%m-%d') AS d, (${CLAP_CASE}) AS clap, COUNT(*) AS n
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList}) AND q.quality_percentage IS NOT NULL
+        AND q.CallDate >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+      GROUP BY d, clap
+      ORDER BY d ASC`,
+    employeeCodes,
+  );
+  if (!(rows as any[]).length) return { ...unavailable("No audited calls in the last 14 days for this process."), available: true };
+
+  const byDay = new Map<string, { Customer: number; Logistic: number; Agent: number; Product: number }>();
+  for (const r of rows as any[]) {
+    const d = String(r.d);
+    const bucket = byDay.get(d) ?? { Customer: 0, Logistic: 0, Agent: 0, Product: 0 };
+    bucket[String(r.clap) as "Customer" | "Logistic" | "Agent" | "Product"] = Number(r.n);
+    byDay.set(d, bucket);
+  }
+  const days = [...byDay.entries()]
+    .map(([date, counts]) => ({ date, counts, total: counts.Customer + counts.Logistic + counts.Agent + counts.Product }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { available: true, reason: null, days };
+}
+
 export interface ClapScenarioBreakdown {
   available: boolean;
   reason: string | null;

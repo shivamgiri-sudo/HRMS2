@@ -186,6 +186,14 @@ interface ClapVoiceOfCustomer {
   };
 }
 
+interface ClapDailyHeatmap {
+  available: boolean; reason: string | null;
+  days: Array<{
+    date: string; total: number;
+    counts: { Customer: number; Logistic: number; Agent: number; Product: number };
+  }>;
+}
+
 interface ClapScenarioBreakdown {
   available: boolean; reason: string | null;
   clap: "Customer" | "Logistic" | "Agent" | "Product"; total: number;
@@ -614,6 +622,8 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
           called." Customer/Product/Logistic mean the root issue lay elsewhere.
         </p>
 
+        <ClapHeatmapRow processId={processId} />
+
         {/* Category selector -- only Agent/Logistic/Product carry verbatim quotes */}
         <div className="flex gap-1.5 mt-3">
           {(["agent", "logistic", "product"] as const).map((cat) => {
@@ -664,6 +674,79 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
         </div>
       </div>
     </ChartCard>
+  );
+}
+
+/**
+ * Day x CLAP-category heat-cell matrix (Mydashboards' pivot-table idiom) --
+ * which days actually carried a spike of Agent/Logistic/Product/Customer-
+ * attributed calls, not just the period-aggregated share the bar above
+ * shows. Always the real last 14 days (see the backend function for why
+ * this ignores the page's period selector). No charting library: a plain
+ * grid of cells whose background alpha is value/max, same technique
+ * Mydashboards' own heatBg() uses.
+ */
+function ClapHeatmapRow({ processId }: { processId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "clap-heatmap", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapDailyHeatmap>>(
+      `/api/process-operations/${processId}/voice-of-customer/heatmap`),
+  });
+  const hm = data?.data;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400 mt-2">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading the 14-day pattern…
+      </div>
+    );
+  }
+  if (!hm?.available || hm.days.length < 3) {
+    return null; // Not enough days to call it a "pattern" -- quietly skip rather than show a near-empty grid.
+  }
+
+  const CATS: Array<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"]> = ["Agent", "Product", "Logistic", "Customer"];
+  const maxByCat: Record<string, number> = {};
+  for (const cat of CATS) maxByCat[cat] = Math.max(1, ...hm.days.map((d) => d.counts[cat]));
+
+  return (
+    <div className="mt-2.5">
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
+        Last 14 days by category — darker means more calls that day, not worse
+      </p>
+      <div className="overflow-x-auto">
+        <table className="text-[9px] border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left pr-2 py-0.5 font-semibold text-slate-400"> </th>
+              {hm.days.map((d) => (
+                <th key={d.date} className="px-1 py-0.5 font-normal text-slate-400 whitespace-nowrap" title={d.date}>
+                  {d.date.slice(5)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {CATS.map((cat) => (
+              <tr key={cat}>
+                <td className="text-right pr-2 py-0.5 font-semibold text-slate-500 whitespace-nowrap">{cat}</td>
+                {hm.days.map((d) => {
+                  const n = d.counts[cat];
+                  const alpha = n === 0 ? 0 : Math.min(0.9, 0.15 + (n / maxByCat[cat]) * 0.75);
+                  return (
+                    <td key={d.date} title={`${cat} · ${d.date}: ${n} call${n === 1 ? "" : "s"}`}
+                      className="w-6 h-5 text-center tabular-nums"
+                      style={{ background: alpha ? `${CLAP_META[cat].color}${Math.round(alpha * 255).toString(16).padStart(2, "0")}` : undefined }}>
+                      {n > 0 ? n : ""}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
