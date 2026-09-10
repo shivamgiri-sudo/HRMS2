@@ -470,12 +470,12 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
-         -- agent's `User` login code (CallDate for the call date) -- not employee_id/punch_date,
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
-         SELECT UPPER(TRIM(`User`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(`User`)), DATE(CallDate)
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        LEFT JOIN (
          SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break_minutes
@@ -694,12 +694,12 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
-         -- agent's `User` login code (CallDate for the call date) -- not employee_id/punch_date,
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
-         SELECT UPPER(TRIM(`User`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(`User`)), DATE(CallDate)
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY m.id, m.full_name, p.process_name, b.branch_name
@@ -744,12 +744,12 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
-         -- agent's `User` login code (CallDate for the call date) -- not employee_id/punch_date,
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
-         SELECT UPPER(TRIM(`User`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(`User`)), DATE(CallDate)
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY p.id, p.process_name, b.branch_name
@@ -787,12 +787,12 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
-         -- agent's `User` login code (CallDate for the call date) -- not employee_id/punch_date,
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
-         SELECT UPPER(TRIM(`User`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(`User`)), DATE(CallDate)
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter}
        GROUP BY b.id, b.branch_name
