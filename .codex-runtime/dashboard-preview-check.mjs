@@ -1,9 +1,13 @@
 import { chromium } from "playwright";
 import fs from "node:fs/promises";
 
-const baseUrl = "http://127.0.0.1:8081";
-const email = "sofiya.sultan@teammas.co.in";
-const password = "Noida@1234";
+const baseUrl = process.env.PREVIEW_BASE_URL || "http://127.0.0.1:8081";
+const email = process.env.PREVIEW_LOGIN_EMAIL;
+const password = process.env.PREVIEW_LOGIN_PASSWORD;
+if (!email || !password) {
+  console.error("Set PREVIEW_LOGIN_EMAIL and PREVIEW_LOGIN_PASSWORD env vars before running this script.");
+  process.exit(1);
+}
 const outDir = ".codex-runtime/playwright-preview";
 
 await fs.mkdir(outDir, { recursive: true });
