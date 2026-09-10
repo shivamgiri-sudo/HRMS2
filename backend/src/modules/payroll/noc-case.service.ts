@@ -438,7 +438,7 @@ async function loadEmployeeSnapshot(employeeId: string): Promise<EmployeeSnapsho
             b.branch_name, p.process_name, d.designation_name,
             e.employment_status,
             e.official_email, e.email, e.personal_email,
-            COALESCE(e.mobile_number, e.mobile, e.phone) AS mobile
+            COALESCE(e.mobile, e.personal_phone, e.alternate_mobile) AS mobile
        FROM employees e
        LEFT JOIN branch_master b      ON b.id = e.branch_id
        LEFT JOIN process_master p     ON p.id = e.process_id

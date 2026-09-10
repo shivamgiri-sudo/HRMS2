@@ -23,6 +23,7 @@ import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { payrollSecureRouter } from "./modules/payroll/payroll.secure.routes.js";
 import { payrollPublicRouter } from "./modules/payroll/payroll.public.routes.js";
 import { nocCasePublicRouter } from "./modules/payroll/noc-case-public.routes.js";
+import { nocCaseRouter } from "./modules/payroll/noc-case.routes.js";
 import { payrollStatutoryConfigCompatRouter } from "./modules/payroll/payroll-statutory-config.compat.routes.js";
 import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat.routes.js";
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
@@ -450,6 +451,7 @@ app.use("/api/payroll/cheque-validation", chequeValidationRouter);
 app.use("/api/payroll", disbursalRouter);
 app.use("/api/payroll", payrollWindowCronRouter);
 app.use("/api/payroll/noc", nocRouter);
+app.use("/api/payroll/noc-cases", nocCaseRouter);
 app.use("/api/payroll", runningSalaryRouter);
 // NOTE: /api/payroll-masters is mounted once, below, with payrollMastersRouter.
 // A duplicate `app.use("/api/payroll-masters", salaryPackageRouter)` used to sit here —
