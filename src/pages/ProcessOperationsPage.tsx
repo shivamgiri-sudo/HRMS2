@@ -705,7 +705,9 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
 
 function currency(v: number | null): string {
   if (v === null) return "no data";
-  return `₹${Math.round(v).toLocaleString("en-IN")}`;
+  const rounded = Math.round(v);
+  const sign = rounded < 0 ? "-" : "";
+  return `${sign}₹${Math.abs(rounded).toLocaleString("en-IN")}`;
 }
 
 const REVENUE_STATUS_LABEL: Record<string, string> = {
