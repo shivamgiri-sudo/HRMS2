@@ -49,22 +49,30 @@ defects, not just a dated look:
 
 ### Backend (small, additive)
 
-New route: `GET /api/finance/vendor-payments/pending-approval-summary`
-(`vendor-payment.routes.ts`, same `PAYMENT_READ_ROLES` gate as the existing
-capabilities/list routes).
+**No new backlog endpoint needed.** `GET /api/finance/grns/summary`
+(`grn.routes.ts:733-755`) already exists, is correctly RBAC-scoped via the
+same `resolveFinanceBranchScopeSet` helper this page's own endpoints use, and
+returns `{ byStatus: Record<status, {count, value}>, inQueue }` — exactly
+`branch_head_approved` and `finance_head_approved` buckets with count + ₹
+value. The frontend calls this directly.
 
-New service function `getPendingApprovalSummary()` in
-`vendor-payment.service.ts`: queries `grn_request` for rows in
-`branch_head_approved`/`finance_head_approved` status, grouped by branch and
-stage, with count + `SUM(amount_with_tax)`. Reuses the existing
-`resolveFinanceBranchScopeSet` scope helper from `finance-access-scope.ts` —
-same branch narrowing as every other endpoint on this page, no new RBAC
-surface.
+One gap: `GRN_READ_ROLES` (`accounts_head, finance_head, super_admin, admin,
+branch_head, branch_admin, finance, hr, hr_admin`) does not include
+`payroll_head`, which IS in this page's `PAYMENT_READ_ROLES`. Rather than
+widen GRN's role list (out of scope — a different module's access surface),
+the frontend treats a 403 from this one query as "hide the backlog tile/panel
+for this viewer" rather than an error, exactly the way the page already
+degrades in other spots (e.g. capability-gated write controls).
 
-Capabilities route (`GET /vendor-payments/capabilities`) response gains one
-field: `scopeBranchNames: string[]` (resolved branch names when
-`readScope === "branch"`, empty/omitted when `"organisation"`) so the frontend
-can render an honest badge instead of the generic "branch scope" label.
+Only actual backend change: capabilities route (`GET
+/vendor-payments/capabilities`, `vendor-payment.routes.ts:110-144`) gains one
+field, `scopeBranchNames: string[]` (resolved branch names when
+`readScope === "branch"`, omitted/`[]` when `"organisation"`), via a new
+`vendorPaymentService.getScopeBranchNames(branchScope)` that looks up
+`branch_master.branch_name` for the resolved `branchIds` (mirrors the
+existing `LEFT JOIN branch_master b ON b.id = vpt.branch_id` pattern already
+used elsewhere in `vendor-payment.service.ts`). Handler becomes async (wrapped
+in the existing `h()` helper) to call `resolveFinanceBranchScopeSet`.
 
 ### Frontend (`VendorPaymentDispatchPage.tsx`)
 
