@@ -291,6 +291,7 @@ export const navGroups: NavGroup[] = [
         label: "Brand Sales",  href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Bellavita & GNC analytics",
         children: [
           { label: "Brand Analytics",   href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Sales dashboards & upload" },
+          { label: "Housing Dashboards", href: "/sales/housing-dashboards", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","coo","process_manager","operations_manager","branch_head","hr","manager"], description: "Housing Owner & Premium sales + CDR" },
         ],
       },
       {
