@@ -428,6 +428,16 @@ const KNOWN_IMPORT_RPCS = new Set([
   // db_external/mas_hrms first, no DB backing exists anywhere. See
   // bla-bli-blu-overall-sales-bulk.service.ts.
   "import_bla_bli_blu_overall_sales_batch",
+  // Dalmia Cement's own real MIS workbook's 5 raw sheets -- checked
+  // across every schema on both hosts first, no DB backing exists
+  // anywhere. See dalmia-ib-cdr-bulk.service.ts, dalmia-dd-bulk.service.ts,
+  // dalmia-outbound-bulk.service.ts, dalmia-apr-utilization-bulk.service.ts,
+  // dalmia-after-hour-bulk.service.ts.
+  "import_dalmia_ib_cdr_batch",
+  "import_dalmia_dd_batch",
+  "import_dalmia_outbound_batch",
+  "import_dalmia_apr_utilization_batch",
+  "import_dalmia_after_hour_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1119,6 +1129,46 @@ async function dispatchImport(
       "../bulk-upload/bla-bli-blu-overall-sales-bulk.service.js"
     );
     const data = await importBlaBliBluOverallSalesBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_ib_cdr_batch") {
+    const { importDalmiaIbCdrBatch } = await import(
+      "../bulk-upload/dalmia-ib-cdr-bulk.service.js"
+    );
+    const data = await importDalmiaIbCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_dd_batch") {
+    const { importDalmiaDdBatch } = await import(
+      "../bulk-upload/dalmia-dd-bulk.service.js"
+    );
+    const data = await importDalmiaDdBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_outbound_batch") {
+    const { importDalmiaOutboundBatch } = await import(
+      "../bulk-upload/dalmia-outbound-bulk.service.js"
+    );
+    const data = await importDalmiaOutboundBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_apr_utilization_batch") {
+    const { importDalmiaAprUtilizationBatch } = await import(
+      "../bulk-upload/dalmia-apr-utilization-bulk.service.js"
+    );
+    const data = await importDalmiaAprUtilizationBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_after_hour_batch") {
+    const { importDalmiaAfterHourBatch } = await import(
+      "../bulk-upload/dalmia-after-hour-bulk.service.js"
+    );
+    const data = await importDalmiaAfterHourBatch(id, userId);
     return { success: true, data };
   }
 
