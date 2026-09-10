@@ -34,3 +34,27 @@ describe("VendorPaymentDispatchPage — financialYear filter (Task 2)", () => {
     );
   });
 });
+
+describe("VendorPaymentDispatchPage — Metric tile KPI strip + backlog query (Task 3)", () => {
+  it("defines a local Metric tile component matching the sibling Finance page recipe", () => {
+    expect(SRC).toMatch(/function Metric\(\{[\s\S]*?label[\s\S]*?value[\s\S]*?\}/);
+    expect(SRC).toContain("rounded-2xl border");
+    expect(SRC).toContain("uppercase tracking-[0.15em]");
+  });
+
+  it("queries GET /api/finance/grns/summary for the approval backlog", () => {
+    expect(SRC).toContain('"/api/finance/grns/summary"');
+    expect(SRC).toMatch(/queryKey:\s*\["grn-approval-summary"/);
+  });
+
+  it("derives pendingApproval from branch_head_approved + finance_head_approved buckets", () => {
+    expect(SRC).toContain("branch_head_approved");
+    expect(SRC).toContain("finance_head_approved");
+  });
+
+  it("renders the KPI strip as a Metric tile grid, not plain spans", () => {
+    expect(SRC).toMatch(/grid grid-cols-2 md:grid-cols-5 gap-2/);
+    expect(SRC).toMatch(/<Metric\s+label="Page due"/);
+    expect(SRC).toMatch(/<Metric\s+label="Pending approval"/);
+  });
+});

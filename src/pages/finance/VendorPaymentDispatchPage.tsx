@@ -120,6 +120,33 @@ function money(value: number | string | null | undefined) {
   }).format(Number(value ?? 0));
 }
 
+function Metric({
+  label,
+  value,
+  sub,
+  tone = "slate",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "slate" | "blue" | "emerald" | "rose" | "amber";
+}) {
+  const toneClass = {
+    slate: "text-slate-950",
+    blue: "text-blue-700",
+    emerald: "text-emerald-700",
+    rose: "text-rose-700",
+    amber: "text-amber-700",
+  }[tone];
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">{label}</p>
+      <p className={`mt-2 text-lg font-black ${toneClass}`}>{value}</p>
+      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+    </div>
+  );
+}
+
 function initialFilters(): Filters {
   return {
     branchId: "",
@@ -256,6 +283,33 @@ export default function VendorPaymentDispatchPage() {
   const ledgerVendorOptions: { id: string; vendor_code: string; vendor_name: string }[] =
     (ledgerVendorQuery.data as any)?.data ?? (ledgerVendorQuery.data as any) ?? [];
 
+  // GRN approval backlog — GET /api/finance/grns/summary already exists (grn.routes.ts),
+  // already RBAC-scoped the same way as this page's own endpoints, and already returns
+  // branch_head_approved/finance_head_approved counts. No new backend endpoint needed.
+  // payroll_head is on this page's PAYMENT_READ_ROLES but not GRN_READ_ROLES, so a 403 here
+  // is an expected outcome for that role, not an error — pendingApproval degrades to null.
+  const pendingApprovalQuery = useQuery({
+    queryKey: ["grn-approval-summary", filters.branchId],
+    queryFn: () => hrmsApi.get<any>(
+      filters.branchId
+        ? `/api/finance/grns/summary?branchId=${filters.branchId}`
+        : "/api/finance/grns/summary"
+    ),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const pendingApproval: { count: number; value: number } | null = (() => {
+    if (pendingApprovalQuery.isError) return null;
+    const byStatus = (pendingApprovalQuery.data as any)?.data?.byStatus;
+    if (!byStatus) return null;
+    const branchHead = byStatus.branch_head_approved ?? { count: 0, value: 0 };
+    const financeHead = byStatus.finance_head_approved ?? { count: 0, value: 0 };
+    return {
+      count: Number(branchHead.count ?? 0) + Number(financeHead.count ?? 0),
+      value: Number(branchHead.value ?? 0) + Number(financeHead.value ?? 0),
+    };
+  })();
+
   function clearFilters() {
     setFilters(initialFilters());
     setPage(1);
@@ -338,11 +392,19 @@ export default function VendorPaymentDispatchPage() {
         </div>
 
         {/* ── KPI strip ── */}
-        <div className="flex gap-3 border-b px-4 py-2 text-xs shrink-0">
-          <span className="text-slate-500">Page due: <b className="text-slate-900">₹{summary.due.toLocaleString("en-IN")}</b></span>
-          <span className="text-slate-500">Paid: <b className="text-slate-900">₹{summary.paid.toLocaleString("en-IN")}</b></span>
-          <span className="text-slate-500">Balance: <b className="text-slate-900">₹{summary.balance.toLocaleString("en-IN")}</b></span>
-          <span className="text-slate-500">Overdue: <b className="text-rose-600">₹{summary.overdue.toLocaleString("en-IN")}</b></span>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 border-b bg-slate-50/40 px-4 py-3 text-xs shrink-0">
+          <Metric label="Page due" value={money(summary.due)} />
+          <Metric label="Paid" value={money(summary.paid)} tone="emerald" />
+          <Metric label="Balance" value={money(summary.balance)} tone="blue" />
+          <Metric label="Overdue" value={money(summary.overdue)} tone="rose" />
+          {pendingApproval && (
+            <Metric
+              label="Pending approval"
+              value={money(pendingApproval.value)}
+              sub={`${pendingApproval.count} GRN${pendingApproval.count === 1 ? "" : "s"}`}
+              tone="amber"
+            />
+          )}
         </div>
 
         {/* ── Filter bar ── */}
