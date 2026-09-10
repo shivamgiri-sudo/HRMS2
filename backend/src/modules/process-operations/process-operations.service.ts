@@ -2549,6 +2549,142 @@ export async function getCustomerRiskCards(
   };
 }
 
+const FATAL_SCENARIOS = ["Query", "Complaint", "Request", "Sale Done"] as const;
+
+export interface FatalScenarioRow { scenario: string; fatalCount: number; fatalPct: number; }
+export interface FatalDayRow { date: string; totalCount: number; totalFatal: number; }
+export interface FatalContributorRow { employeeCode: string; employeeName: string; auditCount: number; fatalCount: number; fatalPct: number; }
+export interface FatalAnalysis {
+  available: boolean; reason: string | null;
+  auditCount: number; cqScore: number | null; fatalCount: number; fatalPct: number;
+  byScenario: FatalScenarioRow[];
+  dayWise: FatalDayRow[];
+  topContributors: FatalContributorRow[];
+}
+
+/**
+ * Fatal Analysis tab -- ported from Mydashboards' getFatalAnalysis: the
+ * process-wide fatal rate, its breakdown by scenario (Query/Complaint/
+ * Request/Sale Done), a day-wise fatal trend (days with zero fatals
+ * omitted, matching the source's own HAVING total_fatal > 0), and the top 5
+ * agents by raw fatal count. The full per-agent fatal table Mydashboards'
+ * source also returns here is NOT duplicated -- getAgentAuditSummary
+ * already covers that exact shape (audit count, cqScore, fatal count/pct
+ * per agent) on this page.
+ */
+export async function getFatalAnalysis(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<FatalAnalysis | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): FatalAnalysis => ({
+    available: false, reason, auditCount: 0, cqScore: null, fatalCount: 0, fatalPct: 0,
+    byScenario: [], dayWise: [], topContributors: [],
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
+  const scenarioSums = FATAL_SCENARIOS
+    .map((s) => `SUM(CASE WHEN TRIM(q.scenario) = '${s}' AND (${fatalSql}) THEN 1 ELSE 0 END) AS \`${s.toLowerCase().replace(" ", "_")}\``)
+    .join(",\n        ");
+
+  const [[kpiRows], [dayRows], [topRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) audit_count,
+              ROUND(AVG(CASE WHEN NOT (${fatalSql}) THEN q.quality_percentage END), 1) cq_score,
+              SUM(CASE WHEN (${fatalSql}) THEN 1 ELSE 0 END) fatal_count,
+              ${scenarioSums}
+         FROM db_audit.call_quality_assessment q
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.quality_percentage IS NOT NULL`,
+      [...employeeCodes, from, to],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(q.CallDate, '%Y-%m-%d') call_date, COUNT(*) total_count,
+              SUM(CASE WHEN (${fatalSql}) THEN 1 ELSE 0 END) total_fatal
+         FROM db_audit.call_quality_assessment q
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.quality_percentage IS NOT NULL
+          AND q.scenario IS NOT NULL AND TRIM(q.scenario) != ''
+        GROUP BY call_date
+        HAVING total_fatal > 0
+        ORDER BY call_date DESC`,
+      [...employeeCodes, from, to],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT q.User employee_code, COUNT(*) audit_count,
+              SUM(CASE WHEN (${fatalSql}) THEN 1 ELSE 0 END) fatal_count
+         FROM db_audit.call_quality_assessment q
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.quality_percentage IS NOT NULL
+        GROUP BY q.User
+        HAVING fatal_count > 0
+        ORDER BY fatal_count DESC
+        LIMIT 5`,
+      [...employeeCodes, from, to],
+    ),
+  ]);
+
+  const k = (kpiRows as any[])[0];
+  const auditCount = Number(k?.audit_count ?? 0);
+  if (!auditCount) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const fatalCount = Number(k.fatal_count ?? 0);
+  const byScenario: FatalScenarioRow[] = FATAL_SCENARIOS.map((s) => {
+    const count = Number(k[s.toLowerCase().replace(" ", "_")] ?? 0);
+    return { scenario: s, fatalCount: count, fatalPct: auditCount > 0 ? Math.round((count / auditCount) * 1000) / 10 : 0 };
+  });
+
+  const dayWise: FatalDayRow[] = (dayRows as any[]).map((r) => ({
+    date: String(r.call_date), totalCount: Number(r.total_count), totalFatal: Number(r.total_fatal),
+  }));
+
+  const topContributors: FatalContributorRow[] = (topRows as any[]).map((r) => {
+    const ac = Number(r.audit_count); const fc = Number(r.fatal_count);
+    return {
+      employeeCode: String(r.employee_code),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      auditCount: ac, fatalCount: fc, fatalPct: ac > 0 ? Math.round((fc / ac) * 1000) / 10 : 0,
+    };
+  });
+
+  return {
+    available: true, reason: null,
+    auditCount, cqScore: k.cq_score !== null ? Number(k.cq_score) : null,
+    fatalCount, fatalPct: Math.round((fatalCount / auditCount) * 1000) / 10,
+    byScenario, dayWise, topContributors,
+  };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{

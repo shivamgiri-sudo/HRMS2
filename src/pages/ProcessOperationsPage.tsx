@@ -263,6 +263,17 @@ interface CustomerRiskCards {
   potentialScam: number; potentialScamPct: number;
 }
 
+interface FatalScenarioRow { scenario: string; fatalCount: number; fatalPct: number; }
+interface FatalDayRow { date: string; totalCount: number; totalFatal: number; }
+interface FatalContributorRow { employeeCode: string; employeeName: string; auditCount: number; fatalCount: number; fatalPct: number; }
+interface FatalAnalysis {
+  available: boolean; reason: string | null;
+  auditCount: number; cqScore: number | null; fatalCount: number; fatalPct: number;
+  byScenario: FatalScenarioRow[];
+  dayWise: FatalDayRow[];
+  topContributors: FatalContributorRow[];
+}
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1196,6 +1207,98 @@ function CustomerRiskCardsPanel({ processId, period }: { processId: string; peri
               <div className="text-[9px] text-slate-400">Financial fraud reported</div>
             </div>
           </div>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Fatal Analysis tab -- ported from Mydashboards' getFatalAnalysis: KPI
+ * strip, fatal-by-scenario breakdown, day-wise fatal trend (days with zero
+ * fatals omitted, matching the source), and top 5 fatal contributors. The
+ * per-agent fatal table Mydashboards' own tab also shows is NOT duplicated
+ * -- Agent Audit Summary above already covers that exact shape.
+ */
+function FatalAnalysisPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "fatal-analysis", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<FatalAnalysis>>(
+      `/api/process-operations/${processId}/fatal-analysis?period=${period}`),
+  });
+  const fa = data?.data;
+  const maxScenario = useMemo(() => Math.max(1, ...(fa?.byScenario.map((s) => s.fatalCount) ?? [1])), [fa]);
+
+  return (
+    <ChartCard title="Fatal analysis" subtitle="Process-wide fatal rate, by scenario, by day, and its top contributors">
+      <div className="px-3 pb-2">
+        {isLoading || !fa ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading fatal analysis…
+          </div>
+        ) : !fa.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{fa.reason}</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-4 gap-2 mb-3">
+              {[
+                { label: "Audits", value: fa.auditCount.toLocaleString() },
+                { label: "CQ score", value: fa.cqScore !== null ? `${fa.cqScore}%` : "—" },
+                { label: "Fatal count", value: fa.fatalCount.toLocaleString(), tone: fa.fatalCount > 0 ? "red" : undefined },
+                { label: "Fatal %", value: `${fa.fatalPct}%`, tone: fa.fatalPct > 0 ? "red" : undefined },
+              ].map((c) => (
+                <div key={c.label} className="rounded-lg border border-slate-100 dark:border-slate-800 px-2 py-1.5">
+                  <div className={`text-[13px] font-bold ${c.tone === "red" ? "text-red-600" : "text-slate-700 dark:text-slate-200"}`}>{c.value}</div>
+                  <div className="text-[8.5px] text-slate-500 uppercase tracking-wide">{c.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-[9.5px] font-bold uppercase tracking-wide text-slate-400 mb-1">By scenario</div>
+            <div className="space-y-1 mb-3">
+              {fa.byScenario.map((s) => (
+                <div key={s.scenario} className="flex items-center gap-2 text-[10.5px]">
+                  <span className="w-16 shrink-0 text-slate-600 dark:text-slate-300">{s.scenario}</span>
+                  <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div className="h-full rounded-full bg-red-500" style={{ width: `${Math.max(s.fatalCount > 0 ? 4 : 0, (s.fatalCount / maxScenario) * 100)}%` }} />
+                  </div>
+                  <span className="w-16 shrink-0 text-right text-slate-500">{s.fatalCount} ({s.fatalPct}%)</span>
+                </div>
+              ))}
+            </div>
+
+            {fa.dayWise.length > 0 && (
+              <>
+                <div className="text-[9.5px] font-bold uppercase tracking-wide text-slate-400 mb-1">Days with fatals</div>
+                <div className="max-h-28 overflow-y-auto mb-3">
+                  {fa.dayWise.map((d) => (
+                    <div key={d.date} className="flex items-center justify-between text-[10px] py-0.5 border-t border-slate-100 dark:border-slate-800 first:border-t-0">
+                      <span className="text-slate-500">{d.date}</span>
+                      <span className="text-slate-400">{d.totalCount} audits</span>
+                      <span className="text-red-600 font-semibold">{d.totalFatal} fatal</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {fa.topContributors.length > 0 && (
+              <>
+                <div className="text-[9.5px] font-bold uppercase tracking-wide text-slate-400 mb-1">Top fatal contributors</div>
+                <table className="w-full text-[10.5px] border-collapse">
+                  <tbody>
+                    {fa.topContributors.map((c) => (
+                      <tr key={c.employeeCode} className="border-t border-slate-100 dark:border-slate-800 first:border-t-0">
+                        <td className="py-1 pr-2 font-medium text-slate-700 dark:text-slate-300">{c.employeeName}</td>
+                        <td className="py-1 pr-2 text-right text-slate-500">{c.auditCount} audits</td>
+                        <td className="py-1 text-right text-red-600 font-semibold">{c.fatalCount} ({c.fatalPct}%)</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </>
         )}
       </div>
     </ChartCard>
@@ -3885,6 +3988,7 @@ export default function ProcessOperationsPage() {
                 {current && <CriticalSignalsPanel processId={current} period={period} />}
                 {current && <DailyQualityTrendPanel processId={current} />}
                 {current && <CustomerRiskCardsPanel processId={current} period={period} />}
+                {current && <FatalAnalysisPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
