@@ -5,10 +5,9 @@ import fs from "fs";
 import { randomUUID } from "crypto";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, verifyAuthenticatedActor } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { authService } from "../auth/auth.service.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { verifyToken as verifyCandidatePortalToken } from "../ats/candidate-portal.service.js";
 import {
@@ -137,7 +136,7 @@ async function resolveCandidateFileActor(req: AuthenticatedRequest): Promise<
     };
   }
 
-  const user = authService.verifyAccessToken(token);
+  const user = await verifyAuthenticatedActor(token);
   if (!user) return null;
   const ctx = await getUserRoleContext(user.id).catch(() => null);
   const role = ctx?.primaryRole ?? null;
@@ -239,7 +238,7 @@ router.get(
 
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.replace("Bearer ", "").trim();
-      const user = authService.verifyAccessToken(token);
+      const user = await verifyAuthenticatedActor(token);
       if (user) {
         actorUserId = user.id;
         const ctx = await getUserRoleContext(user.id).catch(() => null);
@@ -468,7 +467,7 @@ router.get(
       if (!authHeader?.startsWith("Bearer ")) {
         return res.status(401).json({ error: "Authentication required" });
       }
-      const user = authService.verifyAccessToken(authHeader.replace("Bearer ", "").trim());
+      const user = await verifyAuthenticatedActor(authHeader.replace("Bearer ", "").trim());
       if (!user) {
         return res.status(401).json({ error: "Invalid session" });
       }

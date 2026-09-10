@@ -95,6 +95,21 @@ export async function requireAuth(
         }
       }
 
+      // SEC-06: a must_change_password account gets a restricted token, scope
+      // 'password_change', that must not reach any endpoint except the one that
+      // lets it fix the problem. Checked against originalUrl (not req.path)
+      // because this middleware runs at different mount depths across routers.
+      if (mysqlUser.scope === 'password_change') {
+        const isChangePasswordEndpoint = /\/api\/auth\/change-password$/i.test(req.originalUrl ?? '');
+        if (!isChangePasswordEndpoint) {
+          return res.status(403).json({
+            success: false,
+            message: 'You must change your password before continuing.',
+            code: 'MUST_CHANGE_PASSWORD',
+          });
+        }
+      }
+
       // Resolve primary role and isReadOnly — use 30s in-process cache to avoid 2 DB queries per request
       let resolvedRole: string | undefined;
       let resolvedRoleKeys: string[] | undefined;
@@ -159,6 +174,28 @@ export async function requireAuth(
   } catch (error) {
     return next(error);
   }
+}
+
+// SEC-04: shared low-level verifier for routes that cannot use requireAuth as
+// Express middleware (e.g. because they must also accept a different token
+// type, like the candidate-portal token, on the same route). Any route
+// verifying a bearer token outside `requireAuth` MUST go through this
+// function instead of calling `authService.verifyAccessToken` directly —
+// otherwise a pre_auth (pre-2FA) token or a revoked/deactivated account's
+// still-valid JWT keeps working on that route.
+export async function verifyAuthenticatedActor(
+  token: string
+): Promise<{ id: string; email?: string; scope?: string } | null> {
+  const { authService } = await import('../modules/auth/auth.service.js');
+  const user = authService.verifyAccessToken(token);
+  if (!user) return null;
+
+  // Pre-2FA tokens must never grant access outside the 2FA challenge/verify flow.
+  if ((user as any).scope === 'pre_auth') return null;
+
+  if (await isAccountRevoked(user.id)) return null;
+
+  return user;
 }
 
 export function requireWriteAccess(
