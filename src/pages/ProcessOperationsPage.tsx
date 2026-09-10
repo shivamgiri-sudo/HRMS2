@@ -1386,9 +1386,10 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                   return (
                     <Fragment key={a.employeeId}>
                       <tr onClick={() => setExpandedId(open ? null : a.employeeId)}
-                        aria-expanded={open}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedId(open ? null : a.employeeId); } }}
+                        role="button" tabIndex={0} aria-expanded={open}
                         title="Show this analyst's full reporting chain"
-                        className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${open ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
+                        className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${open ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
                         <td className="px-2 py-1.5 text-slate-700 dark:text-slate-300">
                           <span className="inline-flex items-center gap-1">
                             <ChevronRight size={11} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
@@ -1642,9 +1643,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                       {d.readings.map((x) => (
                         <Fragment key={x.date}>
                           <tr onClick={() => toggleExpanded(x.date)}
-                            aria-expanded={expandedDate === x.date}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpanded(x.date); } }}
+                            role="button" tabIndex={0} aria-expanded={expandedDate === x.date}
                             title="Show the individual records behind this day"
-                            className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                            className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${
                               expandedDate === x.date ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
                             <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300 flex items-center gap-1">
                               <ChevronRight size={11}
