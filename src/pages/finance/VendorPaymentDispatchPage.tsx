@@ -34,6 +34,7 @@ interface PaymentCapabilities {
   canRead: boolean;
   canWrite: boolean;
   readScope: "organisation" | "branch";
+  scopeBranchNames?: string[];
   writeRole: string | null;
   paymentModel?: "installment_ledger";
 }
@@ -374,9 +375,15 @@ export default function VendorPaymentDispatchPage() {
             >
               {capabilityLoading ? "Checking access" : canWrite ? "Dispatch access" : "Read-only"}
             </Badge>
-            {capabilities?.readScope && (
-              <Badge variant="outline">{capabilities.readScope} scope</Badge>
-            )}
+            {capabilities?.readScope === "organisation" ? (
+              <Badge variant="outline">organisation scope</Badge>
+            ) : capabilities?.scopeBranchNames && capabilities.scopeBranchNames.length > 0 ? (
+              <Badge variant="outline" title="All branches in the filter bar is narrowed to these on the backend">
+                {capabilities.scopeBranchNames.join(", ")} only
+              </Badge>
+            ) : capabilities?.readScope === "branch" ? (
+              <Badge variant="outline">branch scope</Badge>
+            ) : null}
             <Button size="sm" variant="outline" onClick={() => setShowAging((v) => !v)}>
               <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />Aging
             </Button>

@@ -89,3 +89,14 @@ describe("VendorPaymentDispatchPage — honest empty state (Task 5)", () => {
     expect(SRC).toMatch(/\(rows \?\? \[\]\)\.length === 0 &&[\s\S]{0,600}pendingApproval[\s\S]{0,600}/);
   });
 });
+
+describe("VendorPaymentDispatchPage — honest scope badge (Task 6)", () => {
+  it("PaymentCapabilities interface declares scopeBranchNames", () => {
+    expect(SRC).toMatch(/interface PaymentCapabilities \{[\s\S]*?scopeBranchNames\??:\s*string\[\];[\s\S]*?\}/);
+  });
+
+  it("scope badge shows named branches for branch scope, not a generic 'branch scope' pill", () => {
+    expect(SRC).toMatch(/capabilities\?\.scopeBranchNames/);
+    expect(SRC).not.toMatch(/\{capabilities\.readScope\} scope/);
+  });
+});
