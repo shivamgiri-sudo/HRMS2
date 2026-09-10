@@ -118,13 +118,70 @@ async function countRevenueRiskRows(period: string): Promise<number> {
   return Number((rows[0] as { source_rows?: unknown } | undefined)?.source_rows ?? 0);
 }
 
+/**
+ * Last real result per key, kept past the 60s cache TTL so a stale one is always available to
+ * serve instantly instead of blocking a caller on a fresh compute. Deliberately unbounded by
+ * time (process-lifetime) -- the number of distinct filter combinations actually requested is
+ * small (a handful of periods × branches), so this never grows large enough to matter, unlike
+ * the 200-entry quality-cache it sits beside.
+ */
+const staleAllocationSummary = new Map<string, { value: Record<string, unknown>; computedAt: number }>();
+/** One in-flight background refresh per key at a time -- a burst of requests for the same stale
+ *  key must not each kick off their own duplicate multi-second recompute. */
+const refreshInFlight = new Map<string, Promise<void>>();
+
+/**
+ * getCachedAllocationSummary(), but stale-while-revalidate instead of cache-or-block.
+ *
+ * The underlying computation (bpoPnlAllocationOverlayService.getSummary -> bpoPnlService.
+ * getSummary -> computeBranchRows) is architecturally sound -- every sub-query is already
+ * batched, not N+1 -- but still issues several dozen round trips even when parallelised, and
+ * has been directly measured taking 90+ seconds under this machine's real conditions: off-LAN
+ * DB latency (300ms+ per round trip vs ~2ms on LAN, confirmed live 2026-09-10) compounded by
+ * lock contention from concurrent sessions sharing this dev DB (the ER_LOCK_WAIT_TIMEOUT this
+ * whole session hit repeatedly elsewhere). Neither cause is fixable by changing this query code
+ * -- the queries are already correct and already parallel.
+ *
+ * What IS fixable in code: once ANY value has been computed for a key, no caller ever needs to
+ * wait on a fresh (possibly 90s+) compute again. A cache-or-set with a bare TTL forces exactly
+ * that block on every expiry -- the very hang that took down the Business Health panel
+ * (process-operations.service.ts's 8s Promise.race timeout treats the SYMPTOM of that block;
+ * this treats the cause). Serve the last good value immediately, refresh it in the background,
+ * and let only the very first call after a process restart pay the real cost.
+ */
 export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
   const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
-  return pnlSummaryCache.getOrSet(
-    key,
-    () => bpoPnlAllocationOverlayService.getSummary(filters) as Promise<Record<string, unknown>>,
-    60,
-  ) as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
+  const fetcher = () => bpoPnlAllocationOverlayService.getSummary(filters) as Promise<Record<string, unknown>>;
+
+  const fresh = await pnlSummaryCache.get<Record<string, unknown>>(key);
+  if (fresh) return fresh as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
+
+  const stale = staleAllocationSummary.get(key);
+  if (stale) {
+    if (!refreshInFlight.has(key)) {
+      const refresh = (async () => {
+        try {
+          const value = await fetcher();
+          await pnlSummaryCache.set(key, value, 60);
+          staleAllocationSummary.set(key, { value, computedAt: Date.now() });
+        } catch {
+          // Keep serving the last good value -- a failed background refresh is not this
+          // request's problem, and the next call will simply try again.
+        } finally {
+          refreshInFlight.delete(key);
+        }
+      })();
+      refreshInFlight.set(key, refresh);
+    }
+    return stale.value as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
+  }
+
+  // First-ever call for this key this process lifetime: nothing to serve yet, so this one
+  // genuinely has to wait for the real computation. Every call after this is instant.
+  const value = await fetcher();
+  await pnlSummaryCache.set(key, value, 60);
+  staleAllocationSummary.set(key, { value, computedAt: Date.now() });
+  return value as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
 }
 
 export function shiftPeriod(period: string, delta: number) {
