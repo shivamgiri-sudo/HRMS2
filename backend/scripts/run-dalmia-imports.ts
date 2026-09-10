@@ -1,8 +1,15 @@
 /**
- * One-off: loads the real Dalmia Cement MIS workbook's 5 raw sheets
+ * One-off: loads the real Dalmia Cement MIS workbook's raw sheets
  * (exported to JSON by _export_dalmia_json.py) into upload_batch(es) and
- * runs each real import function against mas_hrms. See sql/1730-1734 and
- * the corresponding dalmia-*-bulk.service.ts files for what these are.
+ * runs each real import function against mas_hrms. See sql/1731, 1732,
+ * 1734 and the corresponding dalmia-*-bulk.service.ts files for what
+ * these are.
+ *
+ * Only 3 of the workbook's original 5 sheets are imported here: IB CDR
+ * Raw (sql/1730) and APR-Utilization Raw (sql/1733) were RETRACTED
+ * 2026-09-10 -- dialer_db.cdr_in_249/cdr_in_4 and mas_hrms.apr already
+ * carry this exact data live (see runPendingMigrations.ts's retraction
+ * comments for both).
  *
  * Run with: npx tsx scripts/run-dalmia-imports.ts
  */
@@ -12,10 +19,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { db } from "../src/db/mysql.js";
-import { importDalmiaIbCdrBatch } from "../src/modules/bulk-upload/dalmia-ib-cdr-bulk.service.js";
 import { importDalmiaDdBatch } from "../src/modules/bulk-upload/dalmia-dd-bulk.service.js";
 import { importDalmiaOutboundBatch } from "../src/modules/bulk-upload/dalmia-outbound-bulk.service.js";
-import { importDalmiaAprUtilizationBatch } from "../src/modules/bulk-upload/dalmia-apr-utilization-bulk.service.js";
 import { importDalmiaAfterHourBatch } from "../src/modules/bulk-upload/dalmia-after-hour-bulk.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,10 +65,8 @@ async function runOne(
 
 async function main() {
   const results: Record<string, { importedRows: number; errorRows: number }> = {};
-  results.ib_cdr = await runOne("dalmia_ib_cdr", "DALMIA_IB_CDR", importDalmiaIbCdrBatch);
   results.dd = await runOne("dalmia_dd", "DALMIA_DD_RAW", importDalmiaDdBatch);
   results.outbound = await runOne("dalmia_outbound", "DALMIA_OUTBOUND_RAW", importDalmiaOutboundBatch);
-  results.apr_utilization = await runOne("dalmia_apr_utilization", "DALMIA_APR_UTILIZATION", importDalmiaAprUtilizationBatch);
   results.after_hour = await runOne("dalmia_after_hour", "DALMIA_AFTER_HOUR", importDalmiaAfterHourBatch);
 
   console.log("\n=== SUMMARY ===");
