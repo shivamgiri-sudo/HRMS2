@@ -48,6 +48,9 @@ import {
   getRewardPenaltySummary,
 } from "./reward-penalty.service.js";
 import { pnlManualAdjustmentService } from "./pnl-manual-adjustment.service.js";
+import { getPnlTrend } from "./pnl-trend.service.js";
+import { getReceivablesAgeing } from "./pnl-receivables-ageing.service.js";
+import { getSeatBillability } from "./pnl-seat-billability.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -1935,6 +1938,33 @@ router.put("/pnl/manual-adjustments/:id/approve", requireAuth, requireWriteAcces
 router.put("/pnl/manual-adjustments/:id/reject", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_APPROVE_ROLES), h(async (req, res) => {
   const reason = String(req.body?.reason ?? "");
   const data = await pnlManualAdjustmentService.reviewManualAdjustment(req.params.id, "reject", req.authUser.id, reason);
+  res.json({ success: true, data });
+}));
+
+// ── Trend / receivables ageing / seat billability (2026-09-10 build) ───────
+// All three sit under /pnl, so they inherit the requireRole(...PNL_READ_ROLES) gate above.
+
+router.get("/pnl/trend", requireAuth, h(async (req, res) => {
+  const data = await getPnlTrend({
+    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/receivables-ageing", requireAuth, h(async (req, res) => {
+  const data = await getReceivablesAgeing({
+    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/seat-billability", requireAuth, h(async (req, res) => {
+  const data = await getSeatBillability({
+    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+  });
   res.json({ success: true, data });
 }));
 

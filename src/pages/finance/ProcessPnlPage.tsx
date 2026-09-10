@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
@@ -20,6 +19,9 @@ import { PnlCostLeakagePanel } from "@/components/finance/pnl/PnlCostLeakagePane
 import { PnlDailyTrendChart } from "@/components/finance/pnl/PnlDailyTrendChart";
 import { PnlSeatForecastCard } from "@/components/finance/pnl/PnlSeatForecastCard";
 import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
+import { PnlTrendCharts } from "@/components/finance/pnl/PnlTrendCharts";
+import { PnlReceivablesAgeingPanel } from "@/components/finance/pnl/PnlReceivablesAgeingPanel";
+import { PnlSeatBillabilityPanel } from "@/components/finance/pnl/PnlSeatBillabilityPanel";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
 import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
 import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
@@ -38,6 +40,9 @@ const matrixIssueFilters: ProcessPnlIssueFilter[] = [
   "accounting-fallback",
 ];
 const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
+
+const tabTriggerClass =
+  "rounded-none border-b-[3px] border-transparent px-4 py-3 text-[13px] font-extrabold text-[#605d5d] data-[state=active]:border-[#ec3013] data-[state=active]:bg-transparent data-[state=active]:text-[#201e1d] data-[state=active]:shadow-none";
 
 /**
  * The month the page opens on.
@@ -274,19 +279,26 @@ export default function ProcessPnlPage() {
 
   return (
     <DashboardLayout>
-      <div className="flex h-full flex-col">
-        {/* Slim header */}
+      <div className="flex h-full flex-col bg-[#f3f2f2] text-[#201e1d]">
+        {/* Page header — dense finance masthead, styled after the Process P&L reference:
+            #201e1d ink, #ec3013 accent rule, uppercase eyebrow over a large title. */}
         <div
-          className="flex items-center justify-between border-b px-4 h-12 shrink-0"
+          className="flex flex-col gap-2 border-b border-[#d7d3d3] bg-[#f8f4f4] px-4 py-3 shrink-0 sm:flex-row sm:items-end sm:justify-between"
           aria-label="Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT"
         >
-          <h1 className="text-sm font-semibold">Process P&amp;L</h1>
-          <div className="flex items-center gap-3">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#7d7979]">
+              Finance · Profitability command centre
+            </p>
+            <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-[#201e1d]">Process P&amp;L</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
             {summary && (
               <>
-                <span className="text-xs text-slate-500">
-                  Revenue: <b className="text-slate-900">{formatCurrency(revenueV, true)}</b>
-                </span>
+                <div className="border-l-[3px] border-[#ec3013] pl-2.5">
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#7d7979]">Recognized revenue</p>
+                  <p className="text-lg font-extrabold tabular-nums text-[#201e1d]">{formatCurrency(revenueV, true)}</p>
+                </div>
                 {kpiSource === "statement" && (
                   // Never switch engines silently: without this the process-level configuration
                   // looks complete because the numbers look right.
@@ -298,32 +310,32 @@ export default function ProcessPnlPage() {
                   </span>
                 )}
                 {(summary.kpis.lossMakingProcesses ?? 0) > 0 && (
-                  <Badge variant="destructive" className="text-xs">
-                    At risk: {summary.kpis.lossMakingProcesses}
-                  </Badge>
+                  <span className="bg-[#ec3013] px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.06em] text-[#f3f2f2]">
+                    {summary.kpis.lossMakingProcesses} at risk
+                  </span>
                 )}
               </>
             )}
             {bpoQuery.dataUpdatedAt > 0 && (
-              <span className="text-[11px] text-slate-400">
+              <span className="text-[11px] text-[#7d7979]">
                 Data as of {new Date(bpoQuery.dataUpdatedAt).toLocaleTimeString()}
                 {" · "}
-                <button type="button" className="underline hover:text-slate-600" onClick={() => void bpoQuery.refetch()}>Refresh</button>
+                <button type="button" className="underline hover:text-[#201e1d]" onClick={() => void bpoQuery.refetch()}>Refresh</button>
               </span>
             )}
-            <Button size="sm" variant="outline" onClick={() => void downloadBpoPnlExport(filters)}>
+            <Button size="sm" variant="outline" className="h-8 rounded-none border-[#201e1d] text-[#201e1d] hover:bg-[#eae7e7]" onClick={() => void downloadBpoPnlExport(filters)}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export
             </Button>
-            <Button size="sm" variant="outline" asChild>
+            <Button size="sm" asChild className="h-8 rounded-none bg-[#ec3013] text-[#f3f2f2] hover:bg-[#ae1800]">
               <Link to={`/finance/branch-budget?period=${period}`}>Branch budget</Link>
             </Button>
           </div>
         </div>
 
         {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 border-b-2 border-[#201e1d] bg-white px-4 py-2 shrink-0">
           <div className="flex items-center gap-1">
-            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-[#eae7e7]" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <MonthYearPicker
@@ -331,12 +343,12 @@ export default function ProcessPnlPage() {
               onChange={(v) => updateFilters({ period: v })}
               className="w-52"
             />
-            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-[#eae7e7]" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
           <select
-            className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
+            className="flex h-8 rounded-none border border-[#bab6b6] bg-white px-2 py-0 text-xs"
             value={branchId}
             onChange={(e) => updateFilters({ branchId: e.target.value || undefined })}
           >
@@ -346,7 +358,7 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <select
-            className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
+            className="flex h-8 rounded-none border border-[#bab6b6] bg-white px-2 py-0 text-xs"
             value={clientId}
             onChange={(e) => updateFilters({ clientId: e.target.value || undefined })}
           >
@@ -356,13 +368,14 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <Input
-            className="h-8 w-48 text-xs"
+            className="h-8 w-48 rounded-none text-xs"
             placeholder="Search process..."
             value={draftSearch}
             onChange={(e) => setDraftSearch(e.target.value)}
           />
           <Button
             size="sm"
+            className="h-8 rounded-none bg-[#ec3013] text-[#f3f2f2] hover:bg-[#ae1800]"
             onClick={() => updateFilters({ search: draftSearch || undefined })}
           >
             Apply
@@ -370,30 +383,30 @@ export default function ProcessPnlPage() {
         </div>
 
         {/* Always-visible KPI strip */}
-        <div className="border-b px-4 py-2 shrink-0 overflow-x-auto">
+        <div className="border-b-2 border-[#201e1d] bg-[#f8f4f4] shrink-0 overflow-x-auto">
           {bpoQuery.isLoading ? (
-            <div className="flex gap-2">
+            <div className="flex gap-2 p-2">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-36 rounded-xl shrink-0" />)}
             </div>
           ) : bpoQuery.isError ? (
-            <p className="text-sm text-rose-600">
+            <p className="p-2 text-sm text-rose-600">
               Could not load P&amp;L data for {period}.{" "}
               <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
             </p>
           ) : (
-            <PnlExecutiveKpiStrip items={kpiItems} compact />
+            <PnlExecutiveKpiStrip items={kpiItems} />
           )}
         </div>
 
         {/* Tab layout: CEO Overview (default) + Process Matrix + Alerts & Reconciliation */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
-          <TabsList className="mx-4 mt-3 w-fit shrink-0">
-            <TabsTrigger value="overview">CEO Overview</TabsTrigger>
-            <TabsTrigger value="live">Live P&amp;L</TabsTrigger>
-            <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
-            <TabsTrigger value="statement">P&amp;L Statement</TabsTrigger>
+          <TabsList className="h-auto w-full shrink-0 justify-start gap-0 rounded-none border-b-2 border-[#201e1d] bg-white px-4 py-0">
+            <TabsTrigger value="overview" className={tabTriggerClass}>CEO Overview</TabsTrigger>
+            <TabsTrigger value="live" className={tabTriggerClass}>Live P&amp;L</TabsTrigger>
+            <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
+            <TabsTrigger value="statement" className={tabTriggerClass}>P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
-            <TabsTrigger value="leakage">Cost Leakage</TabsTrigger>
+            <TabsTrigger value="leakage" className={tabTriggerClass}>Cost Leakage</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -436,6 +449,10 @@ export default function ProcessPnlPage() {
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
                 />
+
+                {/* Revenue/cost/margin trend + headcount-vs-revenue trend, over the real months
+                    of invoicing data only (see PnlTrendCharts's own doc comment). */}
+                <PnlTrendCharts filters={{ branchId: branchId || undefined }} />
 
                 {/* YTD summary strip */}
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -520,16 +537,19 @@ export default function ProcessPnlPage() {
                 <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
               </p>
             ) : (
-              <BpoPnlMatrixTable
-                rows={rows}
-                period={period}
-                preset={matrixPreset}
-                status={statusFilter}
-                issue={issueFilter}
-                density={matrixDensity}
-                search={search}
-                alerts={summary?.alerts}
-              />
+              <div className="flex flex-col gap-5">
+                <BpoPnlMatrixTable
+                  rows={rows}
+                  period={period}
+                  preset={matrixPreset}
+                  status={statusFilter}
+                  issue={issueFilter}
+                  density={matrixDensity}
+                  search={search}
+                  alerts={summary?.alerts}
+                />
+                <PnlSeatBillabilityPanel filters={{ branchId: branchId || undefined }} />
+              </div>
             )}
           </TabsContent>
 
@@ -563,7 +583,10 @@ export default function ProcessPnlPage() {
                 <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
               </p>
             ) : summary ? (
-              <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
+              <div className="flex flex-col gap-5">
+                <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
+                <PnlReceivablesAgeingPanel filters={{ branchId: branchId || undefined }} />
+              </div>
             ) : null}
           </TabsContent>
         </Tabs>
