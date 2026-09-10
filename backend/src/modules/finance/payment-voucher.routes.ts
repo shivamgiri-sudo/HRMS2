@@ -5,19 +5,21 @@ import { paymentVoucherService, PaymentVoucherError } from "./payment-voucher.se
 
 /**
  * Payment Voucher API — own prefix (/api/finance/payment-vouchers), matching imprest.routes.ts's
- * rationale: nothing here can ever be shadowed by grnRouter's ":id"-shaped routes, and the
- * three role sets below are deliberately disjoint at the write level (VOUCHER_RAISE_ROLES ∩
- * VOUCHER_CEO_ROLES ∩ VOUCHER_RELEASE_ROLES = {super_admin} only) — a route guard proves a
- * role, so keeping the ROLE sets themselves narrow is the first line of defence; the real
- * maker-checker enforcement (raised_by != ceo_approved_by != released_by) lives in
- * payment-voucher.service.ts and cannot be bypassed by any role combination a normal account
- * holds, since a real person cannot simultaneously be finance_head, ceo and accounts_head.
+ * rationale: nothing here can ever be shadowed by grnRouter's ":id"-shaped routes.
+ *
+ * Role model (revised 2026-09-10): Finance Head both raises AND releases — VOUCHER_RAISE_ROLES
+ * and VOUCHER_RELEASE_ROLES are the SAME set now, by deliberate business decision, not an
+ * oversight. CEO approval (VOUCHER_CEO_ROLES) is the one blocking gate between raise and
+ * release; VOUCHER_REVIEW_ROLES (Accounts Head) is a non-blocking sign-off AFTER release — see
+ * payment-voucher.service.ts's reviewRelease(). The maker-checker enforcement that still applies
+ * (raised_by != ceo_approved_by) lives in payment-voucher.service.ts.
  */
 export const VOUCHER_RAISE_ROLES = ["finance_head", "super_admin"] as const;
 export const VOUCHER_CEO_ROLES = ["ceo", "super_admin"] as const;
-export const VOUCHER_RELEASE_ROLES = ["accounts_head", "super_admin"] as const;
+export const VOUCHER_RELEASE_ROLES = ["finance_head", "super_admin"] as const;
+export const VOUCHER_REVIEW_ROLES = ["accounts_head", "super_admin"] as const;
 export const VOUCHER_READ_ROLES = [
-  ...new Set([...VOUCHER_RAISE_ROLES, ...VOUCHER_CEO_ROLES, ...VOUCHER_RELEASE_ROLES, "branch_head", "admin", "finance"]),
+  ...new Set([...VOUCHER_RAISE_ROLES, ...VOUCHER_CEO_ROLES, ...VOUCHER_RELEASE_ROLES, ...VOUCHER_REVIEW_ROLES, "branch_head", "admin", "finance"]),
 ] as const;
 
 export const paymentVoucherRouter = Router();
@@ -162,6 +164,22 @@ paymentVoucherRouter.post(
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to release the payment voucher");
+    }
+  }),
+);
+
+/** Accounts Head's post-release sign-off — non-blocking, never gates or reverses the release. */
+paymentVoucherRouter.post(
+  "/:id/review",
+  requireWriteAccess,
+  requireRole(...VOUCHER_REVIEW_ROLES),
+  h(async (req, res) => {
+    try {
+      const a = actor(req);
+      const data = await paymentVoucherService.reviewRelease(req.params.id, a.id, a.role, req.body?.note ?? null);
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to record the review");
     }
   }),
 );

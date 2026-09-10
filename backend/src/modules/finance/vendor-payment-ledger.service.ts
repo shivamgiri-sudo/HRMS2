@@ -51,6 +51,15 @@ export interface DispatchPaymentPayload {
   transactionId?: string | null;
   paymentAmount: number;
   remarks?: string | null;
+  /**
+   * One payment voucher release can cover several GRNs of the same vendor with a single bank
+   * transfer — that transfer carries exactly one UTR/reference, legitimately reused across every
+   * GRN it settles. The duplicate-reference check below exists to catch a DIFFERENT payment
+   * accidentally reusing an old reference, not this same-payment/same-voucher case, so the
+   * caller (payment-voucher.service.ts's release(), looping dispatch() once per allocation) sets
+   * this on every call after the first for one voucher.
+   */
+  allowSharedReference?: boolean;
 }
 
 function roundMoney(value: number) {
@@ -207,17 +216,19 @@ export const vendorPaymentLedgerService = {
           throw requestError(409, "Payment reference is currently being processed; retry once");
         }
 
-        const [duplicateRows] = await connection.execute<RowDataPacket[]>(
-          `SELECT transaction_id
-             FROM vendor_payment_transaction
-            WHERE payment_mode = ?
-              AND COALESCE(bank_id, '') = COALESCE(?, '')
-              AND UPPER(transaction_id) = UPPER(?)
-            LIMIT 1`,
-          [payload.paymentMode, bankId, externalTransactionId]
-        );
-        if (duplicateRows[0]) {
-          throw requestError(409, "This transaction reference is already recorded");
+        if (!payload.allowSharedReference) {
+          const [duplicateRows] = await connection.execute<RowDataPacket[]>(
+            `SELECT transaction_id
+               FROM vendor_payment_transaction
+              WHERE payment_mode = ?
+                AND COALESCE(bank_id, '') = COALESCE(?, '')
+                AND UPPER(transaction_id) = UPPER(?)
+              LIMIT 1`,
+            [payload.paymentMode, bankId, externalTransactionId]
+          );
+          if (duplicateRows[0]) {
+            throw requestError(409, "This transaction reference is already recorded");
+          }
         }
       }
 

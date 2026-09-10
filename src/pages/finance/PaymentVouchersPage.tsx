@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -28,7 +29,8 @@ type Voucher = {
   id: string;
   voucher_number: string;
   voucher_type: string;
-  source_type: "vendor_grn" | "imprest_allocation";
+  source_type: "vendor_grn" | "imprest_allocation" | "general";
+  particulars: string | null;
   bank_account_id: string;
   bank_account_name: string | null;
   payable_account_id: string;
@@ -48,15 +50,25 @@ type Voucher = {
   ceo_approved_at: string | null;
   released_by: string | null;
   released_at: string | null;
+  accounts_reviewed_by: string | null;
+  accounts_reviewed_at: string | null;
+  review_note: string | null;
   payment_mode: string | null;
   payment_date: string | null;
   transaction_ref: string | null;
   rejection_reason: string | null;
   changes_requested_note: string | null;
+  head: string | null;
+  sub_head: string | null;
   created_at: string;
   approval_events?: Array<{ action: string; actor_user_id: string; actor_role: string; created_at: string; remarks: string | null }>;
   audit_log?: Array<{ action_type: string; created_at: string }>;
   consumption_since_replenishment?: { sinceDate: string; rows: Array<{ transaction_date: string; amount: number; grn_number: string | null; expense_head: string | null; narration: string | null }> } | null;
+  grn_allocations?: Array<{
+    vendor_payment_tracking_id: string; allocated_amount: number; grn_number: string | null; vendor_name: string | null;
+    head: string | null; sub_head: string | null; due_date: string | null; due_amount: number; tds_deducted_amount: number;
+    paid_amount: number; balance_amount: number;
+  }>;
 };
 
 const PAYMENT_MODES = ["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other"];
@@ -139,8 +151,11 @@ const emptyRaiseForm = {
   vendorId: "",
   bankAccountId: "",
   payableAccountId: "",
-  linkedVendorPaymentId: "",
+  /** GRN id -> allocated amount (as a string, mirroring the Amount input pattern). Supports
+   *  paying several outstanding GRNs of the same vendor with one voucher. */
+  grnAllocations: {} as Record<string, string>,
   linkedImprestManagerId: "",
+  particulars: "",
   amount: "",
   remarks: "",
 };
@@ -149,9 +164,12 @@ export default function PaymentVouchersPage() {
   const { toast } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  // Role model (2026-09-10): Finance Head both raises and releases — CEO approval is the one
+  // blocking gate between the two. Accounts Head no longer releases; they review afterward.
   const canRaise = useHasRole("finance_head", "super_admin");
   const canApprove = useHasRole("ceo", "super_admin");
-  const canRelease = useHasRole("accounts_head", "super_admin");
+  const canRelease = useHasRole("finance_head", "super_admin");
+  const canReview = useHasRole("accounts_head", "super_admin");
 
   const [tab, setTab] = useState<"all" | "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested">("all");
   const [raiseOpen, setRaiseOpen] = useState(false);
@@ -160,6 +178,7 @@ export default function PaymentVouchersPage() {
   const [rejectNote, setRejectNote] = useState("");
   const [changesNote, setChangesNote] = useState("");
   const [resubmitBankAccountId, setResubmitBankAccountId] = useState("");
+  const [reviewNote, setReviewNote] = useState("");
   const [releaseForm, setReleaseForm] = useState({ paymentMode: "", paymentDate: new Date().toISOString().slice(0, 10), transactionRef: "" });
 
   const vouchersQuery = useQuery({
@@ -184,8 +203,13 @@ export default function PaymentVouchersPage() {
   const vendorDuesQuery = useQuery({
     queryKey: ["payment-voucher-vendor-dues"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: { rows: any[] } }>("/api/finance/vendor-payments?limit=200");
-      return (res.data?.rows ?? []).filter((r: any) => Number(r.balance_amount) > 0);
+      // Server-side outstandingOnly=1 is required, not just belt-and-suspenders: without it,
+      // ORDER BY due_date ASC + LIMIT 200 can return 200 already-settled legacy rows and zero
+      // real dues whenever 200+ older rows are marked Paid, which is exactly what happened here.
+      const res = await hrmsApi.get<{ success: boolean; rows: any[] }>(
+        "/api/finance/vendor-payments?limit=200&outstandingOnly=1",
+      );
+      return (res.rows ?? []).filter((r: any) => Number(r.balance_amount) > 0);
     },
     enabled: raiseOpen && raiseForm.sourceType === "vendor_grn",
   });
@@ -230,8 +254,13 @@ export default function PaymentVouchersPage() {
       sourceType: raiseForm.sourceType,
       bankAccountId: raiseForm.bankAccountId,
       payableAccountId: raiseForm.payableAccountId,
-      linkedVendorPaymentId: raiseForm.sourceType === "vendor_grn" ? raiseForm.linkedVendorPaymentId : undefined,
+      grnAllocations: raiseForm.sourceType === "vendor_grn"
+        ? Object.entries(raiseForm.grnAllocations)
+            .filter(([, amt]) => Number(amt) > 0)
+            .map(([vendorPaymentTrackingId, amt]) => ({ vendorPaymentTrackingId, amount: Number(amt) }))
+        : undefined,
       linkedImprestManagerId: raiseForm.sourceType === "imprest_allocation" ? raiseForm.linkedImprestManagerId : undefined,
+      particulars: raiseForm.sourceType === "general" ? raiseForm.particulars.trim() : undefined,
       amount: Number(raiseForm.amount),
       remarks: raiseForm.remarks?.trim() || undefined,
     })).data,
@@ -275,12 +304,33 @@ export default function PaymentVouchersPage() {
     onSuccess: () => { toast({ title: "Voucher released" }); invalidate(); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+  const reviewMutation = useMutation({
+    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/review`, {
+      note: reviewNote?.trim() || undefined,
+    })).data,
+    onSuccess: () => { toast({ title: "Review recorded" }); invalidate(); setReviewNote(""); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   const vouchers = vouchersQuery.data ?? [];
-  const selectedDue = useMemo(
-    () => (vendorDuesQuery.data ?? []).find((r: any) => r.id === raiseForm.linkedVendorPaymentId),
-    [vendorDuesQuery.data, raiseForm.linkedVendorPaymentId],
+  // Every GRN the finance head has ticked for this voucher — drives the checklist, the running
+  // total, and (via its head/sub_head) the auto-populated ledger classification below.
+  const selectedGrnIds = useMemo(
+    () => Object.keys(raiseForm.grnAllocations).filter((id) => Number(raiseForm.grnAllocations[id]) > 0),
+    [raiseForm.grnAllocations],
   );
+  const selectedGrnRows = useMemo(
+    () => selectedGrnIds.map((id) => filteredDues.find((r: any) => r.id === id)).filter(Boolean) as any[],
+    [selectedGrnIds, filteredDues],
+  );
+  const allocatedTotal = useMemo(
+    () => selectedGrnIds.reduce((sum, id) => sum + (Number(raiseForm.grnAllocations[id]) || 0), 0),
+    [selectedGrnIds, raiseForm.grnAllocations],
+  );
+  /** All selected GRNs of one vendor carry the same head/sub_head in practice (they share a
+   *  vendor_id, and this table's head/sub_head is a per-vendor classification) — shown from the
+   *  first selection so Finance Head sees it without opening each row. */
+  const primaryGrn = selectedGrnRows[0];
 
   return (
     <DashboardLayout>
@@ -333,9 +383,9 @@ export default function PaymentVouchersPage() {
                   {vouchers.map((v) => (
                     <tr key={v.id} className="cursor-pointer transition-colors duration-150 hover:bg-blue-50/50" onClick={() => setDetailId(v.id)}>
                       <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">{v.voucher_number}</td>
-                      <td className="px-4 py-2.5 text-gray-600">{v.source_type === "vendor_grn" ? "Vendor GRN" : "Imprest Top-up"}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{v.source_type === "vendor_grn" ? "Vendor GRN" : v.source_type === "imprest_allocation" ? "Imprest Top-up" : "General"}</td>
                       <td className="px-4 py-2.5 text-gray-600">{v.bank_account_name ?? "—"}</td>
-                      <td className="px-4 py-2.5 text-gray-600">{v.source_type === "vendor_grn" ? (v.vendor_name ?? v.grn_number ?? "—") : (v.imprest_manager_name ?? "—")}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{v.source_type === "vendor_grn" ? (v.vendor_name ?? v.grn_number ?? "—") : v.source_type === "imprest_allocation" ? (v.imprest_manager_name ?? "—") : (v.particulars ?? "—")}</td>
                       <td className="px-4 py-2.5 font-semibold text-gray-800">{money(v.amount)}</td>
                       <td className="px-4 py-2.5"><Badge className={STATUS_TONE[v.status]}>{STATUS_LABEL[v.status]}</Badge></td>
                     </tr>
@@ -354,11 +404,12 @@ export default function PaymentVouchersPage() {
           <div className="grid gap-3">
             <div>
               <Label>Purpose</Label>
-              <Select value={raiseForm.sourceType} onValueChange={(v) => setRaiseForm((f) => ({ ...f, sourceType: v as any, linkedVendorPaymentId: "", linkedImprestManagerId: "", amount: "" }))}>
+              <Select value={raiseForm.sourceType} onValueChange={(v) => setRaiseForm((f) => ({ ...f, sourceType: v as any, grnAllocations: {}, linkedImprestManagerId: "", particulars: "", amount: "" }))}>
                 <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="vendor_grn">Vendor GRN Payment</SelectItem>
                   <SelectItem value="imprest_allocation">Imprest Float Replenishment</SelectItem>
+                  <SelectItem value="general">Other / General Payment</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -367,39 +418,72 @@ export default function PaymentVouchersPage() {
               <div className="space-y-3">
                 <div>
                   <Label>Vendor</Label>
-                  <Select value={raiseForm.vendorId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, linkedVendorPaymentId: "", amount: "" }))}>
+                  <Select value={raiseForm.vendorId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, grnAllocations: {}, amount: "" }))}>
                     <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select vendor" /></SelectTrigger>
                     <SelectContent>
                       {vendorOptions.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-                <Label>Outstanding GRN (net balance shown)</Label>
-                <Select
-                  value={raiseForm.linkedVendorPaymentId}
-                  onValueChange={(v) => {
-                    const row = filteredDues.find((r: any) => r.id === v);
-                    const netBalance = row ? Number(row.balance_amount) - Number(row.tds_deducted_amount ?? 0) : 0;
-                    setRaiseForm((f) => ({ ...f, linkedVendorPaymentId: v, amount: netBalance > 0 ? String(netBalance) : f.amount }));
-                  }}
-                  disabled={!raiseForm.vendorId}
-                >
-                  <SelectTrigger className="cursor-pointer"><SelectValue placeholder={raiseForm.vendorId ? "Select GRN" : "Select a vendor first"} /></SelectTrigger>
-                  <SelectContent>
-                    {filteredDues.map((r: any) => (
-                      <SelectItem key={r.id} value={r.id}>
-                        {r.grn_number ?? r.id} — {money(r.balance_amount)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedDue && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Due {money(selectedDue.balance_amount)} · TDS {money(selectedDue.tds_deducted_amount ?? 0)} · Suggested net {money(Number(selectedDue.balance_amount) - Number(selectedDue.tds_deducted_amount ?? 0))}
-                  </p>
+
+                {primaryGrn && (
+                  <div className="grid grid-cols-2 gap-y-1 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                    <span className="text-slate-500">Head</span><span className="font-semibold text-gray-800">{primaryGrn.head ?? "—"}</span>
+                    <span className="text-slate-500">Sub Head</span><span className="font-semibold text-gray-800">{primaryGrn.sub_head ?? "—"}</span>
+                  </div>
                 )}
+
+                <div>
+                  <Label>Outstanding GRNs — tick one or more (same vendor, net balance shown)</Label>
+                  {!raiseForm.vendorId ? (
+                    <p className="mt-1 text-xs text-slate-400">Select a vendor first</p>
+                  ) : filteredDues.length === 0 ? (
+                    <p className="mt-1 text-xs text-slate-400">No outstanding GRNs for this vendor</p>
+                  ) : (
+                    <ul className="mt-1 max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-slate-100 p-2">
+                      {filteredDues.map((r: any) => {
+                        const checked = r.id in raiseForm.grnAllocations;
+                        const netBalance = Math.max(0, Number(r.balance_amount) - Number(r.tds_deducted_amount ?? 0));
+                        return (
+                          <li key={r.id} className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-slate-50">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(v) => setRaiseForm((f) => {
+                                const next = { ...f.grnAllocations };
+                                if (v) next[r.id] = String(netBalance > 0 ? netBalance : 0);
+                                else delete next[r.id];
+                                const total = Object.values(next).reduce((s, a) => s + (Number(a) || 0), 0);
+                                return { ...f, grnAllocations: next, amount: total > 0 ? String(total) : "" };
+                              })}
+                            />
+                            <span className="min-w-0 flex-1 truncate text-xs text-gray-700">
+                              {r.grn_number ?? r.id} — Due {money(r.balance_amount)} · TDS {money(r.tds_deducted_amount ?? 0)}
+                            </span>
+                            {checked && (
+                              <Input
+                                type="number"
+                                className="h-7 w-28 text-xs"
+                                value={raiseForm.grnAllocations[r.id]}
+                                onChange={(e) => setRaiseForm((f) => {
+                                  const next = { ...f.grnAllocations, [r.id]: e.target.value };
+                                  const total = Object.values(next).reduce((s, a) => s + (Number(a) || 0), 0);
+                                  return { ...f, grnAllocations: next, amount: total > 0 ? String(total) : "" };
+                                })}
+                              />
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {selectedGrnIds.length > 0 && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      {selectedGrnIds.length} GRN{selectedGrnIds.length > 1 ? "s" : ""} selected · Allocated total {money(allocatedTotal)}
+                    </p>
+                  )}
+                </div>
               </div>
-            ) : (
+            ) : raiseForm.sourceType === "imprest_allocation" ? (
               <div>
                 <Label>Imprest Manager</Label>
                 <Select value={raiseForm.linkedImprestManagerId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, linkedImprestManagerId: v }))}>
@@ -416,6 +500,16 @@ export default function PaymentVouchersPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            ) : (
+              <div>
+                <Label>Particulars (what this payment is for)</Label>
+                <Input
+                  placeholder="e.g. March statutory PF challan, Bank charges Q2"
+                  value={raiseForm.particulars}
+                  onChange={(e) => setRaiseForm((f) => ({ ...f, particulars: e.target.value }))}
+                />
+                <p className="mt-1 text-xs text-slate-500">For anything with no vendor GRN or imprest manager behind it — the Payable Account below is the category (Salary Payable, Statutory Dues, Bank Charges, TDS Payable, Other).</p>
               </div>
             )}
 
@@ -477,17 +571,32 @@ export default function PaymentVouchersPage() {
                   <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Details</h3>
                   <dl className="grid grid-cols-2 gap-y-2 text-sm">
                     <dt className="text-slate-500">Purpose</dt>
-                    <dd className="font-semibold text-gray-800">{detailQuery.data.source_type === "vendor_grn" ? (detailQuery.data.vendor_name ?? detailQuery.data.grn_number) : detailQuery.data.imprest_manager_name}</dd>
+                    <dd className="font-semibold text-gray-800">
+                      {detailQuery.data.source_type === "vendor_grn" ? (detailQuery.data.vendor_name ?? detailQuery.data.grn_number)
+                        : detailQuery.data.source_type === "imprest_allocation" ? detailQuery.data.imprest_manager_name
+                        : (detailQuery.data.particulars ?? "General payment")}
+                    </dd>
+                    {detailQuery.data.source_type === "vendor_grn" && (
+                      <>
+                        <dt className="text-slate-500">Head</dt><dd className="text-gray-600">{detailQuery.data.head ?? "—"}</dd>
+                        <dt className="text-slate-500">Sub Head</dt><dd className="text-gray-600">{detailQuery.data.sub_head ?? "—"}</dd>
+                      </>
+                    )}
                     <dt className="text-slate-500">Bank Account</dt><dd className="font-semibold text-gray-800">{detailQuery.data.bank_account_name}</dd>
                     <dt className="text-slate-500">Ledger Head</dt><dd className="font-semibold text-gray-800">{detailQuery.data.payable_account_name}</dd>
                     <dt className="text-slate-500">Amount</dt><dd className="font-semibold text-gray-800">{money(detailQuery.data.amount)}</dd>
                     <dt className="text-slate-500">Remarks</dt><dd className="text-gray-600">{detailQuery.data.remarks ?? "—"}</dd>
-                    <dt className="text-slate-500">Reason</dt><dd className="text-gray-600">{detailQuery.data.reason ?? "—"}</dd>
                     {detailQuery.data.status === "released" && (
                       <>
                         <dt className="text-slate-500">Payment Mode</dt><dd className="text-gray-600">{detailQuery.data.payment_mode}</dd>
                         <dt className="text-slate-500">Payment Date</dt><dd className="text-gray-600">{detailQuery.data.payment_date}</dd>
                         <dt className="text-slate-500">Reference</dt><dd className="font-mono text-gray-600">{detailQuery.data.transaction_ref ?? "—"}</dd>
+                        <dt className="text-slate-500">Accounts Review</dt>
+                        <dd className="text-gray-600">
+                          {detailQuery.data.accounts_reviewed_at
+                            ? <>Reviewed {dateTime(detailQuery.data.accounts_reviewed_at)}{detailQuery.data.review_note ? ` — “${detailQuery.data.review_note}”` : ""}</>
+                            : <span className="text-amber-600">Awaiting review</span>}
+                        </dd>
                       </>
                     )}
                     {detailQuery.data.status === "rejected" && (
@@ -495,6 +604,20 @@ export default function PaymentVouchersPage() {
                     )}
                   </dl>
                 </section>
+
+                {detailQuery.data.source_type === "vendor_grn" && (detailQuery.data.grn_allocations?.length ?? 0) > 1 && (
+                  <section>
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">GRNs Paid by This Voucher</h3>
+                    <ul className="space-y-1.5">
+                      {detailQuery.data.grn_allocations!.map((a) => (
+                        <li key={a.vendor_payment_tracking_id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs">
+                          <span className="text-gray-600">{a.grn_number ?? a.vendor_payment_tracking_id} — {a.head ?? "—"} / {a.sub_head ?? "—"}</span>
+                          <span className="font-semibold text-gray-800">{money(a.allocated_amount)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
 
                 {detailQuery.data.source_type === "imprest_allocation" && detailQuery.data.consumption_since_replenishment && (
                   <section>
@@ -576,6 +699,19 @@ export default function PaymentVouchersPage() {
                     </div>
                     <Button className="cursor-pointer bg-emerald-600 hover:bg-emerald-700" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(detailQuery.data!.id)}>
                       Release Payment
+                    </Button>
+                  </section>
+                )}
+
+                {/* Non-blocking post-release sign-off — the payment has already gone out; this
+                    just records that Accounts Head checked it. */}
+                {detailQuery.data.status === "released" && canReview && !detailQuery.data.accounts_reviewed_at && (
+                  <section className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-indigo-700">Accounts Review</h3>
+                    <p className="text-xs text-slate-500">Already released — this is a sign-off, not an approval gate.</p>
+                    <Textarea placeholder="Review note (optional)" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={2} />
+                    <Button className="cursor-pointer bg-indigo-600 hover:bg-indigo-700" disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate(detailQuery.data!.id)}>
+                      Mark Reviewed
                     </Button>
                   </section>
                 )}

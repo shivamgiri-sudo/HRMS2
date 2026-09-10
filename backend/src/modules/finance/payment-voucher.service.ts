@@ -13,18 +13,27 @@ import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 /**
  * Payment Voucher — the authorization + release chain (PRD §3.4, §6.5, §6.6).
  *
- * Three different people, three different actions:
- *   raise()      Finance Head  — bank + payable account + remarks. Money has not moved yet.
- *   ceoApprove() CEO           — a yes/no on amount/purpose. Does not execute the transfer.
- *   release()    Accounts Head — actually executes the transfer, keys in the real
- *                                payment_mode/date/transaction_ref, and is the ONLY step that
- *                                writes vendor_payment_tracking / bank_account_ledger_entry /
- *                                the imprest ledger.
+ * Role model (revised 2026-09-10 — Finance Head now both raises AND releases):
+ *   raise()        Finance Head  — bank + payable account + remarks. Money has not moved yet.
+ *   ceoApprove()   CEO           — a yes/no on amount/purpose. Does not execute the transfer.
+ *   release()      Finance Head  — actually executes the transfer, keys in the real
+ *                                  payment_mode/date/transaction_ref, and is the ONLY step that
+ *                                  writes vendor_payment_tracking / bank_account_ledger_entry /
+ *                                  the imprest ledger.
+ *   reviewRelease() Accounts Head — a non-blocking sign-off AFTER release: Accounts Head
+ *                                  reviews the already-executed payment and records that it was
+ *                                  checked, but cannot hold up or reverse it. This is the actual
+ *                                  control now (a second pair of eyes on money already sent,
+ *                                  not a gate before it goes) — CEO approval remains the one
+ *                                  blocking check between raise and release.
  *
- * Maker-checker is enforced here, not only by role — the same pairwise inequality checks
- * vendor-approval.service.ts and vendor-bank.service.ts already use for two-party
- * maker-checker ("a route guard proves a role, it cannot prove two different people"),
- * extended to three: raised_by != ceo_approved_by != released_by.
+ * Maker-checker between raise and CEO approval is still enforced by identity, not only role —
+ * the same pairwise inequality check vendor-approval.service.ts and vendor-bank.service.ts use
+ * ("a route guard proves a role, it cannot prove two different people"): raised_by !=
+ * ceo_approved_by. release() no longer requires released_by to differ from raised_by — the same
+ * Finance Head who raised a CEO-approved voucher is expected to release it themselves; the CEO
+ * approval gate plus the post-release Accounts Head review are what stand in for that older
+ * three-way separation now.
  *
  * source_type='sales_receipt' is declared on the table for a later phase; raise() refuses it
  * here rather than silently accepting a lane nothing downstream can release.
@@ -95,10 +104,20 @@ async function nextVoucherNumber(connection: PoolConnection, bankAccountId: stri
 }
 
 export interface RaiseVoucherInput {
-  sourceType: "vendor_grn" | "imprest_allocation";
+  sourceType: "vendor_grn" | "imprest_allocation" | "general";
   bankAccountId: string;
   payableAccountId: string;
+  /** Required when sourceType === 'general' — the free-text description a GRN/imprest name
+   *  would otherwise supply (e.g. "March statutory PF challan", "Bank charges Q2"). */
+  particulars?: string | null;
+  /** Legacy single-GRN shape — still accepted; internally normalised into a one-row grnAllocations. */
   linkedVendorPaymentId?: string | null;
+  /**
+   * Multi-GRN shape: pay several outstanding GRNs of the SAME vendor with one voucher. When
+   * present this wins over linkedVendorPaymentId. Every allocation must belong to the same
+   * vendor_id, and allocated amounts must sum to `amount` (within a paisa of rounding).
+   */
+  grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>;
   linkedImprestManagerId?: string | null;
   amount: number;
   remarks?: string | null;
@@ -144,6 +163,7 @@ export const paymentVoucherService = {
               pam.account_name AS payable_account_name,
               vpt.grn_number, vpt.vendor_name, vpt.due_amount AS vendor_due_amount,
               vpt.tds_deducted_amount, vpt.paid_amount AS vendor_paid_amount,
+              vpt.head, vpt.sub_head, vpt.due_date, vpt.financial_year,
               im.tally_name AS imprest_manager_name
          FROM payment_voucher pv
          LEFT JOIN company_bank_account cba ON cba.id = pv.bank_account_id
@@ -171,8 +191,24 @@ export const paymentVoucherService = {
       ? await imprestService.getConsumptionSinceLastReplenishment(String((row as any).linked_imprest_manager_id))
       : null;
 
+    // Full multi-GRN allocation set (Requirement: "multiple selection of GRN of same vendor" +
+    // "complete GRN Data" visible) — not just the single primary GRN the row-level join above
+    // resolves. Empty for imprest-lane vouchers and for legacy single-GRN vouchers raised before
+    // this table existed (those still show correctly via the vpt.* columns above).
+    const [grnAllocationRows] = await db.execute<RowDataPacket[]>(
+      `SELECT pvga.vendor_payment_tracking_id, pvga.allocated_amount,
+              vpt.grn_number, vpt.vendor_name, vpt.head, vpt.sub_head, vpt.due_date,
+              vpt.due_amount, vpt.tds_deducted_amount, vpt.paid_amount, vpt.balance_amount
+         FROM payment_voucher_grn_allocation pvga
+         JOIN vendor_payment_tracking vpt ON vpt.id = pvga.vendor_payment_tracking_id
+        WHERE pvga.payment_voucher_id = ?
+        ORDER BY pvga.created_at ASC`,
+      [id],
+    );
+
     return {
       ...maskVoucherRow(row),
+      grn_allocations: grnAllocationRows,
       // The raise -> CEO-approve -> release timeline (drill-down mandate's "Approval / workflow
       // timeline" section) — same generic reader every other finance entity type uses.
       approval_events: await listFinanceApprovalEvents("payment_voucher", id),
@@ -183,10 +219,13 @@ export const paymentVoucherService = {
 
   async raise(input: RaiseVoucherInput, actorUserId: string, actorRole?: string) {
     if ((input.sourceType as string) === "sales_receipt") {
-      throw new PaymentVoucherError("Sales-receipt vouchers are not available yet — vendor_grn and imprest_allocation only.");
+      throw new PaymentVoucherError("Sales-receipt vouchers are not available yet — vendor_grn, imprest_allocation and general only.");
     }
-    if (!["vendor_grn", "imprest_allocation"].includes(input.sourceType)) {
+    if (!["vendor_grn", "imprest_allocation", "general"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
+    }
+    if (input.sourceType === "general" && !input.particulars?.trim()) {
+      throw new PaymentVoucherError("Particulars are required for a general payment (what this payment is for)");
     }
     const amount = roundMoney(Number(input.amount));
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -215,22 +254,55 @@ export const paymentVoucherService = {
       if (!payableAccount) throw new PaymentVoucherError("Payable account not found", 404);
       if (!(payableAccount as any).active_status) throw new PaymentVoucherError("This payable account is inactive");
 
+      // Normalise both input shapes into one allocation list: the legacy single-GRN field
+      // becomes a one-row allocation of the full amount, so the rest of raise() and every
+      // downstream reader (release()) only ever has to handle "N allocations", never a
+      // singular/plural special case.
+      let grnAllocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
       if (input.sourceType === "vendor_grn") {
-        if (!input.linkedVendorPaymentId) throw new PaymentVoucherError("A vendor GRN payment record must be selected");
-        const [[vpt]] = await connection.execute<RowDataPacket[]>(
-          `SELECT due_amount, tds_deducted_amount, paid_amount FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
-          [input.linkedVendorPaymentId],
-        );
-        if (!vpt) throw new PaymentVoucherError("Vendor payment record not found", 404);
-        const remaining = roundMoney(
-          Number((vpt as any).due_amount) - Number((vpt as any).tds_deducted_amount ?? 0) - Number((vpt as any).paid_amount ?? 0),
-        );
-        if (amount > remaining + 0.01) {
+        if (input.grnAllocations && input.grnAllocations.length > 0) {
+          grnAllocations = input.grnAllocations.map((a) => ({
+            vendorPaymentTrackingId: a.vendorPaymentTrackingId,
+            amount: roundMoney(Number(a.amount)),
+          }));
+        } else if (input.linkedVendorPaymentId) {
+          grnAllocations = [{ vendorPaymentTrackingId: input.linkedVendorPaymentId, amount }];
+        } else {
+          throw new PaymentVoucherError("At least one vendor GRN payment record must be selected");
+        }
+        if (grnAllocations.some((a) => !a.vendorPaymentTrackingId || !(a.amount > 0))) {
+          throw new PaymentVoucherError("Every selected GRN needs a positive allocated amount");
+        }
+        const allocatedTotal = roundMoney(grnAllocations.reduce((sum, a) => sum + a.amount, 0));
+        if (Math.abs(allocatedTotal - amount) > 0.01) {
           throw new PaymentVoucherError(
-            `Amount (${amount}) exceeds the remaining net-payable balance on this GRN (${remaining})`,
+            `Allocated amounts (${allocatedTotal}) must add up to the voucher amount (${amount})`,
           );
         }
-      } else {
+
+        let vendorIdSeen: string | null = null;
+        for (const alloc of grnAllocations) {
+          const [[vpt]] = await connection.execute<RowDataPacket[]>(
+            `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount
+               FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
+            [alloc.vendorPaymentTrackingId],
+          );
+          if (!vpt) throw new PaymentVoucherError("Vendor payment record not found", 404);
+          const row = vpt as any;
+          if (vendorIdSeen === null) vendorIdSeen = row.vendor_id;
+          else if (row.vendor_id !== vendorIdSeen) {
+            throw new PaymentVoucherError("All selected GRNs must belong to the same vendor");
+          }
+          const remaining = roundMoney(
+            Number(row.due_amount) - Number(row.tds_deducted_amount ?? 0) - Number(row.paid_amount ?? 0),
+          );
+          if (alloc.amount > remaining + 0.01) {
+            throw new PaymentVoucherError(
+              `Allocated amount (${alloc.amount}) exceeds the remaining net-payable balance on GRN ${alloc.vendorPaymentTrackingId} (${remaining})`,
+            );
+          }
+        }
+      } else if (input.sourceType === "imprest_allocation") {
         if (!input.linkedImprestManagerId) throw new PaymentVoucherError("An imprest manager must be selected");
         const [[manager]] = await connection.execute<RowDataPacket[]>(
           `SELECT id, active_status FROM imprest_manager WHERE id = ? FOR UPDATE`,
@@ -239,6 +311,8 @@ export const paymentVoucherService = {
         if (!manager) throw new PaymentVoucherError("Imprest manager not found", 404);
         if (!(manager as any).active_status) throw new PaymentVoucherError("This imprest manager is not active");
       }
+      // 'general' has no linkage to validate — Payable Account (already validated above) is the
+      // category, and input.particulars (already required-checked above) is the description.
 
       id = randomUUID();
       voucherNumber = await nextVoucherNumber(connection, input.bankAccountId);
@@ -247,8 +321,8 @@ export const paymentVoucherService = {
         `INSERT INTO payment_voucher
            (id, voucher_number, voucher_type, source_type, bank_account_id, payable_account_id,
             linked_vendor_payment_id, linked_imprest_manager_id, amount, remarks, reason,
-            status, raised_by, raised_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
+            particulars, status, raised_by, raised_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
         [
           id,
           voucherNumber,
@@ -256,14 +330,24 @@ export const paymentVoucherService = {
           input.sourceType,
           input.bankAccountId,
           input.payableAccountId,
-          input.linkedVendorPaymentId ?? null,
+          grnAllocations[0]?.vendorPaymentTrackingId ?? null,
           input.linkedImprestManagerId ?? null,
           amount,
           input.remarks?.trim() || null,
           input.reason?.trim() || null,
+          input.particulars?.trim() || null,
           actorUserId,
         ],
       );
+
+      for (const alloc of grnAllocations) {
+        await connection.execute(
+          `INSERT INTO payment_voucher_grn_allocation
+             (id, payment_voucher_id, vendor_payment_tracking_id, allocated_amount)
+           VALUES (?, ?, ?, ?)`,
+          [randomUUID(), id, alloc.vendorPaymentTrackingId, alloc.amount],
+        );
+      }
 
       await recordFinanceApprovalEvent(
         {
@@ -409,10 +493,14 @@ export const paymentVoucherService = {
     }).catch(() => undefined);
 
     if (decision === "approve") {
-      const recipients = await resolveRoleHolderUserIds("accounts_head", null);
-      for (const userId of recipients) {
+      // Finance Head releases now (2026-09-10 role model), and per the original spec ("Finance
+      // head should get the notification that payment has to be done") this goes to the specific
+      // person who raised it, not a role-wide broadcast — they raised it, they know the vendor
+      // and amount, they're the one expected to actually make the payment.
+      const raisedBy = String((await this.get(id))?.raised_by ?? "");
+      if (raisedBy) {
         await inboxService.createItem({
-          user_id: userId,
+          user_id: raisedBy,
           type: "payment_voucher_ready_for_release",
           title: `[ACTION REQUIRED] Payment Voucher ready to release`,
           description: `CEO-approved and awaiting release.`,
@@ -555,9 +643,11 @@ export const paymentVoucherService = {
       sourceType = v.source_type;
       linkedVendorPaymentId = v.linked_vendor_payment_id;
       if (v.status !== "ceo_approved") throw new PaymentVoucherError(`Voucher is not ready for release (status: ${v.status})`, 409);
-      if (String(v.raised_by) === String(actorUserId)) {
-        throw new PaymentVoucherError("A payment voucher must be released by someone other than the person who raised it.", 403);
-      }
+      // Finance Head both raises and releases under the current role model (2026-09-10) — CEO
+      // approval is the one blocking gate between the two, so release no longer requires a
+      // different person than raised_by. The CEO themselves still cannot release their own
+      // approval, since ceo is not in VOUCHER_RELEASE_ROLES at all — this check is defence in
+      // depth for a super_admin acting as both.
       if (String(v.ceo_approved_by) === String(actorUserId)) {
         throw new PaymentVoucherError("A payment voucher must be released by someone other than the CEO who approved it.", 403);
       }
@@ -586,83 +676,101 @@ export const paymentVoucherService = {
       const amount = roundMoney(Number(v.amount));
 
       if (v.source_type === "vendor_grn") {
-        // Reuses the exact same write path the Vendor Payment page's own "Pay" button uses
-        // (vendor_payment_transaction ledger row + TDS calc + vendor_payment_tracking/grn_request
-        // update) — this is what makes "all payment details reflect back into Vendor Payment"
-        // actually true, rather than a second, thinner implementation of the same update that
-        // used to skip the per-installment ledger row and TDS calculation entirely. Runs inside
-        // THIS transaction via the externalConnection parameter (Task 2).
-        const dispatchResult = await vendorPaymentLedgerService.dispatch(
-          v.linked_vendor_payment_id,
-          {
-            paymentMode: paymentMode as any,
-            paymentDate,
-            bankId: (bankAccount as any).bank_id,
-            transactionId: transactionRef,
-            paymentAmount: amount,
-            remarks: `Released via Payment Voucher ${v.voucher_number}`,
-          },
-          actorUserId,
-          actorRole,
-          connection,
+        // Multi-GRN (Task: "multiple selection of GRN of same vendor"): walk every GRN this
+        // voucher was raised against, not just the single linked_vendor_payment_id column —
+        // that column only ever holds the FIRST/primary allocation for backward compatibility
+        // with older read paths. A voucher raised before this table existed has no allocation
+        // rows at all, so it falls back to the single linked GRN for its full amount.
+        const [allocRows] = await connection.execute<RowDataPacket[]>(
+          `SELECT vendor_payment_tracking_id, allocated_amount
+             FROM payment_voucher_grn_allocation WHERE payment_voucher_id = ? ORDER BY created_at ASC`,
+          [id],
         );
-        const lastTransaction = dispatchResult.transactions[dispatchResult.transactions.length - 1];
-        const grnNumberForNarration = (dispatchResult.payment as any)?.grn_number ?? "";
+        const allocations = (allocRows as any[]).length > 0
+          ? (allocRows as any[]).map((r) => ({ vendorPaymentTrackingId: r.vendor_payment_tracking_id, amount: roundMoney(Number(r.allocated_amount)) }))
+          : [{ vendorPaymentTrackingId: v.linked_vendor_payment_id, amount }];
 
-        runningBalance = roundMoney(runningBalance - amount);
-        await connection.execute(
-          `INSERT INTO bank_account_ledger_entry
-             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
-              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
-           VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'voucher', ?)`,
-          [
-            randomUUID(),
-            v.bank_account_id,
-            paymentDate,
-            id,
-            amount,
-            v.payable_account_id,
-            `Vendor payment released — GRN ${grnNumberForNarration} — voucher ${v.voucher_number}`.trim(),
-            transactionRef,
-            runningBalance,
+        for (const alloc of allocations) {
+          // Reuses the exact same write path the Vendor Payment page's own "Pay" button uses
+          // (vendor_payment_transaction ledger row + TDS calc + vendor_payment_tracking/grn_request
+          // update) — this is what makes "all payment details reflect back into Vendor Payment"
+          // actually true, rather than a second, thinner implementation of the same update that
+          // used to skip the per-installment ledger row and TDS calculation entirely. Runs inside
+          // THIS transaction via the externalConnection parameter, once per allocated GRN, so
+          // every selected GRN's vendor_payment_tracking row updates automatically.
+          const dispatchResult = await vendorPaymentLedgerService.dispatch(
+            alloc.vendorPaymentTrackingId,
+            {
+              paymentMode: paymentMode as any,
+              paymentDate,
+              bankId: (bankAccount as any).bank_id,
+              transactionId: transactionRef,
+              paymentAmount: alloc.amount,
+              remarks: `Released via Payment Voucher ${v.voucher_number}`,
+              // One bank transfer, one reference, split across every GRN this voucher covers —
+              // not several independent payments that happen to collide on a UTR.
+              allowSharedReference: allocations.length > 1,
+            },
             actorUserId,
-          ],
-        );
-
-        // TDS withheld is not cash leaving the bank — it never touches running_balance. There is
-        // no general-ledger/journal table in this schema yet, so this row is booked as a
-        // zero-cash memo against "TDS Payable" purely so the liability is visible next to the
-        // payment that created it — debit=credit=0 is deliberate, not a bug. Sized to what
-        // dispatch() actually computed for THIS installment — dispatch() calculates TDS per
-        // installment from the vendor's own TDS settings, so this is correct for partial or
-        // multiple releases against the same GRN, unlike the "first release only" approximation
-        // this replaced.
-        const tds = roundMoney(Number(lastTransaction?.tds_amount ?? 0));
-        if (tds > 0) {
-          const [[tdsAccount]] = await connection.execute<RowDataPacket[]>(
-            `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`,
+            actorRole,
+            connection,
           );
-          if (tdsAccount) {
-            await connection.execute(
-              `INSERT INTO bank_account_ledger_entry
-                 (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
-                  payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
-               VALUES (?, ?, ?, ?, 0, 0, ?, ?, NULL, ?, 'voucher', ?)`,
-              [
-                randomUUID(),
-                v.bank_account_id,
-                paymentDate,
-                id,
-                (tdsAccount as any).id,
-                `TDS withheld on GRN ${grnNumberForNarration} — voucher ${v.voucher_number} (liability memo, no cash movement)`.trim(),
-                runningBalance,
-                actorUserId,
-              ],
+          const lastTransaction = dispatchResult.transactions[dispatchResult.transactions.length - 1];
+          const grnNumberForNarration = (dispatchResult.payment as any)?.grn_number ?? "";
+
+          runningBalance = roundMoney(runningBalance - alloc.amount);
+          await connection.execute(
+            `INSERT INTO bank_account_ledger_entry
+               (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'voucher', ?)`,
+            [
+              randomUUID(),
+              v.bank_account_id,
+              paymentDate,
+              id,
+              alloc.amount,
+              v.payable_account_id,
+              `Vendor payment released — GRN ${grnNumberForNarration} — voucher ${v.voucher_number}`.trim(),
+              transactionRef,
+              runningBalance,
+              actorUserId,
+            ],
+          );
+
+          // TDS withheld is not cash leaving the bank — it never touches running_balance. There is
+          // no general-ledger/journal table in this schema yet, so this row is booked as a
+          // zero-cash memo against "TDS Payable" purely so the liability is visible next to the
+          // payment that created it — debit=credit=0 is deliberate, not a bug. Sized to what
+          // dispatch() actually computed for THIS installment — dispatch() calculates TDS per
+          // installment from the vendor's own TDS settings, so this is correct per-GRN across a
+          // multi-GRN release, unlike the "first release only" approximation this replaced.
+          const tds = roundMoney(Number(lastTransaction?.tds_amount ?? 0));
+          if (tds > 0) {
+            const [[tdsAccount]] = await connection.execute<RowDataPacket[]>(
+              `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`,
             );
+            if (tdsAccount) {
+              await connection.execute(
+                `INSERT INTO bank_account_ledger_entry
+                   (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                    payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+                 VALUES (?, ?, ?, ?, 0, 0, ?, ?, NULL, ?, 'voucher', ?)`,
+                [
+                  randomUUID(),
+                  v.bank_account_id,
+                  paymentDate,
+                  id,
+                  (tdsAccount as any).id,
+                  `TDS withheld on GRN ${grnNumberForNarration} — voucher ${v.voucher_number} (liability memo, no cash movement)`.trim(),
+                  runningBalance,
+                  actorUserId,
+                ],
+              );
+            }
           }
         }
-      } else {
-        // imprest_allocation lane
+      } else if (v.source_type === "imprest_allocation") {
         const [[manager]] = await connection.execute<RowDataPacket[]>(
           `SELECT id, branch_id FROM imprest_manager WHERE id = ? FOR UPDATE`,
           [v.linked_imprest_manager_id],
@@ -704,6 +812,30 @@ export const paymentVoucherService = {
             actorUserId,
           ],
         );
+      } else {
+        // 'general' lane — no vendor GRN or imprest manager to update, just the bank debit
+        // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
+        // TDS Payable / Other) the voucher was raised under. particulars carries the "what this
+        // is for" a GRN number or imprest manager name would otherwise supply.
+        runningBalance = roundMoney(runningBalance - amount);
+        await connection.execute(
+          `INSERT INTO bank_account_ledger_entry
+             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'voucher', ?)`,
+          [
+            randomUUID(),
+            v.bank_account_id,
+            paymentDate,
+            id,
+            amount,
+            v.payable_account_id,
+            `${v.particulars ?? "General payment"} — voucher ${v.voucher_number}`,
+            transactionRef,
+            runningBalance,
+            actorUserId,
+          ],
+        );
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
@@ -725,7 +857,7 @@ export const paymentVoucherService = {
           fromStatus: "ceo_approved",
           toStatus: "released",
           actorUserId,
-          actorRole: actorRole ?? "accounts_head",
+          actorRole: actorRole ?? "finance_head",
           remarks: null,
           details: { paymentMode, paymentDate, transactionRef },
         },
@@ -771,6 +903,88 @@ export const paymentVoucherService = {
       entity_type: "payment_voucher",
       entity_id: id,
       types: ["payment_voucher_ready_for_release"],
+    }).catch(() => undefined);
+
+    // Accounts Head reviews the payment AFTER it lands, not before — tell them it's ready to
+    // look at now that money has actually moved.
+    const accountsRecipients = await resolveRoleHolderUserIds("accounts_head", null);
+    for (const userId of accountsRecipients) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "payment_voucher_awaiting_review",
+        title: `Payment Voucher released — review when convenient`,
+        description: `Released and awaiting your sign-off review.`,
+        entity_type: "payment_voucher",
+        entity_id: id,
+        action_url: "/finance/payment-vouchers",
+        priority: "normal",
+      }).catch(() => undefined);
+    }
+
+    return this.get(id);
+  },
+
+  /**
+   * Accounts Head's post-release review — non-blocking. The voucher is already released; this
+   * only records who checked it, when, and any note. Never touches status or reverses anything.
+   */
+  async reviewRelease(id: string, actorUserId: string, actorRole: string | undefined, note?: string | null) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[voucher]] = await connection.execute<RowDataPacket[]>(
+        `SELECT status FROM payment_voucher WHERE id = ? FOR UPDATE`,
+        [id],
+      );
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
+      if ((voucher as any).status !== "released") {
+        throw new PaymentVoucherError("Only a released voucher can be reviewed.", 409);
+      }
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE payment_voucher
+            SET accounts_reviewed_by = ?, accounts_reviewed_at = NOW(), review_note = ?
+          WHERE id = ? AND status = 'released'`,
+        [actorUserId, note?.trim() || null, id],
+      );
+      if (result.affectedRows !== 1) {
+        throw new PaymentVoucherError("Voucher state changed — please retry.", 409);
+      }
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "payment_voucher",
+          entityId: id,
+          action: "accounts_review",
+          fromStatus: "released",
+          toStatus: "released",
+          actorUserId,
+          actorRole: actorRole ?? "accounts_head",
+          remarks: note ?? null,
+        },
+        connection,
+      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_REVIEWED", id, actorUserId, actorRole, { note: note ?? null });
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    await inboxService.resolveItems({
+      entity_type: "payment_voucher",
+      entity_id: id,
+      types: ["payment_voucher_awaiting_review"],
+    }).catch(() => undefined);
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      actor_role: actorRole,
+      action_type: "PAYMENT_VOUCHER_REVIEWED",
+      module_key: "FINANCE",
+      entity_type: "payment_voucher",
+      entity_id: id,
+      change_summary: { note: note ?? null },
     }).catch(() => undefined);
 
     return this.get(id);

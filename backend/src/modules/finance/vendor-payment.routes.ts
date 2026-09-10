@@ -182,6 +182,7 @@ router.get(
       paymentStatus: req.query.paymentStatus
         ? String(req.query.paymentStatus)
         : undefined,
+      outstandingOnly: req.query.outstandingOnly === "1",
       dueDateFrom: req.query.dueDateFrom
         ? String(req.query.dueDateFrom)
         : undefined,

@@ -25,6 +25,15 @@ export interface VendorPaymentFilters {
   subHead?: string;
   vendorId?: string;
   paymentStatus?: string;
+  /**
+   * True outstanding balance, independent of payment_status label — a row can carry any status
+   * while still owing money (e.g. "Partially Paid"), and the reverse is also possible in this
+   * legacy-backed table. Consumers that need "what can still be paid" (the Payment Voucher
+   * raise form's vendor/GRN pickers) must ask for this instead of paging through
+   * ORDER BY due_date ASC and filtering client-side: with 200+ already-settled legacy rows
+   * sorted first, a plain LIMIT 200 can return zero outstanding rows even when many exist.
+   */
+  outstandingOnly?: boolean;
   dueDateFrom?: string;
   dueDateTo?: string;
   search?: string;
@@ -194,6 +203,9 @@ export const vendorPaymentService = {
       }
       conditions.push("vpt.payment_status = ?");
       params.push(filters.paymentStatus);
+    }
+    if (filters.outstandingOnly) {
+      conditions.push("vpt.balance_amount > 0");
     }
     if (filters.dueDateFrom) {
       conditions.push("vpt.due_date >= ?");

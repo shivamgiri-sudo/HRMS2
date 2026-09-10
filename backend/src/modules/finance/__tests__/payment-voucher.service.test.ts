@@ -61,6 +61,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([[VOUCHER_ROW]]) // SELECT voucher FOR UPDATE
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]]) // bank account
       .mockResolvedValueOnce([[{ running_balance: 100000 }]]) // last ledger entry
+      .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none, falls back to linked_vendor_payment_id
       .mockResolvedValueOnce([{}]) // INSERT bank_account_ledger_entry (cash movement)
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE payment_voucher SET status='released'
       .mockResolvedValueOnce([{}]); // writeVoucherAudit
@@ -69,12 +70,12 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       transactions: [{ tds_amount: 0 }],
     });
 
-    await paymentVoucherService.release("pv-1", "ah-1", "accounts_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR123" });
+    await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR123" });
 
     expect(dispatch).toHaveBeenCalledWith(
       "vpt-1",
       expect.objectContaining({ paymentMode: "NEFT", paymentDate: "2026-09-10", paymentAmount: 5000, transactionId: "UTR123" }),
-      "ah-1", "accounts_head", conn,
+      "fh-1", "finance_head", conn,
     );
   });
 
@@ -85,6 +86,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([[VOUCHER_ROW]])
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
+      .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none
       .mockResolvedValueOnce([{}]) // cash movement entry
       .mockResolvedValueOnce([[{ id: "tds-account-id" }]]) // SELECT TDS Payable payable_account_master
       .mockResolvedValueOnce([{}]) // INSERT TDS memo entry
@@ -95,7 +97,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       transactions: [{ tds_amount: 250 }],
     });
 
-    await paymentVoucherService.release("pv-1", "ah-1", "accounts_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR124" });
+    await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR124" });
 
     expect(conn.execute).toHaveBeenCalledWith(
       expect.stringMatching(/SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable'/),
@@ -109,6 +111,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([[VOUCHER_ROW]])
       .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
+      .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none
       .mockResolvedValueOnce([{}]) // cash movement entry
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
@@ -117,10 +120,53 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       transactions: [{ tds_amount: 0 }],
     });
 
-    await paymentVoucherService.release("pv-1", "ah-1", "accounts_head", { paymentMode: "Cash", paymentDate: "2026-09-10" });
+    await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "Cash", paymentDate: "2026-09-10" });
 
     const tdsLookupCalls = conn.execute.mock.calls.filter((c) => String(c[0]).includes("TDS Payable"));
     expect(tdsLookupCalls).toHaveLength(0);
+  });
+
+  it("loops dispatch() once per allocated GRN when a voucher covers multiple GRNs of the same vendor", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[VOUCHER_ROW]])
+      .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[{ running_balance: 100000 }]])
+      .mockResolvedValueOnce([[ // two allocations for this voucher
+        { vendor_payment_tracking_id: "vpt-1", allocated_amount: "3000.00" },
+        { vendor_payment_tracking_id: "vpt-2", allocated_amount: "2000.00" },
+      ]])
+      .mockResolvedValueOnce([{}]) // ledger entry for allocation 1
+      .mockResolvedValueOnce([{}]) // ledger entry for allocation 2
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+    dispatch
+      .mockResolvedValueOnce({ payment: { grn_number: "GRN-1" }, transactions: [{ tds_amount: 0 }] })
+      .mockResolvedValueOnce({ payment: { grn_number: "GRN-2" }, transactions: [{ tds_amount: 0 }] });
+
+    await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR125" });
+
+    expect(dispatch).toHaveBeenNthCalledWith(1, "vpt-1", expect.objectContaining({ paymentAmount: 3000, allowSharedReference: true }), "fh-1", "finance_head", conn);
+    expect(dispatch).toHaveBeenNthCalledWith(2, "vpt-2", expect.objectContaining({ paymentAmount: 2000, allowSharedReference: true }), "fh-1", "finance_head", conn);
+  });
+
+  it("does not set allowSharedReference for a single-GRN release", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[VOUCHER_ROW]])
+      .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[{ running_balance: 100000 }]])
+      .mockResolvedValueOnce([[]]) // no allocation rows -> single fallback
+      .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+    dispatch.mockResolvedValueOnce({ payment: { grn_number: "GRN-1" }, transactions: [{ tds_amount: 0 }] });
+
+    await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR128" });
+
+    expect(dispatch).toHaveBeenCalledWith("vpt-1", expect.objectContaining({ allowSharedReference: false }), "fh-1", "finance_head", conn);
   });
 });
 
@@ -163,8 +209,8 @@ describe("paymentVoucherService.ceoApprove — request_changes", () => {
   });
 });
 
-describe("paymentVoucherService.ceoApprove — approve, notifies Accounts Head", () => {
-  it("creates an inbox item for every accounts_head role holder", async () => {
+describe("paymentVoucherService.ceoApprove — approve, notifies the Finance Head who raised it", () => {
+  it("creates a payment_voucher_ready_for_release inbox item for raised_by, not a role-wide broadcast", async () => {
     const conn = mockConnection();
     getConnection.mockResolvedValueOnce(conn);
     conn.execute
@@ -174,9 +220,70 @@ describe("paymentVoucherService.ceoApprove — approve, notifies Accounts Head",
 
     await paymentVoucherService.ceoApprove("pv-1", "ceo-1", "ceo", "approve");
 
+    // VOUCHER_ROW.raised_by === "fh-1"; execute.mockImplementation's catch-all resolves
+    // this.get(id)'s post-commit re-read to VOUCHER_ROW.
     expect(inboxService.createItem).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: "accounts-head-1", type: "payment_voucher_ready_for_release", entity_type: "payment_voucher", entity_id: "pv-1" }),
+      expect.objectContaining({ user_id: "fh-1", type: "payment_voucher_ready_for_release", entity_type: "payment_voucher", entity_id: "pv-1" }),
     );
+  });
+});
+
+describe("paymentVoucherService.release — Finance Head releases their own raised voucher", () => {
+  it("no longer rejects release when released_by === raised_by", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[VOUCHER_ROW]]) // raised_by: "fh-1"
+      .mockResolvedValueOnce([[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]])
+      .mockResolvedValueOnce([[{ running_balance: 100000 }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+    dispatch.mockResolvedValueOnce({ payment: { grn_number: "GRN-1" }, transactions: [{ tds_amount: 0 }] });
+
+    // actorUserId "fh-1" matches VOUCHER_ROW.raised_by — must succeed, not throw.
+    await expect(
+      paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR126" }),
+    ).resolves.toBeDefined();
+  });
+
+  it("still rejects release by the CEO who approved it", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[VOUCHER_ROW]]); // ceo_approved_by: "ceo-1"
+
+    await expect(
+      paymentVoucherService.release("pv-1", "ceo-1", "ceo", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR127" }),
+    ).rejects.toThrow(/other than the CEO/i);
+  });
+});
+
+describe("paymentVoucherService.reviewRelease", () => {
+  it("records the Accounts Head review without changing status", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "released" }]]) // SELECT status FOR UPDATE
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE accounts_reviewed_*
+      .mockResolvedValueOnce([{}]); // writeVoucherAudit
+
+    await paymentVoucherService.reviewRelease("pv-1", "ah-1", "accounts_head", "Checked against the bank statement");
+
+    expect(conn.execute).toHaveBeenCalledWith(
+      expect.stringMatching(/SET accounts_reviewed_by = \?, accounts_reviewed_at = NOW\(\), review_note = \?/),
+      expect.arrayContaining(["ah-1", "Checked against the bank statement", "pv-1"]),
+    );
+  });
+
+  it("refuses to review a voucher that has not been released yet", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "ceo_approved" }]]);
+
+    await expect(
+      paymentVoucherService.reviewRelease("pv-1", "ah-1", "accounts_head", null),
+    ).rejects.toThrow(/only a released voucher/i);
   });
 });
 
