@@ -427,9 +427,14 @@ export default function PaymentVouchersPage() {
                 </div>
 
                 {primaryGrn && (
-                  <div className="grid grid-cols-2 gap-y-1 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
-                    <span className="text-slate-500">Head</span><span className="font-semibold text-gray-800">{primaryGrn.head ?? "—"}</span>
-                    <span className="text-slate-500">Sub Head</span><span className="font-semibold text-gray-800">{primaryGrn.sub_head ?? "—"}</span>
+                  <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                    <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Budget classification on the GRN — not the ledger account below
+                    </p>
+                    <div className="grid grid-cols-2 gap-y-1">
+                      <span className="text-slate-500">Head</span><span className="font-semibold text-gray-800">{primaryGrn.head ?? "—"}</span>
+                      <span className="text-slate-500">Sub Head</span><span className="font-semibold text-gray-800">{primaryGrn.sub_head ?? "—"}</span>
+                    </div>
                   </div>
                 )}
 
@@ -525,9 +530,9 @@ export default function PaymentVouchersPage() {
               </Select>
             </div>
             <div>
-              <Label>Payable Account (ledger head)</Label>
+              <Label>Payable Account (bank ledger — Vendor Payables, TDS Payable, etc.)</Label>
               <Select value={raiseForm.payableAccountId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, payableAccountId: v }))}>
-                <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select ledger head" /></SelectTrigger>
+                <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select ledger account" /></SelectTrigger>
                 <SelectContent>
                   {(payableAccountsQuery.data ?? []).map((a: any) => (
                     <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
