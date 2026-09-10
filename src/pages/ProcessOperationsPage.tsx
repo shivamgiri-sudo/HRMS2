@@ -237,6 +237,10 @@ interface AgentAuditSummary {
   rows: AgentAuditSummaryRow[];
 }
 
+interface ScenarioDistributionChild { scenario1: string; count: number; pct: number; }
+interface ScenarioDistributionItem { scenario: string; count: number; pct: number; children: ScenarioDistributionChild[]; }
+interface ScenarioDistribution { available: boolean; reason: string | null; items: ScenarioDistributionItem[]; }
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -913,6 +917,80 @@ function AgentAuditSummaryPanel({ processId, period }: { processId: string; peri
               </table>
             </div>
           </>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+const SCENARIO_DIST_COLORS = [C_BLUE, C_RED, C_AMBER, C_GREEN, C_PURPLE, "#EC4899", "#14B8A6", "#6366F1"];
+
+/**
+ * Scenario Distribution -- every audited call's own recorded scenario
+ * (Complaint/Query/Request/Sale Done/...) x its scenario1 sub-type, ported
+ * from Mydashboards' getScenarios (verified against source). A ranked
+ * horizontal-bar list rather than a donut: this page has no pie-chart import
+ * yet and a bar list already carries the same "share of whole, ranked"
+ * information the Biggest Drivers section above uses -- no new chart type
+ * for one panel. Each scenario expands in place to its scenario1 children,
+ * the same idiom AnalystBreakdownPanel and ScenarioBreakdownRow already use.
+ */
+function ScenarioDistributionPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "scenario-distribution", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ScenarioDistribution>>(
+      `/api/process-operations/${processId}/scenario-distribution?period=${period}`),
+  });
+  const dist = data?.data;
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  return (
+    <ChartCard title="Scenario distribution"
+      subtitle="Every audited call's real recorded scenario, ranked by share -- click a row for its sub-type breakdown">
+      <div className="px-3">
+        {isLoading || !dist ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading scenario distribution…
+          </div>
+        ) : !dist.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{dist.reason}</p>
+        ) : !dist.items.length ? (
+          <p className="text-xs text-slate-400 italic py-1">No audited calls in this period.</p>
+        ) : (
+          <div className="space-y-1.5 pb-1">
+            {dist.items.map((item, i) => {
+              const color = SCENARIO_DIST_COLORS[i % SCENARIO_DIST_COLORS.length];
+              const isOpen = expanded === item.scenario;
+              return (
+                <div key={item.scenario}>
+                  <button type="button" onClick={() => setExpanded(isOpen ? null : item.scenario)}
+                    className="w-full text-left group cursor-pointer focus:outline-none">
+                    <div className="flex items-center justify-between text-[11px] mb-0.5">
+                      <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <ChevronRight size={11} className={`text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                        {item.scenario}
+                      </span>
+                      <span className="text-slate-500 tabular-nums">{item.count} · {item.pct}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden ml-3.5">
+                      <div className="h-full rounded-full transition-all group-hover:opacity-80"
+                        style={{ width: `${Math.max(2, item.pct)}%`, background: color }} />
+                    </div>
+                  </button>
+                  {isOpen && (
+                    <div className="ml-6 mt-1 mb-2 space-y-1 border-l-2 pl-2" style={{ borderColor: color }}>
+                      {item.children.map((c) => (
+                        <div key={c.scenario1} className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                          <span className="truncate">{c.scenario1}</span>
+                          <span className="tabular-nums shrink-0 ml-2">{c.count} · {c.pct}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </ChartCard>
@@ -3522,6 +3600,7 @@ export default function ProcessOperationsPage() {
                 {current && <VoiceOfCustomerPanel processId={current} period={period} />}
                 {current && <FatalCallsPanel processId={current} period={period} />}
                 {current && <AgentAuditSummaryPanel processId={current} period={period} />}
+                {current && <ScenarioDistributionPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

@@ -1795,6 +1795,102 @@ export async function getAgentAuditSummary(
   return { available: true, reason: null, totals, rows: parsed };
 }
 
+export interface ScenarioDistributionChild { scenario1: string; count: number; pct: number; }
+export interface ScenarioDistributionItem {
+  scenario: string; count: number; pct: number;
+  children: ScenarioDistributionChild[];
+}
+export interface ScenarioDistribution {
+  available: boolean; reason: string | null;
+  items: ScenarioDistributionItem[];
+}
+
+/**
+ * scenario x scenario1 distribution, ported from Mydashboards' getScenarios
+ * (verified against source): every audited call grouped by its top-level
+ * scenario (Complaint/Query/Request/Sale Done/...), each with its own
+ * scenario1 sub-type breakdown as drill-down children. Source has a
+ * client-specific quirk (Bellavita, ClientId 375: Repeat calls are audited
+ * as a Complaint sub-type and folded in) -- NOT replicated here, because
+ * this file scopes every query by process_id -> employee_code, never by the
+ * upstream dialer ClientId the quirk is keyed on, and guessing a process ->
+ * ClientId mapping risks silently misclassifying a different client's real
+ * "Repeat" scenario as "Complaint". Left as real scenario1 data instead of
+ * an unverified merge.
+ */
+export async function getScenarioDistribution(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<ScenarioDistribution | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ScenarioDistribution => ({ available: false, reason, items: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        CASE WHEN TRIM(q.scenario)  = '' OR q.scenario  IS NULL THEN 'Unknown' ELSE TRIM(q.scenario)  END AS scenario,
+        CASE WHEN TRIM(q.scenario1) = '' OR q.scenario1 IS NULL THEN 'Unknown' ELSE TRIM(q.scenario1) END AS scenario1,
+        COUNT(*) AS cnt
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY scenario, scenario1
+      ORDER BY scenario, cnt DESC`,
+    [...employeeCodes, from, to],
+  );
+
+  const total = (rows as any[]).reduce((s, r) => s + Number(r.cnt), 0);
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const scenMap = new Map<string, { children: ScenarioDistributionChild[]; total: number }>();
+  for (const r of rows as any[]) {
+    const scen = String(r.scenario);
+    const cnt = Number(r.cnt);
+    const entry = scenMap.get(scen) ?? { children: [], total: 0 };
+    entry.total += cnt;
+    entry.children.push({ scenario1: String(r.scenario1), count: cnt, pct: 0 });
+    scenMap.set(scen, entry);
+  }
+
+  const items: ScenarioDistributionItem[] = Array.from(scenMap.entries())
+    .map(([scenario, { children, total: scenTotal }]) => ({
+      scenario,
+      count: scenTotal,
+      pct: Math.round((scenTotal / total) * 1000) / 10,
+      children: children
+        .map((c) => ({ ...c, pct: scenTotal > 0 ? Math.round((c.count / scenTotal) * 1000) / 10 : 0 }))
+        .sort((a, b) => b.count - a.count),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return { available: true, reason: null, items };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{

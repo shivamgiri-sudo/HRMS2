@@ -264,6 +264,21 @@ router.get("/:processId/agent-audit-summary", requireAuth, requireRole(...VIEWER
 }));
 
 /**
+ * Scenario Distribution -- scenario x scenario1 breakdown. Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/scenario-distribution", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getScenarioDistribution(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
  * One analyst's own recent audited calls -- third real consumer of
  * CallDetailDrawer, reached from AnalystBreakdownPanel's per-employee
  * expansion (any metric, not just quality ones). Declared before
