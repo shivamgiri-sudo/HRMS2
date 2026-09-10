@@ -766,8 +766,12 @@ const REVENUE_STATUS_LABEL: Record<string, string> = {
 };
 
 /** A single stat in the Business Health grid — value, its own honest-null state, a caption. */
-function HealthStat({ label, value, caption, tone, icon: Icon }: {
+function HealthStat({ label, value, caption, tone, icon: Icon, fillPct, fillGood }: {
   label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral"; icon?: typeof Users;
+  /** 0-100 -- when set, draws a Mydashboards-style fill bar under the value
+   *  (e.g. headcount/mandate). Clamped to a 4% minimum so a real-but-tiny
+   *  fill never reads as visually empty, same as the reference component. */
+  fillPct?: number; fillGood?: boolean;
 }) {
   const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED_TEXT : C_SLATE;
   const noData = value === "no data";
@@ -791,6 +795,119 @@ function HealthStat({ label, value, caption, tone, icon: Icon }: {
         {value}
       </p>
       {caption && <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">{caption}</p>}
+      {fillPct !== undefined && (
+        <div className="mt-1.5 h-1 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+          <div className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${Math.min(100, Math.max(4, fillPct))}%`, background: fillGood ? C_GREEN : C_RED_TEXT }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface Insight {
+  severity: "critical" | "warning";
+  title: string;
+  detail: string;
+  action: string;
+  sectionKey: string;
+}
+
+/**
+ * The "read this first" strip at the top of the Process Performance Card —
+ * the same idea as Mydashboards' rule-based root-cause/insight panels, but
+ * every card here is derived live from this page's own already-verified
+ * numbers (targetStatus() against a metric's real configured target, the
+ * same headcount/shortfall this page already computed), not static canned
+ * copy keyed by metric name. An insight that can't point at a real target
+ * miss or a real shortfall simply isn't generated -- an empty panel is the
+ * honest "nothing worth flagging" case, not a placeholder.
+ */
+function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefined): Insight[] {
+  const insights: Insight[] = [];
+
+  if (health?.available && health.headcount.available && (health.headcount.shortfall ?? 0) > 0) {
+    const sf = health.headcount.shortfall!;
+    insights.push({
+      severity: "critical",
+      title: `Understaffed by ${sf} against mandate`,
+      detail: `${health.headcount.activeHc} active headcount against a sanctioned ${health.headcount.mandatedHc} — ${sf} seat${sf === 1 ? "" : "s"} short.`,
+      action: health.hiring.openRequisitions > 0
+        ? `${health.hiring.openRequisitions} requisition${health.hiring.openRequisitions === 1 ? "" : "s"} already open — chase fulfillment, not a new raise.`
+        : "No requisition raised yet for this gap — that's the actionable next step.",
+      sectionKey: "operations",
+    });
+  }
+
+  const sectionOrder = ["operations", "conversion", "risk", "conduct", "quality", "hygiene"];
+  for (const key of sectionOrder) {
+    const section = ops.sections.find((s) => s.key === key);
+    if (!section) continue;
+    const fails = section.metrics
+      .filter((m) => targetStatus(m) === "fail")
+      // Worst-first: rank by how far the value sits from its own target, in
+      // the metric's own unit -- a metric with no target never reaches here
+      // (targetStatus() returns null), so this division is always real.
+      .sort((a, b) => Math.abs(b.value! - b.targetValue!) - Math.abs(a.value! - a.targetValue!));
+    if (!fails.length) continue;
+    const worst = fails[0];
+    insights.push({
+      severity: key === "hygiene" ? "warning" : "critical",
+      title: `${worst.label} missing target`,
+      detail: `${formatValue(worst.value, worst.unit)} against ${targetCaption(worst) ?? "its configured target"}${
+        fails.length > 1 ? ` — ${fails.length - 1} more metric${fails.length - 1 === 1 ? "" : "s"} in ${section.title} also missing target` : ""}.`,
+      action: `Open ${section.title} below for the full breakdown.`,
+      sectionKey: key,
+    });
+  }
+
+  return insights;
+}
+
+function InsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
+  // Shares the exact queryKey BusinessHealthPanel uses -- react-query dedupes
+  // this against that component's own fetch, so this panel costs zero extra
+  // network requests, not a second poll of the same endpoint.
+  const { data } = useQuery({
+    queryKey: ["process-operations", "business-health", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessBusinessHealth>>(
+      `/api/process-operations/${processId}/business-health`),
+    staleTime: 60_000,
+  });
+  const health = data?.data;
+  const insights = useMemo(() => deriveInsights(ops, health), [ops, health]);
+
+  if (!insights.length) {
+    return (
+      <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 px-3.5 py-2.5 flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+        <p className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">
+          Nothing missing target right now — headcount, quality and hygiene are all within their configured targets.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3.5 pt-3 pb-2">
+        <Lightbulb className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+          Read this first — {insights.length} thing{insights.length === 1 ? "" : "s"} missing target
+        </p>
+      </div>
+      <div className="grid gap-2 px-3.5 pb-3.5 sm:grid-cols-2">
+        {insights.map((ins, i) => {
+          const color = ins.severity === "critical" ? C_RED_TEXT : C_AMBER;
+          return (
+            <div key={i} className="rounded-lg border px-2.5 py-2" style={{ borderColor: `${color}40`, background: `${color}0c` }}>
+              <p className="text-[11px] font-bold" style={{ color }}>{ins.title}</p>
+              <p className="text-[10.5px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">{ins.detail}</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 italic">→ {ins.action}</p>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -883,7 +1000,10 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
             Headcount vs. sanctioned mandate
           </p>
           <div className="flex flex-wrap gap-2">
-            <HealthStat label="Headcount" value={String(headcount.activeHc)} icon={Users} />
+            <HealthStat label="Headcount" value={String(headcount.activeHc)} icon={Users}
+              caption={headcount.available && headcount.mandatedHc ? `of ${headcount.mandatedHc} mandate` : undefined}
+              fillPct={headcount.available && headcount.mandatedHc ? (headcount.activeHc / headcount.mandatedHc) * 100 : undefined}
+              fillGood={headcount.available && headcount.mandatedHc ? headcount.activeHc >= headcount.mandatedHc : undefined} />
             {headcount.available ? (
               <>
                 <HealthStat label="Mandate" value={String(headcount.mandatedHc)} icon={Target}
@@ -2551,10 +2671,13 @@ export default function ProcessOperationsPage() {
                   </div>
                 )}
 
-                {/* Process Performance Card reading order: headcount &
-                    operations first (the staffing/dialler reality this
-                    period), then quality, then hygiene last -- see the
-                    SECTIONS comment in process-operations.service.ts. */}
+                {/* Process Performance Card reading order: an insights strip
+                    first (what actually needs a look, derived from this
+                    page's own real target checks), then headcount &
+                    operations (the staffing/dialler reality this period),
+                    then quality, then hygiene last -- see the SECTIONS
+                    comment in process-operations.service.ts. */}
+                {current && ops && <InsightsPanel processId={current} ops={ops} />}
                 {current && <BusinessHealthPanel processId={current} />}
 
                 {charts.length > 0 && (
