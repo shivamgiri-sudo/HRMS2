@@ -285,12 +285,17 @@ export async function getAgentPerformance(f: DashboardFilters) {
     const salesValue = a.salesValue as number;
     return {
       ...a,
+      // Named explicitly (not just via the ...a spread above) purely so TypeScript can see
+      // them: `a`'s type is Record<string, unknown>, so spreading it carries the values at
+      // runtime but erases named-property visibility for the .sort() below. Same values
+      // either way -- no behavior change, just makes the static type match the real shape.
+      salesCount, salesValue,
       connectionPct: (a.totalCalls as number) > 0 ? (connected / (a.totalCalls as number)) * 100 : 0,
       conversionPct: connected > 0 ? (salesCount / connected) * 100 : 0,
       avgSale: salesCount > 0 ? salesValue / salesCount : 0,
       revenuePerConnected: connected > 0 ? salesValue / connected : 0,
     };
-  }).sort((a, b) => (b.salesValue as number) - (a.salesValue as number));
+  }).sort((a, b) => b.salesValue - a.salesValue);
 }
 
 export async function getDailyTrend(f: DashboardFilters) {
