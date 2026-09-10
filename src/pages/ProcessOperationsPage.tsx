@@ -55,6 +55,10 @@ const C_PURPLE = "#8B5CF6";
 const C_AMBER = "#F59E0B";
 const C_RED = "#EF4444";
 const C_SLATE = "#64748B";
+// C_RED (#EF4444 on white) is ~3.78:1 -- fine for a chart line/border/tint, but
+// fails WCAG AA (4.5:1) for small text. The design system's own "value text"
+// red tone (#DC2626, ~4.83:1) is what the hero KPI card's text actually uses.
+const C_RED_TEXT = "#DC2626";
 
 const TOOLTIP_STYLE = { background: "#FFFFFF", border: "1px solid #334155", borderRadius: 8, fontSize: 12 } as const;
 const AXIS_TICK = { fill: "#64748B", fontSize: 11 } as const;
@@ -384,7 +388,7 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
       className="group relative text-left rounded-2xl overflow-hidden border cursor-pointer transition-all duration-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 h-full flex flex-col p-4"
       style={{ borderColor: `${C_RED}40`, background: `linear-gradient(160deg, ${C_RED}12, transparent 65%)` }}>
       <div className="flex items-start gap-1.5 mb-1">
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: C_RED }}>
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: C_RED_TEXT }}>
           <AlertTriangle size={11} className="shrink-0" />Needs attention
         </span>
         <div className="ml-auto flex shrink-0 gap-1">
@@ -413,7 +417,7 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
       </div>
       <p className="text-[11px] font-semibold text-slate-600 leading-tight mb-1.5">{r.label}</p>
       <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="text-[34px] font-black leading-none tabular-nums" style={{ color: C_RED }}>
+        <span className="text-[34px] font-black leading-none tabular-nums" style={{ color: C_RED_TEXT }}>
           {formatValue(r.value, r.unit)}
         </span>
         {d && (
@@ -426,7 +430,7 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
           </span>
         )}
       </div>
-      {caption && <p className="text-[11px] font-semibold mt-0.5" style={{ color: C_RED }}>{caption}</p>}
+      {caption && <p className="text-[11px] font-semibold mt-0.5" style={{ color: C_RED_TEXT }}>{caption}</p>}
       <div className="mt-auto pt-2"><Sparkline trend={r.trend} color={C_RED} big /></div>
     </button>
   );
@@ -1038,7 +1042,7 @@ function DrilldownTrendChart({ readings, unit, targetValue, direction }: {
         <div role="tablist" aria-label="Chart type" className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 p-0.5 shrink-0">
           {(["line", "bar"] as const).map((t) => (
             <button key={t} type="button" role="tab" aria-selected={chartType === t} onClick={() => setChartType(t)}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold capitalize cursor-pointer transition-colors ${
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold capitalize cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
                 chartType === t ? "bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>
               {t}
             </button>
@@ -1155,7 +1159,7 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
               <button type="button"
                 onClick={() => downloadCsv(`${metricKey}_${date}.csv`, r.columns, r.rows)}
                 title="Download the rows shown here as a .csv file"
-                className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer">
+                className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded">
                 <Download size={11} />CSV
               </button>
             </div>
@@ -1261,7 +1265,7 @@ function EmployeeUploadBox({ processId, metricKey, period, onSaved }: {
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)}
-        className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+        className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded">
         <Upload size={11} />Add per-analyst values by hand
       </button>
     );
@@ -1273,7 +1277,7 @@ function EmployeeUploadBox({ processId, metricKey, period, onSaved }: {
           Paste rows: <code className="font-mono text-[10px] bg-white dark:bg-slate-900 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700">employee_code,date,value,note</code>
         </p>
         <button type="button" onClick={() => { setOpen(false); setPasted(""); setPreview(null); }}
-          className="text-slate-400 hover:text-slate-600 cursor-pointer"><X size={13} /></button>
+          aria-label="Close" className="text-slate-400 hover:text-slate-600 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded"><X size={13} /></button>
       </div>
       <textarea value={pasted} onChange={(e) => { setPasted(e.target.value); setPreview(null); }}
         rows={4} placeholder={"MAS12345,2026-09-09,78.5\nMAS12346,2026-09-09,64.0,typed from the weekly QA sheet"}
@@ -1285,12 +1289,12 @@ function EmployeeUploadBox({ processId, metricKey, period, onSaved }: {
       <div className="flex items-center gap-2 mt-2">
         <button type="button" disabled={!pasted.trim() || check.isPending}
           onClick={() => check.mutate()}
-          className="rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold px-3 py-1.5 hover:bg-slate-300 dark:hover:bg-slate-600 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          className="rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold px-3 py-1.5 hover:bg-slate-300 dark:hover:bg-slate-600 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
           {check.isPending ? "Checking…" : "Check rows"}
         </button>
         <button type="button" disabled={!preview || !previewDryRun || readyCount === 0 || doImport.isPending}
           onClick={() => doImport.mutate()}
-          className="rounded-lg bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 hover:bg-blue-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+          className="rounded-lg bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 hover:bg-blue-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
           {doImport.isPending ? "Saving…" : `Save ${readyCount || ""} row${readyCount === 1 ? "" : "s"}`}
         </button>
       </div>
@@ -1382,9 +1386,10 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                   return (
                     <Fragment key={a.employeeId}>
                       <tr onClick={() => setExpandedId(open ? null : a.employeeId)}
-                        aria-expanded={open}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedId(open ? null : a.employeeId); } }}
+                        role="button" tabIndex={0} aria-expanded={open}
                         title="Show this analyst's full reporting chain"
-                        className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${open ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
+                        className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${open ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
                         <td className="px-2 py-1.5 text-slate-700 dark:text-slate-300">
                           <span className="inline-flex items-center gap-1">
                             <ChevronRight size={11} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
@@ -1605,8 +1610,8 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                 : ""}
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close"
-            className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition cursor-pointer">
+          <button type="button" onClick={onClose} aria-label="Close"
+            className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1">
             <X size={15} />
           </button>
         </div>
@@ -1638,9 +1643,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                       {d.readings.map((x) => (
                         <Fragment key={x.date}>
                           <tr onClick={() => toggleExpanded(x.date)}
-                            aria-expanded={expandedDate === x.date}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpanded(x.date); } }}
+                            role="button" tabIndex={0} aria-expanded={expandedDate === x.date}
                             title="Show the individual records behind this day"
-                            className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                            className={`cursor-pointer border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${
                               expandedDate === x.date ? "bg-slate-50 dark:bg-slate-800/40" : ""}`}>
                             <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300 flex items-center gap-1">
                               <ChevronRight size={11}
@@ -1684,7 +1690,7 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
             <section className="rounded-xl border border-slate-200 dark:border-slate-800">
               <button type="button" onClick={() => setShowDetails((v) => !v)}
                 aria-expanded={showDetails}
-                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl transition">
+                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
                   <Filter size={11} />How this number is calculated
                 </span>
@@ -1931,8 +1937,8 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
               Saved values are marked "manual" everywhere they show.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close"
-            className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition cursor-pointer">
+          <button type="button" onClick={onClose} aria-label="Close"
+            className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1">
             <X size={15} />
           </button>
         </div>
@@ -1940,7 +1946,7 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
         <div role="tablist" aria-label="Entry mode" className="flex border-b border-slate-200 dark:border-slate-800 px-5 pt-2">
           {([["single", "Single entry"], ["bulk", "Paste multiple"]] as const).map(([m, label]) => (
             <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
-              className={`px-3 py-2 text-xs font-semibold cursor-pointer border-b-2 -mb-px transition-colors ${
+              className={`px-3 py-2 text-xs font-semibold cursor-pointer border-b-2 -mb-px transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
                 mode === m ? "border-slate-800 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                   : "border-transparent text-slate-400 hover:text-slate-600"}`}>
               {label}
@@ -2007,7 +2013,7 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
             )}
 
             <button type="button" disabled={!canSave} onClick={() => save.mutate()}
-              className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+              className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
               style={{ background: NAVY }}>
               {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Save reading
@@ -2044,13 +2050,13 @@ function ManualEntryDrawer({ open, processId, processName, onClose, onSaved }: {
             <div className="flex gap-2">
               <button type="button" disabled={!pasted.trim() || checkBulk.isPending}
                 onClick={() => checkBulk.mutate()}
-                className="flex-1 rounded-lg py-2 text-xs font-semibold border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5">
+                className="flex-1 rounded-lg py-2 text-xs font-semibold border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
                 {checkBulk.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                 Check rows
               </button>
               <button type="button" disabled={!preview || readyCount === 0 || importBulk.isPending}
                 onClick={() => importBulk.mutate()}
-                className="flex-1 rounded-lg py-2 text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5"
+                className="flex-1 rounded-lg py-2 text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
                 style={{ background: NAVY }}>
                 {importBulk.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                 Import {readyCount ? `${readyCount} row${readyCount === 1 ? "" : "s"}` : ""}
@@ -2121,7 +2127,7 @@ function StoppedFeeds({ health }: { health: FeedHealth }) {
   return (
     <div className="rounded-2xl border border-red-200 dark:border-red-900 bg-red-50/80 dark:bg-red-950/30 p-4 shadow-sm">
       <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
-        className="w-full flex items-start gap-2 text-left cursor-pointer">
+        className="w-full flex items-start gap-2 text-left cursor-pointer rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
         <Radio className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -2192,7 +2198,7 @@ function NeverReportedBanner({ groups, currentProcessId, currentProcessName }: {
   return (
     <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/80 dark:bg-amber-950/30 p-4 shadow-sm">
       <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
-        className="w-full flex items-start gap-2 text-left cursor-pointer">
+        className="w-full flex items-start gap-2 text-left cursor-pointer rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
         <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -2254,7 +2260,7 @@ function NeverReportedBanner({ groups, currentProcessId, currentProcessName }: {
                   <button type="button"
                     onClick={() => downloadFillInTemplate(g, currentProcessName)}
                     title={`A blank 14-day CSV for ${g.metricKey} — same 4 columns "Add a reading" → Bulk paste already reads, fill in real values and paste it back in for ${currentProcessName}`}
-                    className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition cursor-pointer">
+                    className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
                     <Download size={10} />Blank template for {currentProcessName}
                   </button>
                 )}
@@ -2434,8 +2440,8 @@ export default function ProcessOperationsPage() {
               <AlertTriangle className="h-4 w-4 shrink-0" />
               Could not reach the server. This is not "no processes" -- the request itself failed.
             </span>
-            <button onClick={() => refetchList()}
-              className="shrink-0 rounded-lg bg-red-600 text-white text-xs font-semibold px-3 py-1.5 hover:bg-red-700 transition cursor-pointer">
+            <button type="button" onClick={() => refetchList()}
+              className="shrink-0 rounded-lg bg-red-600 text-white text-xs font-semibold px-3 py-1.5 hover:bg-red-700 transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-800 focus-visible:ring-offset-1">
               Retry
             </button>
           </div>
