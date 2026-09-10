@@ -186,6 +186,12 @@ interface ClapVoiceOfCustomer {
   };
 }
 
+interface ClapScenarioBreakdown {
+  available: boolean; reason: string | null;
+  clap: "Customer" | "Logistic" | "Agent" | "Product"; total: number;
+  scenarios: Array<{ scenario: string; count: number; pct: number }>;
+}
+
 interface ProcessBusinessHealth {
   available: boolean; reason: string | null;
   periodCode: string;
@@ -593,6 +599,8 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
           })}
         </div>
 
+        <ScenarioBreakdownRow processId={processId} period={period} category={category} />
+
         <div className="grid sm:grid-cols-2 gap-3 mt-2.5 mb-1">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
@@ -623,6 +631,64 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
         </div>
       </div>
     </ChartCard>
+  );
+}
+
+/**
+ * Sub-scenario drill for the selected CLAP category (Phase B of the
+ * Mydashboards port, 2026-09-10 plan) -- the category selector above answers
+ * "how many quotes", this answers "which real scenarios make up that share",
+ * a ranked inline-bar list matching the pattern already used elsewhere on
+ * this page (see the "Biggest drivers" Pareto chart). A category with no
+ * classified calls this period says so rather than show an empty chart.
+ */
+function ScenarioBreakdownRow({ processId, period, category }: {
+  processId: string; period: ReportPeriod; category: "agent" | "logistic" | "product";
+}) {
+  const clap = (category.charAt(0).toUpperCase() + category.slice(1)) as ClapScenarioBreakdown["clap"];
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "clap-scenarios", processId, period, clap],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapScenarioBreakdown>>(
+      `/api/process-operations/${processId}/voice-of-customer/scenarios?period=${period}&clap=${clap}`),
+  });
+  const sb = data?.data;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-2">
+        <Loader2 className="h-3 w-3 animate-spin" />Loading which scenarios make up this share…
+      </div>
+    );
+  }
+  if (!sb?.available || !sb.scenarios.length) {
+    return (
+      <p className="text-[10px] text-slate-400 italic mt-2">
+        {sb?.reason ?? "No scenario breakdown available for this category."}
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-slate-200 dark:border-slate-800 px-2.5 py-2 bg-slate-50/50 dark:bg-slate-800/30">
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">
+        Which real scenarios make up {clap} — {sb.total} call{sb.total === 1 ? "" : "s"}
+      </p>
+      <div className="space-y-1">
+        {sb.scenarios.slice(0, 6).map((s) => (
+          <div key={s.scenario} className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-600 dark:text-slate-300 w-32 shrink-0 truncate" title={s.scenario}>
+              {s.scenario}
+            </span>
+            <div className="flex-1 h-3.5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+              <div className="h-full rounded" style={{ width: `${Math.max(2, s.pct)}%`, background: CLAP_META[clap].color }} />
+            </div>
+            <span className="text-[9.5px] tabular-nums text-slate-500 w-14 shrink-0 text-right">
+              {s.count} ({s.pct}%)
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

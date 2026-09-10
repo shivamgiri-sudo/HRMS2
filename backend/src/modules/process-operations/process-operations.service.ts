@@ -1353,6 +1353,93 @@ export async function getProcessVoiceOfCustomer(
   };
 }
 
+export interface ClapScenarioBreakdown {
+  available: boolean;
+  reason: string | null;
+  clap: "Customer" | "Logistic" | "Agent" | "Product";
+  total: number;
+  scenarios: Array<{ scenario: string; count: number; pct: number }>;
+}
+
+/**
+ * Phase B of the Mydashboards port (2026-09-10 plan) -- the sub-scenario
+ * drill for one CLAP bucket: clicking "Agent: 34%" on the breakdown bar
+ * shouldn't just filter quotes, it should say WHICH real scenarios make up
+ * that 34%. Groups by the exact same q.scenario/q.scenario1 fields
+ * CLAP_CASE itself classifies on, over the exact same employee/date window
+ * getProcessVoiceOfCustomer already resolves -- this is a second read of
+ * the same rows, one level more granular, not a new data source.
+ */
+export async function getClapScenarioBreakdown(
+  userId: string, processId: string, period: ReportPeriod, clap: "Customer" | "Logistic" | "Agent" | "Product",
+): Promise<ClapScenarioBreakdown | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapScenarioBreakdown => ({
+    available: false, reason, clap, total: 0, scenarios: [],
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  // Caught live verifying this: for rows that reach CLAP_CASE's
+  // Complaint/Repeat branch, q.scenario is ALWAYS literally 'Complaint' or
+  // 'Repeat' -- that's the branch condition, not a sub-scenario -- and the
+  // real differentiator CLAP_CASE actually classified on for those rows is
+  // q.scenario1 (Dispatch/Delivery/RTO/Fraud/etc., see that CASE branch).
+  // For every other row, q.scenario itself is what CLAP_CASE keyed on, so
+  // this reports whichever field actually drove that row's classification,
+  // never both (that would double-count the same call under two labels).
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT x.scenario, COUNT(*) AS n
+       FROM (
+         SELECT
+             CASE WHEN q.scenario IN ('Complaint','Repeat')
+                  THEN COALESCE(NULLIF(TRIM(q.scenario1), ''), q.scenario)
+                  ELSE q.scenario END AS scenario
+           FROM db_audit.call_quality_assessment q
+          WHERE q.User IN (${inList}) AND q.quality_percentage IS NOT NULL
+            AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+            AND (${CLAP_CASE}) = ?
+       ) x
+      GROUP BY x.scenario
+      ORDER BY n DESC`,
+    [...employeeCodes, from, to, clap],
+  );
+  const total = (rows as any[]).reduce((s, r) => s + Number(r.n), 0);
+  if (!total) return { ...unavailable(`No ${clap}-classified calls in this period.`), available: true };
+
+  const scenarios = (rows as any[]).map((r) => ({
+    scenario: String(r.scenario ?? "").trim() || "(blank)",
+    count: Number(r.n),
+    pct: Math.round((Number(r.n) / total) * 1000) / 10,
+  }));
+
+  return { available: true, reason: null, clap, total, scenarios };
+}
+
 /**
  * Root Cause vs. Workforce — the question the CLAP panel above cannot answer on
  * its own: is a spike in Agent-attributed complaints a coaching problem, or is

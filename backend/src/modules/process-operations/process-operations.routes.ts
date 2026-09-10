@@ -134,6 +134,35 @@ router.get("/:processId/voice-of-customer", requireAuth, requireRole(...VIEWER_R
   res.json({ success: true, data });
 }));
 
+const CLAP_VALUES = ["Customer", "Logistic", "Agent", "Product"] as const;
+
+/**
+ * Sub-scenario drill for one CLAP bucket (Phase B of the Mydashboards
+ * port) — clicking "Agent: 34%" on the breakdown bar answers WHICH real
+ * scenarios make up that share, grouped on the exact same q.scenario field
+ * CLAP_CASE itself classifies on. Declared before /:processId for the same
+ * shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer/scenarios", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const clap = req.query.clap as string;
+  if (!CLAP_VALUES.includes(clap as any)) {
+    return res.status(400).json({
+      success: false, code: "BAD_REQUEST",
+      message: `clap must be one of ${CLAP_VALUES.join(", ")}.`,
+    });
+  }
+  const data = await svc.getClapScenarioBreakdown(
+    req.authUser!.id, req.params.processId, readPeriod(req), clap as typeof CLAP_VALUES[number],
+  );
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
 /**
  * Root Cause vs. Workforce: the CLAP Agent-share trend alongside ramp-cohort
  * tenure, attrition and roster staffing gap for the same process/dates — a
