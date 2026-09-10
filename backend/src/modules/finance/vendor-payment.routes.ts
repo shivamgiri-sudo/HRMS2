@@ -584,4 +584,15 @@ router.get(
   })
 );
 
+// 4-D: Vendor advance/on-account balance — backs the Raise form's inline display and the
+// Dispatch page's advance badge.
+router.get(
+  "/vendors/:vendorId/advance-balance",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const balance = await vendorPaymentService.getAdvanceBalance(req.params.vendorId);
+    res.json({ success: true, data: { balance } });
+  })
+);
+
 export { router as vendorPaymentRouter };

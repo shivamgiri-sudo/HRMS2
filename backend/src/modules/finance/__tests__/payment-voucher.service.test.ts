@@ -324,3 +324,203 @@ describe("paymentVoucherService.resubmit", () => {
     );
   });
 });
+
+/**
+ * Vendor advance / on-account payments (Phase 2). Dispatches on SQL text rather than an ordered
+ * chain -- these two lanes touch enough distinct queries (company_bank_account,
+ * payable_account_master, vendor_payment_tracking, vendor_advance_ledger, vendor_master,
+ * payment_voucher_grn_allocation) that an ordered chain would be as fragile as the one that
+ * broke when assertNotInClosedPeriod was added earlier -- see that fix's own comment.
+ */
+function mockAdvanceConnection(opts: {
+  advanceBalance?: number;
+  vendorPaymentTrackingRows?: Record<string, { vendor_id: string; due_amount: number; tds_deducted_amount?: number; paid_amount?: number }>;
+} = {}) {
+  const execute = vi.fn(async (sql: string, params?: any[]) => {
+    const text = String(sql);
+    if (text.includes("branch_code")) {
+      return [[{ branch_code: "HQ" }]]; // nextVoucherNumber's own lookup
+    }
+    if (text.includes("FROM company_bank_account") && text.includes("FOR UPDATE")) {
+      return [[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]];
+    }
+    if (text.includes("FROM payable_account_master")) {
+      return [[{ id: "pam-1", active_status: 1 }]];
+    }
+    if (text.includes("FROM vendor_master") && text.includes("FOR UPDATE")) {
+      return [[{ id: "vendor-1" }]];
+    }
+    if (text.includes("FROM vendor_payment_tracking") && text.includes("FOR UPDATE")) {
+      const vptId = params?.[0];
+      const row = opts.vendorPaymentTrackingRows?.[vptId] ?? { vendor_id: "vendor-1", due_amount: 3000, tds_deducted_amount: 0, paid_amount: 0 };
+      return [[row]];
+    }
+    if (text.includes("FROM vendor_advance_ledger") && text.includes("balance_after")) {
+      return [opts.advanceBalance != null ? [{ balance_after: opts.advanceBalance }] : []];
+    }
+    if (text.includes("FROM bank_reconciliation_period")) {
+      return [[]]; // assertNotInClosedPeriod -- no closed period
+    }
+    if (text.includes("FROM bank_account_ledger_entry") && text.includes("running_balance")) {
+      return [[{ running_balance: 100000 }]];
+    }
+    if (text.includes("COUNT(*) AS n FROM payment_voucher")) {
+      return [[{ n: 0 }]];
+    }
+    if (text.includes("FROM payment_voucher_grn_allocation")) {
+      return [[
+        { vendor_payment_tracking_id: "vpt-1", allocated_amount: "1000.00" },
+        { vendor_payment_tracking_id: "vpt-2", allocated_amount: "2000.00" },
+      ]];
+    }
+    if (text.includes("SELECT * FROM payment_voucher WHERE id")) {
+      return [[VOUCHER_ADVANCE_APPLICATION_ROW]];
+    }
+    return [{ affectedRows: 1 }];
+  });
+  return { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+}
+
+const VOUCHER_ADVANCE_ROW = {
+  id: "pv-adv-1", voucher_number: "PV/HQ/202609/0002", source_type: "vendor_advance",
+  bank_account_id: "acct-1", payable_account_id: "pam-1", linked_vendor_id: "vendor-1",
+  amount: "5000.00", status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1", released_by: null,
+};
+const VOUCHER_ADVANCE_APPLICATION_ROW = {
+  id: "pv-adv-2", voucher_number: "PV/HQ/202609/0003", source_type: "vendor_advance_application",
+  bank_account_id: "acct-1", payable_account_id: "pam-1", linked_vendor_id: "vendor-1",
+  amount: "3000.00", status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1", released_by: null,
+};
+
+describe("paymentVoucherService.raise — vendor_advance / vendor_advance_application", () => {
+  it("requires a vendor for vendor_advance", async () => {
+    getConnection.mockResolvedValueOnce(mockAdvanceConnection());
+    await expect(
+      paymentVoucherService.raise(
+        { sourceType: "vendor_advance", bankAccountId: "acct-1", payableAccountId: "pam-1", amount: 5000 } as any,
+        "fh-1", "finance_head",
+      ),
+    ).rejects.toThrow(/vendor must be selected/i);
+  });
+
+  it("raises a vendor_advance with no GRN allocation required", async () => {
+    getConnection.mockResolvedValueOnce(mockAdvanceConnection());
+    await expect(
+      paymentVoucherService.raise(
+        { sourceType: "vendor_advance", bankAccountId: "acct-1", payableAccountId: "pam-1", linkedVendorId: "vendor-1", amount: 5000 } as any,
+        "fh-1", "finance_head",
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("requires GRN allocations for vendor_advance_application", async () => {
+    getConnection.mockResolvedValueOnce(mockAdvanceConnection({ advanceBalance: 5000 }));
+    await expect(
+      paymentVoucherService.raise(
+        { sourceType: "vendor_advance_application", bankAccountId: "acct-1", payableAccountId: "pam-1", linkedVendorId: "vendor-1", amount: 3000 } as any,
+        "fh-1", "finance_head",
+      ),
+    ).rejects.toThrow(/GRN due/i);
+  });
+
+  it("rejects an application whose GRN allocations belong to a different vendor", async () => {
+    getConnection.mockResolvedValueOnce(mockAdvanceConnection({
+      advanceBalance: 5000,
+      vendorPaymentTrackingRows: { "vpt-1": { vendor_id: "some-other-vendor", due_amount: 3000 } },
+    }));
+    await expect(
+      paymentVoucherService.raise(
+        {
+          sourceType: "vendor_advance_application", bankAccountId: "acct-1", payableAccountId: "pam-1",
+          linkedVendorId: "vendor-1", amount: 3000, grnAllocations: [{ vendorPaymentTrackingId: "vpt-1", amount: 3000 }],
+        } as any,
+        "fh-1", "finance_head",
+      ),
+    ).rejects.toThrow(/do not belong to the chosen vendor/i);
+  });
+
+  it("rejects an application amount exceeding the vendor's available advance balance", async () => {
+    getConnection.mockResolvedValueOnce(mockAdvanceConnection({
+      advanceBalance: 1000,
+      vendorPaymentTrackingRows: { "vpt-1": { vendor_id: "vendor-1", due_amount: 3000 } },
+    }));
+    await expect(
+      paymentVoucherService.raise(
+        {
+          sourceType: "vendor_advance_application", bankAccountId: "acct-1", payableAccountId: "pam-1",
+          linkedVendorId: "vendor-1", amount: 3000, grnAllocations: [{ vendorPaymentTrackingId: "vpt-1", amount: 3000 }],
+        } as any,
+        "fh-1", "finance_head",
+      ),
+    ).rejects.toThrow(/available advance balance/i);
+  });
+
+  it("accepts an application within the available advance balance", async () => {
+    getConnection.mockResolvedValueOnce(mockAdvanceConnection({
+      advanceBalance: 5000,
+      vendorPaymentTrackingRows: { "vpt-1": { vendor_id: "vendor-1", due_amount: 3000 } },
+    }));
+    await expect(
+      paymentVoucherService.raise(
+        {
+          sourceType: "vendor_advance_application", bankAccountId: "acct-1", payableAccountId: "pam-1",
+          linkedVendorId: "vendor-1", amount: 3000, grnAllocations: [{ vendorPaymentTrackingId: "vpt-1", amount: 3000 }],
+        } as any,
+        "fh-1", "finance_head",
+      ),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("paymentVoucherService.release — vendor_advance lane", () => {
+  it("writes one bank debit and one vendor_advance_ledger credit, no dispatch() calls", async () => {
+    const conn = mockAdvanceConnection({ advanceBalance: 0 });
+    getConnection.mockResolvedValueOnce(conn);
+    // First execute() call in release() re-selects the voucher itself; override for this row.
+    conn.execute.mockImplementationOnce(async () => [[VOUCHER_ADVANCE_ROW]]);
+
+    await paymentVoucherService.release("pv-adv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR200" });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    const bankInsert = conn.execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO bank_account_ledger_entry"));
+    expect(bankInsert).toBeDefined();
+    const ledgerInsert = conn.execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO vendor_advance_ledger"));
+    expect(ledgerInsert).toBeDefined();
+    expect(ledgerInsert![0]).toContain("'credit'"); // direction is a SQL literal, not a bound param
+    // params: [id, vendor_id, branch_id, amount, balance_after, voucher_id, narration, created_by]
+    expect(ledgerInsert![1][3]).toBe(5000); // amount
+    expect(ledgerInsert![1][4]).toBe(5000); // balance_after = 0 (prior) + 5000
+  });
+});
+
+describe("paymentVoucherService.release — vendor_advance_application lane", () => {
+  it("writes zero bank entries, one Adjustment dispatch per allocation, one vendor_advance_ledger debit", async () => {
+    const conn = mockAdvanceConnection({ advanceBalance: 5000 });
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockImplementationOnce(async () => [[VOUCHER_ADVANCE_APPLICATION_ROW]]);
+    dispatch.mockResolvedValue({ payment: { grn_number: "GRN-X" }, transactions: [{ tds_amount: 0 }] });
+
+    await paymentVoucherService.release("pv-adv-2", "fh-1", "finance_head", { paymentMode: "Cash", paymentDate: "2026-09-10" });
+
+    const bankInsert = conn.execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO bank_account_ledger_entry"));
+    expect(bankInsert).toBeUndefined();
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenNthCalledWith(1, "vpt-1", expect.objectContaining({ paymentMode: "Adjustment", paymentAmount: 1000 }), "fh-1", "finance_head", conn, "pv-adv-2");
+    expect(dispatch).toHaveBeenNthCalledWith(2, "vpt-2", expect.objectContaining({ paymentMode: "Adjustment", paymentAmount: 2000 }), "fh-1", "finance_head", conn, "pv-adv-2");
+    const ledgerInsert = conn.execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO vendor_advance_ledger"));
+    expect(ledgerInsert![0]).toContain("'debit'");
+    expect(ledgerInsert![1][3]).toBe(3000); // amount applied
+    expect(ledgerInsert![1][4]).toBe(2000); // balance_after = 5000 - 3000
+  });
+
+  it("refuses to release when the advance balance has been drawn down below the applied amount since raise", async () => {
+    const conn = mockAdvanceConnection({ advanceBalance: 1000 }); // was 5000+ at raise time, now only 1000
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockImplementationOnce(async () => [[VOUCHER_ADVANCE_APPLICATION_ROW]]); // amount: 3000
+
+    await expect(
+      paymentVoucherService.release("pv-adv-2", "fh-1", "finance_head", { paymentMode: "Cash", paymentDate: "2026-09-10" }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("available advance balance") });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});

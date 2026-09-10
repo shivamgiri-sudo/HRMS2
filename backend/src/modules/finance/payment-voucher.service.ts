@@ -104,8 +104,87 @@ async function nextVoucherNumber(connection: PoolConnection, bankAccountId: stri
   return `${prefix}${String(seq).padStart(4, "0")}`;
 }
 
+/**
+ * Normalises + validates a GRN allocation set against `amount`, shared by 'vendor_grn' (paying
+ * fresh dues from the bank) and 'vendor_advance_application' (settling dues from an existing
+ * advance balance) — both mean "which GRN dues does this voucher affect, by how much" and must
+ * enforce the exact same rules: every allocation belongs to the same vendor, amounts sum to
+ * `amount` within a paisa, and none exceeds its GRN's own remaining net-payable balance. Kept as
+ * one function rather than duplicated per lane — two copies of this arithmetic disagreeing after
+ * a future edit is a correctness bug, not a style nit (same reasoning as this session's
+ * assertNotInClosedPeriod extraction).
+ */
+async function validateGrnAllocations(
+  connection: PoolConnection,
+  input: { grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>; linkedVendorPaymentId?: string | null },
+  amount: number,
+  notSelectedMessage: string,
+): Promise<{ allocations: Array<{ vendorPaymentTrackingId: string; amount: number }>; vendorId: string }> {
+  let allocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
+  if (input.grnAllocations && input.grnAllocations.length > 0) {
+    allocations = input.grnAllocations.map((a) => ({
+      vendorPaymentTrackingId: a.vendorPaymentTrackingId,
+      amount: roundMoney(Number(a.amount)),
+    }));
+  } else if (input.linkedVendorPaymentId) {
+    allocations = [{ vendorPaymentTrackingId: input.linkedVendorPaymentId, amount }];
+  } else {
+    throw new PaymentVoucherError(notSelectedMessage);
+  }
+  if (allocations.some((a) => !a.vendorPaymentTrackingId || !(a.amount > 0))) {
+    throw new PaymentVoucherError("Every selected GRN needs a positive allocated amount");
+  }
+  const allocatedTotal = roundMoney(allocations.reduce((sum, a) => sum + a.amount, 0));
+  if (Math.abs(allocatedTotal - amount) > 0.01) {
+    throw new PaymentVoucherError(
+      `Allocated amounts (${allocatedTotal}) must add up to the voucher amount (${amount})`,
+    );
+  }
+
+  let vendorIdSeen: string | null = null;
+  for (const alloc of allocations) {
+    const [[vpt]] = await connection.execute<RowDataPacket[]>(
+      `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount
+         FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
+      [alloc.vendorPaymentTrackingId],
+    );
+    if (!vpt) throw new PaymentVoucherError("Vendor payment record not found", 404);
+    const row = vpt as any;
+    if (vendorIdSeen === null) vendorIdSeen = row.vendor_id;
+    else if (row.vendor_id !== vendorIdSeen) {
+      throw new PaymentVoucherError("All selected GRNs must belong to the same vendor");
+    }
+    const remaining = roundMoney(
+      Number(row.due_amount) - Number(row.tds_deducted_amount ?? 0) - Number(row.paid_amount ?? 0),
+    );
+    if (alloc.amount > remaining + 0.01) {
+      throw new PaymentVoucherError(
+        `Allocated amount (${alloc.amount}) exceeds the remaining net-payable balance on GRN ${alloc.vendorPaymentTrackingId} (${remaining})`,
+      );
+    }
+  }
+  return { allocations, vendorId: vendorIdSeen as string };
+}
+
+/** Vendor's currently available advance balance — the latest vendor_advance_ledger running
+ *  balance, or 0 if the vendor has never had an advance voucher released. Same "latest
+ *  balance_after wins" pattern bank_account_ledger_entry's running_balance already uses.
+ *  Accepts either `db` (a plain read, e.g. from get()) or a `PoolConnection` mid-transaction —
+ *  both share this call shape. */
+async function getVendorAdvanceBalance(
+  executor: { execute(sql: string, params?: any[]): Promise<[any, any]> },
+  vendorId: string,
+): Promise<number> {
+  const [[last]] = (await executor.execute(
+    `SELECT balance_after FROM vendor_advance_ledger
+      WHERE vendor_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [vendorId],
+  )) as [RowDataPacket[], unknown];
+  return last ? Number((last as any).balance_after) : 0;
+}
+
 export interface RaiseVoucherInput {
-  sourceType: "vendor_grn" | "imprest_allocation" | "general";
+  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application";
   bankAccountId: string;
   payableAccountId: string;
   /** Required when sourceType === 'general' — the free-text description a GRN/imprest name
@@ -117,9 +196,17 @@ export interface RaiseVoucherInput {
    * Multi-GRN shape: pay several outstanding GRNs of the SAME vendor with one voucher. When
    * present this wins over linkedVendorPaymentId. Every allocation must belong to the same
    * vendor_id, and allocated amounts must sum to `amount` (within a paisa of rounding).
+   *
+   * Also used by 'vendor_advance_application' — same shape, same meaning ("which GRN dues does
+   * this voucher affect, by how much"), just settling them from an existing advance balance
+   * instead of a fresh bank payment.
    */
   grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>;
   linkedImprestManagerId?: string | null;
+  /** Required for 'vendor_advance' (which vendor is being paid an advance) and
+   *  'vendor_advance_application' (whose advance balance this draws down). Neither source type
+   *  is GRN-anchored, so there is no other column carrying vendor identity for them. */
+  linkedVendorId?: string | null;
   amount: number;
   remarks?: string | null;
   reason?: string | null;
@@ -143,12 +230,16 @@ export const paymentVoucherService = {
               cba.account_name AS bank_account_name,
               pam.account_name AS payable_account_name,
               vpt.grn_number, vpt.vendor_name, vpt.due_amount AS vendor_due_amount,
-              im.tally_name AS imprest_manager_name
+              im.tally_name AS imprest_manager_name,
+              -- vendor_advance/vendor_advance_application carry no GRN, so vpt.vendor_name above
+              -- is NULL for them — linked_vendor_id + this join is their only vendor identity.
+              lv.vendor_name AS linked_vendor_name
          FROM payment_voucher pv
          LEFT JOIN company_bank_account cba ON cba.id = pv.bank_account_id
          LEFT JOIN payable_account_master pam ON pam.id = pv.payable_account_id
          LEFT JOIN vendor_payment_tracking vpt ON vpt.id = pv.linked_vendor_payment_id
          LEFT JOIN imprest_manager im ON im.id = pv.linked_imprest_manager_id
+         LEFT JOIN vendor_master lv ON lv.id = pv.linked_vendor_id
         WHERE ${conditions.join(" AND ")}
         ORDER BY pv.created_at DESC
         LIMIT ${limit}`,
@@ -165,12 +256,14 @@ export const paymentVoucherService = {
               vpt.grn_number, vpt.vendor_name, vpt.due_amount AS vendor_due_amount,
               vpt.tds_deducted_amount, vpt.paid_amount AS vendor_paid_amount,
               vpt.head, vpt.sub_head, vpt.due_date, vpt.financial_year,
-              im.tally_name AS imprest_manager_name
+              im.tally_name AS imprest_manager_name,
+              lv.vendor_name AS linked_vendor_name
          FROM payment_voucher pv
          LEFT JOIN company_bank_account cba ON cba.id = pv.bank_account_id
          LEFT JOIN payable_account_master pam ON pam.id = pv.payable_account_id
          LEFT JOIN vendor_payment_tracking vpt ON vpt.id = pv.linked_vendor_payment_id
          LEFT JOIN imprest_manager im ON im.id = pv.linked_imprest_manager_id
+         LEFT JOIN vendor_master lv ON lv.id = pv.linked_vendor_id
         WHERE pv.id = ?
         LIMIT 1`,
       [id],
@@ -207,6 +300,13 @@ export const paymentVoucherService = {
       [id],
     );
 
+    // The vendor's advance balance AFTER this voucher, for both new lanes — lets the drawer show
+    // "₹X still available" on a vendor_advance voucher and "₹X remains after this application"
+    // on a vendor_advance_application one, without a second round trip from the frontend.
+    const advanceBalance = (row as any).linked_vendor_id
+      ? await getVendorAdvanceBalance(db, String((row as any).linked_vendor_id))
+      : null;
+
     return {
       ...maskVoucherRow(row),
       grn_allocations: grnAllocationRows,
@@ -215,6 +315,7 @@ export const paymentVoucherService = {
       approval_events: await listFinanceApprovalEvents("payment_voucher", id),
       audit_log: auditRows,
       consumption_since_replenishment: consumptionSinceReplenishment,
+      vendor_advance_balance: advanceBalance,
     };
   },
 
@@ -222,7 +323,7 @@ export const paymentVoucherService = {
     if ((input.sourceType as string) === "sales_receipt") {
       throw new PaymentVoucherError("Sales-receipt vouchers are not available yet — vendor_grn, imprest_allocation and general only.");
     }
-    if (!["vendor_grn", "imprest_allocation", "general"].includes(input.sourceType)) {
+    if (!["vendor_grn", "imprest_allocation", "general", "vendor_advance", "vendor_advance_application"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
     }
     if (input.sourceType === "general" && !input.particulars?.trim()) {
@@ -260,49 +361,12 @@ export const paymentVoucherService = {
       // downstream reader (release()) only ever has to handle "N allocations", never a
       // singular/plural special case.
       let grnAllocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
+      let linkedVendorId: string | null = null;
       if (input.sourceType === "vendor_grn") {
-        if (input.grnAllocations && input.grnAllocations.length > 0) {
-          grnAllocations = input.grnAllocations.map((a) => ({
-            vendorPaymentTrackingId: a.vendorPaymentTrackingId,
-            amount: roundMoney(Number(a.amount)),
-          }));
-        } else if (input.linkedVendorPaymentId) {
-          grnAllocations = [{ vendorPaymentTrackingId: input.linkedVendorPaymentId, amount }];
-        } else {
-          throw new PaymentVoucherError("At least one vendor GRN payment record must be selected");
-        }
-        if (grnAllocations.some((a) => !a.vendorPaymentTrackingId || !(a.amount > 0))) {
-          throw new PaymentVoucherError("Every selected GRN needs a positive allocated amount");
-        }
-        const allocatedTotal = roundMoney(grnAllocations.reduce((sum, a) => sum + a.amount, 0));
-        if (Math.abs(allocatedTotal - amount) > 0.01) {
-          throw new PaymentVoucherError(
-            `Allocated amounts (${allocatedTotal}) must add up to the voucher amount (${amount})`,
-          );
-        }
-
-        let vendorIdSeen: string | null = null;
-        for (const alloc of grnAllocations) {
-          const [[vpt]] = await connection.execute<RowDataPacket[]>(
-            `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount
-               FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
-            [alloc.vendorPaymentTrackingId],
-          );
-          if (!vpt) throw new PaymentVoucherError("Vendor payment record not found", 404);
-          const row = vpt as any;
-          if (vendorIdSeen === null) vendorIdSeen = row.vendor_id;
-          else if (row.vendor_id !== vendorIdSeen) {
-            throw new PaymentVoucherError("All selected GRNs must belong to the same vendor");
-          }
-          const remaining = roundMoney(
-            Number(row.due_amount) - Number(row.tds_deducted_amount ?? 0) - Number(row.paid_amount ?? 0),
-          );
-          if (alloc.amount > remaining + 0.01) {
-            throw new PaymentVoucherError(
-              `Allocated amount (${alloc.amount}) exceeds the remaining net-payable balance on GRN ${alloc.vendorPaymentTrackingId} (${remaining})`,
-            );
-          }
-        }
+        const result = await validateGrnAllocations(
+          connection, input, amount, "At least one vendor GRN payment record must be selected",
+        );
+        grnAllocations = result.allocations;
       } else if (input.sourceType === "imprest_allocation") {
         if (!input.linkedImprestManagerId) throw new PaymentVoucherError("An imprest manager must be selected");
         const [[manager]] = await connection.execute<RowDataPacket[]>(
@@ -311,6 +375,28 @@ export const paymentVoucherService = {
         );
         if (!manager) throw new PaymentVoucherError("Imprest manager not found", 404);
         if (!(manager as any).active_status) throw new PaymentVoucherError("This imprest manager is not active");
+      } else if (input.sourceType === "vendor_advance") {
+        if (!input.linkedVendorId) throw new PaymentVoucherError("A vendor must be selected");
+        linkedVendorId = input.linkedVendorId;
+      } else if (input.sourceType === "vendor_advance_application") {
+        if (!input.linkedVendorId) throw new PaymentVoucherError("A vendor must be selected");
+        const result = await validateGrnAllocations(
+          connection, input, amount, "At least one of this vendor's GRN dues must be selected to apply the advance against",
+        );
+        grnAllocations = result.allocations;
+        if (result.vendorId !== input.linkedVendorId) {
+          throw new PaymentVoucherError("The selected GRN dues do not belong to the chosen vendor");
+        }
+        linkedVendorId = input.linkedVendorId;
+        // Friendly check now; release() re-checks under a row lock, since the balance can move
+        // between raise and a later release (e.g. a second application raised against the same
+        // balance in the meantime).
+        const available = await getVendorAdvanceBalance(connection, linkedVendorId);
+        if (amount > available + 0.01) {
+          throw new PaymentVoucherError(
+            `This vendor's available advance balance (${available}) is less than the amount being applied (${amount})`,
+          );
+        }
       }
       // 'general' has no linkage to validate — Payable Account (already validated above) is the
       // category, and input.particulars (already required-checked above) is the description.
@@ -321,9 +407,9 @@ export const paymentVoucherService = {
       await connection.execute(
         `INSERT INTO payment_voucher
            (id, voucher_number, voucher_type, source_type, bank_account_id, payable_account_id,
-            linked_vendor_payment_id, linked_imprest_manager_id, amount, remarks, reason,
+            linked_vendor_payment_id, linked_imprest_manager_id, linked_vendor_id, amount, remarks, reason,
             particulars, status, raised_by, raised_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
         [
           id,
           voucherNumber,
@@ -333,6 +419,7 @@ export const paymentVoucherService = {
           input.payableAccountId,
           grnAllocations[0]?.vendorPaymentTrackingId ?? null,
           input.linkedImprestManagerId ?? null,
+          linkedVendorId,
           amount,
           input.remarks?.trim() || null,
           input.reason?.trim() || null,
@@ -818,6 +905,109 @@ export const paymentVoucherService = {
             transactionRef,
             runningBalance,
             actorUserId,
+          ],
+        );
+      } else if (v.source_type === "vendor_advance") {
+        // Real money out to the vendor, no GRN behind it — same bank-debit shape as the
+        // 'general' lane, plus crediting this vendor's advance balance so it's available to
+        // draw down later via a 'vendor_advance_application' voucher.
+        runningBalance = roundMoney(runningBalance - amount);
+        await connection.execute(
+          `INSERT INTO bank_account_ledger_entry
+             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'voucher', ?)`,
+          [
+            randomUUID(),
+            v.bank_account_id,
+            paymentDate,
+            id,
+            amount,
+            v.payable_account_id,
+            `Vendor advance — voucher ${v.voucher_number}`,
+            transactionRef,
+            runningBalance,
+            actorUserId,
+          ],
+        );
+
+        // Lock the vendor as the serialization point for vendor_advance_ledger writes — same
+        // "lock the owning entity row, read the last balance, compute, insert" discipline
+        // imprest-ledger.service.ts's post() uses for imprest_manager, so two vouchers for the
+        // same vendor releasing concurrently can't read the same stale balance.
+        const [[vendorLock]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM vendor_master WHERE id = ? FOR UPDATE`,
+          [v.linked_vendor_id],
+        );
+        if (!vendorLock) throw new PaymentVoucherError("Vendor not found", 404);
+        const priorAdvanceBalance = await getVendorAdvanceBalance(connection, v.linked_vendor_id);
+        const newAdvanceBalance = roundMoney(priorAdvanceBalance + amount);
+        await connection.execute(
+          `INSERT INTO vendor_advance_ledger
+             (id, vendor_id, branch_id, direction, amount, balance_after, payment_voucher_id, narration, created_by)
+           VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?)`,
+          [
+            randomUUID(), v.linked_vendor_id, (bankAccount as any).branch_id, amount, newAdvanceBalance,
+            id, `Advance paid — voucher ${v.voucher_number}`, actorUserId,
+          ],
+        );
+      } else if (v.source_type === "vendor_advance_application") {
+        // No new money moves here — the cash left the bank when the original vendor_advance
+        // voucher released. This settles GRN dues on paper: walk the allocation set (same table
+        // vendor_grn uses) and dispatch each with payment_mode='Adjustment', which
+        // vendor-payment-ledger.service.ts's dispatch() already handles as a first-class,
+        // no-bank-required path (not in BANK_MODES) that still correctly updates the GRN due's
+        // paid/balance/status — and, since no companyBankAccountId is supplied, correctly writes
+        // NO bank_account_ledger_entry row, because no real cash is moving right now.
+        const [[vendorLock]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM vendor_master WHERE id = ? FOR UPDATE`,
+          [v.linked_vendor_id],
+        );
+        if (!vendorLock) throw new PaymentVoucherError("Vendor not found", 404);
+
+        const available = await getVendorAdvanceBalance(connection, v.linked_vendor_id);
+        if (amount > available + 0.01) {
+          throw new PaymentVoucherError(
+            `This vendor's available advance balance (${available}) is now less than the amount being applied (${amount}) — another application likely drew it down since this voucher was raised.`,
+            409,
+          );
+        }
+
+        const [applicationAllocRows] = await connection.execute<RowDataPacket[]>(
+          `SELECT vendor_payment_tracking_id, allocated_amount
+             FROM payment_voucher_grn_allocation WHERE payment_voucher_id = ? ORDER BY created_at ASC`,
+          [id],
+        );
+        const applicationAllocations = (applicationAllocRows as any[]).map((r) => ({
+          vendorPaymentTrackingId: r.vendor_payment_tracking_id,
+          amount: roundMoney(Number(r.allocated_amount)),
+        }));
+
+        for (const alloc of applicationAllocations) {
+          await vendorPaymentLedgerService.dispatch(
+            alloc.vendorPaymentTrackingId,
+            {
+              paymentMode: "Adjustment",
+              paymentDate,
+              paymentAmount: alloc.amount,
+              remarks: `Settled from vendor advance — voucher ${v.voucher_number}`,
+              allowSharedReference: applicationAllocations.length > 1,
+            },
+            actorUserId,
+            actorRole,
+            connection,
+            v.id,
+          );
+        }
+
+        const newAdvanceBalance = roundMoney(available - amount);
+        await connection.execute(
+          `INSERT INTO vendor_advance_ledger
+             (id, vendor_id, branch_id, direction, amount, balance_after, payment_voucher_id, narration, created_by)
+           VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?)`,
+          [
+            randomUUID(), v.linked_vendor_id, (bankAccount as any).branch_id, amount, newAdvanceBalance,
+            id, `Applied against ${applicationAllocations.length} GRN due(s) — voucher ${v.voucher_number}`, actorUserId,
           ],
         );
       } else {

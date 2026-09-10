@@ -853,6 +853,23 @@ export const vendorPaymentService = {
     return rows;
   },
 
+  /**
+   * Vendor's currently available advance/on-account balance — the latest vendor_advance_ledger
+   * running balance, or 0 if this vendor has never had an advance voucher released. Same
+   * "latest balance_after wins" logic payment-voucher.service.ts's own private copy of this
+   * query uses internally during raise()/release() — this is the read-only, externally-callable
+   * twin, backing the Raise form's inline balance display and the Vendor Payment Dispatch page's
+   * advance badge. A single trivial SELECT, not worth importing across modules for.
+   */
+  async getAdvanceBalance(vendorId: string): Promise<number> {
+    const [[last]] = await db.execute<RowDataPacket[]>(
+      `SELECT balance_after FROM vendor_advance_ledger
+        WHERE vendor_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [vendorId],
+    );
+    return last ? Number((last as any).balance_after) : 0;
+  },
+
   async auditCreatedPayment(id: string, actorUserId: string) {
     const payment = await this.getPayment(id);
     if (!payment) throw new Error("Vendor payment record not found for audit");
