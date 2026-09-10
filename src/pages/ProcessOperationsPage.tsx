@@ -1233,8 +1233,16 @@ function HealthStat({ label, value, caption, tone, icon: Icon, fillPct, fillGood
 
 interface Insight {
   severity: "critical" | "warning";
-  title: string;
-  detail: string;
+  /** What the reader would spot first, one line. */
+  what: string;
+  /** Why -- the real number(s) this insight is derived from, not a guess. */
+  why: string;
+  /** Impact -- what's actually affected by this, scoped to what's provably
+   *  true from data already on screen (never a fabricated cost/revenue
+   *  estimate this page has no way to compute). */
+  impact: string;
+  /** Action -- the concrete next step, derived from real state (an open
+   *  requisition existing or not, a section existing to drill into). */
   action: string;
   sectionKey: string;
 }
@@ -1247,7 +1255,11 @@ interface Insight {
  * same headcount/shortfall this page already computed), not static canned
  * copy keyed by metric name. An insight that can't point at a real target
  * miss or a real shortfall simply isn't generated -- an empty panel is the
- * honest "nothing worth flagging" case, not a placeholder.
+ * honest "nothing worth flagging" case, not a placeholder. Structured as
+ * What/Why/Impact/Action (Mydashboards' narrative-card idiom) rather than a
+ * flat title+detail -- every field still traces to a real value, "Impact"
+ * included: it describes what's affected in this system's own terms
+ * (mandate, section, target), never an invented rupee/time cost.
  */
 function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefined): Insight[] {
   const insights: Insight[] = [];
@@ -1256,8 +1268,9 @@ function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefin
     const sf = health.headcount.shortfall!;
     insights.push({
       severity: "critical",
-      title: `Understaffed by ${sf} against mandate`,
-      detail: `${health.headcount.activeHc} active headcount against a sanctioned ${health.headcount.mandatedHc} — ${sf} seat${sf === 1 ? "" : "s"} short.`,
+      what: `Understaffed by ${sf} against mandate`,
+      why: `${health.headcount.activeHc} active headcount against a sanctioned ${health.headcount.mandatedHc}.`,
+      impact: `${sf} seat${sf === 1 ? "" : "s"} short of mandate -- every operations metric below is being produced by fewer people than this process is sanctioned for.`,
       action: health.hiring.openRequisitions > 0
         ? `${health.hiring.openRequisitions} requisition${health.hiring.openRequisitions === 1 ? "" : "s"} already open — chase fulfillment, not a new raise.`
         : "No requisition raised yet for this gap — that's the actionable next step.",
@@ -1279,9 +1292,11 @@ function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefin
     const worst = fails[0];
     insights.push({
       severity: key === "hygiene" ? "warning" : "critical",
-      title: `${worst.label} missing target`,
-      detail: `${formatValue(worst.value, worst.unit)} against ${targetCaption(worst) ?? "its configured target"}${
-        fails.length > 1 ? ` — ${fails.length - 1} more metric${fails.length - 1 === 1 ? "" : "s"} in ${section.title} also missing target` : ""}.`,
+      what: `${worst.label} missing target`,
+      why: `${formatValue(worst.value, worst.unit)} against ${targetCaption(worst) ?? "its configured target"}.`,
+      impact: fails.length > 1
+        ? `${fails.length - 1} more metric${fails.length - 1 === 1 ? "" : "s"} in ${section.title} also missing target — not an isolated miss.`
+        : `The only metric in ${section.title} missing target this period.`,
       action: `Open ${section.title} below for the full breakdown.`,
       sectionKey: key,
     });
@@ -1313,6 +1328,39 @@ function deriveParetoData(ops: Operations): ParetoBar[] {
     running += f.gap;
     return { label: f.label, gapPct: Math.round(f.gap * 10) / 10, cumulativePct: Math.round((running / total) * 1000) / 10 };
   });
+}
+
+/**
+ * One insight, collapsed to just "What" by default (keeps the panel scannable
+ * when there are several), expanding on click into the Why/Impact/Action
+ * quadrants Mydashboards' own AI Insight cards use -- What is the card's own
+ * header rather than a fourth quadrant, since repeating it inside the
+ * expanded body would just restate the title.
+ */
+function InsightCard({ insight: ins }: { insight: Insight }) {
+  const [open, setOpen] = useState(false);
+  const color = ins.severity === "critical" ? C_RED_TEXT : C_AMBER;
+  return (
+    <button type="button" onClick={() => setOpen((v) => !v)}
+      className="text-left rounded-lg border px-2.5 py-2 cursor-pointer transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+      style={{ borderColor: `${color}40`, background: `${color}0c` }}>
+      <div className="flex items-start gap-1.5">
+        <p className="text-[11px] font-bold flex-1" style={{ color }}>{ins.what}</p>
+        <ChevronRight size={12} className={`shrink-0 mt-0.5 transition-transform ${open ? "rotate-90" : ""}`} style={{ color }} />
+      </div>
+      {!open && <p className="text-[10.5px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">{ins.why}</p>}
+      {open && (
+        <div className="mt-1.5 grid grid-cols-1 gap-1.5">
+          {([["Why", ins.why], ["Impact", ins.impact], ["Action", ins.action]] as const).map(([label, text]) => (
+            <div key={label} className="rounded bg-white/70 dark:bg-slate-900/40 px-2 py-1">
+              <p className="text-[8.5px] font-bold uppercase tracking-wide" style={{ color }}>{label}</p>
+              <p className="text-[10.5px] text-slate-600 dark:text-slate-300 leading-snug mt-0.5">{text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </button>
+  );
 }
 
 function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
@@ -1349,16 +1397,7 @@ function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: 
         </p>
       </div>
       <div className="grid gap-2 px-3.5 pb-3.5 sm:grid-cols-2">
-        {insights.map((ins, i) => {
-          const color = ins.severity === "critical" ? C_RED_TEXT : C_AMBER;
-          return (
-            <div key={i} className="rounded-lg border px-2.5 py-2" style={{ borderColor: `${color}40`, background: `${color}0c` }}>
-              <p className="text-[11px] font-bold" style={{ color }}>{ins.title}</p>
-              <p className="text-[10.5px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">{ins.detail}</p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 italic">→ {ins.action}</p>
-            </div>
-          );
-        })}
+        {insights.map((ins, i) => <InsightCard key={i} insight={ins} />)}
       </div>
       {pareto.length >= 2 && (
         <div className="px-3.5 pb-3.5">
