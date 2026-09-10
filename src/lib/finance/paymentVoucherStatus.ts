@@ -23,7 +23,7 @@ export type Voucher = {
   id: string;
   voucher_number: string;
   voucher_type: string;
-  source_type: "vendor_grn" | "imprest_allocation" | "general";
+  source_type: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application";
   particulars: string | null;
   bank_account_id: string;
   bank_account_name: string | null;
@@ -34,6 +34,13 @@ export type Voucher = {
   vendor_name: string | null;
   linked_imprest_manager_id: string | null;
   imprest_manager_name: string | null;
+  /** vendor_advance/vendor_advance_application carry no GRN, so vendor_name above is null for
+   *  them — this is their vendor identity. */
+  linked_vendor_id: string | null;
+  linked_vendor_name: string | null;
+  /** The vendor's advance balance AFTER this voucher — returned by get(), null for every other
+   *  source type. */
+  vendor_advance_balance: number | null;
   amount: number;
   remarks: string | null;
   reason: string | null;
