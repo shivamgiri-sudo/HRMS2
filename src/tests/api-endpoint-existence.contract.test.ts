@@ -346,6 +346,17 @@ const KNOWN_MISSING: Record<string, string> = {
   // sources,compute}.ts, not a modules/kpi-studio/ DIRECTORY, which is what the original
   // search looked for. The router simply was never mounted in app.ts, so every path 401'd
   // and looked absent. Mounted 2026-09-07 and exercised end to end; entries removed.
+
+  // ── NOC Certificate employee form ─────────────────────────────────────────────────────────
+  // EmployeeNocFormPage.tsx calls these against a bearer-less token link, same shape as the
+  // joining-kit/EPF public links. The backend module (noc-case-public.routes.ts, noc-case.
+  // service.ts) exists on this machine's local working tree but was never committed to origin
+  // -- no commit anywhere in this repo's history touches either file. Mounting the router
+  // without its dependency pushed breaks the build (`Cannot find module`), caught live
+  // 2026-09-10 trying exactly that. Genuinely absent from `main` today, not a wiring gap:
+  // removing this entry requires the owning session to actually push the feature.
+  "/api/public/noc/:x": "backend module built locally but never pushed to origin/main; see comment above",
+  "/api/public/noc/:x/submit": "same as /api/public/noc/:x -- never pushed to origin/main",
 };
 
 /**
@@ -354,6 +365,14 @@ const KNOWN_MISSING: Record<string, string> = {
  * "nobody serves this" with "nobody calls this" teaches people to stop reading its output.
  */
 const NOT_A_REQUEST: Record<string, string> = {
+  "/api/housing-dashboards/housing-owner":
+    "the `base` argument NativeHousingDashboards.tsx passes into useFilterOptions(base), which " +
+    "fetches `${base}/filter-options` -- a real, mounted route (housing-dashboards.routes.ts). " +
+    "The static scan can't see the template-literal suffix the hook appends at call time, so it " +
+    "reads the bare base string as its own request.",
+  "/api/housing-dashboards/housing-premium":
+    "same shape as housing-owner above -- the useFilterOptions(base) argument, not a fetch target " +
+    "on its own; the real call is `${base}/filter-options`, a mounted route.",
   "/api/files/company-feed":
     "a prefix in AuthedImage.tsx's PUBLIC_CATEGORIES, used by isPublicUrl(src) to decide whether to attach an auth header to a URL it was given. It is a predicate, never a fetch target, so the backend is not expected to mount it.",
 };
