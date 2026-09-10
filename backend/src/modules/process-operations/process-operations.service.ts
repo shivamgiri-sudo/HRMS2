@@ -1666,9 +1666,21 @@ export async function getProcessBusinessHealth(
     };
   }
 
-  // ── Headcount vs. mandate -- active headcount is always real; mandate is
-  // real only where a workforce_mandate row was actually configured for this
-  // process (21 of 58 processes, as of this session's audit).
+  // ── Headcount vs. mandate -- active headcount is always real. "Mandate" turns
+  // out to have TWO independent, disagreeing sources in this system, not one:
+  //
+  //   workforce_mandate.mandated_hc        -- the formal HC-planning mandate,
+  //     configured for only 21 of 58 processes.
+  //   process_revenue_rule.mandated_seats  -- the seat count the CLIENT is
+  //     billed against, configured for more processes (33 of 58) including
+  //     several with no workforce_mandate row at all.
+  //
+  // Checked live across all 58 processes: 14 processes have BOTH, and 14 of
+  // those disagree -- some by a lot (one process: 10 revenue-rule seats vs.
+  // 31 HC-mandate seats). Silently preferring one over the other means
+  // picking a winner between two real, both-configured numbers with no basis
+  // to say which is right. So: show whichever exists; show BOTH, clearly
+  // labelled, when both exist -- never quietly resolve a disagreement.
   const [hcRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS active_hc FROM employees WHERE process_id = ? AND active_status = 1`, [processId],
   );
@@ -1681,10 +1693,38 @@ export async function getProcessBusinessHealth(
     [processId],
   );
   const mandatedHcRaw = (mandateRows as any[])[0]?.total_mandated_hc;
-  const mandatedHc = mandatedHcRaw !== null && mandatedHcRaw !== undefined ? Number(mandatedHcRaw) : null;
-  const headcount: ProcessBusinessHealth["headcount"] = mandatedHc === null
-    ? { available: false, reason: "No sanctioned headcount mandate configured for this process.", activeHc, mandatedHc: null, gap: null }
-    : { available: true, reason: null, activeHc, mandatedHc, gap: activeHc - mandatedHc };
+  const hcMandate = mandatedHcRaw !== null && mandatedHcRaw !== undefined ? Number(mandatedHcRaw) : null;
+
+  const [seatRows] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(mandated_seats) AS total_seats
+       FROM process_revenue_rule
+      WHERE process_id = ? AND status = 'approved' AND mandated_seats IS NOT NULL
+        AND effective_from <= CURDATE() AND (effective_to IS NULL OR effective_to >= CURDATE())`,
+    [processId],
+  );
+  const seatRaw = (seatRows as any[])[0]?.total_seats;
+  const revenueRuleSeats = seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
+
+  let headcount: ProcessBusinessHealth["headcount"];
+  if (hcMandate === null && revenueRuleSeats === null) {
+    headcount = {
+      available: false, reason: "No sanctioned headcount mandate or contracted seat count configured for this process.",
+      activeHc, mandatedHc: null, gap: null,
+    };
+  } else if (hcMandate !== null && revenueRuleSeats !== null && hcMandate !== revenueRuleSeats) {
+    headcount = {
+      available: true,
+      reason: `Two disagreeing sources: HC mandate says ${hcMandate}, the revenue rule's contracted seats say ${revenueRuleSeats}. Shown separately rather than picking one.`,
+      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate,
+    };
+  } else {
+    const resolved = hcMandate ?? revenueRuleSeats!;
+    headcount = {
+      available: true,
+      reason: hcMandate === null ? "From the revenue rule's contracted seats — no formal HC mandate configured." : null,
+      activeHc, mandatedHc: resolved, gap: activeHc - resolved,
+    };
+  }
 
   // ── Hiring pipeline -- job_requisition carries a real process_id link;
   // ats_candidate only matches by process NAME (no FK), which is weaker and

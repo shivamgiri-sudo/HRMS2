@@ -860,7 +860,8 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
             <HealthStat label="Active headcount" value={String(headcount.activeHc)} />
             {headcount.available ? (
               <>
-                <HealthStat label="Mandated headcount" value={String(headcount.mandatedHc)} />
+                <HealthStat label="Mandated headcount" value={String(headcount.mandatedHc)}
+                  caption={headcount.reason ? "see note below" : undefined} />
                 <HealthStat label="Gap" value={`${(headcount.gap ?? 0) > 0 ? "+" : ""}${headcount.gap}`}
                   caption={headcount.gap === 0 ? "exactly at mandate" : headcount.gap! > 0 ? "over mandate" : "under mandate"}
                   tone={headcount.gap === 0 ? "neutral" : headcount.gap! > 0 ? "good" : "bad"} />
@@ -871,6 +872,9 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
               </div>
             )}
           </div>
+          {headcount.available && headcount.reason && (
+            <p className="text-[9.5px] text-amber-600 dark:text-amber-400 mt-1.5">{headcount.reason}</p>
+          )}
         </div>
 
         {/* Hiring pipeline */}
