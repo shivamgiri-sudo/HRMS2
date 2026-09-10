@@ -1170,6 +1170,56 @@ function FunnelChart({ metrics }: { metrics: Reading[] }) {
   );
 }
 
+const FUNNEL_STAGE_COLORS = [C_SLATE, C_BLUE, C_PURPLE, C_GREEN];
+
+/**
+ * The same four funnel metrics FunnelChart already plots over time, but as a
+ * snapshot funnel of the latest reading only (Mydashboards' hand-rolled
+ * FunnelBar/JourneyFunnel idiom) -- each stage's own width IS its %, so the
+ * shape of the funnel narrowing is visible at a glance, with the stage-to-
+ * stage drop-off called out underneath. No new data: every value here is
+ * the same Reading.value FunnelChart already receives.
+ */
+function FunnelSnapshot({ metrics }: { metrics: Reading[] }) {
+  const stages: Array<[string, string]> = [
+    ["FUNNEL_SCORED_PCT", "Scored"], ["FUNNEL_OPENING_PCT", "Opening"],
+    ["FUNNEL_OFFER_PCT", "Offer"], ["FUNNEL_SALE_PCT", "Sale"],
+  ];
+  const present = stages
+    .map(([key, label]) => ({ key, label, value: metrics.find((m) => m.metricKey === key)?.value ?? null }))
+    .filter((s): s is { key: string; label: string; value: number } => s.value !== null);
+  if (present.length < 2) return null;
+
+  return (
+    <ChartCard title="Conversion funnel — latest reading"
+      subtitle="Each bar's width is its own % of all scored calls; drop-off is stage-to-stage">
+      <div className="px-3 space-y-2 py-1">
+        {present.map((s, i) => {
+          const prevValue = i > 0 ? present[i - 1].value : null;
+          const dropoffPct = prevValue !== null && prevValue > 0 ? ((prevValue - s.value) / prevValue) * 100 : null;
+          return (
+            <div key={s.key}>
+              <div className="flex items-center justify-between text-[10px] mb-0.5">
+                <span className="font-semibold text-slate-600 dark:text-slate-300">{s.label}</span>
+                <span className="tabular-nums font-bold text-slate-700 dark:text-slate-200">{s.value.toFixed(1)}%</span>
+              </div>
+              <div className="h-5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                <div className="h-full rounded transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(4, s.value))}%`, background: FUNNEL_STAGE_COLORS[i] }} />
+              </div>
+              {dropoffPct !== null && dropoffPct > 0.05 && (
+                <p className="text-[9px] mt-0.5" style={{ color: C_RED_TEXT }}>
+                  ↓ {dropoffPct.toFixed(1)}% drop from {present[i - 1].label}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </ChartCard>
+  );
+}
+
 /** Seven scored attributes on a fixed axis set — the case radar is actually for. */
 function QualityRadar({ metrics }: { metrics: Reading[] }) {
   const data = metrics
@@ -2605,6 +2655,7 @@ export default function ProcessOperationsPage() {
   const qual = ops?.sections.find((s) => s.key === "quality");
   const risk = ops?.sections.find((s) => s.key === "risk");
   const charts = [
+    conv ? <FunnelSnapshot key="fs" metrics={conv.metrics} /> : null,
     conv ? <FunnelChart key="f" metrics={conv.metrics} /> : null,
     qual ? <QualityRadar key="q" metrics={qual.metrics} /> : null,
     risk ? <RiskBars key="r" metrics={risk.metrics} /> : null,
