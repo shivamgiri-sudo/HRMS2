@@ -134,6 +134,23 @@ router.get("/:processId/voice-of-customer", requireAuth, requireRole(...VIEWER_R
   res.json({ success: true, data });
 }));
 
+/**
+ * Day x CLAP-category heat-cell matrix, last 14 days -- which days carried
+ * a spike of Agent/Logistic/Product/Customer-attributed calls. Not
+ * period-selector-driven, see the service function for why. Declared
+ * before /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer/heatmap", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getClapDailyHeatmap(req.authUser!.id, req.params.processId);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
 const CLAP_VALUES = ["Customer", "Logistic", "Agent", "Product"] as const;
 
 /**
