@@ -2685,6 +2685,75 @@ export async function getFatalAnalysis(
   };
 }
 
+export interface DayWiseScenarioRow { date: string; complaint: number; request: number; query: number; saleDone: number; total: number; }
+export interface DayWiseScenarioAudit { available: boolean; reason: string | null; days: DayWiseScenarioRow[]; }
+
+/**
+ * Detail Analysis tab's distinctive piece -- ported from Mydashboards'
+ * getDetailAnalysis: daily audit volume broken down by scenario
+ * (Complaint/Request/Query/Sale Done), newest first. The tab's other
+ * components (scenario x scenario1 panels, scenario count totals) are
+ * already covered by this page's Scenario Distribution panel -- not
+ * duplicated here.
+ */
+export async function getDayWiseScenarioAudit(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<DayWiseScenarioAudit | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): DayWiseScenarioAudit => ({ available: false, reason, days: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(q.CallDate, '%Y-%m-%d') call_date,
+            SUM(CASE WHEN TRIM(q.scenario) = 'Complaint' THEN 1 ELSE 0 END) complaint,
+            SUM(CASE WHEN TRIM(q.scenario) = 'Request' THEN 1 ELSE 0 END) request,
+            SUM(CASE WHEN TRIM(q.scenario) = 'Query' THEN 1 ELSE 0 END) query,
+            SUM(CASE WHEN TRIM(q.scenario) = 'Sale Done' THEN 1 ELSE 0 END) sale_done,
+            COUNT(*) total
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY call_date
+      ORDER BY call_date DESC`,
+    [...employeeCodes, from, to],
+  );
+
+  if (!(rows as any[]).length) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const days: DayWiseScenarioRow[] = (rows as any[]).map((r) => ({
+    date: String(r.call_date),
+    complaint: Number(r.complaint), request: Number(r.request), query: Number(r.query), saleDone: Number(r.sale_done),
+    total: Number(r.total),
+  }));
+  return { available: true, reason: null, days };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{

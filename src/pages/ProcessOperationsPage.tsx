@@ -274,6 +274,9 @@ interface FatalAnalysis {
   topContributors: FatalContributorRow[];
 }
 
+interface DayWiseScenarioRow { date: string; complaint: number; request: number; query: number; saleDone: number; total: number; }
+interface DayWiseScenarioAudit { available: boolean; reason: string | null; days: DayWiseScenarioRow[]; }
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1299,6 +1302,55 @@ function FatalAnalysisPanel({ processId, period }: { processId: string; period: 
               </>
             )}
           </>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Detail Analysis tab's distinctive piece -- daily audit volume stacked by
+ * scenario. Ported from Mydashboards' getDetailAnalysis. The tab's other
+ * components (scenario panels, scenario totals) are already covered by
+ * Scenario Distribution above -- not duplicated here.
+ */
+function DayWiseScenarioAuditPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "day-wise-scenario-audit", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<DayWiseScenarioAudit>>(
+      `/api/process-operations/${processId}/day-wise-scenario-audit?period=${period}`),
+  });
+  const dw = data?.data;
+  const chartData = useMemo(
+    () => dw?.days.slice().reverse().map((d) => ({ date: d.date.slice(5), Complaint: d.complaint, Request: d.request, Query: d.query, "Sale Done": d.saleDone })) ?? [],
+    [dw],
+  );
+
+  return (
+    <ChartCard title="Day-wise audit volume by scenario" subtitle="Daily audit count, stacked by what the call was actually about">
+      <div className="px-3 pb-1">
+        {isLoading || !dw ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading day-wise audit volume…
+          </div>
+        ) : !dw.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{dw.reason}</p>
+        ) : (
+          <div className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
+                <Bar dataKey="Complaint" stackId="s" fill={C_RED} radius={[0, 0, 0, 0]} />
+                <Bar dataKey="Query" stackId="s" fill={C_BLUE} />
+                <Bar dataKey="Request" stackId="s" fill={C_AMBER} />
+                <Bar dataKey="Sale Done" stackId="s" fill={C_GREEN} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         )}
       </div>
     </ChartCard>
@@ -3989,6 +4041,7 @@ export default function ProcessOperationsPage() {
                 {current && <DailyQualityTrendPanel processId={current} />}
                 {current && <CustomerRiskCardsPanel processId={current} period={period} />}
                 {current && <FatalAnalysisPanel processId={current} period={period} />}
+                {current && <DayWiseScenarioAuditPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
