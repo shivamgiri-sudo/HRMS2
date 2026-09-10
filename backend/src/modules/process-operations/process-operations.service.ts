@@ -2132,7 +2132,20 @@ export async function getProcessBusinessHealth(
   // the SAME cached summary every P&L page already warms.
   let finance: ProcessBusinessHealth["finance"];
   try {
-    const summary: any = await getCachedAllocationSummary({ period: periodCode });
+    // Bounded wait, not a bare await: the underlying P&L computation has been
+    // observed to hang well past 90s under this machine's real concurrent
+    // load (see comment above) rather than throw -- a bare await here means
+    // this whole panel spins on "Pulling P&L..." forever with no fallback,
+    // exactly what live verification caught on 2026-09-10 (Bella-Vita Organic,
+    // request pending 60s+, no response at all). A hang is not a crash the
+    // existing try/catch below can degrade from, so race it against a timeout
+    // and degrade the same honest way the catch block already does for a
+    // real error -- this endpoint must always answer, even if finance can't.
+    const summary: any = await Promise.race([
+      getCachedAllocationSummary({ period: periodCode }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("P&L allocation summary timed out after 8s")), 8000)),
+    ]);
     const row = (summary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
     if (!row) {
       finance = {
