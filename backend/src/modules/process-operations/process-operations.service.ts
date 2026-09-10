@@ -2859,6 +2859,130 @@ export async function getRepeatAnalysis(
   };
 }
 
+/**
+ * A call is flagged as a fraud call when fraud_detected_sentence holds a
+ * real value -- not blank, not a placeholder like "None"/"NA"/"N/A"/"Null".
+ * Ported verbatim from Mydashboards' INBOUND_FRAUD_SENTENCE_CHECK. Both
+ * columns confirmed live: fraud_detected_sentence had 2 real flagged calls
+ * in the last 30 days across all processes.
+ */
+const FRAUD_SENTENCE_CHECK =
+  `q.fraud_detected_sentence IS NOT NULL AND TRIM(q.fraud_detected_sentence) != ''
+   AND LOWER(TRIM(q.fraud_detected_sentence)) NOT IN ('none', 'na', 'n/a', 'null')`;
+
+export interface FraudCallRow {
+  employeeCode: string; employeeName: string;
+  callDate: string; scenario: string | null;
+  sentence: string; hasTranscript: boolean; hasRecording: boolean;
+}
+export interface FraudAgentRow { employeeCode: string; employeeName: string; flagged: number; total: number; riskPct: number; }
+export interface FraudCallSummary {
+  available: boolean; reason: string | null;
+  total: number; flagged: number;
+  calls: FraudCallRow[];
+  byAgent: FraudAgentRow[];
+}
+
+/**
+ * Fraud Call tab -- ported from Mydashboards' getFraudCalls. Every call
+ * with a real fraud_detected_sentence value, newest first, plus a per-agent
+ * flagged/total/risk rollup. Each row opens the same CallDetailDrawer every
+ * other real-call list on this page already uses.
+ */
+export async function getFraudCallSummary(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<FraudCallSummary | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): FraudCallSummary => ({ available: false, reason, total: 0, flagged: 0, calls: [], byAgent: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [[callRows], [agentRows], [totalRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT q.User employee_code, DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i:%s') call_date,
+              q.scenario, q.fraud_detected_sentence sentence,
+              (q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != '') has_transcript,
+              (q.call_recording IS NOT NULL AND TRIM(q.call_recording) != '') has_recording
+         FROM db_audit.call_quality_assessment q
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND (${FRAUD_SENTENCE_CHECK})
+        ORDER BY q.CallDate DESC
+        LIMIT 100`,
+      [...employeeCodes, from, to],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT q.User employee_code,
+              SUM(CASE WHEN (${FRAUD_SENTENCE_CHECK}) THEN 1 ELSE 0 END) flagged,
+              COUNT(*) total
+         FROM db_audit.call_quality_assessment q
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.quality_percentage IS NOT NULL
+        GROUP BY q.User
+        HAVING flagged > 0
+        ORDER BY flagged DESC`,
+      [...employeeCodes, from, to],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) total FROM db_audit.call_quality_assessment q
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.quality_percentage IS NOT NULL`,
+      [...employeeCodes, from, to],
+    ),
+  ]);
+
+  const total = Number((totalRows as any[])[0]?.total ?? 0);
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const calls: FraudCallRow[] = (callRows as any[]).map((r) => ({
+    employeeCode: String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    callDate: String(r.call_date), scenario: r.scenario ?? null,
+    sentence: String(r.sentence ?? ""),
+    hasTranscript: Boolean(r.has_transcript), hasRecording: Boolean(r.has_recording),
+  }));
+
+  const byAgent: FraudAgentRow[] = (agentRows as any[]).map((r) => {
+    const flagged = Number(r.flagged); const agentTotal = Number(r.total);
+    return {
+      employeeCode: String(r.employee_code),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      flagged, total: agentTotal,
+      riskPct: agentTotal > 0 ? Math.round((flagged / agentTotal) * 1000) / 10 : 0,
+    };
+  });
+
+  return { available: true, reason: null, total, flagged: calls.length, calls, byAgent };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{

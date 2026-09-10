@@ -284,6 +284,15 @@ interface RepeatAnalysis {
   dayWise: DayWiseRepeatRow[];
 }
 
+interface FraudCallRow { employeeCode: string; employeeName: string; callDate: string; scenario: string | null; sentence: string; hasTranscript: boolean; hasRecording: boolean; }
+interface FraudAgentRow { employeeCode: string; employeeName: string; flagged: number; total: number; riskPct: number; }
+interface FraudCallSummary {
+  available: boolean; reason: string | null;
+  total: number; flagged: number;
+  calls: FraudCallRow[];
+  byAgent: FraudAgentRow[];
+}
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1424,6 +1433,81 @@ function RepeatAnalysisPanel({ processId, period }: { processId: string; period:
           </>
         )}
       </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Fraud Call tab -- ported from Mydashboards' getFraudCalls: every call
+ * with a real fraud_detected_sentence value (not blank, not a placeholder),
+ * plus a per-agent flagged/total/risk rollup. Each row opens the same
+ * CallDetailDrawer every other real-call list on this page already uses --
+ * fourth real consumer.
+ */
+function FraudCallPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "fraud-calls", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<FraudCallSummary>>(
+      `/api/process-operations/${processId}/fraud-calls?period=${period}`),
+  });
+  const fc = data?.data;
+  const { openCall, drawer } = useCallDetailDrawer(processId);
+
+  return (
+    <ChartCard title="Fraud call detection" subtitle="Calls where the AI pass detected a real fraud-risk sentence">
+      <div className="px-3 pb-1">
+        {isLoading || !fc ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Checking for fraud calls…
+          </div>
+        ) : !fc.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{fc.reason}</p>
+        ) : !fc.calls.length ? (
+          <div className="rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 px-2.5 py-2 flex items-center gap-2">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+            <p className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">No fraud-risk calls detected in this period — {fc.total} audited.</p>
+          </div>
+        ) : (
+          <>
+            <div className="rounded-lg border border-red-200 dark:border-red-900 overflow-hidden mb-2">
+              <div className="px-2.5 py-1.5 bg-gradient-to-r from-red-700 to-red-600 text-white text-[10px] font-bold uppercase tracking-wide">
+                {fc.calls.length} of {fc.total} audited calls flagged
+              </div>
+              <div className="max-h-56 overflow-y-auto">
+                {fc.calls.map((c, i) => (
+                  <button key={i} type="button"
+                    onClick={() => c.hasTranscript && openCall({ employeeCode: c.employeeCode, callDate: c.callDate })}
+                    disabled={!c.hasTranscript}
+                    title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
+                    className="w-full flex flex-col gap-0.5 text-left px-2.5 py-1.5 text-[10.5px] border-t border-red-100 dark:border-red-900/50 first:border-t-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:bg-red-50/70 dark:hover:bg-red-950/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500 shrink-0 w-32">{c.callDate}</span>
+                      <span className="text-slate-700 dark:text-slate-300 font-medium truncate w-28 shrink-0">{c.employeeName}</span>
+                      <span className="text-slate-500 truncate flex-1">{c.scenario ?? "—"}</span>
+                      {c.hasTranscript ? <ChevronRight size={11} className="text-slate-300 shrink-0" /> : <span className="w-2.5 shrink-0" />}
+                    </div>
+                    <p className="text-[9.5px] text-red-600 dark:text-red-400 italic truncate pl-1">"{c.sentence}"</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {fc.byAgent.length > 0 && (
+              <table className="w-full text-[10.5px] border-collapse">
+                <tbody>
+                  {fc.byAgent.map((a) => (
+                    <tr key={a.employeeCode} className="border-t border-slate-100 dark:border-slate-800 first:border-t-0">
+                      <td className="py-1 pr-2 font-medium text-slate-700 dark:text-slate-300">{a.employeeName}</td>
+                      <td className="py-1 pr-2 text-right text-slate-500">{a.total} audits</td>
+                      <td className="py-1 text-right text-red-600 font-semibold">{a.flagged} ({a.riskPct}%)</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+      </div>
+      {drawer}
     </ChartCard>
   );
 }
@@ -4114,6 +4198,7 @@ export default function ProcessOperationsPage() {
                 {current && <FatalAnalysisPanel processId={current} period={period} />}
                 {current && <DayWiseScenarioAuditPanel processId={current} period={period} />}
                 {current && <RepeatAnalysisPanel processId={current} period={period} />}
+                {current && <FraudCallPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
