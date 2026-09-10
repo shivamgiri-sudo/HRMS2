@@ -75,6 +75,10 @@ const EMPTY_DRAFT = {
   amount: "",
   paymentMode: "Bank Transfer",
   bankName: "",
+  // Which of the company's own accounts this allocation is actually funded from — required for
+  // a real bank-funded top-up to write its own Bank Ledger entry (bank_account_ledger_entry),
+  // closing the gap where these top-ups never reached reconciliation.
+  companyBankAccountId: "",
   referenceNo: "",
   transactionDate: "",
   remarks: "",
@@ -104,6 +108,15 @@ export function ImprestAllocationPanel() {
     queryKey: ["imprest-managers"],
     queryFn: async () => unwrap<Manager>(await hrmsApi.get<any>("/api/finance/imprest/managers")),
   });
+
+  // Same shared query key the Payment Voucher forms use — one cache for the company's account
+  // list.
+  const bankAccountsQuery = useQuery({
+    queryKey: ["payment-voucher-bank-accounts"],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/bank-accounts")).data ?? [],
+    enabled: showForm,
+  });
+  const bankAccounts = bankAccountsQuery.data ?? [];
 
   const allocationsQuery = useQuery({
     queryKey: ["imprest-allocations"],
@@ -151,6 +164,7 @@ export function ImprestAllocationPanel() {
         amount: Number(draft.amount),
         paymentMode: draft.paymentMode,
         bankName: draft.bankName || undefined,
+        companyBankAccountId: draft.companyBankAccountId || undefined,
         referenceNo: draft.referenceNo || undefined,
         transactionDate: draft.transactionDate || undefined,
         remarks: draft.remarks || undefined,
@@ -296,6 +310,26 @@ export function ImprestAllocationPanel() {
             </GrnFieldRow>
 
             <GrnFieldRow
+              label="Bank account"
+              required
+              hint="Which of the company's own accounts this is actually paid from — needed so this allocation shows up in Bank Ledger and reconciliation, the same way a Payment Voucher release does."
+            >
+              <GrnSelect
+                value={draft.companyBankAccountId}
+                onChange={(e) => setDraft((d) => ({ ...d, companyBankAccountId: e.target.value }))}
+              >
+                <option value="">
+                  {bankAccountsQuery.isLoading ? "Loading…" : "— choose —"}
+                </option>
+                {bankAccounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>
+                    {a.account_name} — {a.account_number_masked}
+                  </option>
+                ))}
+              </GrnSelect>
+            </GrnFieldRow>
+
+            <GrnFieldRow
               label="Reference / UTR"
               hint="Mode, bank and reference together must be unique — the same guard the vendor payment ledger uses to stop a transfer being recorded twice."
             >
@@ -337,6 +371,10 @@ export function ImprestAllocationPanel() {
               <GrnButton
                 disabled={
                   create.isPending || !draft.imprestManagerId || !(Number(draft.amount) > 0)
+                  // Bank account only required once the org actually has one configured —
+                  // mirrors createAllocation()'s own server-side gate, so a fresh/test tenant
+                  // with none set up isn't blocked from raising an allocation.
+                  || (draft.paymentMode !== "Cash" && bankAccounts.length > 0 && !draft.companyBankAccountId)
                 }
                 onClick={() => create.mutate()}
               >

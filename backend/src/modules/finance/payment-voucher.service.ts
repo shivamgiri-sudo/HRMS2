@@ -623,10 +623,11 @@ export const paymentVoucherService = {
     const paymentDate = String(input.paymentDate ?? "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new PaymentVoucherError("Payment date is required");
     if (paymentDate > new Date().toISOString().slice(0, 10)) throw new PaymentVoucherError("Payment date cannot be in the future");
+    // Optional for every mode, not just Cash: reconciliation's own matching logic (see
+    // bank-reconciliation-match.service.ts's autoMatch) works purely off amount + date, never
+    // off this reference, so requiring it bought nothing but friction — Finance often doesn't
+    // have a UTR in hand yet at release time.
     const transactionRef = input.transactionRef?.trim() || null;
-    if (paymentMode !== "Cash" && !transactionRef) {
-      throw new PaymentVoucherError("Transaction ID / UTR / Cheque No. is required");
-    }
 
     let sourceType = "";
     let linkedVendorPaymentId: string | null = null;

@@ -29,11 +29,37 @@ const PENDING_PAYMENT = {
  *
  * `activeVoucher` seeds the guard's lookup: null means no voucher is in flight for this due.
  */
-function mockConnection(opts: { activeVoucher?: Record<string, unknown> | null } = {}) {
+function mockConnection(opts: {
+  activeVoucher?: Record<string, unknown> | null;
+  /** Whether `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1` (the
+   *  required-once-accounts-exist guard) finds a row. */
+  anyBankAccountExists?: boolean;
+  /** The row returned by the `company_bank_account ... FOR UPDATE` lock the ledger-write block
+   *  reads before computing running_balance. `undefined` (default) uses a normal active account. */
+  companyBankAccount?: { opening_balance: number; active_status: number } | null;
+  /** The `running_balance` of the most recent bank_account_ledger_entry row for this account, or
+   *  null/undefined for a fresh account with no ledger history yet (seeds from opening_balance). */
+  lastLedgerBalance?: number | null;
+} = {}) {
   const execute = vi.fn(async (sql: string) => {
     const text = String(sql);
     if (text.includes("FROM payment_voucher_grn_allocation")) {
       return [opts.activeVoucher ? [opts.activeVoucher] : []];
+    }
+    if (text.includes("FROM company_bank_account") && text.includes("active_status = 1") && !text.includes("FOR UPDATE")) {
+      return [opts.anyBankAccountExists ? [{ id: "any-account" }] : []];
+    }
+    if (text.includes("FROM company_bank_account") && text.includes("FOR UPDATE")) {
+      const account = opts.companyBankAccount === undefined
+        ? { opening_balance: 100000, active_status: 1 }
+        : opts.companyBankAccount;
+      return [account ? [{ id: "acct-1", ...account }] : []];
+    }
+    if (text.includes("FROM bank_account_ledger_entry") && text.includes("running_balance")) {
+      return [opts.lastLedgerBalance != null ? [{ running_balance: opts.lastLedgerBalance }] : []];
+    }
+    if (text.includes("FROM payable_account_master")) {
+      return [[{ id: "payable-1" }]];
     }
     if (text.includes("FOR UPDATE")) return [[PENDING_PAYMENT]];
     if (text.includes("vm.tds_enabled")) return [[{ tds_enabled: 0, tds_rate: 0, tds_section: null }]];
@@ -43,7 +69,14 @@ function mockConnection(opts: { activeVoucher?: Record<string, unknown> | null }
   });
   return {
     execute,
-    query: vi.fn(),
+    // GET_LOCK/RELEASE_LOCK — only exercised when a reference is supplied (referenceLock gets
+    // set). Real calls in these new tests, unlike the Cash-only tests above this describe block,
+    // so this needs to behave like a real connection.query(), not the default vi.fn() that
+    // returns undefined and breaks `.catch()` on the RELEASE_LOCK call.
+    query: vi.fn(async (sql: string) => {
+      if (String(sql).includes("GET_LOCK")) return [[{ acquired: 1 }]];
+      return [[]];
+    }),
     beginTransaction: vi.fn(),
     commit: vi.fn(),
     rollback: vi.fn(),
@@ -156,5 +189,108 @@ describe("vendorPaymentLedgerService.dispatch active-voucher guard", () => {
       String(sql).includes("FROM payment_voucher_grn_allocation")
     );
     expect(guardCall?.[1]).toEqual(["pay-1", ""]);
+  });
+});
+
+/**
+ * A direct "Pay" click never used to write to bank_account_ledger_entry — the only table Bank
+ * Reconciliation and the Bank Ledger report ever read — so a due paid this way was invisible to
+ * both. This closes that gap: supplying companyBankAccountId makes dispatch() write its own
+ * ledger entry, the same way payment-voucher.service.ts's release() already does for a voucher.
+ */
+describe("vendorPaymentLedgerService.dispatch bank ledger completeness", () => {
+  const NEFT_PAYLOAD = {
+    paymentMode: "NEFT" as const,
+    paymentDate: "2026-09-10",
+    paymentAmount: 500,
+    bankId: "bank-master-1",
+    transactionId: "UTR999",
+    companyBankAccountId: "acct-1",
+  };
+
+  it("writes a bank_account_ledger_entry row when companyBankAccountId is supplied", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: true, lastLedgerBalance: null });
+
+    await vendorPaymentLedgerService.dispatch("pay-1", NEFT_PAYLOAD, "actor-1", "accounts_head", conn as any);
+
+    const insertCall = conn.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+    );
+    expect(insertCall).toBeDefined();
+    const params = insertCall![1] as any[];
+    // Bound params, in order: id, bank_account_id, entry_date, debit_amount, payable_account_id,
+    // narration, instrument_ref, running_balance, created_by — voucher_id and credit_amount are
+    // SQL literals (NULL / 0) in the VALUES clause, not bound params.
+    expect(params[1]).toBe("acct-1"); // bank_account_id
+    expect(params[3]).toBe(500); // debit_amount = the gross installment amount
+    // Fresh account, no prior ledger entry: running_balance seeds from opening_balance (100000).
+    expect(params[7]).toBe(99500); // running_balance = 100000 - 500
+  });
+
+  it("chains running_balance off the previous ledger entry on a second dispatch", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: true, lastLedgerBalance: 99500 });
+
+    await vendorPaymentLedgerService.dispatch("pay-1", NEFT_PAYLOAD, "actor-1", "accounts_head", conn as any);
+
+    const insertCall = conn.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+    );
+    const params = insertCall![1] as any[];
+    expect(params[7]).toBe(99000); // 99500 - 500, continuing the chain, not re-seeding from opening_balance
+  });
+
+  it("does NOT insert a ledger row when called with callingVoucherId (release() writes its own)", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: true, lastLedgerBalance: 99500 });
+
+    await vendorPaymentLedgerService.dispatch(
+      "pay-1", NEFT_PAYLOAD, "actor-1", "finance_head", conn as any, "pv-being-released"
+    );
+
+    const insertCall = conn.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+    );
+    expect(insertCall).toBeUndefined();
+  });
+
+  it("does NOT insert a ledger row when companyBankAccountId is omitted (unchanged common case)", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: false });
+    const { companyBankAccountId, ...withoutAccount } = NEFT_PAYLOAD;
+
+    await vendorPaymentLedgerService.dispatch("pay-1", withoutAccount, "actor-1", "accounts_head", conn as any);
+
+    const insertCall = conn.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO bank_account_ledger_entry")
+    );
+    expect(insertCall).toBeUndefined();
+  });
+
+  it("requires a bank account once the org has one configured, for a bank-rail mode", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: true });
+    const { companyBankAccountId, ...withoutAccount } = NEFT_PAYLOAD;
+
+    await expect(
+      vendorPaymentLedgerService.dispatch("pay-1", withoutAccount, "actor-1", "accounts_head", conn as any)
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining("Bank account is required") });
+  });
+
+  it("does not require a bank account when the org has none configured yet", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: false });
+    const { companyBankAccountId, ...withoutAccount } = NEFT_PAYLOAD;
+
+    await expect(
+      vendorPaymentLedgerService.dispatch("pay-1", withoutAccount, "actor-1", "accounts_head", conn as any)
+    ).resolves.toBeDefined();
+  });
+
+  it("does not require a bank account for Cash, even once the org has one configured", async () => {
+    const conn = mockConnection({ activeVoucher: null, anyBankAccountExists: true });
+
+    await expect(
+      vendorPaymentLedgerService.dispatch(
+        "pay-1",
+        { paymentMode: "Cash", paymentDate: "2026-09-10", paymentAmount: 500 },
+        "actor-1", "accounts_head", conn as any
+      )
+    ).resolves.toBeDefined();
   });
 });
