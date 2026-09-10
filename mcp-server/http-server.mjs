@@ -51,9 +51,14 @@ const DB_PORT     = parseInt(process.env.DB_PORT || '3306');
 const DB_USER     = process.env.DB_USER     || '';
 const DB_PASSWORD = process.env.DB_PASSWORD || '';
 const DB_NAME     = process.env.DB_NAME     || 'mas_hrms';
-const ROLE        = (process.env.HRMS_ROLE  || 'full').toLowerCase();
+// SEC-10: default to the least-privileged role, not 'full' — an operator who
+// forgets to set HRMS_ROLE used to get unrestricted table access by default.
+const ROLE        = (process.env.HRMS_ROLE  || 'viewer').toLowerCase();
 const HTTP_PORT   = parseInt(process.env.HTTP_PORT || '3099');
 const MCP_TOKEN   = process.env.MCP_TOKEN   || '';
+// SEC-10: default to loopback-only. This is a dev/ops tool, not a public
+// service — set HRMS_MCP_BIND_ALL=true explicitly to expose it on the network.
+const BIND_HOST   = process.env.HRMS_MCP_BIND_ALL === 'true' ? '0.0.0.0' : '127.0.0.1';
 
 if (!DB_USER || !DB_PASSWORD) { console.error('DB_USER and DB_PASSWORD required in .env'); process.exit(1); }
 if (!MCP_TOKEN) { console.error('MCP_TOKEN required in .env — set a secret token to share with users'); process.exit(1); }
@@ -204,18 +209,17 @@ app.all('/mcp', async (req, res) => {
 // Health check
 app.get('/health', (req, res) => res.json({ status:'ok', role:ROLE, db:DB_NAME, allowed_tables:ALLOWED.size }));
 
-app.listen(HTTP_PORT, '0.0.0.0', () => {
+app.listen(HTTP_PORT, BIND_HOST, () => {
   console.log(`\n🚀 HRMS MCP HTTP Server running`);
+  console.log(`   Bind    : ${BIND_HOST}${BIND_HOST === '0.0.0.0' ? ' (network-exposed — HRMS_MCP_BIND_ALL=true)' : ' (loopback only)'}`);
   console.log(`   Port    : ${HTTP_PORT}`);
   console.log(`   Database: ${DB_HOST}:${DB_PORT}/${DB_NAME}`);
   console.log(`   Role    : ${ROLE} (${ALLOWED.size} tables)`);
-  console.log(`\n   Share this URL with users:`);
-  console.log(`   http://<this-server-ip>:${HTTP_PORT}/mcp`);
-  console.log(`\n   Their .mcp.json entry:`);
+  console.log(`\n   Their .mcp.json entry (token withheld from logs — copy it from .env):`);
   console.log(`   {`);
   console.log(`     "hrms-db": {`);
   console.log(`       "url": "http://<this-server-ip>:${HTTP_PORT}/mcp",`);
-  console.log(`       "headers": { "Authorization": "Bearer ${MCP_TOKEN}" }`);
+  console.log(`       "headers": { "Authorization": "Bearer <MCP_TOKEN from .env>" }`);
   console.log(`     }`);
   console.log(`   }\n`);
 });
