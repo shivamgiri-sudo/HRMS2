@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Clock,
   Download,
   FileText,
   Filter,
@@ -103,6 +104,13 @@ const PAYMENT_STATUSES = [
   "Closed",
 ] as const;
 
+// Approval Backlog panel stages — GRN statuses gating a payment from ever reaching this page's
+// own vendor_payment_tracking grid (Branch Head approval, then Finance Head approval).
+const BACKLOG_STAGES: { key: string; label: string }[] = [
+  { key: "branch_head_approved", label: "Awaiting Finance Head (cleared Branch Head)" },
+  { key: "finance_head_approved", label: "Awaiting Accounts Head (cleared Finance Head)" },
+];
+
 const STATUS_CLASS: Record<string, string> = {
   "Payment Pending": "border-amber-200 bg-amber-50 text-amber-700",
   "Partially Paid": "border-blue-200 bg-blue-50 text-blue-700",
@@ -199,6 +207,7 @@ export default function VendorPaymentDispatchPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showAging, setShowAging] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
+  const [showBacklog, setShowBacklog] = useState(false);
   const [ledgerVendorId, setLedgerVendorId] = useState("");
   const [ledgerVendorSearch, setLedgerVendorSearch] = useState("");
 
@@ -373,6 +382,14 @@ export default function VendorPaymentDispatchPage() {
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowLedger((v) => !v)}>
               <FileText className="mr-1.5 h-3.5 w-3.5" />Ledger
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowBacklog((v) => !v)}>
+              <Clock className="mr-1.5 h-3.5 w-3.5" />Backlog
+              {pendingApproval && pendingApproval.count > 0 && (
+                <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-[10px] text-white">
+                  {pendingApproval.count}
+                </span>
+              )}
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowFilters((v) => !v)}>
               <Filter className="mr-1.5 h-3.5 w-3.5" />Filters
@@ -646,6 +663,44 @@ export default function VendorPaymentDispatchPage() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Approval Backlog — GRNs that must clear Branch Head + Finance Head approval before
+          they ever reach vendor_payment_tracking and this page's own grid. Read-only link-out;
+          approving is a different page's job. */}
+      {showBacklog && (
+        <div className="border-t px-4 py-3">
+          <p className="mb-2 text-sm font-semibold text-slate-800">Approval Backlog</p>
+          {pendingApprovalQuery.isError ? (
+            <p className="text-xs text-slate-400">
+              Approval backlog isn't visible for your role — ask a Finance/Accounts Head to check
+              the GRN approval queue directly.
+            </p>
+          ) : !pendingApproval || pendingApproval.count === 0 ? (
+            <p className="text-xs text-slate-400">No GRNs waiting on approval right now.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {BACKLOG_STAGES.map(({ key, label }) => {
+                const byStatus = (pendingApprovalQuery.data as any)?.data?.byStatus ?? {};
+                const bucket = byStatus[key] ?? { count: 0, value: 0 };
+                return (
+                  <div key={key} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-[11px] font-medium text-slate-500 uppercase">{label}</p>
+                    <p className="mt-1 text-base font-semibold tabular-nums text-amber-700">
+                      {money(bucket.value)}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      {bucket.count} GRN{bucket.count === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <a href="/finance/grn" className="mt-3 inline-block text-xs font-medium text-blue-600 hover:underline">
+            Open GRN Approvals →
+          </a>
         </div>
       )}
 

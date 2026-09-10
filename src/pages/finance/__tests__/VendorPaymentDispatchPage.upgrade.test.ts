@@ -58,3 +58,22 @@ describe("VendorPaymentDispatchPage — Metric tile KPI strip + backlog query (T
     expect(SRC).toMatch(/<Metric\s+label="Pending approval"/);
   });
 });
+
+describe("VendorPaymentDispatchPage — Approval Backlog panel (Task 4)", () => {
+  it("declares a showBacklog toggle alongside showAging/showLedger", () => {
+    expect(SRC).toMatch(/const \[showBacklog, setShowBacklog\] = useState\(false\);/);
+  });
+
+  it("renders a header button toggling showBacklog", () => {
+    expect(SRC).toMatch(/onClick=\{\(\) => setShowBacklog\(\(v\) => !v\)\}/);
+  });
+
+  it("renders the backlog panel gated on showBacklog, listing both approval stages", () => {
+    expect(SRC).toMatch(/\{showBacklog && \([\s\S]*?Approval Backlog[\s\S]*?\}\)\}/);
+    expect(SRC).toMatch(/Branch Head[\s\S]{0,200}Finance Head/);
+  });
+
+  it("links out to the GRN approval page rather than adding new write actions here", () => {
+    expect(SRC).toMatch(/href="\/finance\/grn|to="\/finance\/grn|navigate\(.\/finance\/grn/);
+  });
+});
