@@ -455,6 +455,7 @@ export default function VendorPaymentDispatchPage() {
               className="w-52"
               value={filters.month}
               onChange={(v) => { setFilters((c) => ({ ...c, month: v })); setPage(1); }}
+              emptyLabel="All months"
             />
             <Select
               value={filters.financialYear || "_all"}
@@ -587,7 +588,14 @@ export default function VendorPaymentDispatchPage() {
                     <td className="py-1 text-right font-medium tabular-nums">
                       ₹{(p.balance_amount ?? 0).toLocaleString("en-IN")}
                     </td>
-                    <td className="py-1">{p.due_date ? formatISTDate(p.due_date) : "-"}</td>
+                    <td className="py-1">
+                      {p.due_date ? formatISTDate(p.due_date) : "-"}
+                      {p.due_date && agingDays(p.due_date) > 0 && !["Paid", "Closed"].includes(p.payment_status) && (
+                        <div className="text-[10px] font-medium text-rose-600">
+                          {agingDays(p.due_date)} days overdue
+                        </div>
+                      )}
+                    </td>
                     <td className="py-1">
                       <Badge
                         variant={p.payment_status === "Paid" ? "default" : p.payment_status === "On Hold" ? "destructive" : "secondary"}
@@ -758,7 +766,13 @@ export default function VendorPaymentDispatchPage() {
                 <thead>
                   <tr className="border-b bg-slate-50">
                     {["GRN No.", "Date", "Invoice No.", "Period", "Due Amt", "TDS", "Net Payable", "Paid", "Balance", "Status", "Due Date", "Branch"].map((h) => (
-                      <th key={h} className="h-8 px-3 text-left font-medium text-slate-500">{h}</th>
+                      <th
+                        key={h}
+                        className="h-8 px-3 text-left font-medium text-slate-500"
+                        title={h === "Period" ? "This is accounting_period — the main grid above filters by due_date instead, so a bill can show a different month here than in the Due date filter." : undefined}
+                      >
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>

@@ -100,3 +100,17 @@ describe("VendorPaymentDispatchPage — honest scope badge (Task 6)", () => {
     expect(SRC).not.toMatch(/\{capabilities\.readScope\} scope/);
   });
 });
+
+describe("VendorPaymentDispatchPage — overdue chip, ledger tooltip, clearable month (Task 7)", () => {
+  it("Due date cell shows an inline overdue chip using the existing agingDays() helper", () => {
+    expect(SRC).toMatch(/agingDays\(p\.due_date\) > 0[\s\S]{0,200}days overdue/);
+  });
+
+  it("Ledger panel's Period column header carries a tooltip about accounting_period vs due_date", () => {
+    expect(SRC).toMatch(/accounting_period[\s\S]{0,150}due_date/);
+  });
+
+  it("MonthYearPicker in the filter bar is clearable via emptyLabel", () => {
+    expect(SRC).toMatch(/<MonthYearPicker[\s\S]{0,200}emptyLabel="All months"/);
+  });
+});
