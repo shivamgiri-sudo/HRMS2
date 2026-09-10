@@ -85,13 +85,16 @@ export function dateTime(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(d);
 }
 
+// Solid-fill pills (not the lighter bordered/tinted style this used to be) — picked from the
+// reference dashboard's Paid/Unpaid/Completed status pills: full saturation, white text, no
+// border, tight padding. Same semantic hue per status as before, just a crisper fill.
 export const STATUS_TONE: Record<VoucherStatus, string> = {
-  draft: "border-slate-200 bg-slate-50 text-slate-600",
-  raised: "border-amber-200 bg-amber-50 text-amber-800",
-  ceo_approved: "border-blue-200 bg-blue-50 text-blue-800",
-  released: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  rejected: "border-rose-200 bg-rose-50 text-rose-800",
-  changes_requested: "border-orange-200 bg-orange-50 text-orange-800",
+  draft: "border-transparent bg-slate-400 text-white",
+  raised: "border-transparent bg-amber-500 text-white",
+  ceo_approved: "border-transparent bg-blue-600 text-white",
+  released: "border-transparent bg-emerald-600 text-white",
+  rejected: "border-transparent bg-rose-600 text-white",
+  changes_requested: "border-transparent bg-orange-500 text-white",
 };
 
 export const STATUS_LABEL: Record<VoucherStatus, string> = {

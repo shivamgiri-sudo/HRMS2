@@ -431,14 +431,24 @@ export default function PaymentVouchersPage() {
 
             <div>
               <Label>Bank Account (paying)</Label>
-              <Select value={raiseForm.bankAccountId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, bankAccountId: v }))}>
-                <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select bank account" /></SelectTrigger>
-                <SelectContent>
-                  {(bankAccountsQuery.data ?? []).map((a: any) => (
-                    <SelectItem key={a.id} value={a.id}>{a.account_name} — {a.account_number_masked}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Masked account number sits right in the option (SearchableSelect's `hint`),
+                  same information density as an account-list row, instead of hiding it behind
+                  a click into a plain <Select>. No balance shown here deliberately — the
+                  account's own opening_balance is a seed figure, not the live running balance;
+                  showing it next to "Bank Account" would read as the current balance and
+                  wouldn't be. */}
+              <SearchableSelect
+                id="payment-voucher-bank-account"
+                aria-label="Bank Account"
+                loading={bankAccountsQuery.isLoading}
+                options={(bankAccountsQuery.data ?? []).map((a: any) => ({
+                  value: a.id, label: a.account_name, hint: a.account_number_masked ?? undefined,
+                }))}
+                value={raiseForm.bankAccountId}
+                onChange={(v) => setRaiseForm((f) => ({ ...f, bankAccountId: v }))}
+                placeholder="Select bank account"
+                searchPlaceholder="Type an account name…"
+              />
             </div>
             <div>
               <Label>Payable Account (bank ledger — Vendor Payables, TDS Payable, etc.)</Label>

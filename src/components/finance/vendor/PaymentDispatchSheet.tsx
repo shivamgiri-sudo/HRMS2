@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -351,16 +352,19 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
               </div>
               <div>
                 <Label className="text-xs">Bank Account *</Label>
-                <Select value={companyBankAccountId} onValueChange={setCompanyBankAccountId}>
-                  <SelectTrigger className="mt-1 h-8 text-sm">
-                    <SelectValue placeholder={bankAccountsQuery.isLoading ? "Loading…" : "Which account pays this"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {bankAccounts.map((a: any) => (
-                      <SelectItem key={a.id} value={a.id}>{a.account_name} — {a.account_number_masked}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  id="dispatch-bank-account"
+                  aria-label="Bank Account"
+                  className="mt-1 h-8 text-sm"
+                  loading={bankAccountsQuery.isLoading}
+                  options={bankAccounts.map((a: any) => ({
+                    value: a.id, label: a.account_name, hint: a.account_number_masked ?? undefined,
+                  }))}
+                  value={companyBankAccountId}
+                  onChange={setCompanyBankAccountId}
+                  placeholder="Which account pays this"
+                  searchPlaceholder="Type an account name…"
+                />
               </div>
               <div>
                 <Label className="text-xs">UTR / Cheque no. (optional)</Label>
