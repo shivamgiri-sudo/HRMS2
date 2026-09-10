@@ -423,6 +423,11 @@ const KNOWN_IMPORT_RPCS = new Set([
   // the same dashboard; no DB backing exists anywhere. See
   // bella-repeat-alignment-bulk.service.ts.
   "import_bella_repeat_alignment_batch",
+  // Bla Bli Blu's own Overall Sales Raw sheet -- agent-attributed
+  // order-level sales; checked against Shivamgiri/dialer_db/db_masmis/
+  // db_external/mas_hrms first, no DB backing exists anywhere. See
+  // bla-bli-blu-overall-sales-bulk.service.ts.
+  "import_bla_bli_blu_overall_sales_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1106,6 +1111,14 @@ async function dispatchImport(
       throw new Error(`No Bella Vita report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importBellaRawBatch(config, id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_overall_sales_batch") {
+    const { importBlaBliBluOverallSalesBatch } = await import(
+      "../bulk-upload/bla-bli-blu-overall-sales-bulk.service.js"
+    );
+    const data = await importBlaBliBluOverallSalesBatch(id, userId);
     return { success: true, data };
   }
 
