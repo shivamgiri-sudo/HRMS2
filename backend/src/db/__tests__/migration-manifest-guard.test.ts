@@ -230,6 +230,15 @@ describe("migration manifest — duplicates", () => {
     // (reginald_abandoned_cart_daily_actual, bla_bli_blu_cdr_daily_actual). Same shape
     // as every jump above; renaming either side is the one thing that would break
     // schema_migrations' by-filename tracking.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(85);
+    //
+    // 85 -> 88 (2026-09-10): merging worktree-payment-voucher-phase1 a third time (bank
+    // ledger completeness / vendor picker / optional reference work) into main. The
+    // branch's own 1739-1741 (vendor_payment_transaction_bank_account,
+    // imprest_allocation_bank_account, bank_ledger_direct_source_types) collided with
+    // main's independently-numbered 1739-1741, part of a concurrent session's larger
+    // 1739-1746 batch (Bla Bli Blu / GNC / Bellavita / Neemans uploaders). Same shape as
+    // every jump above; renaming either side is the one thing that would break
+    // schema_migrations' by-filename tracking.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(88);
   });
 });

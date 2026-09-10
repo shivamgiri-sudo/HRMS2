@@ -74,6 +74,15 @@ const ALLOCATION_PAYMENT_MODES = [
   "Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other",
 ];
 
+// Mirrors vendor-payment-ledger.service.ts's BANK_MODES — the modes that genuinely move money
+// through a specific bank account, as opposed to Cash (no account) or Adjustment/Other (not a
+// real bank-rail transfer). Used to require company_bank_account_id only where it applies.
+const ALLOCATION_BANK_MODES = new Set(["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Bank Transfer"]);
+
+function round2(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
 export const imprestService = {
   // ── Manager master ────────────────────────────────────────────────────────
 
@@ -437,6 +446,15 @@ export const imprestService = {
       paymentMode?: string;
       bankId?: string | null;
       bankName?: string | null;
+      /**
+       * Which of the company's own bank accounts (company_bank_account.id) this allocation was
+       * actually funded from — distinct from bankId above, which is only bank_master's generic
+       * bank-name directory. Required for a real bank-rail mode once the org has at least one
+       * account configured; this is what lets a direct allocation write its own
+       * bank_account_ledger_entry row, closing the gap where "real bank-funded" top-ups never
+       * reached the Bank Ledger / reconciliation.
+       */
+      companyBankAccountId?: string | null;
       referenceNo?: string | null;
       transactionDate?: string | null;
       remarks?: string | null;
@@ -475,10 +493,23 @@ export const imprestService = {
     if (mode !== "Cash" && !input.referenceNo) {
       throw new Error(`A transaction reference is required for ${mode}`);
     }
+    const companyBankAccountId = input.companyBankAccountId?.trim() || null;
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
+
+      // Required once the org has a bank account configured — same reasoning as the mirror
+      // check in vendor-payment-ledger.service.ts's dispatch(): otherwise this is silently
+      // skippable and the bank ledger stays incomplete for the exact payments this was meant to
+      // close. Only checked for real bank-rail modes; a fresh/test tenant with zero accounts
+      // configured is unaffected.
+      if (ALLOCATION_BANK_MODES.has(mode) && !companyBankAccountId) {
+        const [[anyAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`
+        );
+        if (anyAccount) throw new Error("Bank account is required for this payment mode");
+      }
 
       const [managerRows] = await connection.execute<RowDataPacket[]>(
         `SELECT id, branch_id FROM imprest_manager WHERE id = ? AND active_status = 1 LIMIT 1`,
@@ -499,13 +530,14 @@ export const imprestService = {
       await connection.execute(
         `INSERT INTO imprest_allocation
            (id, allocation_no, imprest_manager_id, branch_id, allocation_date, amount,
-            payment_mode, bank_id, bank_name, reference_no, transaction_date, remarks,
-            accounting_period,
+            payment_mode, bank_id, company_bank_account_id, bank_name, reference_no,
+            transaction_date, remarks, accounting_period,
             status, submitted_by, submitted_at, disbursed_at, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
         [
           id, allocationNo, input.imprestManagerId, input.branchId, input.allocationDate, amount,
-          mode, input.bankId ?? null, input.bankName ?? null, input.referenceNo ?? null,
+          mode, input.bankId ?? null, companyBankAccountId, input.bankName ?? null,
+          input.referenceNo ?? null,
           input.transactionDate ?? null, input.remarks ?? null,
           input.accountingPeriod?.trim() || null,
           status, actorUserId, input.disburseImmediately ? new Date() : null, actorUserId,
@@ -531,6 +563,53 @@ export const imprestService = {
           },
           connection,
         );
+
+        // Bank ledger write — closes the gap this fix targets. No callingVoucherId-style gate
+        // needed here: payment-voucher.service.ts's release() funds the "imprest_allocation"
+        // voucher lane by calling imprestLedgerService.post() directly, never createAllocation(),
+        // so there is no double-write path to guard against, unlike the vendor-dispatch fix.
+        if (companyBankAccountId) {
+          const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, opening_balance, active_status
+               FROM company_bank_account WHERE id = ? FOR UPDATE`,
+            [companyBankAccountId]
+          );
+          if (!bankAccount) throw new Error("Bank account not found");
+          if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+
+          const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
+            `SELECT running_balance FROM bank_account_ledger_entry
+               WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [companyBankAccountId]
+          );
+          const runningBalance = round2(
+            (lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance))
+            - amount
+          );
+
+          const [[imprestPayableAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`
+          );
+          if (!imprestPayableAccount) throw new Error("Imprest Float ledger account is not configured");
+
+          await connection.execute(
+            `INSERT INTO bank_account_ledger_entry
+               (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+             VALUES (?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, 'direct_imprest_allocation', ?)`,
+            [
+              randomUUID(),
+              companyBankAccountId,
+              input.allocationDate,
+              amount,
+              (imprestPayableAccount as any).id,
+              `Imprest allocation ${allocationNo} disbursed to manager ${input.imprestManagerId}`,
+              input.referenceNo ?? null,
+              runningBalance,
+              actorUserId,
+            ]
+          );
+        }
       }
 
       await recordFinanceApprovalEvent(
@@ -618,6 +697,56 @@ export const imprestService = {
           },
           connection,
         );
+
+        // Bank ledger write, mirroring createAllocation()'s immediate-disbursement block. The
+        // bank account was chosen once, when this allocation was raised as "submitted" — read it
+        // back off the locked row rather than asking again at approval time; the money-out
+        // decision is made once, approval only decides yes/no.
+        const companyBankAccountId = allocation.company_bank_account_id
+          ? String(allocation.company_bank_account_id)
+          : null;
+        if (companyBankAccountId) {
+          const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, opening_balance, active_status
+               FROM company_bank_account WHERE id = ? FOR UPDATE`,
+            [companyBankAccountId]
+          );
+          if (!bankAccount) throw new Error("Bank account not found");
+          if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+
+          const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
+            `SELECT running_balance FROM bank_account_ledger_entry
+               WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [companyBankAccountId]
+          );
+          const runningBalance = round2(
+            (lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance))
+            - Number(allocation.amount)
+          );
+
+          const [[imprestPayableAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`
+          );
+          if (!imprestPayableAccount) throw new Error("Imprest Float ledger account is not configured");
+
+          await connection.execute(
+            `INSERT INTO bank_account_ledger_entry
+               (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+             VALUES (?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, 'direct_imprest_allocation', ?)`,
+            [
+              randomUUID(),
+              companyBankAccountId,
+              String(allocation.allocation_date).slice(0, 10),
+              Number(allocation.amount),
+              (imprestPayableAccount as any).id,
+              `Imprest allocation ${allocation.allocation_no} disbursed to manager ${allocation.imprest_manager_id}`,
+              allocation.reference_no ?? null,
+              runningBalance,
+              actorUserId,
+            ]
+          );
+        }
       }
 
       await recordFinanceApprovalEvent(

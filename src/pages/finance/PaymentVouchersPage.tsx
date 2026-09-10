@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -70,30 +71,36 @@ export default function PaymentVouchersPage() {
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/payable-accounts")).data ?? [],
     enabled: raiseOpen,
   });
-  const vendorDuesQuery = useQuery({
-    queryKey: ["payment-voucher-vendor-dues"],
-    queryFn: async () => {
-      // Server-side outstandingOnly=1 is required, not just belt-and-suspenders: without it,
-      // ORDER BY due_date ASC + LIMIT 200 can return 200 already-settled legacy rows and zero
-      // real dues whenever 200+ older rows are marked Paid, which is exactly what happened here.
-      const res = await hrmsApi.get<{ success: boolean; rows: any[] }>(
-        "/api/finance/vendor-payments?limit=200&outstandingOnly=1",
-      );
-      return (res.rows ?? []).filter((r: any) => Number(r.balance_amount) > 0);
-    },
+  // Vendor Master runs to ~1.8k active rows (same scale BudgetLinkedGrnForm.tsx's GRN vendor
+  // picker already searches server-side, /api/erp/vendors?is_active=1&limit=50&q=). A vendor
+  // dropdown built from "who has an outstanding due in the first 200 rows" — the old approach —
+  // silently hid any vendor sorted past that page, which read as "vendor names aren't showing."
+  const [vendorSearch, setVendorSearch] = useState("");
+  const vendorSearchQuery = useQuery({
+    queryKey: ["payment-voucher-vendor-search", vendorSearch],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] } | any[]>(
+      `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`
+    )) as any,
     enabled: raiseOpen && raiseForm.sourceType === "vendor_grn",
   });
   const vendorOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const row of vendorDuesQuery.data ?? []) {
-      if (row.vendor_id && !seen.has(row.vendor_id)) seen.set(row.vendor_id, row.vendor_name ?? row.vendor_id);
-    }
-    return [...seen.entries()].map(([id, name]) => ({ id, name }));
-  }, [vendorDuesQuery.data]);
-  const filteredDues = useMemo(
-    () => (vendorDuesQuery.data ?? []).filter((r: any) => !raiseForm.vendorId || r.vendor_id === raiseForm.vendorId),
-    [vendorDuesQuery.data, raiseForm.vendorId],
-  );
+    const raw = (vendorSearchQuery.data as any)?.data ?? vendorSearchQuery.data ?? [];
+    return (raw as any[]).map((v) => ({ id: v.id, name: (v.vendor_name ?? v.name ?? "").trim() }));
+  }, [vendorSearchQuery.data]);
+  // Scoped server-side to the picked vendor — outstandingOnly still applies, but there is no
+  // 200-row page to fall off of: a vendor with more than 200 open dues previously lost the ones
+  // past row 200 entirely, since the old query fetched one shared, unscoped page for every vendor.
+  const vendorDuesQuery = useQuery({
+    queryKey: ["payment-voucher-vendor-dues", raiseForm.vendorId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; rows: any[] }>(
+        `/api/finance/vendor-payments?vendorId=${encodeURIComponent(raiseForm.vendorId)}&limit=200&outstandingOnly=1`,
+      );
+      return (res.rows ?? []).filter((r: any) => Number(r.balance_amount) > 0);
+    },
+    enabled: raiseOpen && raiseForm.sourceType === "vendor_grn" && !!raiseForm.vendorId,
+  });
+  const filteredDues = vendorDuesQuery.data ?? [];
   const imprestManagersQuery = useQuery({
     queryKey: ["payment-voucher-imprest-managers"],
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/imprest/managers")).data ?? [],
@@ -243,12 +250,19 @@ export default function PaymentVouchersPage() {
               <div className="space-y-3">
                 <div>
                   <Label>Vendor</Label>
-                  <Select value={raiseForm.vendorId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, grnAllocations: {}, amount: "" }))}>
-                    <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select vendor" /></SelectTrigger>
-                    <SelectContent>
-                      {vendorOptions.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    id="payment-voucher-vendor"
+                    aria-label="Vendor"
+                    loading={vendorSearchQuery.isFetching}
+                    options={vendorOptions.map((v) => ({ value: v.id, label: v.name }))}
+                    value={raiseForm.vendorId}
+                    onChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, grnAllocations: {}, amount: "" }))}
+                    search={vendorSearch}
+                    onSearchChange={setVendorSearch}
+                    placeholder="Select vendor"
+                    searchPlaceholder="Type a vendor name…"
+                    emptyText={vendorSearch.trim() ? "No matching vendor" : "Type to search vendors"}
+                  />
                 </div>
 
                 {primaryGrn && (

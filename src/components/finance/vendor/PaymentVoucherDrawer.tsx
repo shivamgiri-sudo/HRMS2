@@ -256,7 +256,7 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                     <Input type="date" value={releaseForm.paymentDate} onChange={(e) => setReleaseForm((f) => ({ ...f, paymentDate: e.target.value }))} />
                   </div>
                   <div>
-                    <Label>Transaction Ref / UTR / Cheque No.</Label>
+                    <Label>Transaction Ref / UTR / Cheque No. (optional)</Label>
                     <Input value={releaseForm.transactionRef} onChange={(e) => setReleaseForm((f) => ({ ...f, transactionRef: e.target.value }))} />
                   </div>
                   <Button className="cursor-pointer bg-emerald-600 hover:bg-emerald-700" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(detailQuery.data!.id)}>

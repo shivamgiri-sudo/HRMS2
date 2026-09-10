@@ -27,6 +27,12 @@
 -- real rows, zero collisions -- and is the same value as
 -- dialer_db.cdr_bla_bli_blu.call_uuid, so this table can be joined to the
 -- live CDR by that column without ever writing into dialer_db itself.
+--
+-- crm_form is TEXT, not VARCHAR(255) as first declared: the real import
+-- run hit ER_DATA_TOO_LONG on every single row -- "CRM Form" carries a
+-- full customer/order summary (name, email, delivery date, line items,
+-- address) up to 570 real characters, not a short label. Live table
+-- ALTERed to TEXT before the real import completed.
 CREATE TABLE IF NOT EXISTS bla_bli_blu_call_disposition_raw (
   id CHAR(36) NOT NULL PRIMARY KEY,
   process_id CHAR(36) NOT NULL,
@@ -51,7 +57,7 @@ CREATE TABLE IF NOT EXISTS bla_bli_blu_call_disposition_raw (
   evaluation_form VARCHAR(255) NULL,
   script VARCHAR(255) NULL,
   knowledge_base VARCHAR(255) NULL,
-  crm_form VARCHAR(255) NULL,
+  crm_form TEXT NULL,
   data_source VARCHAR(100) NOT NULL DEFAULT 'bulk_upload',
   source_reference VARCHAR(255) NULL,
   upload_batch_id CHAR(36) NULL,

@@ -60,6 +60,16 @@ export interface DispatchPaymentPayload {
    * this on every call after the first for one voucher.
    */
   allowSharedReference?: boolean;
+  /**
+   * Which of the company's own bank accounts (company_bank_account.id) this direct dispatch
+   * paid out of — distinct from `bankId` above, which is only bank_master's generic bank-name
+   * directory. Supplying this is what lets a direct "Pay" click (as opposed to a Payment Voucher
+   * release) write its own bank_account_ledger_entry row, so Bank Reconciliation sees it too.
+   * Left undefined when dispatch() is called from payment-voucher.service.ts's release() —
+   * release() already writes its own ledger entry for that debit; see the callingVoucherId gate
+   * below for why this must not also write one.
+   */
+  companyBankAccountId?: string | null;
 }
 
 function roundMoney(value: number) {
@@ -220,10 +230,12 @@ export const vendorPaymentLedgerService = {
         );
       }
 
+      // Optional for every mode, not just Cash — mirrors the same relaxation in
+      // payment-voucher.service.ts's release(). Reconciliation matches purely on amount + date
+      // (bank-reconciliation-match.service.ts's autoMatch), never on this reference, so requiring
+      // it never actually protected reconciliation; it only ever gated the duplicate-reference
+      // check below, which already correctly no-ops when this is blank.
       const externalTransactionId = payload.transactionId?.trim() || null;
-      if (payload.paymentMode !== "Cash" && !externalTransactionId) {
-        throw requestError(400, "UTR / Cheque No. / transaction reference is required");
-      }
 
       let bankName: string | null = null;
       const bankId = payload.bankId?.trim() || null;
@@ -238,6 +250,20 @@ export const vendorPaymentLedgerService = {
         );
         if (!bankRows[0]) throw requestError(400, "Selected bank is inactive or unavailable");
         bankName = String(bankRows[0].bank_name);
+      }
+
+      const companyBankAccountId = payload.companyBankAccountId?.trim() || null;
+      // Required once the org actually has a bank account configured — otherwise this fix is
+      // trivially skippable by leaving the field blank, and the bank ledger stays incomplete for
+      // exactly the payments this was meant to catch. Exempt when called from
+      // payment-voucher.service.ts's release() (callingVoucherId set): that caller writes its own
+      // ledger entry using the voucher's own bank_account_id, so it never supplies this field.
+      // A fresh/test tenant with zero bank accounts configured is unaffected either way.
+      if (BANK_MODES.has(payload.paymentMode) && !callingVoucherId && !companyBankAccountId) {
+        const [[anyAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`
+        );
+        if (anyAccount) throw requestError(400, "Bank account is required for this payment mode");
       }
 
       if (externalTransactionId) {
@@ -301,9 +327,9 @@ export const vendorPaymentLedgerService = {
       await connection.execute(
         `INSERT INTO vendor_payment_transaction
           (id, vendor_payment_id, grn_request_id, sequence_no, payment_mode,
-           payment_date, bank_id, bank_name, transaction_id, amount,
+           payment_date, bank_id, company_bank_account_id, bank_name, transaction_id, amount,
            tds_amount, tds_section, net_amount, remarks, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           transactionRowId,
           paymentId,
@@ -312,6 +338,7 @@ export const vendorPaymentLedgerService = {
           payload.paymentMode,
           payload.paymentDate,
           bankId,
+          companyBankAccountId,
           bankName,
           externalTransactionId,
           amount,
@@ -370,6 +397,80 @@ export const vendorPaymentLedgerService = {
           WHERE id = ?`,
         [grnStatus, accountsStatus, payment.grn_request_id]
       );
+
+      // Bank ledger write — the gap this fix closes. Gated on !callingVoucherId: when dispatch()
+      // is called from payment-voucher.service.ts's release(), release() already writes its own
+      // bank_account_ledger_entry row for this exact debit right after this call returns (it
+      // knows the voucher's own bank_account_id independently) — writing one here too would
+      // double-debit the account. A direct "Pay" click never carries a callingVoucherId, so this
+      // only ever fires for the path that was genuinely missing a ledger entry.
+      if (companyBankAccountId && !callingVoucherId) {
+        const [[ledgerBankAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id, opening_balance, active_status
+             FROM company_bank_account WHERE id = ? FOR UPDATE`,
+          [companyBankAccountId]
+        );
+        if (!ledgerBankAccount) throw requestError(404, "Bank account not found");
+        if (!(ledgerBankAccount as any).active_status) throw requestError(400, "This bank account is closed");
+
+        const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
+          `SELECT running_balance FROM bank_account_ledger_entry
+             WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+          [companyBankAccountId]
+        );
+        let runningBalance = lastEntry
+          ? Number((lastEntry as any).running_balance)
+          : Number((ledgerBankAccount as any).opening_balance);
+
+        const [[vendorPayableAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM payable_account_master WHERE account_name = 'Vendor Payables' LIMIT 1`
+        );
+        if (!vendorPayableAccount) throw requestError(500, "Vendor Payables ledger account is not configured");
+
+        runningBalance = roundMoney(runningBalance - amount);
+        await connection.execute(
+          `INSERT INTO bank_account_ledger_entry
+             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+           VALUES (?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, 'direct_vendor_dispatch', ?)`,
+          [
+            randomUUID(),
+            companyBankAccountId,
+            payload.paymentDate,
+            amount,
+            (vendorPayableAccount as any).id,
+            `Vendor payment dispatched — GRN ${payment.grn_number ?? payment.grn_request_id} — installment #${sequenceNo}`,
+            externalTransactionId,
+            runningBalance,
+            actorUserId,
+          ]
+        );
+
+        // Same zero-cash TDS liability memo the voucher-release lane writes, so a direct
+        // dispatch's TDS withholding is just as visible in the ledger as a voucher-released one.
+        if (tdsAmount > 0) {
+          const [[tdsAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`
+          );
+          if (tdsAccount) {
+            await connection.execute(
+              `INSERT INTO bank_account_ledger_entry
+                 (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                  payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+               VALUES (?, ?, ?, NULL, 0, 0, ?, ?, NULL, ?, 'direct_vendor_dispatch', ?)`,
+              [
+                randomUUID(),
+                companyBankAccountId,
+                payload.paymentDate,
+                (tdsAccount as any).id,
+                `TDS withheld on GRN ${payment.grn_number ?? payment.grn_request_id} — direct dispatch installment #${sequenceNo} (liability memo, no cash movement)`,
+                runningBalance,
+                actorUserId,
+              ]
+            );
+          }
+        }
+      }
 
       auditSummary = {
         grn_number: payment.grn_number,
