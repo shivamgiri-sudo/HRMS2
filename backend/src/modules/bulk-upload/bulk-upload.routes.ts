@@ -391,14 +391,6 @@ const KNOWN_IMPORT_RPCS = new Set([
   // workbook family used for Chat Performance/CRM Disposition; no DB
   // backing exists anywhere. See clovia-team-alignment-bulk.service.ts.
   "import_clovia_team_alignment_batch",
-  // Clovia's IB CDR Raw, full inbound call log -- found while auditing
-  // the same workbook family; no DB backing exists anywhere. See
-  // clovia-ib-cdr-bulk.service.ts.
-  "import_clovia_ib_cdr_batch",
-  // Clovia's Outbound Report, full outbound call log -- found while
-  // auditing the same workbook family; no DB backing exists anywhere.
-  // See clovia-outbound-cdr-bulk.service.ts.
-  "import_clovia_outbound_cdr_batch",
   // Clovia's Feedback (CSAT/DSAT survey) -- found while auditing the same
   // workbook family; no DB backing exists anywhere. See
   // clovia-feedback-bulk.service.ts.
@@ -1021,22 +1013,6 @@ async function dispatchImport(
       "../bulk-upload/clovia-team-alignment-bulk.service.js"
     );
     const data = await importCloviaTeamAlignmentBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_ib_cdr_batch") {
-    const { importCloviaIbCdrBatch } = await import(
-      "../bulk-upload/clovia-ib-cdr-bulk.service.js"
-    );
-    const data = await importCloviaIbCdrBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_outbound_cdr_batch") {
-    const { importCloviaOutboundCdrBatch } = await import(
-      "../bulk-upload/clovia-outbound-cdr-bulk.service.js"
-    );
-    const data = await importCloviaOutboundCdrBatch(id, userId);
     return { success: true, data };
   }
 
