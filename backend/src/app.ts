@@ -196,6 +196,7 @@ import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-ag
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
 import { salesUploadRouter } from "./modules/sales-upload/sales-upload.routes.js";
+import { housingDashboardsRouter } from "./modules/housing-dashboards/housing-dashboards.routes.js";
 import { inboundQualityRouter } from "./modules/quality-dashboard/inbound-quality.routes.js";
 import { magicalScriptRouter } from "./modules/quality-dashboard/magical-script.routes.js";
 import { performanceDashboardRouter } from "./modules/performance-dashboard/performance-dashboard.routes.js";
@@ -749,6 +750,7 @@ app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
 app.use("/api/inbound", inboundRouter);
 app.use("/api/sales-upload", salesUploadRouter);
+app.use("/api/housing-dashboards", housingDashboardsRouter);
 app.use("/api/inbound-quality", inboundQualityRouter);
 app.use("/api/quality-dashboard/magical-script", magicalScriptRouter);
 app.use("/api/performance-hub", performanceIntelligenceRouter);
