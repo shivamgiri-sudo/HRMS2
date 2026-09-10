@@ -1,0 +1,504 @@
+<title>Payment Voucher Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #f6f5f0;
+    --surface: #ffffff;
+    --surface-2: #efedE4;
+    --ink: #14213d;
+    --ink-soft: #2c3550;
+    --muted: #5b6474;
+    --line: #d9d3c4;
+    --line-strong: #c3bca8;
+    --accent: #0f6b4c;
+    --accent-soft: #e3efe6;
+    --brass: #9c6b2e;
+    --brass-soft: #f2e6d2;
+    --warn: #a8401f;
+    --warn-soft: #f6e4dc;
+    --shadow: 0 1px 2px rgba(20,33,61,.05), 0 8px 24px rgba(20,33,61,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11151f;
+      --surface: #1a2030;
+      --surface-2: #212840;
+      --ink: #ece9e0;
+      --ink-soft: #cfd3e0;
+      --muted: #9aa3b8;
+      --line: #313a52;
+      --line-strong: #3c4664;
+      --accent: #3fc98f;
+      --accent-soft: #1c3a2f;
+      --brass: #e0ab5c;
+      --brass-soft: #3a2f1c;
+      --warn: #e2775a;
+      --warn-soft: #3c2420;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11151f;
+    --surface: #1a2030;
+    --surface-2: #212840;
+    --ink: #ece9e0;
+    --ink-soft: #cfd3e0;
+    --muted: #9aa3b8;
+    --line: #313a52;
+    --line-strong: #3c4664;
+    --accent: #3fc98f;
+    --accent-soft: #1c3a2f;
+    --brass: #e0ab5c;
+    --brass-soft: #3a2f1c;
+    --warn: #e2775a;
+    --warn-soft: #3c2420;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 28px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 80px; }
+
+  /* ---------- Header ---------- */
+  .masthead {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
+    padding-bottom: 22px; margin-bottom: 30px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .masthead-left { max-width: 720px; }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600;
+    font-size: clamp(30px, 4vw, 44px); line-height: 1.08; margin: 0 0 10px; text-wrap: balance;
+  }
+  .dek { color: var(--muted); font-size: 15.5px; line-height: 1.55; margin: 0; max-width: 60ch; }
+  .stamp {
+    flex: none; text-align: right; font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px; color: var(--muted); line-height: 1.7;
+  }
+  .stamp b { color: var(--ink); font-weight: 600; }
+  .stamp .badge {
+    display: inline-block; margin-top: 6px; padding: 4px 10px; border: 1.5px solid var(--accent);
+    color: var(--accent); border-radius: 3px; font-weight: 700; letter-spacing: .06em;
+    transform: rotate(-2deg);
+  }
+
+  /* ---------- Diagram section ---------- */
+  .diagram-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 28px 20px 18px; box-shadow: var(--shadow); margin-bottom: 40px;
+    overflow-x: auto;
+  }
+  .diagram-card svg { display: block; min-width: 900px; width: 100%; height: auto; }
+  figcaption {
+    font-size: 13px; color: var(--muted); text-align: center; margin: 14px auto 0; max-width: 62ch;
+    padding-top: 14px; border-top: 1px dashed var(--line);
+  }
+
+  /* ---------- Legend row ---------- */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px 22px; justify-content: center;
+    margin-top: 16px; padding-top: 14px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+
+  /* ---------- Section labels ---------- */
+  .section-head {
+    display: flex; align-items: baseline; gap: 12px; margin: 54px 0 18px;
+  }
+  .section-num {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--surface);
+    background: var(--ink); width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .section-head h2 {
+    font-family: "IBM Plex Serif", Georgia, serif; font-size: 22px; font-weight: 600; margin: 0;
+  }
+  .section-head .tag {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; margin-left: auto;
+  }
+
+  /* ---------- Stage cards (ledger-entry style) ---------- */
+  .stage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 900px) { .stage-grid { grid-template-columns: 1fr; } }
+  .stage-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px;
+    position: relative;
+  }
+  .stage-card::before {
+    content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+    background: var(--role-color, var(--accent)); border-radius: 0 3px 3px 0;
+  }
+  .stage-title { font-weight: 600; font-size: 15px; padding-left: 6px; }
+  .role-pill {
+    align-self: flex-start; margin-left: 6px; font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600;
+    color: var(--role-color, var(--accent)); background: var(--role-bg, var(--accent-soft));
+    padding: 3px 8px; border-radius: 4px;
+  }
+  .stage-body { font-size: 13.2px; line-height: 1.55; color: var(--ink-soft); padding-left: 6px; }
+  .stage-body code {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; background: var(--surface-2);
+    padding: 1px 5px; border-radius: 3px; color: var(--ink);
+  }
+
+  /* ---------- Maker-checker panel ---------- */
+  .checker-panel {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 24px; display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; align-items: center;
+    box-shadow: var(--shadow);
+  }
+  @media (max-width: 760px) { .checker-panel { grid-template-columns: 1fr; } }
+  .checker-panel h3 { font-family: "IBM Plex Serif", Georgia, serif; font-size: 18px; margin: 0 0 8px; }
+  .checker-panel p { font-size: 13.5px; color: var(--muted); line-height: 1.6; margin: 0 0 10px; }
+  .rule {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; color: var(--ink-soft);
+  }
+  .people-row { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+  .person {
+    display: flex; flex-direction: column; align-items: center; gap: 6px; width: 92px;
+  }
+  .person .dot {
+    width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-family: "IBM Plex Serif", serif; font-weight: 700; font-size: 17px; color: var(--surface);
+  }
+  .person span { font-size: 11px; text-align: center; color: var(--muted); line-height: 1.3; }
+  .neq { font-family: "IBM Plex Mono", monospace; font-size: 18px; color: var(--warn); font-weight: 700; }
+
+  /* ---------- Formula callout ---------- */
+  .formula-card {
+    background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+    border: 1px solid var(--line); border-radius: 10px; padding: 24px 26px; margin-top: 20px;
+    box-shadow: var(--shadow);
+  }
+  .formula-card h3 { font-family: "IBM Plex Serif", serif; font-size: 17px; margin: 0 0 6px; }
+  .formula-card p.lede { font-size: 13.5px; color: var(--muted); margin: 0 0 16px; line-height: 1.55; }
+  .formula-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", monospace; font-size: 15px; font-variant-numeric: tabular-nums;
+    background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 8px;
+    padding: 16px 18px; color: var(--ink);
+  }
+  .formula-row .op { color: var(--muted); }
+  .formula-row .term { padding: 3px 9px; border-radius: 5px; }
+  .term.hrms { background: var(--accent-soft); color: var(--accent); }
+  .term.outstanding { background: var(--warn-soft); color: var(--warn); }
+  .term.statement { background: var(--brass-soft); color: var(--brass); }
+  .formula-foot { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+
+  /* ---------- Outcome band ---------- */
+  .outcome-band { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+  @media (max-width: 760px) { .outcome-band { grid-template-columns: 1fr; } }
+  .outcome-card {
+    border-radius: 10px; padding: 20px 22px; border: 1px solid var(--line);
+  }
+  .outcome-card.provisional { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); }
+  .outcome-card.final { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .outcome-card h4 {
+    margin: 0 0 6px; font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .08em;
+    text-transform: uppercase; font-weight: 700;
+  }
+  .outcome-card.provisional h4 { color: var(--warn); }
+  .outcome-card.final h4 { color: var(--accent); }
+  .outcome-card p { margin: 0; font-size: 13.3px; line-height: 1.55; color: var(--ink-soft); }
+
+  /* ---------- Footer ---------- */
+  footer {
+    margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="masthead-left">
+      <p class="kicker">MAS Callnet PeopleOS &middot; Finance Module</p>
+      <h1>Payment Voucher Flow</h1>
+      <p class="dek">From the company's bank account master through raise&nbsp;&rarr;&nbsp;approve&nbsp;&rarr;&nbsp;release, into the running bank ledger, and out through monthly reconciliation to a Tally-ready export.</p>
+    </div>
+    <div class="stamp">
+      PV/HQ/YYYYMM/NNNN<br>
+      3-person maker&ndash;checker<br>
+      <span class="badge">Phases 1&ndash;5</span>
+    </div>
+  </header>
+
+  <!-- =================== MAIN PIPELINE DIAGRAM =================== -->
+  <figure class="diagram-card">
+    <svg viewBox="0 0 1180 440" role="img" aria-label="Pipeline: Masters feed a voucher raised by Finance Head, approved by the CEO, released by Accounts Head into the Bank Ledger; adjustments also post to the Bank Ledger; the ledger feeds Bank Reconciliation, which closes periods and flips the Tally export from provisional to final, with a guarded reopen loop back into reconciliation.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+        <marker id="arrowAccent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+
+      <!-- ===== Row: Masters (top strip) ===== -->
+      <g font-family="IBM Plex Mono, monospace" font-size="10.5" fill="currentColor" opacity=".7">
+        <text x="60" y="26" font-weight="600" letter-spacing="1">MASTERS (SET UP ONCE)</text>
+      </g>
+      <g stroke="var(--line-strong)" stroke-width="1" fill="none">
+        <rect x="20" y="36" width="150" height="46" rx="7" fill="var(--surface-2)"/>
+        <rect x="185" y="36" width="150" height="46" rx="7" fill="var(--surface-2)"/>
+        <rect x="350" y="36" width="150" height="46" rx="7" fill="var(--surface-2)"/>
+      </g>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="95" y="63">Bank Accounts</text>
+        <text x="260" y="63">Ledger Heads</text>
+        <text x="425" y="63">Bank Directory</text>
+      </g>
+      <!-- feed lines down into RAISE -->
+      <path d="M95,82 V108" stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#arrow)"/>
+      <path d="M260,82 V108" stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#arrow)"/>
+      <path d="M425,82 Q425,100 200,108" stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#arrow)"/>
+
+      <!-- ===== Row: Voucher chain (Raise -> CEO -> Release) ===== -->
+      <g>
+        <rect x="20" y="110" width="150" height="72" rx="8" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.4"/>
+        <text x="95" y="136" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" letter-spacing=".5" fill="var(--brass)" font-weight="700">FINANCE HEAD</text>
+        <text x="95" y="158" text-anchor="middle" font-family="IBM Plex Serif, serif" font-size="15" font-weight="600" fill="currentColor">Raise</text>
+        <text x="95" y="174" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="var(--muted)">amount + payable a/c</text>
+      </g>
+
+      <path d="M170,146 H228" stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+
+      <g>
+        <rect x="230" y="110" width="150" height="72" rx="8" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.4"/>
+        <text x="305" y="136" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" letter-spacing=".5" fill="var(--brass)" font-weight="700">CEO</text>
+        <text x="305" y="158" text-anchor="middle" font-family="IBM Plex Serif, serif" font-size="15" font-weight="600" fill="currentColor">Approve</text>
+        <text x="305" y="174" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="var(--muted)">yes / no on amount</text>
+      </g>
+
+      <path d="M380,146 H438" stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+
+      <g>
+        <rect x="440" y="110" width="160" height="72" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+        <text x="520" y="136" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" letter-spacing=".5" fill="var(--brass)" font-weight="700">ACCOUNTS HEAD</text>
+        <text x="520" y="158" text-anchor="middle" font-family="IBM Plex Serif, serif" font-size="15" font-weight="600" fill="currentColor">Release</text>
+        <text x="520" y="174" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="var(--muted)">executes the transfer</text>
+      </g>
+
+      <path d="M600,146 H660" stroke="var(--accent)" stroke-width="1.6" fill="none" marker-end="url(#arrowAccent)"/>
+      <text x="630" y="138" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--accent)">posts</text>
+
+      <!-- ===== Bank Ledger ===== -->
+      <g>
+        <rect x="662" y="100" width="170" height="92" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.8"/>
+        <text x="747" y="128" text-anchor="middle" font-family="IBM Plex Serif, serif" font-size="15.5" font-weight="700" fill="var(--accent)">Bank Ledger</text>
+        <text x="747" y="146" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="currentColor">running balance</text>
+        <text x="747" y="160" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="currentColor">one row per release</text>
+        <text x="747" y="178" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--muted)">Credit / Debit report</text>
+      </g>
+
+      <path d="M832,146 H892" stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+
+      <!-- ===== Reconciliation ===== -->
+      <g>
+        <rect x="894" y="100" width="180" height="92" rx="8" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.4"/>
+        <text x="984" y="128" text-anchor="middle" font-family="IBM Plex Serif, serif" font-size="15.5" font-weight="700" fill="currentColor">Reconciliation</text>
+        <text x="984" y="146" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="var(--muted)">upload statement</text>
+        <text x="984" y="160" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="var(--muted)">auto + manual match</text>
+        <text x="984" y="178" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--brass)" font-weight="600">CLOSE PERIOD</text>
+      </g>
+
+      <!-- adjustment loop back to ledger -->
+      <path d="M984,100 C984,60 800,60 747,100" stroke="var(--warn)" stroke-width="1.3" fill="none" marker-end="url(#arrow)" stroke-dasharray="4 3" opacity=".85"/>
+      <text x="865" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--warn)">adjustment (bank charge, interest)</text>
+
+      <!-- reopen guarded loop -->
+      <path d="M1074,192 C1074,225 894,225 894,192" stroke="var(--muted)" stroke-width="1.2" fill="none" marker-end="url(#arrow)" stroke-dasharray="3 3"/>
+      <text x="984" y="234" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--muted)">reopen &mdash; reason required, most-recent period only</text>
+
+      <!-- ===== Tally export outcome ===== -->
+      <path d="M984,100 V60 H1085" stroke="currentColor" stroke-width="1.3" fill="none" opacity="0"/>
+      <path d="M1074,146 H1132" stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#arrow)"/>
+
+      <g>
+        <rect x="1000" y="270" width="150" height="0" opacity="0"/>
+      </g>
+
+      <!-- Tally export card placed below-right, connected -->
+      <path d="M1074,146 Q1155,146 1155,190" stroke="currentColor" stroke-width="0" fill="none" opacity="0"/>
+
+      <g>
+        <rect x="920" y="290" width="230" height="80" rx="8" fill="var(--brass-soft)" stroke="var(--brass)" stroke-width="1.6"/>
+        <text x="1035" y="316" text-anchor="middle" font-family="IBM Plex Serif, serif" font-size="15" font-weight="700" fill="var(--brass)">Tally Export</text>
+        <text x="1035" y="334" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="9.5" fill="currentColor">provisional &rarr; final</text>
+        <text x="1035" y="350" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--muted)">once every entry's period is closed</text>
+      </g>
+      <path d="M1035,192 V283" stroke="var(--brass)" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+      <!-- Bottom row: masters legend recap + stage numbers -->
+      <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">
+        <text x="20" y="410">01</text><text x="42" y="410">Masters</text>
+        <text x="230" y="410">02</text><text x="252" y="410">Raise</text>
+        <text x="440" y="410">03</text><text x="462" y="410">Approve</text>
+        <text x="662" y="410">04</text><text x="684" y="410">Release &amp; post</text>
+        <text x="894" y="410">05</text><text x="916" y="410">Reconcile</text>
+        <text x="920" y="428">06</text><text x="942" y="428">Export to Tally</text>
+      </g>
+    </svg>
+    <figcaption>Money moves left to right through three different people (raise, approve, release); every release posts one row into the Bank Ledger, which Reconciliation later matches against the real bank statement before the Tally export can be marked final.</figcaption>
+
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--surface-2); border:1px solid var(--line-strong)"></span>Setup / masters</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--ink)"></span>Voucher chain (3 people)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span>Bank Ledger (auto-posted)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--warn)"></span>Adjustment / reopen (guarded)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--brass)"></span>Tally export outcome</div>
+    </div>
+  </figure>
+
+  <!-- =================== SECTION 1: MASTERS =================== -->
+  <div class="section-head">
+    <span class="section-num">1</span>
+    <h2>Masters &mdash; set up once, reused every voucher</h2>
+    <span class="tag">Admin, as-needed</span>
+  </div>
+  <div class="stage-grid">
+    <div class="stage-card" style="--role-color: var(--muted); --role-bg: var(--surface-2);">
+      <span class="role-pill">Finance Admin</span>
+      <div class="stage-title">Company Bank Accounts</div>
+      <div class="stage-body">The organisation's own paying accounts &mdash; IFSC, encrypted account number, and the exact <code>tally_ledger_name</code> so an export never breaks if the account is renamed in-app. Full create / edit / close / reactivate, with an audit trail per account.</div>
+    </div>
+    <div class="stage-card" style="--role-color: var(--muted); --role-bg: var(--surface-2);">
+      <span class="role-pill">Finance Admin</span>
+      <div class="stage-title">Ledger Heads</div>
+      <div class="stage-body">The chart of accounts every voucher and adjustment posts against &mdash; <code>Vendor Payables</code>, <code>TDS Payable</code>, <code>Bank Charges</code>, <code>Interest Income</code> and more. Add a new head without touching the database directly.</div>
+    </div>
+    <div class="stage-card" style="--role-color: var(--muted); --role-bg: var(--surface-2);">
+      <span class="role-pill">Finance Admin</span>
+      <div class="stage-title">Bank Directory</div>
+      <div class="stage-body">The banks offered when a new company account is added. Started as a fixed list of 20; now a real add/edit screen with IFSC-prefix validation, so a bank outside the original list no longer needs a raw SQL insert.</div>
+    </div>
+  </div>
+
+  <!-- =================== SECTION 2: VOUCHER CHAIN =================== -->
+  <div class="section-head">
+    <span class="section-num">2</span>
+    <h2>The voucher chain &mdash; raise, approve, release</h2>
+    <span class="tag">Per payment</span>
+  </div>
+  <div class="stage-grid">
+    <div class="stage-card" style="--role-color: var(--brass); --role-bg: var(--brass-soft);">
+      <span class="role-pill">Finance Head</span>
+      <div class="stage-title">Raise</div>
+      <div class="stage-body">Picks the bank account and the ledger head, enters the amount and remarks. Nothing has moved yet &mdash; this is a request, not a payment.</div>
+    </div>
+    <div class="stage-card" style="--role-color: var(--brass); --role-bg: var(--brass-soft);">
+      <span class="role-pill">CEO</span>
+      <div class="stage-title">Approve</div>
+      <div class="stage-body">A plain yes/no on amount and purpose. Does not execute the transfer &mdash; only clears it to be released.</div>
+    </div>
+    <div class="stage-card" style="--role-color: var(--accent); --role-bg: var(--accent-soft);">
+      <span class="role-pill">Accounts Head</span>
+      <div class="stage-title">Release</div>
+      <div class="stage-body">The only step that actually moves money: keys in the real payment mode, date and transaction reference, then posts the Bank Ledger row and (for vendor payments) the TDS-withheld entry.</div>
+    </div>
+  </div>
+
+  <div class="checker-panel" style="margin-top:14px;">
+    <div>
+      <h3>Why three different people</h3>
+      <p>A role can be faked by a shared login; a person can't be two people at once. So the rule is enforced on identity, not title:</p>
+      <div class="rule">raised_by &ne; ceo_approved_by &ne; released_by</div>
+      <p style="margin-top:10px;">Even a <code>super_admin</code> account cannot self-approve or self-release its own voucher &mdash; the check runs server-side on every release.</p>
+    </div>
+    <div class="people-row">
+      <div class="person">
+        <div class="dot" style="background:var(--brass);">FH</div>
+        <span>Finance Head<br>raises</span>
+      </div>
+      <div class="neq">&ne;</div>
+      <div class="person">
+        <div class="dot" style="background:var(--ink);">CEO</div>
+        <span>CEO<br>approves</span>
+      </div>
+      <div class="neq">&ne;</div>
+      <div class="person">
+        <div class="dot" style="background:var(--accent);">AH</div>
+        <span>Accounts Head<br>releases</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== SECTION 3: RECONCILIATION =================== -->
+  <div class="section-head">
+    <span class="section-num">3</span>
+    <h2>Bank Reconciliation &mdash; matching HRMS against the real bank</h2>
+    <span class="tag">Monthly, by Accounts Head</span>
+  </div>
+  <div class="stage-grid">
+    <div class="stage-card" style="--role-color: var(--accent); --role-bg: var(--accent-soft);">
+      <span class="role-pill">Step 1</span>
+      <div class="stage-title">Start period &amp; upload statement</div>
+      <div class="stage-body">Opening balance carries forward from the last closed period. Upload any bank CSV/XLSX; map its columns once (date, description, debit/credit) and every later upload from that bank reuses the mapping.</div>
+    </div>
+    <div class="stage-card" style="--role-color: var(--accent); --role-bg: var(--accent-soft);">
+      <span class="role-pill">Step 2</span>
+      <div class="stage-title">Auto-match, then resolve the rest</div>
+      <div class="stage-body">Exact amount within a &plusmn;15-day window auto-matches. Anything left over is matched by hand, or posted as an <b>Adjustment</b> &mdash; a real bank-only entry like a bank charge or interest, which lands as a new Bank Ledger row.</div>
+    </div>
+    <div class="stage-card" style="--role-color: var(--brass); --role-bg: var(--brass-soft);">
+      <span class="role-pill">Step 3</span>
+      <div class="stage-title">Close the period</div>
+      <div class="stage-body">Only allowed once every statement line is resolved <i>and</i> the numbers actually balance (see the formula below). Closing locks every matched entry and carries the closing balance into the next period.</div>
+    </div>
+  </div>
+
+  <div class="formula-card">
+    <h3>What "close" actually checks</h3>
+    <p class="lede">Not a rubber stamp &mdash; the classic bank-reconciliation formula, enforced server-side before a period can lock:</p>
+    <div class="formula-row">
+      <span class="term hrms">HRMS closing balance</span>
+      <span class="op">&minus;</span>
+      <span class="term outstanding">outstanding (issued, not yet cleared)</span>
+      <span class="op">=</span>
+      <span class="term statement">statement closing balance</span>
+    </div>
+    <p class="formula-foot">A mismatch refuses the close and shows the exact rupee difference &mdash; never forced through, and never silently accepted.</p>
+  </div>
+
+  <!-- =================== SECTION 4: OUTCOME =================== -->
+  <div class="section-head">
+    <span class="section-num">4</span>
+    <h2>What comes out the other end</h2>
+    <span class="tag">Tally export</span>
+  </div>
+  <div class="outcome-band">
+    <div class="outcome-card provisional">
+      <h4>Provisional</h4>
+      <p>Any range that touches an open (not-yet-closed) period. Watermarked in the exported XML and flagged in the UI &mdash; a draft hand-off, not the final posting. This is the state every export was in before Bank Reconciliation existed.</p>
+    </div>
+    <div class="outcome-card final">
+      <h4>Final</h4>
+      <p>Every entry in the requested range belongs to a <i>closed</i> reconciliation period. Only then does the export drop its provisional watermark &mdash; safe to post into Tally as the real record.</p>
+    </div>
+  </div>
+
+  <footer>
+    <span>Payment Voucher System &middot; Phases 1&ndash;5</span>
+    <span>company bank accounts &middot; ledger heads &middot; voucher chain &middot; bank ledger &middot; reconciliation &middot; Tally export</span>
+  </footer>
+
+</div>
