@@ -6,9 +6,9 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronRight, Clock,
-  Database, Download, Filter, Headphones, Lightbulb, Loader2, Minus, Package, PenLine, Radio,
-  ShieldAlert, Sparkles, Target, Truck, Upload, User, Users, Users2, X,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Briefcase, CheckCircle2, ChevronRight, Clock,
+  Database, Download, Filter, Headphones, Hourglass, Lightbulb, Loader2, Minus, Package, PenLine, Radio,
+  ShieldAlert, Sparkles, Target, Truck, Upload, User, UserCheck, UserPlus, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -199,10 +199,12 @@ interface ProcessBusinessHealth {
   headcount: {
     available: boolean; reason: string | null;
     activeHc: number; mandatedHc: number | null; gap: number | null;
+    availableCount: number | null; buffer: number | null; shortfall: number | null;
   };
   hiring: {
     available: boolean; reason: string | null;
     openRequisitions: number; openPositions: number; candidatesInPipeline: number;
+    hiredCount: number; pendingHiringCount: number;
   };
 }
 
@@ -224,12 +226,12 @@ interface WorkforceCorrelation {
 }
 
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
+  operations: { accent: "#06B6D4", tint: "linear-gradient(135deg,#ECFEFF 0%,#CFFAFE 100%)", icon: Headphones },
   conversion: { accent: C_BLUE, tint: "linear-gradient(135deg,#EFF6FF 0%,#DBEAFE 100%)", icon: Target },
   risk: { accent: C_RED, tint: "linear-gradient(135deg,#FEF2F2 0%,#FEE2E2 100%)", icon: ShieldAlert },
   conduct: { accent: C_PURPLE, tint: "linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 100%)", icon: Sparkles },
   quality: { accent: C_GREEN, tint: "linear-gradient(135deg,#ECFDF5 0%,#D1FAE5 100%)", icon: Activity },
-  telephony: { accent: "#06B6D4", tint: "linear-gradient(135deg,#ECFEFF 0%,#CFFAFE 100%)", icon: Headphones },
-  workforce: { accent: C_AMBER, tint: "linear-gradient(135deg,#FFFBEB 0%,#FEF3C7 100%)", icon: Users2 },
+  hygiene: { accent: C_AMBER, tint: "linear-gradient(135deg,#FFFBEB 0%,#FEF3C7 100%)", icon: Users2 },
   other: { accent: C_SLATE, tint: "linear-gradient(135deg,#F8FAFC 0%,#F1F5F9 100%)", icon: Activity },
 };
 
@@ -764,15 +766,28 @@ const REVENUE_STATUS_LABEL: Record<string, string> = {
 };
 
 /** A single stat in the Business Health grid — value, its own honest-null state, a caption. */
-function HealthStat({ label, value, caption, tone }: {
-  label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral";
+function HealthStat({ label, value, caption, tone, icon: Icon }: {
+  label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral"; icon?: typeof Users;
 }) {
-  const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED : C_SLATE;
+  const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED_TEXT : C_SLATE;
+  const noData = value === "no data";
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px]">
-      <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide truncate">{label}</p>
-      <p className={`text-sm font-bold tabular-nums mt-0.5 ${value === "no data" ? "text-slate-400 text-xs font-normal italic" : ""}`}
-        style={value === "no data" ? undefined : { color }}>
+    <div className="relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px] transition-shadow hover:shadow-sm">
+      {/* MetricCard idiom (Mydashboards): a solid-color top strip instead of a
+          tinted border, so the accent stays crisp at this radius, plus the
+          icon chip's background derived from the exact same hex the strip
+          uses -- never a separately-chosen "-light" shade that can drift. */}
+      {!noData && <div className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color }} />}
+      <div className="flex items-start justify-between gap-1.5">
+        <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide truncate">{label}</p>
+        {Icon && (
+          <span className="shrink-0 rounded-md p-1" style={{ background: noData ? undefined : `${color}18` }}>
+            <Icon className="h-3 w-3" style={{ color: noData ? "#94A3B8" : color }} />
+          </span>
+        )}
+      </div>
+      <p className={`text-sm font-bold tabular-nums mt-0.5 ${noData ? "text-slate-400 text-xs font-normal italic" : ""}`}
+        style={noData ? undefined : { color }}>
         {value}
       </p>
       {caption && <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">{caption}</p>}
@@ -816,7 +831,8 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
       <div className="px-3 space-y-4">
         {/* Finance */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_BLUE }} />
             Revenue &amp; margin
           </p>
           {finance.available ? (
@@ -862,18 +878,22 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
 
         {/* Headcount vs mandate */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_PURPLE }} />
             Headcount vs. sanctioned mandate
           </p>
           <div className="flex flex-wrap gap-2">
-            <HealthStat label="Active headcount" value={String(headcount.activeHc)} />
+            <HealthStat label="Headcount" value={String(headcount.activeHc)} icon={Users} />
             {headcount.available ? (
               <>
-                <HealthStat label="Mandated headcount" value={String(headcount.mandatedHc)}
+                <HealthStat label="Mandate" value={String(headcount.mandatedHc)} icon={Target}
                   caption={headcount.reason ? "see note below" : undefined} />
-                <HealthStat label="Gap" value={`${(headcount.gap ?? 0) > 0 ? "+" : ""}${headcount.gap}`}
-                  caption={headcount.gap === 0 ? "exactly at mandate" : headcount.gap! > 0 ? "over mandate" : "under mandate"}
-                  tone={headcount.gap === 0 ? "neutral" : headcount.gap! > 0 ? "good" : "bad"} />
+                <HealthStat label="Available count" value={String(headcount.availableCount)} icon={UserCheck}
+                  caption="sanctioned seats still open" tone={headcount.availableCount === 0 ? "neutral" : "bad"} />
+                <HealthStat label="Buffer" value={`+${headcount.buffer}`} icon={ArrowUpRight}
+                  caption="staffed above mandate" tone={headcount.buffer! > 0 ? "good" : "neutral"} />
+                <HealthStat label="Shortfall" value={`-${headcount.shortfall}`} icon={AlertTriangle}
+                  caption="staffed below mandate" tone={headcount.shortfall! > 0 ? "bad" : "neutral"} />
               </>
             ) : (
               <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-2.5 py-2 flex items-center">
@@ -888,16 +908,19 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
 
         {/* Hiring pipeline */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_AMBER }} />
             Hiring pipeline
           </p>
           <div className="flex flex-wrap gap-2">
-            <HealthStat label="Open requisitions" value={String(hiring.openRequisitions)}
+            <HealthStat label="Requisition open" value={String(hiring.openRequisitions)} icon={Briefcase}
               tone={hiring.openRequisitions > 0 ? "neutral" : "good"} />
-            <HealthStat label="Open positions" value={String(hiring.openPositions)}
-              tone={hiring.openPositions > 0 ? "bad" : "good"} />
-            <HealthStat label="Candidates in pipeline" value={String(hiring.candidatesInPipeline)}
-              caption="Matched by process name, not a hard link" />
+            <HealthStat label="Hired count" value={String(hiring.hiredCount)} icon={UserPlus}
+              caption="filled via requisition, ever" tone="good" />
+            <HealthStat label="Pending hiring count" value={String(hiring.pendingHiringCount)} icon={Hourglass}
+              caption="requested minus fulfilled" tone={hiring.pendingHiringCount > 0 ? "bad" : "good"} />
+            <HealthStat label="Candidates in pipeline" value={String(hiring.candidatesInPipeline)} icon={Users2}
+              caption="matched by process name, not a hard link" />
           </div>
           {hiring.openRequisitions === 0 && hiring.candidatesInPipeline === 0 && (
             <p className="text-[9.5px] text-slate-400 italic mt-1.5">
@@ -2528,13 +2551,18 @@ export default function ProcessOperationsPage() {
                   </div>
                 )}
 
+                {/* Process Performance Card reading order: headcount &
+                    operations first (the staffing/dialler reality this
+                    period), then quality, then hygiene last -- see the
+                    SECTIONS comment in process-operations.service.ts. */}
+                {current && <BusinessHealthPanel processId={current} />}
+
                 {charts.length > 0 && (
                   <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
                 )}
 
                 {current && <VoiceOfCustomerPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
-                {current && <BusinessHealthPanel processId={current} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]

@@ -108,11 +108,27 @@ export interface MetricSection {
 }
 
 /**
- * Section order is an argument about how to read the page: coverage before the
- * rates it qualifies, outcomes before the behaviour that explains them, and the
- * workforce last because it is the reason the rest moves rather than a result.
+ * Section order is the "Process Performance Card" reading order requested
+ * 2026-09-10: headcount/operations first (the staffing and dialler reality
+ * this month), then quality (what the AI/QA passes found over those same
+ * calls), then hygiene last (data-quality housekeeping -- unresolved punches,
+ * correction load, roster ack -- real, but the least urgent read on the
+ * page). Quality itself keeps its prior internal order (coverage before the
+ * rates it qualifies, outcomes before the behaviour that explains them).
  */
 const SECTIONS: Array<{ key: string; title: string; blurb: string; members: string[] }> = [
+  {
+    key: "operations",
+    title: "Headcount & operations",
+    blurb: "Staffing and dialler reality for this process, this period -- what the rest of the page explains.",
+    members: [
+      "AHT", "INBOUND_SL_PCT", "INBOUND_AL_PCT", "BLA_INBOUND_AL_PCT",
+      "OUTBOUND_CONNECT_PCT", "AGENT_OCCUPANCY_PCT", "AGENT_UTILISATION_PCT",
+      "CHAT_TICKETS", "CHAT_RESOLVED_PCT", "CHAT_FRT_SLA_PCT",
+      "SHRINKAGE_PCT", "SHIFT_MINUTES_AVG", "PROCESS_JOINERS", "PROCESS_EXITS",
+      "PROC_ATTENDANCE_PCT",
+    ],
+  },
   {
     key: "conversion",
     title: "Conversation & conversion",
@@ -165,24 +181,12 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
     ],
   },
   {
-    key: "telephony",
-    title: "Telephony",
-    blurb: "From the dialler feeds.",
+    key: "hygiene",
+    title: "Hygiene",
+    blurb: "Data-quality housekeeping -- real gaps, but the least urgent read on this page.",
     members: [
-      "AHT", "INBOUND_SL_PCT", "INBOUND_AL_PCT", "BLA_INBOUND_AL_PCT",
-      "OUTBOUND_CONNECT_PCT", "AGENT_OCCUPANCY_PCT", "AGENT_UTILISATION_PCT",
-      "CHAT_TICKETS", "CHAT_RESOLVED_PCT", "CHAT_FRT_SLA_PCT",
-    ],
-  },
-  {
-    key: "workforce",
-    title: "Workforce",
-    blurb: "The same people, and usually the reason the numbers above moved.",
-    members: [
-      "SHRINKAGE_PCT", "UNRESOLVED_PUNCH_PCT", "CORRECTION_LOAD_PCT",
-      "ROSTER_ACK_PCT", "ATTENDANCE_ISSUES_OPEN", "ATTENDANCE_NO_EVIDENCE",
-      "SHIFT_MINUTES_AVG", "PROCESS_JOINERS", "PROCESS_EXITS",
-      "PROC_ATTENDANCE_PCT",
+      "UNRESOLVED_PUNCH_PCT", "CORRECTION_LOAD_PCT", "ROSTER_ACK_PCT",
+      "ATTENDANCE_ISSUES_OPEN", "ATTENDANCE_NO_EVIDENCE",
     ],
   },
 ];
@@ -1560,6 +1564,16 @@ export interface ProcessBusinessHealth {
     activeHc: number;
     mandatedHc: number | null;
     gap: number | null;
+    /** max(mandate - activeHc, 0) -- sanctioned seats still open to hire into.
+     *  Same magnitude as `shortfall` below; kept as a separate field because
+     *  the dashboard shows it in a neutral "seats open" framing next to
+     *  mandate, distinct from shortfall's red/warning framing. Null when no
+     *  mandate is configured -- there is nothing to be "available" against. */
+    availableCount: number | null;
+    /** max(activeHc - mandate, 0) -- staffed beyond the sanctioned mandate. */
+    buffer: number | null;
+    /** max(mandate - activeHc, 0) -- staffed below the sanctioned mandate. */
+    shortfall: number | null;
   };
   hiring: {
     available: boolean;
@@ -1567,6 +1581,15 @@ export interface ProcessBusinessHealth {
     openRequisitions: number;
     openPositions: number;
     candidatesInPipeline: number;
+    /** SUM(fulfilled_headcount) across every requisition ever raised for this
+     *  process -- how many seats have actually been filled through the
+     *  requisition pipeline, not a proxy for total joiners (someone could
+     *  join outside a requisition, e.g. a transfer). */
+    hiredCount: number;
+    /** Alias of `openPositions`, exposed under the label the dashboard uses
+     *  for this figure -- requested minus already-fulfilled headcount, summed
+     *  across every still-open requisition. */
+    pendingHiringCount: number;
   };
 }
 
@@ -1705,24 +1728,32 @@ export async function getProcessBusinessHealth(
   const seatRaw = (seatRows as any[])[0]?.total_seats;
   const revenueRuleSeats = seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
 
+  // Buffer/shortfall/available-count are all derived from the same gap, once a
+  // mandate exists -- factored out so all three headcount branches below stay
+  // in sync rather than repeating the max(...,0) pair three times.
+  const staffingSplit = (mandate: number | null): { availableCount: number | null; buffer: number | null; shortfall: number | null } =>
+    mandate === null
+      ? { availableCount: null, buffer: null, shortfall: null }
+      : { availableCount: Math.max(mandate - activeHc, 0), buffer: Math.max(activeHc - mandate, 0), shortfall: Math.max(mandate - activeHc, 0) };
+
   let headcount: ProcessBusinessHealth["headcount"];
   if (hcMandate === null && revenueRuleSeats === null) {
     headcount = {
       available: false, reason: "No sanctioned headcount mandate or contracted seat count configured for this process.",
-      activeHc, mandatedHc: null, gap: null,
+      activeHc, mandatedHc: null, gap: null, ...staffingSplit(null),
     };
   } else if (hcMandate !== null && revenueRuleSeats !== null && hcMandate !== revenueRuleSeats) {
     headcount = {
       available: true,
       reason: `Two disagreeing sources: HC mandate says ${hcMandate}, the revenue rule's contracted seats say ${revenueRuleSeats}. Shown separately rather than picking one.`,
-      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate,
+      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate, ...staffingSplit(hcMandate),
     };
   } else {
     const resolved = hcMandate ?? revenueRuleSeats!;
     headcount = {
       available: true,
       reason: hcMandate === null ? "From the revenue rule's contracted seats — no formal HC mandate configured." : null,
-      activeHc, mandatedHc: resolved, gap: activeHc - resolved,
+      activeHc, mandatedHc: resolved, gap: activeHc - resolved, ...staffingSplit(resolved),
     };
   }
 
@@ -1738,6 +1769,16 @@ export async function getProcessBusinessHealth(
   const openRequisitions = Number((reqRows as any[])[0]?.open_reqs ?? 0);
   const openPositions = Number((reqRows as any[])[0]?.open_positions ?? 0);
 
+  // "Hired Count" -- fulfilled_headcount summed across every requisition this
+  // process has ever raised (open or closed), not scoped to a period: this is
+  // a running total of seats actually filled through the requisition
+  // pipeline, the same denominator hiring managers already track it against.
+  const [hiredRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(fulfilled_headcount), 0) AS hired FROM job_requisition WHERE process_id = ?`,
+    [processId],
+  );
+  const hiredCount = Number((hiredRows as any[])[0]?.hired ?? 0);
+
   let candidatesInPipeline = 0;
   if (processName) {
     const [candRows] = await db.execute<RowDataPacket[]>(
@@ -1747,6 +1788,7 @@ export async function getProcessBusinessHealth(
   }
   const hiring: ProcessBusinessHealth["hiring"] = {
     available: true, reason: null, openRequisitions, openPositions, candidatesInPipeline,
+    hiredCount, pendingHiringCount: openPositions,
   };
 
   return { available: true, reason: null, periodCode, finance, headcount, hiring };
