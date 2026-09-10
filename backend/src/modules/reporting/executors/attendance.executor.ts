@@ -224,10 +224,15 @@ export async function attendanceRegisterMonthly(
       COALESCE(NULLIF(e.profile_type, ''), e.employment_type, '') AS profile,
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
+      COALESCE(p.process_name, '') AS process_name,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
       CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
       e.date_of_joining,
       e.date_of_exit,
+      -- Display-only, DD-MMM-YYYY. Kept separate from the raw date_of_joining above, which
+      -- stays a real DATE value because the pivot below does day-boundary arithmetic on it.
+      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj_display,
+      DATE_FORMAT(e.salary_start_date, '%d-%b-%Y') AS salary_start_date_display,
       DAY(adr.record_date) AS day_num,
       adr.attendance_status,
       COALESCE(adr.raw_minutes, 0) AS raw_minutes
@@ -239,6 +244,7 @@ export async function attendanceRegisterMonthly(
     LEFT JOIN designation_master desig ON desig.id = e.designation_id
     LEFT JOIN cost_centre_master cc   ON cc.id    = e.cost_centre_id
     LEFT JOIN branch_master b         ON b.id     = e.branch_id
+    LEFT JOIN process_master p        ON p.id     = e.process_id
     WHERE ${clauses.join(" AND ")}
     ORDER BY e.employee_code, adr.record_date
   `;
@@ -265,10 +271,13 @@ export async function attendanceRegisterMonthly(
         profile:         row.profile,
         cost_center:     row.cost_center,
         emp_location:    row.emp_location,
+        process_name:    row.process_name,
         billable:        row.billable,
         employee_status: row.employee_status,
         date_of_joining: row.date_of_joining,
         date_of_exit:    row.date_of_exit,
+        doj_display:              row.doj_display,
+        salary_start_date_display: row.salary_start_date_display,
       });
     }
     // row.day_num is NULL when the LEFT JOIN found no attendance record.
@@ -340,6 +349,9 @@ export async function attendanceRegisterMonthly(
       profile:         emp.profile,
       cost_center:     emp.cost_center,
       emp_location:    emp.emp_location,
+      process_name:    emp.process_name,
+      date_of_joining: emp.doj_display,
+      salary_start_date: emp.salary_start_date_display,
       billable:        emp.billable,
       employee_status: emp.employee_status,
       ...Object.fromEntries(
