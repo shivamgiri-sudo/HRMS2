@@ -257,6 +257,12 @@ interface CriticalSignals { available: boolean; reason: string | null; totalExam
 interface DailyQualityScore { date: string; avgScore: number | null; auditCount: number; }
 interface DailyQualityTrend { available: boolean; reason: string | null; targetPct: number; days: DailyQualityScore[]; }
 
+interface CustomerRiskCards {
+  available: boolean; reason: string | null; totalExamined: number;
+  socialMediaCourtThreat: number; socialMediaCourtThreatPct: number;
+  potentialScam: number; potentialScamPct: number;
+}
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1146,6 +1152,50 @@ function DailyQualityTrendPanel({ processId }: { processId: string }) {
               <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: C_RED }} />&lt;{trend.targetPct - 10}%</span>
             </div>
           </>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * The two Customer Interaction threat cards, ported from Mydashboards'
+ * source social_media_court_threat/potential_scam columns.
+ */
+function CustomerRiskCardsPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "customer-risk-cards", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<CustomerRiskCards>>(
+      `/api/process-operations/${processId}/customer-risk-cards?period=${period}`),
+  });
+  const rc = data?.data;
+
+  return (
+    <ChartCard title="Customer interaction risk" subtitle="Calls carrying an explicit threat or scam risk signal">
+      <div className="px-3 pb-2">
+        {isLoading || !rc ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading customer interaction insights…
+          </div>
+        ) : !rc.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{rc.reason}</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <div className={`rounded-lg border px-2.5 py-2 ${rc.socialMediaCourtThreat > 0 ? "border-red-200 dark:border-red-900 bg-red-50/60 dark:bg-red-950/20" : "border-slate-100 dark:border-slate-800"}`}>
+              <div className={`text-lg font-bold ${rc.socialMediaCourtThreat > 0 ? "text-red-600" : "text-slate-400"}`}>
+                {rc.socialMediaCourtThreat} <span className="text-[10px] font-normal text-slate-500">calls ({rc.socialMediaCourtThreatPct}%)</span>
+              </div>
+              <div className="text-[9.5px] font-bold uppercase tracking-wide text-slate-500">Social media & consumer court threat</div>
+              <div className="text-[9px] text-slate-400">📱 Social media · ⚖️ Consumer court · Legal / FIR</div>
+            </div>
+            <div className={`rounded-lg border px-2.5 py-2 ${rc.potentialScam > 0 ? "border-red-200 dark:border-red-900 bg-red-50/60 dark:bg-red-950/20" : "border-slate-100 dark:border-slate-800"}`}>
+              <div className={`text-lg font-bold ${rc.potentialScam > 0 ? "text-red-600" : "text-slate-400"}`}>
+                {rc.potentialScam} <span className="text-[10px] font-normal text-slate-500">calls ({rc.potentialScamPct}%)</span>
+              </div>
+              <div className="text-[9.5px] font-bold uppercase tracking-wide text-slate-500">Potential scam</div>
+              <div className="text-[9px] text-slate-400">Financial fraud reported</div>
+            </div>
+          </div>
         )}
       </div>
     </ChartCard>
@@ -3834,6 +3884,7 @@ export default function ProcessOperationsPage() {
                 {current && <AchtCategorizationPanel processId={current} period={period} />}
                 {current && <CriticalSignalsPanel processId={current} period={period} />}
                 {current && <DailyQualityTrendPanel processId={current} />}
+                {current && <CustomerRiskCardsPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

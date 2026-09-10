@@ -2468,6 +2468,87 @@ export async function getDailyQualityTrend(
   return { available: true, reason: null, targetPct: 95, days: days_ };
 }
 
+export interface CustomerRiskCards {
+  available: boolean; reason: string | null;
+  totalExamined: number;
+  socialMediaCourtThreat: number; socialMediaCourtThreatPct: number;
+  potentialScam: number; potentialScamPct: number;
+}
+
+/**
+ * The two Customer Interaction Insights threat cards, ported verbatim from
+ * Mydashboards' source (the social_media_court_threat/potential_scam
+ * columns in its Customer Interaction block): a call counts as a scam risk
+ * when financial_fraud='yes' (exact match, case-insensitive after TRIM),
+ * and as a social-media/court threat when sensetive_word matches any of
+ * social/court/consumer/legal/fir (LIKE, case-insensitive) -- both real
+ * columns, confirmed live on db_audit.call_quality_assessment.
+ */
+export async function getCustomerRiskCards(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<CustomerRiskCards | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): CustomerRiskCards => ({
+    available: false, reason, totalExamined: 0,
+    socialMediaCourtThreat: 0, socialMediaCourtThreatPct: 0,
+    potentialScam: 0, potentialScamPct: 0,
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        COUNT(*) total,
+        SUM(CASE WHEN
+              LOWER(q.sensetive_word) LIKE '%social%' OR LOWER(q.sensetive_word) LIKE '%court%' OR
+              LOWER(q.sensetive_word) LIKE '%consumer%' OR LOWER(q.sensetive_word) LIKE '%legal%' OR
+              LOWER(q.sensetive_word) LIKE '%fir%'
+            THEN 1 ELSE 0 END) social_threat,
+        SUM(CASE WHEN LOWER(TRIM(q.financial_fraud)) = 'yes' THEN 1 ELSE 0 END) scam
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND q.quality_percentage IS NOT NULL`,
+    [...employeeCodes, from, to],
+  );
+
+  const row = (rows as any[])[0];
+  const total = Number(row?.total ?? 0);
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const socialThreat = Number(row.social_threat ?? 0);
+  const scam = Number(row.scam ?? 0);
+  return {
+    available: true, reason: null, totalExamined: total,
+    socialMediaCourtThreat: socialThreat, socialMediaCourtThreatPct: Math.round((socialThreat / total) * 1000) / 10,
+    potentialScam: scam, potentialScamPct: Math.round((scam / total) * 1000) / 10,
+  };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{
