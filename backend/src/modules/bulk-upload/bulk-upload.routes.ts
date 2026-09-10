@@ -435,6 +435,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_neemans_allocation_masmis_batch",
   "import_neemans_cart_masmis_batch",
   "import_neemans_apr_masmis_batch",
+  "import_gnc_allocation_masmis_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1148,6 +1149,14 @@ async function dispatchImport(
       "../bulk-upload/neemans-apr-masmis-bulk.service.js"
     );
     const data = await importNeemansAprMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_gnc_allocation_masmis_batch") {
+    const { importGncAllocationMasmisBatch } = await import(
+      "../bulk-upload/gnc-allocation-masmis-bulk.service.js"
+    );
+    const data = await importGncAllocationMasmisBatch(id, userId);
     return { success: true, data };
   }
 
