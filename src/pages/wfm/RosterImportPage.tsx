@@ -286,7 +286,17 @@ export default function RosterImportPage() {
   const cycleId = linkedParams.get("cycleId");
   const [processId, setProcessId] = useState(() => linkedParams.get("processId") ?? "");
   const [importMode, setImportMode] = useState<"NEW" | "UPDATE">("NEW");
-  const [batchId, setBatchId] = useState<number | null>(null);
+  // A batch is normally only ever known to the browser tab that just created it (see upload
+  // mutation below) — there is no "browse pending imports" list yet, so a checker who did not
+  // do the upload themselves has no way to reach a PREVIEW batch to commit it. Opening
+  // /wfm/roster-import?batchId=51 is the interim escape hatch for that maker-checker deadlock
+  // until a real pending-imports list ships.
+  const [batchId, setBatchId] = useState<number | null>(() => {
+    const raw = linkedParams.get("batchId");
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  });
+  const [openBatchInput, setOpenBatchInput] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [editingRow, setEditingRow] = useState<ImportRow | null>(null);
   const [showMissing, setShowMissing] = useState(false);
@@ -645,6 +655,37 @@ export default function RosterImportPage() {
             </Button>
           )}
         </div>
+
+        {/* Open an existing pending batch by ID — the interim escape hatch for a checker who
+            did not do the upload themselves (see batchId state above for why this exists). */}
+        {!batchId && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <span className="text-sm text-slate-600 whitespace-nowrap">Open a pending import by ID:</span>
+            <Input
+              value={openBatchInput}
+              onChange={(e) => setOpenBatchInput(e.target.value)}
+              placeholder="e.g. 51"
+              className="h-8 w-28"
+              inputMode="numeric"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!openBatchInput.trim()}
+              onClick={() => {
+                const parsed = parseInt(openBatchInput, 10);
+                if (Number.isFinite(parsed)) {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("batchId", String(parsed));
+                  window.history.replaceState(null, "", url.toString());
+                  setBatchId(parsed);
+                }
+              }}
+            >
+              Open
+            </Button>
+          </div>
+        )}
 
         {/* Drop zone */}
         {!batchId && (
