@@ -224,6 +224,19 @@ interface EmployeeRecentCalls {
   }>;
 }
 
+interface AgentAuditSummaryRow {
+  employeeCode: string; employeeName: string;
+  auditCount: number; cqScore: number | null;
+  fatalCount: number; fatalPct: number;
+  tqCount: number; mqCount: number; bqCount: number;
+  band: "TQ" | "MQ" | "BQ";
+}
+interface AgentAuditSummary {
+  available: boolean; reason: string | null;
+  totals: { tq: number; mq: number; bq: number };
+  rows: AgentAuditSummaryRow[];
+}
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -806,6 +819,102 @@ function FatalCallsPanel({ processId, period }: { processId: string; period: Rep
         )}
       </div>
       {drawer}
+    </ChartCard>
+  );
+}
+
+/** TQ/MQ/BQ badge -- same three-tier vocabulary the table below stack-ranks by. */
+function BandBadge({ band }: { band: "TQ" | "MQ" | "BQ" }) {
+  const cls = band === "TQ"
+    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+    : band === "MQ"
+    ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+    : "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400";
+  return <span className={`inline-flex items-center justify-center w-8 rounded-md px-1 py-0.5 text-[9.5px] font-bold ${cls}`}>{band}</span>;
+}
+
+/**
+ * Agent Audit Summary -- full stack-ranked roster, ported from Mydashboards'
+ * getAgentAuditBandSummary (verified against its source, not reverse-
+ * engineered from the UI): TQ = calls scoring >=80%, MQ = 60-79%, BQ = 0-59%,
+ * counted per call within each agent, not a single cutoff on the agent's own
+ * average. cqScore is the average over non-fatal calls only -- a fatal call
+ * already failed outright and would otherwise drag a "quality" average down
+ * by a measure that isn't grading quality at all. Sorted worst-first (lowest
+ * cqScore first) so a reader meets whoever needs attention before the rest,
+ * matching this page's established convention elsewhere.
+ */
+function AgentAuditSummaryPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "agent-audit-summary", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<AgentAuditSummary>>(
+      `/api/process-operations/${processId}/agent-audit-summary?period=${period}`),
+  });
+  const summary = data?.data;
+  const sorted = useMemo(
+    () => summary?.rows.slice().sort((a, b) => (a.cqScore ?? 0) - (b.cqScore ?? 0)) ?? [],
+    [summary],
+  );
+
+  return (
+    <ChartCard title="Agent audit summary"
+      subtitle="Every audited agent, stack-ranked TQ/MQ/BQ by call-level score -- worst first">
+      <div className="px-3">
+        {isLoading || !summary ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Ranking agents…
+          </div>
+        ) : !summary.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{summary.reason}</p>
+        ) : !sorted.length ? (
+          <p className="text-xs text-slate-400 italic py-1">No audited agents in this period.</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 pb-2 text-[10.5px] font-semibold">
+              <span className="flex items-center gap-1"><BandBadge band="TQ" />{summary.totals.tq}</span>
+              <span className="flex items-center gap-1"><BandBadge band="MQ" />{summary.totals.mq}</span>
+              <span className="flex items-center gap-1"><BandBadge band="BQ" />{summary.totals.bq}</span>
+              <span className="text-slate-400 font-normal ml-auto">{sorted.length} agent{sorted.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="overflow-x-auto -mx-3 px-3">
+              <table className="w-full text-[10.5px] border-collapse">
+                <thead>
+                  <tr className="text-left text-slate-400 uppercase tracking-wide text-[9px]">
+                    <th className="pb-1.5 pr-2 font-semibold">Agent</th>
+                    <th className="pb-1.5 pr-2 font-semibold text-right">Audits</th>
+                    <th className="pb-1.5 pr-2 font-semibold text-right">CQ Score</th>
+                    <th className="pb-1.5 pr-2 font-semibold text-right">Fatal</th>
+                    <th className="pb-1.5 pr-2 font-semibold text-center">Band</th>
+                    <th className="pb-1.5 pr-2 font-semibold text-right">TQ</th>
+                    <th className="pb-1.5 pr-2 font-semibold text-right">MQ</th>
+                    <th className="pb-1.5 font-semibold text-right">BQ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((r) => (
+                    <tr key={r.employeeCode} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="py-1 pr-2 font-medium text-slate-700 dark:text-slate-300 truncate max-w-[10rem]">{r.employeeName}</td>
+                      <td className="py-1 pr-2 text-right text-slate-500">{r.auditCount}</td>
+                      <td className="py-1 pr-2 text-right font-semibold text-slate-700 dark:text-slate-300">
+                        {r.cqScore !== null ? `${r.cqScore}%` : "—"}
+                      </td>
+                      <td className="py-1 pr-2 text-right">
+                        {r.fatalCount > 0
+                          ? <span className="text-red-600 font-semibold">{r.fatalCount} ({r.fatalPct}%)</span>
+                          : <span className="text-slate-400">0</span>}
+                      </td>
+                      <td className="py-1 pr-2 text-center"><BandBadge band={r.band} /></td>
+                      <td className="py-1 pr-2 text-right text-emerald-600">{r.tqCount}</td>
+                      <td className="py-1 pr-2 text-right text-amber-600">{r.mqCount}</td>
+                      <td className="py-1 text-right text-red-600">{r.bqCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
     </ChartCard>
   );
 }
@@ -3412,6 +3521,7 @@ export default function ProcessOperationsPage() {
 
                 {current && <VoiceOfCustomerPanel processId={current} period={period} />}
                 {current && <FatalCallsPanel processId={current} period={period} />}
+                {current && <AgentAuditSummaryPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

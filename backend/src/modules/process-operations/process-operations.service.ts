@@ -1688,6 +1688,113 @@ export async function getFatalCalls(
   return { available: true, reason: null, calls };
 }
 
+export interface AgentAuditSummaryRow {
+  employeeCode: string; employeeName: string;
+  auditCount: number; cqScore: number | null;
+  fatalCount: number; fatalPct: number;
+  tqCount: number; mqCount: number; bqCount: number;
+  /** The agent's own dominant band by call count -- TQ/MQ/BQ, same three
+   *  bands as the totals below, just picked per row for a scannable badge. */
+  band: "TQ" | "MQ" | "BQ";
+}
+export interface AgentAuditSummary {
+  available: boolean; reason: string | null;
+  totals: { tq: number; mq: number; bq: number };
+  rows: AgentAuditSummaryRow[];
+}
+
+/**
+ * Per-agent audit rollup with TQ/MQ/BQ stack-ranking -- the same banding
+ * convention verified live in Mydashboards' source (inbound-quality.service.ts,
+ * getAgentAuditBandSummary): TQ = quality_percentage >= 80, MQ = 60-79.99,
+ * BQ = 0-59.99, counted per CALL within each agent, not a single cutoff
+ * applied to the agent's own average. cqScore is the average over NON-fatal
+ * calls only, matching the source exactly -- a fatal call already failed
+ * outright and would otherwise drag the "quality" average down by a measure
+ * that isn't about grading quality at all.
+ */
+export async function getAgentAuditSummary(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<AgentAuditSummary | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): AgentAuditSummary =>
+    ({ available: false, reason, totals: { tq: 0, mq: 0, bq: 0 }, rows: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        q.User AS employee_code,
+        COUNT(*) AS audit_count,
+        ROUND(AVG(CASE WHEN NOT (${fatalSql}) THEN q.quality_percentage END), 1) AS cq_score,
+        SUM(CASE WHEN (${fatalSql}) THEN 1 ELSE 0 END) AS fatal_count,
+        SUM(CASE WHEN q.quality_percentage >= 80 THEN 1 ELSE 0 END) AS tq_count,
+        SUM(CASE WHEN q.quality_percentage >= 60 AND q.quality_percentage < 80 THEN 1 ELSE 0 END) AS mq_count,
+        SUM(CASE WHEN q.quality_percentage > 0 AND q.quality_percentage < 60 THEN 1 ELSE 0 END) AS bq_count
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY q.User
+      ORDER BY cq_score DESC`,
+    [...employeeCodes, from, to],
+  );
+
+  const parsed = (rows as any[]).map((r) => {
+    const auditCount = Number(r.audit_count) || 0;
+    const tqCount = Number(r.tq_count) || 0;
+    const mqCount = Number(r.mq_count) || 0;
+    const bqCount = Number(r.bq_count) || 0;
+    const fatalCount = Number(r.fatal_count) || 0;
+    const band: "TQ" | "MQ" | "BQ" =
+      tqCount >= mqCount && tqCount >= bqCount ? "TQ" : mqCount >= bqCount ? "MQ" : "BQ";
+    return {
+      employeeCode: String(r.employee_code),
+      employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+      auditCount,
+      cqScore: r.cq_score !== null ? Number(r.cq_score) : null,
+      fatalCount,
+      fatalPct: auditCount > 0 ? Math.round((fatalCount / auditCount) * 1000) / 10 : 0,
+      tqCount, mqCount, bqCount, band,
+    };
+  });
+
+  if (!parsed.length) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const totals = parsed.reduce(
+    (acc, r) => ({ tq: acc.tq + r.tqCount, mq: acc.mq + r.mqCount, bq: acc.bq + r.bqCount }),
+    { tq: 0, mq: 0, bq: 0 },
+  );
+  return { available: true, reason: null, totals, rows: parsed };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{
