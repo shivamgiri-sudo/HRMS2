@@ -46,31 +46,27 @@ function parseChatDatetime(raw: unknown): string | null {
 
 // ── Upload log ────────────────────────────────────────────────────────────────
 //
-// FLAGGED, NOT FIXED (2026-08-13): every INSERT/DELETE-side function in this file —
-// logUpload(), deleteUploadBatch() below, and every uploadXxx() function through
-// "Neemans Upload Functions" — writes to
-// column names that do not exist on the real db_masmis tables (verified live: e.g.
-// upload_log's real columns are id/batch_id/table_name/file_name/row_count/uploaded_by/
-// uploaded_at, not upload_type/month_label; getUploadLogs()'s own real historical rows —
-// genuine successful uploads with table_name/file_name populated — prove some OTHER,
-// external, non-HRMS2 process is what actually writes these tables, and that these
-// upload* functions have in all likelihood never once succeeded). The read-side dashboard
-// functions above/below were fixed against verified real schemas because a wrong SELECT
-// only serves wrong numbers, which is safely bounded by testing against real data. The
-// write side is left unfixed deliberately: the real Excel template each upload function
-// expects is unknown, and guessing at INSERT column mappings risks silently corrupting
-// live financial/sales data with no way to verify correctness short of a real file from
-// whoever owns that external process. Do not fix without a real sample file + explicit
-// sign-off on the target columns.
+// FIXED 2026-09-10: every INSERT/DELETE-side function in this file previously wrote to
+// column names that do not exist on the real db_masmis tables -- confirmed independently
+// this session (not guessed) by cloning the actual source of these tables,
+// github.com/tausifansari-mcn/Mydashboards ("My Dashboards"), reading its own real
+// sales.controller.ts/sales.service.ts column mappings, and cross-checking every single
+// one against SHOW COLUMNS + real sample rows on the live db_masmis tables themselves.
+// Two more real discrepancies were found even in that repo's own current code (gnc_sale's
+// real columns are sale_date/order_id, not Date/gnc_order_id; gnc_apr's duration columns
+// are fraction-of-a-day decimal text, not HH:MM:SS) -- fixed against the verified LIVE
+// schema in every case, not either source blindly. logUpload's real columns are
+// id/batch_id/table_name/file_name/row_count/uploaded_by/uploaded_at, not
+// upload_type/month_label -- this predates every upload*() function ever landing a row.
 
 export async function logUpload(
-  uploadType: string, monthLabel: string, rowCount: number,
+  uploadType: string, _monthLabel: string, rowCount: number,
   uploadedBy: string, batchId: string
 ): Promise<void> {
   await queryMasmis(
-    `INSERT INTO db_masmis.upload_log (batch_id, upload_type, month_label, row_count, uploaded_by)
-     VALUES (?, ?, ?, ?, ?)`,
-    [batchId, uploadType, monthLabel, rowCount, uploadedBy]
+    `INSERT INTO db_masmis.upload_log (batch_id, table_name, file_name, row_count, uploaded_by)
+     VALUES (?, ?, ?, ?, NULL)`,
+    [batchId, uploadType, `sales-upload by ${uploadedBy}`, rowCount]
   );
 }
 
@@ -109,6 +105,30 @@ export async function deleteUploadBatch(batchId: string): Promise<void> {
 }
 
 // ── Bellavita Sales Upload ────────────────────────────────────────────────────
+//
+// db_masmis.bb_sale's real columns (verified via SHOW COLUMNS + the real My Dashboards
+// source, github.com/tausifansari-mcn/Mydashboards): week, Date, emp_id, emp_name, tl, t1,
+// t2, FHD, days, phone_number, email_id, payment_status, amount, bella_vita_order_id,
+// campaign, calling_status, discount_code, sale_count, current_status, final_status,
+// Order_DateTime, state, line_item_name, pincode, "Order Date", hrs_24_48, crazy_deal,
+// perfume, size, order_pickup_datetime, rto_initiated_datetime, diff_hour, lob,
+// pincode_relevent, rto_status, draft_order, time_1608, sale_source_name, shift.
+function getField(r: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "") return String(r[k]).trim();
+  }
+  return "";
+}
+function nullableNumber(v: string): number | null {
+  if (!v) return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+function nullableInt(v: string): number | null {
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
 
 export async function uploadBellavitaSales(
   buffer: Buffer, uploadedBy: string
@@ -119,51 +139,60 @@ export async function uploadBellavitaSales(
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
-    const orderDate = parseBellavitaDate(r["Order Date"] ?? r["order_date"]);
-    if (!orderDate) continue;
+    const orderId = getField(r, "Bella Vita Order ID", "bella_vita_order_id");
+    const saleDate = parseBellavitaDate(r["Date"] ?? r["date"]);
+    if (!orderId || !saleDate) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.bb_sale
-         (upload_batch_id, order_id, order_date, campaign, product, sku, qty, mrp, selling_price,
-          discount, tax_pct, gross_revenue, net_revenue, gst_amount, payment_mode, order_status,
-          courier, awb_no, city, state, pincode, agent_id, agent_name, source, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (week, Date, emp_id, emp_name, tl, t1, t2, FHD, days, phone_number, email_id,
+          payment_status, amount, bella_vita_order_id, campaign, calling_status, discount_code,
+          sale_count, current_status, final_status, Order_DateTime, state, line_item_name,
+          pincode, \`Order Date\`, hrs_24_48, crazy_deal, perfume, size, order_pickup_datetime,
+          rto_initiated_datetime, diff_hour, lob, pincode_relevent, rto_status, draft_order,
+          time_1608, sale_source_name, shift, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId,
-        String(r["Order ID"] ?? r["order_id"] ?? ""),
-        orderDate,
-        String(r["Campaign"] ?? r["campaign"] ?? ""),
-        String(r["Product"] ?? r["product"] ?? ""),
-        String(r["SKU"] ?? r["sku"] ?? ""),
-        Number(r["Qty"] ?? r["qty"] ?? 0),
-        Number(r["MRP"] ?? r["mrp"] ?? 0),
-        Number(r["Selling Price"] ?? r["selling_price"] ?? 0),
-        Number(r["Discount"] ?? r["discount"] ?? 0),
-        Number(r["Tax %"] ?? r["tax_pct"] ?? 0),
-        Number(r["Gross Revenue"] ?? r["gross_revenue"] ?? 0),
-        Number(r["Net Revenue"] ?? r["net_revenue"] ?? 0),
-        Number(r["GST Amount"] ?? r["gst_amount"] ?? 0),
-        String(r["Payment Mode"] ?? r["payment_mode"] ?? ""),
-        String(r["Order Status"] ?? r["order_status"] ?? ""),
-        String(r["Courier"] ?? r["courier"] ?? ""),
-        String(r["AWB"] ?? r["awb_no"] ?? ""),
-        String(r["City"] ?? r["city"] ?? ""),
-        String(r["State"] ?? r["state"] ?? ""),
-        String(r["Pincode"] ?? r["pincode"] ?? ""),
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        String(r["Source"] ?? r["source"] ?? ""),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        getField(r, "Week", "week"), saleDate,
+        getField(r, "EMP ID", "emp_id"), getField(r, "Emp_Name", "emp_name"),
+        getField(r, "TL", "tl"), getField(r, "T1", "t1"), getField(r, "T2", "t2"),
+        parseBellavitaDate(r["FHD"] ?? r["fhd"]),
+        nullableInt(getField(r, "Days", "days")),
+        getField(r, "Phone Number", "phone_number"), getField(r, "E-mail ID", "email_id"),
+        getField(r, "Payment Status", "payment_status"),
+        nullableNumber(getField(r, "Amount", "amount")),
+        orderId, getField(r, "Campaign", "campaign"),
+        getField(r, "Calling Status", "calling_status"), getField(r, "Discount Code", "discount_code"),
+        nullableInt(getField(r, "Count", "count")),
+        getField(r, "Current Status", "current_status"), getField(r, "Final Status", "final_status"),
+        parseBellavitaDate(r["Order Date&Time"] ?? r["order_datetime"]),
+        getField(r, "State", "state"), getField(r, "Line Item Name", "line_item_name"),
+        getField(r, "Pincode", "pincode"),
+        parseBellavitaDate(r["Order Date"] ?? r["order_date"]),
+        getField(r, "24Hrs&48hrs", "hrs_24_48"), getField(r, "Crazy Deal", "crazy_deal"),
+        getField(r, "Perfume", "perfume"), getField(r, "Size", "size"),
+        parseBellavitaDate(r["Order Pickup Date"] ?? r["order_pickup_datetime"]),
+        parseBellavitaDate(r["RTO Initiated Date"] ?? r["rto_initiated_datetime"]),
+        nullableInt(getField(r, "Diff Hour", "diff_hour")),
+        getField(r, "LOB", "lob"), getField(r, "Pincode Relevent", "pincode_relevent"),
+        getField(r, "RTO Status", "rto_status"), getField(r, "Draft Order", "draft_order"),
+        getField(r, "16:08", "time_1608"), getField(r, "Sale Source Name", "sale_source_name"),
+        getField(r, "Shift", "shift"), batchId,
       ]
     );
     count++;
   }
-  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["Order Date"] ?? rows[0]["order_date"]) ?? "").slice(0, 7) : "";
-  await logUpload("bellavita-sales", monthLabel, count, uploadedBy, batchId);
+  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["Date"] ?? rows[0]["date"]) ?? "").slice(0, 7) : "";
+  await logUpload("bb_sale", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
 // ── GNC Sales Upload ──────────────────────────────────────────────────────────
-
+//
+// db_masmis.gnc_sale's real columns: week, sale_date, emp_id, emp_name, tl, t1, t3,
+// customer_number, email_id, payment_status, gross_amount, sum_before_gst, order_id,
+// campaign, discount_code, sale_count, status, line_item_name, sale_lob, target,
+// sale_source. Note: even My Dashboards' own current code targets "Date"/"gnc_order_id"
+// here, neither of which exist -- confirmed via SHOW COLUMNS, not assumed from that repo.
 export async function uploadGncSales(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -173,42 +202,45 @@ export async function uploadGncSales(
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
-    const saleDate = parseBellavitaDate(r["Sale Date"] ?? r["sale_date"] ?? r["Date"]);
-    if (!saleDate) continue;
+    const orderId = getField(r, "OrderID", "GNC Order ID", "order_id");
+    const saleDate = parseBellavitaDate(r["Date"] ?? r["date"]);
+    if (!orderId || !saleDate) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.gnc_sale
-         (upload_batch_id, sale_date, order_id, product, sku, qty, unit_price, total_revenue,
-          discount, payment_mode, status, agent_id, agent_name, campaign, city, state, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (week, sale_date, emp_id, emp_name, tl, t1, t3, customer_number, email_id,
+          payment_status, gross_amount, sum_before_gst, order_id, campaign, discount_code,
+          sale_count, status, line_item_name, sale_lob, target, sale_source, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
+        getField(r, "Week", "week"), saleDate,
+        getField(r, "EMP ID", "emp_id"), getField(r, "Emp_Name", "emp_name"),
+        getField(r, "TL", "tl"), parseBellavitaDate(r["T1"] ?? r["t1"]), getField(r, "T3", "t3"),
+        getField(r, "CustomerNumber", "customer_number"), getField(r, "E-mail ID", "email_id"),
+        getField(r, "Payment Status", "payment_status"),
+        nullableNumber(getField(r, "Gross Amount", "gross_amount")),
+        nullableNumber(getField(r, "Sum Before GST", "sum_before_gst")),
+        orderId, getField(r, "Campaign", "campaign"), getField(r, "Discount Code", "discount_code"),
+        nullableInt(getField(r, "Count", "count")), getField(r, "Status", "status"),
+        getField(r, "Lineitem name", "line_item_name"), getField(r, "Sale Lob", "sale_lob"),
+        nullableInt(getField(r, "Target", "target")), getField(r, "Sale Source", "sale_source"),
         batchId,
-        saleDate,
-        String(r["Order ID"] ?? r["order_id"] ?? ""),
-        String(r["Product"] ?? r["product"] ?? ""),
-        String(r["SKU"] ?? r["sku"] ?? ""),
-        Number(r["Qty"] ?? r["qty"] ?? 0),
-        Number(r["Unit Price"] ?? r["unit_price"] ?? 0),
-        Number(r["Total Revenue"] ?? r["total_revenue"] ?? 0),
-        Number(r["Discount"] ?? r["discount"] ?? 0),
-        String(r["Payment Mode"] ?? r["payment_mode"] ?? ""),
-        String(r["Status"] ?? r["status"] ?? ""),
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        String(r["Campaign"] ?? r["campaign"] ?? ""),
-        String(r["City"] ?? r["city"] ?? ""),
-        String(r["State"] ?? r["state"] ?? ""),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
       ]
     );
     count++;
   }
-  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["Sale Date"] ?? rows[0]["sale_date"] ?? rows[0]["Date"]) ?? "").slice(0, 7) : "";
-  await logUpload("gnc-sales", monthLabel, count, uploadedBy, batchId);
+  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["Date"] ?? rows[0]["date"]) ?? "").slice(0, 7) : "";
+  await logUpload("gnc_sale", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
 // ── GNC APR Upload ────────────────────────────────────────────────────────────
-
+//
+// db_masmis.gnc_apr's real columns: uid, report_date, user_name, emp_id, tl_name, calls,
+// process_type, login_time, wait_time, talk_time, dispo_time, pause_time, login_duration,
+// logout_time, acht, aoc, bio, bre, briefing, down_time, lunch, meet, qa, sb, tea_break,
+// training_break, wash, net_login, break_time, tra_qa, downtime, atten, capping. Duration
+// columns are fraction-of-a-day decimal TEXT in real live data (e.g.
+// "0.4047337962962963"), not HH:MM:SS -- kept as raw text for consistency with existing rows.
 export async function uploadGncApr(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -218,36 +250,45 @@ export async function uploadGncApr(
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
-    const callDate = parseBellavitaDate(r["Call Date"] ?? r["call_date"] ?? r["Date"]);
-    if (!callDate) continue;
+    const userName = getField(r, "user_name", "User Name");
+    const reportDate = parseBellavitaDate(r["report_date"] ?? r["Date"]);
+    if (!userName || !reportDate) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.gnc_apr
-         (upload_batch_id, call_date, agent_id, agent_name, calls_handled, sales_attempts,
-          sales_closed, conversion_pct, avg_handle_time, quality_score, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+         (uid, report_date, user_name, emp_id, tl_name, calls, process_type, login_time,
+          wait_time, talk_time, dispo_time, pause_time, login_duration, logout_time, acht,
+          aoc, bio, bre, briefing, down_time, lunch, meet, qa, sb, tea_break, training_break,
+          wash, net_login, break_time, tra_qa, downtime, atten, capping, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId,
-        callDate,
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        Number(r["Calls Handled"] ?? r["calls_handled"] ?? 0),
-        Number(r["Sales Attempts"] ?? r["sales_attempts"] ?? 0),
-        Number(r["Sales Closed"] ?? r["sales_closed"] ?? 0),
-        Number(r["Conversion %"] ?? r["conversion_pct"] ?? 0),
-        Number(r["Avg Handle Time"] ?? r["avg_handle_time"] ?? 0),
-        Number(r["Quality Score"] ?? r["quality_score"] ?? 0),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        getField(r, "uid") || null, reportDate, userName, getField(r, "emp_id") || null,
+        getField(r, "tl_name") || null, nullableInt(getField(r, "calls")),
+        getField(r, "process_type") || null, getField(r, "login_time") || null,
+        getField(r, "wait_time") || null, getField(r, "talk_time") || null,
+        getField(r, "dispo_time") || null, getField(r, "pause_time") || null,
+        getField(r, "login_duration") || null, getField(r, "logout_time") || null,
+        nullableInt(getField(r, "acht")), getField(r, "aoc") || null, getField(r, "bio") || null,
+        getField(r, "bre") || null, getField(r, "briefing") || null, getField(r, "down_time") || null,
+        getField(r, "lunch") || null, getField(r, "meet") || null, getField(r, "qa") || null,
+        getField(r, "sb") || null, getField(r, "tea_break") || null, getField(r, "training_break") || null,
+        getField(r, "wash") || null, getField(r, "net_login") || null, getField(r, "break_time") || null,
+        getField(r, "tra_qa") || null, getField(r, "downtime") || null, nullableInt(getField(r, "atten")),
+        getField(r, "capping") || null, batchId,
       ]
     );
     count++;
   }
-  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["Call Date"] ?? rows[0]["call_date"] ?? rows[0]["Date"]) ?? "").slice(0, 7) : "";
-  await logUpload("gnc-apr", monthLabel, count, uploadedBy, batchId);
+  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["report_date"] ?? rows[0]["Date"]) ?? "").slice(0, 7) : "";
+  await logUpload("gnc_apr", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
 // ── GNC Allocation Upload ─────────────────────────────────────────────────────
-
+//
+// db_masmis.gnc_allocation's real columns: uid, alloc_date, helper, date_type, time_slot,
+// store, customer_name, email, total, created_at, lineitem_name, lineitem_sku,
+// shipping_name, shipping_street, shipping_city, shipping_zip, shipping_phone, emp_id,
+// calling_status, sub_scenarios_1, callback_date, same_day_connect, nc_connect.
 export async function uploadGncAllocation(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -258,31 +299,45 @@ export async function uploadGncAllocation(
   let count = 0;
   const monthLabel = currentMonthLabel();
   for (const r of rows) {
+    const uid = getField(r, "uid");
+    if (!uid) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.gnc_allocation
-         (upload_batch_id, month_label, agent_id, agent_name, allocated_leads,
-          contacted, not_contacted, dnd, invalid, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+         (uid, alloc_date, helper, date_type, time_slot, store, customer_name, email, total,
+          created_at, lineitem_name, lineitem_sku, shipping_name, shipping_street,
+          shipping_city, shipping_zip, shipping_phone, emp_id, calling_status,
+          sub_scenarios_1, callback_date, same_day_connect, nc_connect, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, monthLabel,
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        Number(r["Allocated"] ?? r["allocated_leads"] ?? 0),
-        Number(r["Contacted"] ?? r["contacted"] ?? 0),
-        Number(r["Not Contacted"] ?? r["not_contacted"] ?? 0),
-        Number(r["DND"] ?? r["dnd"] ?? 0),
-        Number(r["Invalid"] ?? r["invalid"] ?? 0),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        uid, parseBellavitaDate(r["alloc_date"]), getField(r, "helper") || null,
+        getField(r, "date_type") || null, getField(r, "time_slot") || null,
+        getField(r, "store") || null, getField(r, "customer_name") || null,
+        getField(r, "email") || null, nullableNumber(getField(r, "total")),
+        getField(r, "created_at") || null, getField(r, "lineitem_name") || null,
+        getField(r, "lineitem_sku") || null, getField(r, "shipping_name") || null,
+        getField(r, "shipping_street") || null, getField(r, "shipping_city") || null,
+        getField(r, "shipping_zip") || null, getField(r, "shipping_phone") || null,
+        getField(r, "emp_id") || null, getField(r, "calling_status") || null,
+        getField(r, "sub_scenarios_1") || null, parseBellavitaDate(r["callback_date"]),
+        getField(r, "same_day_connect") || null, getField(r, "nc_connect") || null,
+        batchId,
       ]
     );
     count++;
   }
-  await logUpload("gnc-allocation", monthLabel, count, uploadedBy, batchId);
+  await logUpload("gnc_allocation", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
 // ── Bellavita APR Upload ──────────────────────────────────────────────────────
-
+//
+// db_masmis.bb_apr's real columns: unique_id, week, report_date, emp_name, noiid,
+// num_calls_chat, lob, login_time, wait_time, talk_time, dispo_time, pause_time, acht,
+// lunch, tea, tea1, washr, team_briefing_aux, net_pause, avg_dispo, total_break,
+// actual_login_hrs, downtime, login_duration, logout_time, net_login_hrs, utilization,
+// attendance_1, week_1, mtd, team_leader, fhd, tenure, tenurity_week, sub_lob,
+// unique_count, attendance_2, capping, attendance_3. Duration columns are fraction-of-a-
+// day decimal TEXT in real live data, same convention as gnc_apr above.
 export async function uploadBellavitaApr(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -292,40 +347,53 @@ export async function uploadBellavitaApr(
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
-    const callDate = parseBellavitaDate(r["Call Date"] ?? r["call_date"] ?? r["Date"]);
-    if (!callDate) continue;
+    const empName = getField(r, "emp_name");
+    const reportDate = parseBellavitaDate(r["report_date"] ?? r["Date"]);
+    if (!empName || !reportDate) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.bb_apr
-         (upload_batch_id, call_date, agent_id, agent_name, campaign, total_calls,
-          sales_calls, sales_closed, conversion_pct, cod_orders, prepaid_orders,
-          rto_orders, avg_handle_time, quality_score, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (unique_id, week, report_date, emp_name, noiid, num_calls_chat, lob, login_time,
+          wait_time, talk_time, dispo_time, pause_time, acht, lunch, tea, tea1, washr,
+          team_briefing_aux, net_pause, avg_dispo, total_break, actual_login_hrs, downtime,
+          login_duration, logout_time, net_login_hrs, utilization, attendance_1, week_1,
+          mtd, team_leader, fhd, tenure, tenurity_week, sub_lob, unique_count,
+          attendance_2, capping, attendance_3, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, callDate,
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        String(r["Campaign"] ?? r["campaign"] ?? ""),
-        Number(r["Total Calls"] ?? r["total_calls"] ?? 0),
-        Number(r["Sales Calls"] ?? r["sales_calls"] ?? 0),
-        Number(r["Sales Closed"] ?? r["sales_closed"] ?? 0),
-        Number(r["Conversion %"] ?? r["conversion_pct"] ?? 0),
-        Number(r["COD Orders"] ?? r["cod_orders"] ?? 0),
-        Number(r["Prepaid Orders"] ?? r["prepaid_orders"] ?? 0),
-        Number(r["RTO Orders"] ?? r["rto_orders"] ?? 0),
-        Number(r["Avg Handle Time"] ?? r["avg_handle_time"] ?? 0),
-        Number(r["Quality Score"] ?? r["quality_score"] ?? 0),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        getField(r, "unique_id") || null, getField(r, "week") || null, reportDate, empName,
+        getField(r, "noiid") || null, nullableInt(getField(r, "num_calls_chat")),
+        getField(r, "lob") || null, getField(r, "login_time") || null, getField(r, "wait_time") || null,
+        getField(r, "talk_time") || null, getField(r, "dispo_time") || null, getField(r, "pause_time") || null,
+        nullableInt(getField(r, "acht")), getField(r, "lunch") || null, getField(r, "tea") || null,
+        getField(r, "tea1") || null, getField(r, "washr") || null, getField(r, "team_briefing_aux") || null,
+        getField(r, "net_pause") || null, getField(r, "avg_dispo") || null, getField(r, "total_break") || null,
+        getField(r, "actual_login_hrs") || null, getField(r, "downtime") || null,
+        getField(r, "login_duration") || null, getField(r, "logout_time") || null,
+        getField(r, "net_login_hrs") || null, getField(r, "utilization") || null,
+        getField(r, "attendance_1") || null, getField(r, "week_1") || null, getField(r, "mtd") || null,
+        getField(r, "team_leader") || null, getField(r, "fhd") || null, nullableInt(getField(r, "tenure")),
+        getField(r, "tenurity_week") || null, getField(r, "sub_lob") || null,
+        nullableInt(getField(r, "unique_count")), getField(r, "attendance_2") || null,
+        getField(r, "capping") || null, getField(r, "attendance_3") || null, batchId,
       ]
     );
     count++;
   }
-  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["Call Date"] ?? rows[0]["call_date"] ?? rows[0]["Date"]) ?? "").slice(0, 7) : "";
-  await logUpload("bellavita-apr", monthLabel, count, uploadedBy, batchId);
+  const monthLabel = rows[0] ? (parseBellavitaDate(rows[0]["report_date"] ?? rows[0]["Date"]) ?? "").slice(0, 7) : "";
+  await logUpload("bb_apr", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
 // ── Bellavita Chat Upload ─────────────────────────────────────────────────────
-
+//
+// db_masmis.bb_chat's real columns (44 total): ticket_id, inbox_id, inbox_name,
+// ticket_status, agent_name, email_1, phone_number, created_at, assigned_at, agent_frt_at,
+// frt_1, resolution_time_at, resolution_time, average_wait_time, is_resolved,
+// is_outside_working_hrs, level1_tags, level2_tags, level3_tags, system_tags, chat_link,
+// repeat_status, repeat_status_on_assign, time_1406, resolution_time_min, frt_tat,
+// resolution_tat, phone_number1, current_agent, email_2, chat_date, emp_id, lob, week,
+// count_1, time_slot, hour, tl_name, disposition, day_shift_night_shift, unique_id, froud,
+// frt_2, user_type.
 export async function uploadBellavitaChat(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -336,35 +404,55 @@ export async function uploadBellavitaChat(
   let count = 0;
   const monthLabel = currentMonthLabel();
   for (const r of rows) {
-    const chatDatetime = parseChatDatetime(r["Chat Date"] ?? r["chat_datetime"] ?? r["DateTime"]);
+    const ticketId = getField(r, "ticket_id", "Ticket ID");
+    if (!ticketId) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.bb_chat
-         (upload_batch_id, month_label, chat_datetime, agent_id, agent_name, customer_id,
-          platform, issue_type, resolution, csat_score, first_response_sec, handle_time_sec, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (ticket_id, inbox_id, inbox_name, ticket_status, agent_name, email_1, phone_number,
+          created_at, assigned_at, agent_frt_at, frt_1, resolution_time_at, resolution_time,
+          average_wait_time, is_resolved, is_outside_working_hrs, level1_tags, level2_tags,
+          level3_tags, system_tags, chat_link, repeat_status, repeat_status_on_assign,
+          time_1406, resolution_time_min, frt_tat, resolution_tat, phone_number1,
+          current_agent, email_2, chat_date, emp_id, lob, week, count_1, time_slot, hour,
+          tl_name, disposition, day_shift_night_shift, unique_id, froud, frt_2, user_type,
+          upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, monthLabel,
-        chatDatetime,
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        String(r["Customer ID"] ?? r["customer_id"] ?? ""),
-        String(r["Platform"] ?? r["platform"] ?? ""),
-        String(r["Issue Type"] ?? r["issue_type"] ?? ""),
-        String(r["Resolution"] ?? r["resolution"] ?? ""),
-        Number(r["CSAT Score"] ?? r["csat_score"] ?? 0),
-        Number(r["First Response (sec)"] ?? r["first_response_sec"] ?? 0),
-        Number(r["Handle Time (sec)"] ?? r["handle_time_sec"] ?? 0),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        ticketId, getField(r, "inbox_id") || null, getField(r, "inbox_name") || null,
+        getField(r, "ticket_status") || null, getField(r, "agent_name") || null,
+        getField(r, "email_1") || null, getField(r, "phone_number") || null,
+        parseChatDatetime(r["created_at"]), parseChatDatetime(r["assigned_at"]),
+        parseChatDatetime(r["agent_frt_at"]), getField(r, "frt_1") || null,
+        parseChatDatetime(r["resolution_time_at"]), getField(r, "resolution_time") || null,
+        getField(r, "average_wait_time") || null, getField(r, "is_resolved") || null,
+        getField(r, "is_outside_working_hrs") || null, getField(r, "level1_tags") || null,
+        getField(r, "level2_tags") || null, getField(r, "level3_tags") || null,
+        getField(r, "system_tags") || null, getField(r, "chat_link") || null,
+        getField(r, "repeat_status") || null, getField(r, "repeat_status_on_assign") || null,
+        getField(r, "time_1406") || null, getField(r, "resolution_time_min") || null,
+        getField(r, "frt_tat") || null, getField(r, "resolution_tat") || null,
+        getField(r, "phone_number1") || null, getField(r, "current_agent") || null,
+        getField(r, "email_2") || null, parseBellavitaDate(r["chat_date"]),
+        getField(r, "emp_id") || null, getField(r, "lob") || null, getField(r, "week") || null,
+        nullableNumber(getField(r, "count_1")), getField(r, "time_slot") || null,
+        nullableInt(getField(r, "hour")), getField(r, "tl_name") || null,
+        getField(r, "disposition") || null, getField(r, "day_shift_night_shift") || null,
+        getField(r, "unique_id") || null, getField(r, "froud") || null,
+        getField(r, "frt_2") || null, getField(r, "user_type") || null, batchId,
       ]
     );
     count++;
   }
-  await logUpload("bellavita-chat", monthLabel, count, uploadedBy, batchId);
+  await logUpload("bb_chat", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
 // ── Bellavita Cart Upload ─────────────────────────────────────────────────────
-
+//
+// db_masmis.bb_cart's real columns: cc, source, sno, cart_id, created_at, updated_at,
+// customer_name, customer_address, phone_number, email_id, line_items, variant_title,
+// abandoned_cart_link, amount, phone_10_digit, dates, agent, disposition, sub_disposition,
+// call_date, same_day_connect, status.
 export async function uploadBellavitaCart(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -375,28 +463,35 @@ export async function uploadBellavitaCart(
   let count = 0;
   const monthLabel = currentMonthLabel();
   for (const r of rows) {
-    const cartDate = parseBellavitaDate(r["Date"] ?? r["cart_date"]);
+    const cartId = getField(r, "Cart ID", "cart_id");
+    if (!cartId) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.bb_cart
-         (upload_batch_id, month_label, cart_date, order_id, customer_id, product,
-          cart_value, recovered, recovery_date, agent_id, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+         (cc, source, sno, cart_id, created_at, updated_at, customer_name, customer_address,
+          phone_number, email_id, line_items, variant_title, abandoned_cart_link, amount,
+          phone_10_digit, dates, agent, disposition, sub_disposition, call_date,
+          same_day_connect, status, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, monthLabel,
-        cartDate,
-        String(r["Order ID"] ?? r["order_id"] ?? ""),
-        String(r["Customer ID"] ?? r["customer_id"] ?? ""),
-        String(r["Product"] ?? r["product"] ?? ""),
-        Number(r["Cart Value"] ?? r["cart_value"] ?? 0),
-        r["Recovered"] ? 1 : 0,
-        parseBellavitaDate(r["Recovery Date"] ?? r["recovery_date"]),
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        getField(r, "CC", "cc") || null, getField(r, "Source", "source") || null,
+        nullableInt(getField(r, "SNo", "sno")), cartId,
+        getField(r, "Created At", "created_at") || null, getField(r, "Updated At", "updated_at") || null,
+        getField(r, "Customer Name", "customer_name") || null,
+        getField(r, "Customer Address", "customer_address") || null,
+        getField(r, "Phone Number", "phone_number") || null, getField(r, "Email ID", "email_id") || null,
+        getField(r, "Line Items", "line_items") || null, getField(r, "Variant Title", "variant_title") || null,
+        getField(r, "Abandoned Cart Link", "abandoned_cart_link") || null,
+        nullableNumber(getField(r, "Amount", "amount")),
+        getField(r, "Phone (10 Digit)", "phone_10_digit") || null, getField(r, "Dates", "dates") || null,
+        getField(r, "Agent", "agent") || null, getField(r, "Disposition", "disposition") || null,
+        getField(r, "Sub Disposition", "sub_disposition") || null, getField(r, "Call Date", "call_date") || null,
+        getField(r, "Same Day Connect", "same_day_connect") || null, getField(r, "Status", "status") || null,
+        batchId,
       ]
     );
     count++;
   }
-  await logUpload("bellavita-cart", monthLabel, count, uploadedBy, batchId);
+  await logUpload("bb_cart", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
@@ -527,19 +622,6 @@ export async function getSalesKPIs(startDate: string, endDate: string): Promise<
 
 // ── Neemans Dashboard ─────────────────────────────────────────────────────────
 
-function parseNeemansDate(raw: unknown): string | null {
-  if (raw == null) return null;
-  const n = Number(raw);
-  if (!isNaN(n) && n > 40000 && n < 60000) {
-    const d = new Date(Date.UTC(1900, 0, n - 1));
-    return d.toISOString().slice(0, 10);
-  }
-  const s = String(raw).trim();
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-  return null;
-}
-
 // db_masmis.neemans_month_targets's real columns are (id, month, target, created_by,
 // updated_at) — verified live 2026-08-13 against the 2 real rows that exist (month
 // '2026-06'/'2026-07', target 6774194.00/7000000.00). There is no month_label, no
@@ -658,8 +740,9 @@ export async function getNeemansAbcCartSnap(_month: string): Promise<Record<stri
 // payment_status (lowercase: 'paid'/'cod'/'pending'/'partially_paid'/'voided'/'refunded'/
 // 'partially_refunded' — 'paid'/'cod' are the old 'Paid'/'COD'), name (agent_name), and
 // date, which is an Excel serial number stored as text (e.g. "46174"), not a DATE column —
-// converted here the same way parseNeemansDate() already decodes it elsewhere in this file
-// (Excel's day-1900 epoch, off-by-one included). There is no real 'RTO' status value and no
+// NEEMANS_DATE_SQL below decodes it in-query (Excel's day-1900 epoch, off-by-one included).
+// uploadNeemansSaleRaw keeps this same raw-serial-as-text convention on write, for
+// consistency with existing rows. There is no real 'RTO' status value and no
 // telephony-connection column (no 'Not Connected'/'IVR' concept exists in this table at
 // all — every row here is already a logged sales disposition, not a raw call log), so
 // rto_pct and connected_pct are left NULL rather than invented.
@@ -744,6 +827,13 @@ export async function getNeemansDashboard(month: string): Promise<Record<string,
 
 // ── Neemans Upload Functions ──────────────────────────────────────────────────
 
+// db_masmis.neemans_sale_raw's real columns: week, date, emp_id, name, tl, lob, tenure,
+// order_id, customer_number, email_id, payment_status, amount, discount_code,
+// line_item_name, calling_lob, calling_status, status, count, neemans_order_id,
+// current_status, final_status, line_item_qty, target, call_date_time, duration,
+// created_at_raw. "date" is stored as the RAW, UNCONVERTED Excel serial number as text
+// (e.g. "46215") in real live data -- that repo's own dashboard casts it back to a date at
+// query time, so a different convention here would silently misalign with existing rows.
 export async function uploadNeemansSaleRaw(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -753,33 +843,39 @@ export async function uploadNeemansSaleRaw(
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
-    const saleDate = parseNeemansDate(r["Date"] ?? r["sale_date"] ?? r["Order Date"]);
-    if (!saleDate) continue;
+    const orderId = getField(r, "orderId", "order_id");
+    if (!orderId) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.neemans_sale_raw
-         (upload_batch_id, sale_date, lead_id, agent_id, agent_name, status,
-          order_status, payment_mode, revenue, product, remarks)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+         (week, date, emp_id, name, tl, lob, tenure, order_id, customer_number, email_id,
+          payment_status, amount, discount_code, line_item_name, calling_lob, calling_status,
+          status, count, neemans_order_id, current_status, final_status, line_item_qty,
+          target, call_date_time, duration, created_at_raw, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, saleDate,
-        String(r["Lead ID"] ?? r["lead_id"] ?? ""),
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        String(r["Status"] ?? r["status"] ?? ""),
-        String(r["Order Status"] ?? r["order_status"] ?? ""),
-        String(r["Payment Mode"] ?? r["payment_mode"] ?? ""),
-        Number(r["Revenue"] ?? r["revenue"] ?? 0),
-        String(r["Product"] ?? r["product"] ?? ""),
-        String(r["Remarks"] ?? r["remarks"] ?? ""),
+        getField(r, "week") || null, getField(r, "date") || null, getField(r, "empId", "emp_id") || null,
+        getField(r, "name") || null, getField(r, "tl") || null, getField(r, "lob") || null,
+        getField(r, "tenure") || null, orderId, getField(r, "customerNumber", "customer_number") || null,
+        getField(r, "emailId", "email_id") || null, getField(r, "paymentStatus", "payment_status") || null,
+        nullableNumber(getField(r, "amount")), getField(r, "discountCode", "discount_code") || null,
+        getField(r, "lineItemName", "line_item_name") || null, getField(r, "callingLob", "calling_lob") || null,
+        getField(r, "callingStatus", "calling_status") || null, getField(r, "status") || null,
+        nullableInt(getField(r, "count")), getField(r, "neemansOrderId", "neemans_order_id") || null,
+        getField(r, "currentStatus", "current_status") || null, getField(r, "finalStatus", "final_status") || null,
+        nullableInt(getField(r, "lineItemQty", "line_item_qty")), nullableInt(getField(r, "target")),
+        getField(r, "callDateTime", "call_date_time") || null, getField(r, "duration") || null,
+        getField(r, "createdAt", "created_at_raw") || null, batchId,
       ]
     );
     count++;
   }
-  const monthLabel = rows[0] ? (parseNeemansDate(rows[0]["Date"] ?? rows[0]["sale_date"] ?? rows[0]["Order Date"]) ?? "").slice(0, 7) : "";
-  await logUpload("neemans-sale-raw", monthLabel, count, uploadedBy, batchId);
+  const monthLabel = currentMonthLabel();
+  await logUpload("neemans_sale_raw", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
+// db_masmis.neemans_allocation's real columns: phone, email, customer_name, product_title,
+// amount, type, date, agent, calling_status, sub_scenario1, sub_scenario2, call_id.
 export async function uploadNeemansAllocation(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -790,25 +886,34 @@ export async function uploadNeemansAllocation(
   let count = 0;
   const monthLabel = currentMonthLabel();
   for (const r of rows) {
+    const phone = getField(r, "phone", "phone_number", "mobile");
+    if (!phone) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.neemans_allocation
-         (upload_batch_id, month_label, agent_id, agent_name, allocated_leads, contacted, not_contacted)
-       VALUES (?,?,?,?,?,?,?)`,
+         (phone, email, customer_name, product_title, amount, type, date, agent,
+          calling_status, sub_scenario1, sub_scenario2, call_id, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, monthLabel,
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        Number(r["Allocated"] ?? r["allocated_leads"] ?? 0),
-        Number(r["Contacted"] ?? r["contacted"] ?? 0),
-        Number(r["Not Contacted"] ?? r["not_contacted"] ?? 0),
+        phone, getField(r, "email") || null, getField(r, "customerName", "customer_name") || null,
+        getField(r, "productTitle", "product_title") || null, nullableNumber(getField(r, "amount")),
+        getField(r, "type") || null, getField(r, "date") || null, getField(r, "agent") || null,
+        getField(r, "callingStatus", "calling_status") || null,
+        getField(r, "subScenario1", "sub_scenario1") || null,
+        getField(r, "subScenario2", "sub_scenario2") || null,
+        getField(r, "callId", "call_id") || null, batchId,
       ]
     );
     count++;
   }
-  await logUpload("neemans-allocation", monthLabel, count, uploadedBy, batchId);
+  await logUpload("neemans_allocation", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
 
+// db_masmis.neemans_apr's real columns: unique_id, week, date, emp_name, emp_id, calls,
+// uca_ob, lob, login_time, parks, park_time, avg_park, parks_per_call, wait, talk, dispo,
+// pause, login_ts, logout_ts, acht, team_briefing, lunch, tea, tea1, washr, total_break,
+// net_login, occu_pct, week_short, mtd, attendance, capping. "date" is text like
+// "01-Jul-2026" in real live data, not a DATE column.
 export async function uploadNeemansApr(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
@@ -818,25 +923,37 @@ export async function uploadNeemansApr(
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
-    const callDate = parseNeemansDate(r["Date"] ?? r["call_date"]);
-    if (!callDate) continue;
+    const empName = getField(r, "empName", "emp_name");
+    if (!empName) continue;
     await queryMasmis(
       `INSERT INTO db_masmis.neemans_apr
-         (upload_batch_id, call_date, agent_id, agent_name, total_calls, attendance, occupancy_pct, acht)
-       VALUES (?,?,?,?,?,?,?,?)`,
+         (unique_id, week, date, emp_name, emp_id, calls, uca_ob, lob, login_time, parks,
+          park_time, avg_park, parks_per_call, wait, talk, dispo, pause, login_ts, logout_ts,
+          acht, team_briefing, lunch, tea, tea1, washr, total_break, net_login, occu_pct,
+          week_short, mtd, attendance, capping, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        batchId, callDate,
-        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
-        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
-        Number(r["Total Calls"] ?? r["total_calls"] ?? 0),
-        Number(r["Attendance"] ?? r["attendance"] ?? 0),
-        Number(r["Occupancy %"] ?? r["occupancy_pct"] ?? 0),
-        Number(r["ACHT"] ?? r["acht"] ?? 0),
+        getField(r, "uniqueId", "unique_id") || null, getField(r, "week") || null,
+        getField(r, "date") || null, empName, getField(r, "empId", "emp_id") || null,
+        nullableInt(getField(r, "calls")), nullableInt(getField(r, "ucaOb", "uca_ob")),
+        getField(r, "lob") || null, getField(r, "loginTime", "login_time") || null,
+        nullableInt(getField(r, "parks")), getField(r, "parkTime", "park_time") || null,
+        getField(r, "avgPark", "avg_park") || null,
+        nullableNumber(getField(r, "parksPerCall", "parks_per_call")),
+        getField(r, "wait") || null, getField(r, "talk") || null, getField(r, "dispo") || null,
+        getField(r, "pause") || null, getField(r, "loginTs", "login_ts") || null,
+        getField(r, "logoutTs", "logout_ts") || null, nullableInt(getField(r, "acht")),
+        getField(r, "teamBriefing", "team_briefing") || null, getField(r, "lunch") || null,
+        getField(r, "tea") || null, getField(r, "tea1") || null, getField(r, "washr") || null,
+        getField(r, "totalBreak", "total_break") || null, getField(r, "netLogin", "net_login") || null,
+        nullableNumber(getField(r, "occuPct", "occu_pct")), getField(r, "weekShort", "week_short") || null,
+        getField(r, "mtd") || null, nullableInt(getField(r, "attendance")),
+        getField(r, "capping") || null, batchId,
       ]
     );
     count++;
   }
-  const monthLabel = rows[0] ? (parseNeemansDate(rows[0]["Date"] ?? rows[0]["call_date"]) ?? "").slice(0, 7) : "";
-  await logUpload("neemans-apr", monthLabel, count, uploadedBy, batchId);
+  const monthLabel = currentMonthLabel();
+  await logUpload("neemans_apr", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
