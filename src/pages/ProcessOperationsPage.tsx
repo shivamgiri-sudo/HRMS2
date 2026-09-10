@@ -864,7 +864,7 @@ function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefin
   return insights;
 }
 
-function InsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
+function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
   // Shares the exact queryKey BusinessHealthPanel uses -- react-query dedupes
   // this against that component's own fetch, so this panel costs zero extra
   // network requests, not a second poll of the same endpoint.
@@ -2677,7 +2677,7 @@ export default function ProcessOperationsPage() {
                     operations (the staffing/dialler reality this period),
                     then quality, then hygiene last -- see the SECTIONS
                     comment in process-operations.service.ts. */}
-                {current && ops && <InsightsPanel processId={current} ops={ops} />}
+                {current && ops && <ProcessCardInsightsPanel processId={current} ops={ops} />}
                 {current && <BusinessHealthPanel processId={current} />}
 
                 {charts.length > 0 && (
