@@ -1440,6 +1440,206 @@ export async function getClapScenarioBreakdown(
   return { available: true, reason: null, clap, total, scenarios };
 }
 
+export interface ClapScenarioCall {
+  available: boolean;
+  reason: string | null;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    qualityPercentage: number | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+/**
+ * Row-level companion to getClapScenarioBreakdown -- same window/CLAP
+ * resolution, same Complaint/Repeat scenario1 fix, but returns the actual
+ * calls (capped, newest first) instead of counts, so a reader can click one
+ * of the real scenarios one level further into an individual call. Not a
+ * data dump -- RawRowsPanel/CSV already covers that; this is a list to
+ * click into getCallDetail from.
+ */
+export async function getClapScenarioCalls(
+  userId: string, processId: string, period: ReportPeriod,
+  clap: "Customer" | "Logistic" | "Agent" | "Product", scenario: string,
+): Promise<ClapScenarioCall | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapScenarioCall => ({ available: false, reason, calls: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  // Same resolved-scenario expression as getClapScenarioBreakdown, filtered
+  // down to the one scenario label the reader actually clicked -- matched
+  // in an outer WHERE against the inner computed column, same reason that
+  // breakdown query needed a subquery: only_full_group_by rejects a bare
+  // CASE expression as a filter target inline.
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT x.User AS employee_code, DATE_FORMAT(x.CallDate, '%Y-%m-%d %H:%i:%s') AS call_date,
+            x.quality_percentage, x.has_transcript, x.has_recording
+       FROM (
+         SELECT q.User, q.CallDate, q.quality_percentage,
+             (q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != '') AS has_transcript,
+             (q.call_recording IS NOT NULL AND TRIM(q.call_recording) != '') AS has_recording,
+             CASE WHEN q.scenario IN ('Complaint','Repeat')
+                  THEN COALESCE(NULLIF(TRIM(q.scenario1), ''), q.scenario)
+                  ELSE q.scenario END AS resolved_scenario
+           FROM db_audit.call_quality_assessment q
+          WHERE q.User IN (${inList}) AND q.quality_percentage IS NOT NULL
+            AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+            AND (${CLAP_CASE}) = ?
+       ) x
+      WHERE x.resolved_scenario = ?
+      ORDER BY x.CallDate DESC
+      LIMIT 50`,
+    [...employeeCodes, from, to, clap, scenario],
+  );
+
+  const calls = (rows as any[]).map((r) => ({
+    employeeCode: String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    callDate: String(r.call_date),
+    qualityPercentage: r.quality_percentage === null ? null : Number(r.quality_percentage),
+    hasTranscript: Boolean(r.has_transcript),
+    hasRecording: Boolean(r.has_recording),
+  }));
+
+  if (!calls.length) return { ...unavailable(`No calls found for "${scenario}" in this period.`), available: true };
+  return { available: true, reason: null, calls };
+}
+
+/**
+ * The exact 19 parameters Mydashboards' validated CQ formula scores per call
+ * (backend/scripts/fix-quality-score.mjs's own CQ_PARAM_COLS, not re-typed
+ * from scratch), with a human-readable label per column for the call-detail
+ * drawer. Clovia (client_id 468) scores a 20th, express_empathy -- handled
+ * by simply including it whenever the column is present on the row, not by
+ * a second hardcoded list.
+ */
+const CQ_PARAM_LABELS: Record<string, string> = {
+  call_answered_within_5_seconds: "Answered within 5 seconds",
+  customer_concern_acknowledged: "Customer concern acknowledged",
+  professionalism_maintained: "Professionalism maintained",
+  assurance_or_appreciation_provided: "Assurance or appreciation provided",
+  pronunciation_and_clarity: "Pronunciation and clarity",
+  enthusiasm_and_no_fumbling: "Enthusiasm, no fumbling",
+  active_listening: "Active listening",
+  politeness_and_no_sarcasm: "Politeness, no sarcasm",
+  proper_grammar: "Proper grammar",
+  accurate_issue_probing: "Accurate issue probing",
+  proper_hold_procedure: "Proper hold procedure",
+  proper_transfer_and_language: "Proper transfer and language",
+  dead_air_under_10_seconds: "Dead air under 10 seconds",
+  case_escalated_correctly: "Case escalated correctly",
+  address_recorded_completely: "Address recorded completely",
+  correct_and_complete_information: "Correct and complete information",
+  upselling_or_offers_suggested: "Upselling or offers suggested",
+  further_assistance_offered: "Further assistance offered",
+  proper_call_closure: "Proper call closure",
+  express_empathy: "Express empathy",
+};
+const CQ_PARAM_COLS = [
+  "call_answered_within_5_seconds", "customer_concern_acknowledged", "professionalism_maintained",
+  "assurance_or_appreciation_provided", "pronunciation_and_clarity", "enthusiasm_and_no_fumbling",
+  "active_listening", "politeness_and_no_sarcasm", "proper_grammar", "accurate_issue_probing",
+  "proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds",
+  "case_escalated_correctly", "address_recorded_completely", "correct_and_complete_information",
+  "upselling_or_offers_suggested", "further_assistance_offered", "proper_call_closure",
+  "express_empathy",
+];
+
+export interface CallDetail {
+  available: boolean;
+  reason: string | null;
+  employeeCode: string; employeeName: string; callDate: string;
+  qualityPercentage: number | null;
+  scenario: string | null; scenario1: string | null;
+  transcript: string | null; recordingUrl: string | null;
+  parameters: Array<{ column: string; label: string; value: boolean | null }>;
+}
+
+/**
+ * One call's full audit detail -- the transcript-left/scored-parameters-
+ * right view. Keyed by (employeeCode, callDate) since that's the same
+ * natural pair every sibling function in this file already joins/filters
+ * this upstream table on; no better single primary key surfaced when this
+ * table's columns were inspected for this phase.
+ */
+export async function getCallDetail(
+  userId: string, processId: string, employeeCode: string, callDate: string,
+): Promise<CallDetail | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  // Scoping check: this employee code must actually belong to a readable
+  // process, not just any code the caller happens to pass -- the same
+  // employee/process ownership check every sibling function here relies on,
+  // just done explicitly for a single code instead of an IN-list.
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code = ? LIMIT 1`,
+    [processId, employeeCode],
+  );
+  const emp = (empRows as any[])[0];
+  if (!emp) return null;
+
+  const paramCols = CQ_PARAM_COLS.map((c) => `\`${c}\``).join(", ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT quality_percentage, scenario, scenario1, Transcribe_Text, call_recording, ${paramCols}
+       FROM db_audit.call_quality_assessment
+      WHERE User = ? AND CallDate = ?
+      LIMIT 1`,
+    [employeeCode, callDate],
+  );
+  const row = (rows as any[])[0];
+  if (!row) {
+    return {
+      available: false, reason: "No audit record found for this call.",
+      employeeCode, employeeName: String(emp.name).trim(), callDate,
+      qualityPercentage: null, scenario: null, scenario1: null, transcript: null, recordingUrl: null, parameters: [],
+    };
+  }
+
+  const parameters = CQ_PARAM_COLS
+    .filter((c) => row[c] !== undefined) // express_empathy is absent from most clients' rows entirely
+    .map((c) => ({
+      column: c, label: CQ_PARAM_LABELS[c] ?? c,
+      value: row[c] === null ? null : Number(row[c]) === 1,
+    }));
+
+  return {
+    available: true, reason: null,
+    employeeCode, employeeName: String(emp.name).trim(), callDate,
+    qualityPercentage: row.quality_percentage === null ? null : Number(row.quality_percentage),
+    scenario: row.scenario ?? null, scenario1: row.scenario1 ?? null,
+    transcript: row.Transcribe_Text ?? null, recordingUrl: row.call_recording ?? null,
+    parameters,
+  };
+}
+
 /**
  * Root Cause vs. Workforce — the question the CLAP panel above cannot answer on
  * its own: is a spike in Agent-attributed complaints a coaching problem, or is

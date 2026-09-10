@@ -192,6 +192,23 @@ interface ClapScenarioBreakdown {
   scenarios: Array<{ scenario: string; count: number; pct: number }>;
 }
 
+interface ClapScenarioCall {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    qualityPercentage: number | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+interface CallDetail {
+  available: boolean; reason: string | null;
+  employeeCode: string; employeeName: string; callDate: string;
+  qualityPercentage: number | null;
+  scenario: string | null; scenario1: string | null;
+  transcript: string | null; recordingUrl: string | null;
+  parameters: Array<{ column: string; label: string; value: boolean | null }>;
+}
+
 interface ProcessBusinessHealth {
   available: boolean; reason: string | null;
   periodCode: string;
@@ -652,6 +669,8 @@ function ScenarioBreakdownRow({ processId, period, category }: {
       `/api/process-operations/${processId}/voice-of-customer/scenarios?period=${period}&clap=${clap}`),
   });
   const sb = data?.data;
+  const [expandedScenario, setExpandedScenario] = useState<string | null>(null);
+  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
 
   if (isLoading) {
     return (
@@ -671,24 +690,173 @@ function ScenarioBreakdownRow({ processId, period, category }: {
   return (
     <div className="mt-2.5 rounded-lg border border-slate-200 dark:border-slate-800 px-2.5 py-2 bg-slate-50/50 dark:bg-slate-800/30">
       <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">
-        Which real scenarios make up {clap} — {sb.total} call{sb.total === 1 ? "" : "s"}
+        Which real scenarios make up {clap} — {sb.total} call{sb.total === 1 ? "" : "s"} — click one for the real calls
       </p>
       <div className="space-y-1">
-        {sb.scenarios.slice(0, 6).map((s) => (
-          <div key={s.scenario} className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-600 dark:text-slate-300 w-32 shrink-0 truncate" title={s.scenario}>
-              {s.scenario}
-            </span>
-            <div className="flex-1 h-3.5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
-              <div className="h-full rounded" style={{ width: `${Math.max(2, s.pct)}%`, background: CLAP_META[clap].color }} />
-            </div>
-            <span className="text-[9.5px] tabular-nums text-slate-500 w-14 shrink-0 text-right">
-              {s.count} ({s.pct}%)
-            </span>
-          </div>
-        ))}
+        {sb.scenarios.slice(0, 6).map((s) => {
+          const open = expandedScenario === s.scenario;
+          return (
+            <Fragment key={s.scenario}>
+              <button type="button" onClick={() => setExpandedScenario(open ? null : s.scenario)}
+                className="w-full flex items-center gap-2 cursor-pointer rounded hover:bg-white dark:hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 py-0.5">
+                <ChevronRight size={10} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+                <span className="text-[10px] text-slate-600 dark:text-slate-300 w-28 shrink-0 truncate text-left" title={s.scenario}>
+                  {s.scenario}
+                </span>
+                <div className="flex-1 h-3.5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full rounded" style={{ width: `${Math.max(2, s.pct)}%`, background: CLAP_META[clap].color }} />
+                </div>
+                <span className="text-[9.5px] tabular-nums text-slate-500 w-14 shrink-0 text-right">
+                  {s.count} ({s.pct}%)
+                </span>
+              </button>
+              {open && (
+                <ScenarioCallsList processId={processId} period={period} clap={clap} scenario={s.scenario}
+                  onSelectCall={setSelectedCall} />
+              )}
+            </Fragment>
+          );
+        })}
       </div>
+      {selectedCall && (
+        <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
+          callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
+      )}
     </div>
+  );
+}
+
+/** The real calls behind one clicked scenario -- click a row to open its full audit detail. */
+function ScenarioCallsList({ processId, period, clap, scenario, onSelectCall }: {
+  processId: string; period: ReportPeriod; clap: ClapScenarioBreakdown["clap"]; scenario: string;
+  onSelectCall: (call: { employeeCode: string; callDate: string }) => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "clap-scenario-calls", processId, period, clap, scenario],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapScenarioCall>>(
+      `/api/process-operations/${processId}/voice-of-customer/scenario-calls?period=${period}&clap=${clap}&scenario=${encodeURIComponent(scenario)}`),
+  });
+  const sc = data?.data;
+
+  if (isLoading) {
+    return (
+      <div className="pl-4 py-1 flex items-center gap-1.5 text-[9.5px] text-slate-400">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading the real calls…
+      </div>
+    );
+  }
+  if (!sc?.available || !sc.calls.length) {
+    return <p className="pl-4 py-1 text-[9.5px] text-slate-400 italic">{sc?.reason ?? "No calls to show."}</p>;
+  }
+
+  return (
+    <div className="pl-4 pr-1 py-1 space-y-0.5 max-h-40 overflow-y-auto">
+      {sc.calls.map((c, i) => (
+        <button key={i} type="button"
+          onClick={() => c.hasTranscript && onSelectCall({ employeeCode: c.employeeCode, callDate: c.callDate })}
+          disabled={!c.hasTranscript}
+          title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
+          className="w-full flex items-center gap-2 text-left rounded px-1 py-0.5 text-[9.5px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:bg-white dark:hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
+          <span className="text-slate-500 shrink-0">{c.callDate}</span>
+          <span className="text-slate-700 dark:text-slate-300 truncate">{c.employeeName}</span>
+          <span className="ml-auto tabular-nums font-semibold shrink-0"
+            style={{ color: c.qualityPercentage === null ? undefined : c.qualityPercentage >= 80 ? C_GREEN : C_RED_TEXT }}>
+            {c.qualityPercentage === null ? "—" : `${c.qualityPercentage.toFixed(0)}%`}
+          </span>
+          {c.hasTranscript ? <ChevronRight size={10} className="text-slate-300 shrink-0" /> : <span className="w-2.5 shrink-0" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The call-detail drawer (Phase C of the Mydashboards port) -- transcript on
+ * the left, this call's own scored parameters on the right, so the raw
+ * evidence and the judgment sit in one view. Same right-side Sheet drawer
+ * convention already used elsewhere on this page, sized to this page's
+ * widest existing drawer since a two-pane view needs the room.
+ */
+function CallDetailDrawer({ processId, employeeCode, callDate, onClose }: {
+  processId: string; employeeCode: string; callDate: string; onClose: () => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "call-detail", processId, employeeCode, callDate],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<CallDetail>>(
+      `/api/process-operations/${processId}/call-detail?employeeCode=${encodeURIComponent(employeeCode)}&callDate=${encodeURIComponent(callDate)}`),
+  });
+  const cd = data?.data;
+
+  return (
+    <Sheet open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="w-full sm:max-w-[63rem] p-0 overflow-y-auto">
+        <div className="px-5 py-4 bg-gradient-to-br from-slate-800 to-slate-900 text-white">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-bold">{cd?.employeeName ?? employeeCode}</p>
+              <p className="text-[11px] text-white/60 mt-0.5">{callDate}
+                {cd?.scenario && ` · ${cd.scenario}${cd.scenario1 ? ` — ${cd.scenario1}` : ""}`}
+              </p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="Close"
+              className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1">
+              <X size={15} />
+            </button>
+          </div>
+          {cd?.qualityPercentage !== null && cd?.qualityPercentage !== undefined && (
+            <p className="text-[11px] mt-2">
+              Quality score: <span className="font-bold tabular-nums">{cd.qualityPercentage.toFixed(1)}%</span>
+            </p>
+          )}
+        </div>
+
+        {isLoading || !cd ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500 px-5 py-6">
+            <Loader2 className="h-4 w-4 animate-spin" />Loading this call's transcript and scored parameters…
+          </div>
+        ) : !cd.available ? (
+          <p className="text-sm text-slate-400 italic px-5 py-6">{cd.reason}</p>
+        ) : (
+          <div className="flex flex-col lg:flex-row">
+            {/* Left: raw evidence -- the transcript, unformatted, plus the recording if one exists. */}
+            <div className="flex-1 min-w-0 px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Transcript</p>
+              {cd.recordingUrl && (
+                <audio controls preload="metadata" src={cd.recordingUrl} className="w-full h-9 mb-3" />
+              )}
+              {cd.transcript ? (
+                <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 p-3 max-h-[28rem] overflow-y-auto">
+                  <p className="text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-300">
+                    {cd.transcript}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-400 italic">No transcript recorded for this call.</p>
+              )}
+            </div>
+            {/* Right: the judgment -- every scored parameter, pass/fail/blank. */}
+            <div className="w-full lg:w-64 shrink-0 px-5 py-4 bg-slate-50/50 dark:bg-slate-800/30">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Scored parameters</p>
+              <div className="space-y-1">
+                {cd.parameters.map((p) => (
+                  <div key={p.column} className="flex items-center gap-1.5 text-[10.5px] rounded px-1.5 py-1"
+                    style={{ background: p.value === null ? undefined : p.value ? "#DCFCE7" : "#FEE2E2" }}>
+                    <span className="shrink-0 w-3 font-bold"
+                      style={{ color: p.value === null ? "#94A3B8" : p.value ? "#166534" : "#991B1B" }}>
+                      {p.value === null ? "—" : p.value ? "✓" : "✗"}
+                    </span>
+                    <span className="text-slate-700 dark:text-slate-300">{p.label}</span>
+                  </div>
+                ))}
+              </div>
+              {cd.parameters.every((p) => p.value !== false) && (
+                <p className="text-[9.5px] text-slate-400 italic mt-2">No parameters failed on this call.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 

@@ -164,6 +164,58 @@ router.get("/:processId/voice-of-customer/scenarios", requireAuth, requireRole(.
 }));
 
 /**
+ * Row-level companion to /voice-of-customer/scenarios (Phase C) -- the real
+ * calls behind one scenario, newest first, capped at 50. Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer/scenario-calls", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const clap = req.query.clap as string;
+  const scenario = req.query.scenario as string;
+  if (!CLAP_VALUES.includes(clap as any)) {
+    return res.status(400).json({
+      success: false, code: "BAD_REQUEST",
+      message: `clap must be one of ${CLAP_VALUES.join(", ")}.`,
+    });
+  }
+  if (!scenario || !scenario.trim()) {
+    return res.status(400).json({ success: false, code: "BAD_REQUEST", message: "scenario is required." });
+  }
+  const data = await svc.getClapScenarioCalls(
+    req.authUser!.id, req.params.processId, readPeriod(req), clap as typeof CLAP_VALUES[number], scenario,
+  );
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * One call's full audit detail -- transcript, recording, scenario and every
+ * scored parameter's pass/fail/blank state (Phase C). Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/call-detail", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const employeeCode = req.query.employeeCode as string;
+  const callDate = req.query.callDate as string;
+  if (!employeeCode || !callDate) {
+    return res.status(400).json({
+      success: false, code: "BAD_REQUEST", message: "employeeCode and callDate are both required.",
+    });
+  }
+  const data = await svc.getCallDetail(req.authUser!.id, req.params.processId, employeeCode, callDate);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process/employee, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
  * Root Cause vs. Workforce: the CLAP Agent-share trend alongside ramp-cohort
  * tenure, attrition and roster staffing gap for the same process/dates — a
  * plain juxtaposition, not a computed correlation (see the service function
