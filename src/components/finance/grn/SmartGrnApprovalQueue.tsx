@@ -857,9 +857,15 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         ["GSTIN", parent?.vendor_gstin ?? "—"],
                       ] as [string, string | null | undefined][]).map(([label, val]) => (
                         <GrnKv key={label} label={label}>
-                          {/* title= so a long free-text value (Remarks, Vendor, Rejection reason)
-                              is still readable on hover instead of just cut off by truncate. */}
-                          <span className="block truncate" title={val ?? undefined}>{val ?? "—"}</span>
+                          {/* Remarks/Rejection reason are free text and can run long — truncate+title
+                              relied on hover to reveal the rest, which doesn't exist on touch/mobile,
+                              so those two wrap in full instead. Everything else (short, bounded fields)
+                              still truncates with a hover title as before. */}
+                          {label === "Remarks" || label === "Rejection reason" ? (
+                            <span className="block whitespace-pre-wrap break-words">{val ?? "—"}</span>
+                          ) : (
+                            <span className="block truncate" title={val ?? undefined}>{val ?? "—"}</span>
+                          )}
                         </GrnKv>
                       ))}
                     </GrnKvList>

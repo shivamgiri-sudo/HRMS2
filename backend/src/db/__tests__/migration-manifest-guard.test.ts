@@ -222,6 +222,14 @@ describe("migration manifest — duplicates", () => {
     // concurrently-numbered files. All are real, already-applied-or-approved
     // migrations tracked by distinct full filenames; renaming any of them is
     // the one thing that would break schema_migrations' by-filename tracking.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(82);
+    //
+    // 82 -> 85 (2026-09-10): merging worktree-payment-voucher-phase1 again (Payment
+    // Voucher multi-GRN/role-model/general-payment work) into main. The branch's own
+    // 1726/1728 (payment_voucher_accounts_review, payment_voucher_general_source_type)
+    // collided with main's independently-numbered 1726/1728
+    // (reginald_abandoned_cart_daily_actual, bla_bli_blu_cdr_daily_actual). Same shape
+    // as every jump above; renaming either side is the one thing that would break
+    // schema_migrations' by-filename tracking.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(85);
   });
 });

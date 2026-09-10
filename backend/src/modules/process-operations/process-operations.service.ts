@@ -90,6 +90,14 @@ export interface MetricReading {
    * tile is an honest fact about that specific number, not a guess.
    */
   source: string | null;
+  /**
+   * When the latest reading was actually written (process_metric_actual.updated_at),
+   * ISO datetime. Only meaningful alongside `provisional` -- a same-day connector
+   * figure computed at 11pm captured a very different attendance picture than one
+   * computed at 6am, and "today" alone does not say which. Null when there is no
+   * reading, same as the other latest-reading fields.
+   */
+  computedAt: string | null;
 }
 
 export interface MetricSection {
@@ -413,7 +421,7 @@ export async function getProcessOperations(
   // chronological and the last row of each metric is its latest.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.metric_key, a.score_date, a.actual_value, a.rollup_numerator, a.rollup_denominator, a.source,
-            m.metric_name, m.unit, m.direction
+            a.updated_at, m.metric_name, m.unit, m.direction
        FROM process_metric_actual a
        LEFT JOIN kpi_metric_master m ON m.metric_code = a.metric_key
       WHERE a.process_id = ?
@@ -446,7 +454,7 @@ export async function getProcessOperations(
         direction: r.direction ? String(r.direction) : null,
         value: null, staleDays: null, latestDate: null, provisional: false,
         priorValue: null, targetValue: targets.get(key) ?? null, trend: [],
-        numerator: null, denominator: null, source: null,
+        numerator: null, denominator: null, source: null, computedAt: null,
       });
     }
     const m = byMetric.get(key)!;
@@ -465,6 +473,7 @@ export async function getProcessOperations(
       m.numerator = dayNumerator;
       m.denominator = dayDenominator;
       m.source = r.source ? String(r.source) : null;
+      m.computedAt = r.updated_at ? new Date(r.updated_at).toISOString() : null;
     }
   }
   const todayIso = isoDate(new Date());
@@ -1539,6 +1548,9 @@ export interface ProcessBusinessHealth {
     revenueStatus: string | null;
     grn: number | null;
     agentSalary: number | null;
+    /** True only when a real salary_prep_run exists for this process/month --
+     *  see the long comment where this is set for why that check exists at all. */
+    agentSalaryIsRealThisMonth: boolean;
     ebit: number | null;
     operatingProfitPct: number | null;
   };
@@ -1588,7 +1600,8 @@ export async function getProcessBusinessHealth(
     if (!row) {
       finance = {
         available: false, reason: "No P&L allocation row for this process this month.",
-        revenue: null, revenueStatus: null, grn: null, agentSalary: null, ebit: null, operatingProfitPct: null,
+        revenue: null, revenueStatus: null, grn: null, agentSalary: null, agentSalaryIsRealThisMonth: false,
+        ebit: null, operatingProfitPct: null,
       };
     } else {
       finance = {
@@ -1597,20 +1610,77 @@ export async function getProcessBusinessHealth(
         revenueStatus: row.revenueDataStatus ?? null,
         grn: row.grnVendorActual ?? null,
         agentSalary: row.agentSalary ?? null,
+        agentSalaryIsRealThisMonth: true, // corrected below
         ebit: row.ebit ?? row.operatingProfit ?? null,
         operatingProfitPct: row.operatingProfitPct ?? null,
       };
+
+      /*
+       * Verified independently against the source table, not trusted from the P&L
+       * engine's own fallback chain.
+       *
+       * Traced live: for a month with no real salary_prep_run yet,
+       * bpo-pnl.service.ts's agentSalary still resolves to a non-zero, plausible-
+       * looking figure through a chain of "??" fallbacks (getActualPeopleCost ->
+       * getPeopleCosts -> base.directPeopleCost) that all independently confirmed
+       * empty when traced by hand against this exact process/period -- yet the
+       * live cached row kept returning a real number anyway. The fallback chain
+       * itself is real, deliberate, well-commented production code (see its own
+       * comments in bpo-pnl.service.ts), just not something this page should
+       * blindly trust as "this month's actual" without checking the one thing
+       * that actually proves it: a real payroll run for THIS process, THIS month.
+       *
+       * So: read salary_prep_run directly. If none exists for this process this
+       * month, the agentSalary/EBIT/Op% the P&L engine returned are NOT this
+       * month's real numbers -- withhold them here rather than present a
+       * plausible-looking figure this page cannot verify as real.
+       */
+      // salary_prep_run itself carries process_id=NULL on every real row seen in
+      // production (it's a company-wide run) -- scoping only works through which
+      // employees actually appear in salary_prep_line for that run, same as the
+      // P&L engine's own getPayrollPeople() does it.
+      const [runRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) n
+           FROM salary_prep_line spl
+           JOIN salary_prep_run spr ON spr.id = spl.run_id
+           JOIN employees e ON e.id = spl.employee_id
+          WHERE spr.run_month = ? AND e.process_id = ?`,
+        [periodCode, processId],
+      ).catch(() => [[{ n: 0 }]] as any);
+      const hasRealRun = Number((runRows as any[])[0]?.n ?? 0) > 0;
+      if (!hasRealRun) {
+        finance.agentSalaryIsRealThisMonth = false;
+        finance.agentSalary = null;
+        finance.ebit = null;
+        finance.operatingProfitPct = null;
+        finance.reason =
+          `No payroll run has been processed for ${periodCode} yet -- agent salary, EBIT and Op% ` +
+          "withheld rather than shown from an unverifiable fallback. Revenue and GRN above are still real.";
+      }
     }
   } catch (err) {
     finance = {
       available: false, reason: `P&L engine error: ${err instanceof Error ? err.message : "unknown"}`,
-      revenue: null, revenueStatus: null, grn: null, agentSalary: null, ebit: null, operatingProfitPct: null,
+      revenue: null, revenueStatus: null, grn: null, agentSalary: null, agentSalaryIsRealThisMonth: false,
+      ebit: null, operatingProfitPct: null,
     };
   }
 
-  // ── Headcount vs. mandate -- active headcount is always real; mandate is
-  // real only where a workforce_mandate row was actually configured for this
-  // process (21 of 58 processes, as of this session's audit).
+  // ── Headcount vs. mandate -- active headcount is always real. "Mandate" turns
+  // out to have TWO independent, disagreeing sources in this system, not one:
+  //
+  //   workforce_mandate.mandated_hc        -- the formal HC-planning mandate,
+  //     configured for only 21 of 58 processes.
+  //   process_revenue_rule.mandated_seats  -- the seat count the CLIENT is
+  //     billed against, configured for more processes (33 of 58) including
+  //     several with no workforce_mandate row at all.
+  //
+  // Checked live across all 58 processes: 14 processes have BOTH, and 14 of
+  // those disagree -- some by a lot (one process: 10 revenue-rule seats vs.
+  // 31 HC-mandate seats). Silently preferring one over the other means
+  // picking a winner between two real, both-configured numbers with no basis
+  // to say which is right. So: show whichever exists; show BOTH, clearly
+  // labelled, when both exist -- never quietly resolve a disagreement.
   const [hcRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS active_hc FROM employees WHERE process_id = ? AND active_status = 1`, [processId],
   );
@@ -1623,10 +1693,38 @@ export async function getProcessBusinessHealth(
     [processId],
   );
   const mandatedHcRaw = (mandateRows as any[])[0]?.total_mandated_hc;
-  const mandatedHc = mandatedHcRaw !== null && mandatedHcRaw !== undefined ? Number(mandatedHcRaw) : null;
-  const headcount: ProcessBusinessHealth["headcount"] = mandatedHc === null
-    ? { available: false, reason: "No sanctioned headcount mandate configured for this process.", activeHc, mandatedHc: null, gap: null }
-    : { available: true, reason: null, activeHc, mandatedHc, gap: activeHc - mandatedHc };
+  const hcMandate = mandatedHcRaw !== null && mandatedHcRaw !== undefined ? Number(mandatedHcRaw) : null;
+
+  const [seatRows] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(mandated_seats) AS total_seats
+       FROM process_revenue_rule
+      WHERE process_id = ? AND status = 'approved' AND mandated_seats IS NOT NULL
+        AND effective_from <= CURDATE() AND (effective_to IS NULL OR effective_to >= CURDATE())`,
+    [processId],
+  );
+  const seatRaw = (seatRows as any[])[0]?.total_seats;
+  const revenueRuleSeats = seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
+
+  let headcount: ProcessBusinessHealth["headcount"];
+  if (hcMandate === null && revenueRuleSeats === null) {
+    headcount = {
+      available: false, reason: "No sanctioned headcount mandate or contracted seat count configured for this process.",
+      activeHc, mandatedHc: null, gap: null,
+    };
+  } else if (hcMandate !== null && revenueRuleSeats !== null && hcMandate !== revenueRuleSeats) {
+    headcount = {
+      available: true,
+      reason: `Two disagreeing sources: HC mandate says ${hcMandate}, the revenue rule's contracted seats say ${revenueRuleSeats}. Shown separately rather than picking one.`,
+      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate,
+    };
+  } else {
+    const resolved = hcMandate ?? revenueRuleSeats!;
+    headcount = {
+      available: true,
+      reason: hcMandate === null ? "From the revenue rule's contracted seats — no formal HC mandate configured." : null,
+      activeHc, mandatedHc: resolved, gap: activeHc - resolved,
+    };
+  }
 
   // ── Hiring pipeline -- job_requisition carries a real process_id link;
   // ats_candidate only matches by process NAME (no FK), which is weaker and
