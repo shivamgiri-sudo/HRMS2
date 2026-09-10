@@ -346,36 +346,26 @@ app.use(globalLimiter);
 
 const uploadsPath = path.resolve(process.cwd(), "uploads");
 
-// Public: employee avatar photos served via /api/ so nginx proxy covers all devices.
-// Filename is always {employeeId}.ext — basename-sanitised, no traversal risk.
+// SEC-08: employee photos are internal PII, not public assets. The route
+// registered here used to serve them with no authentication at all, and —
+// because Express matches the first registered handler — it shadowed the
+// properly authenticated `GET /employee-photos/:filename` in
+// files.routes.ts, making that one unreachable dead code. Removed. Photo
+// requests now fall through to filesRouter's authenticated handler (mounted
+// below at /api/files), which enforces a bearer token and uses a private,
+// short-lived Cache-Control header instead of a public/immutable one.
 const employeePhotosDir = path.join(uploadsPath, "employee-photos");
 fs.mkdirSync(employeePhotosDir, { recursive: true });
 
-app.get("/api/files/employee-photos/:filename", (req, res) => {
-  const filename = path.basename(String(req.params.filename ?? ""));
-  const ext = path.extname(filename).toLowerCase();
-  if (![".jpg", ".jpeg", ".png", ".webp"].includes(ext)) {
-    return res.status(400).json({ success: false, error: "Invalid file type" });
-  }
-  const filePath = path.join(employeePhotosDir, filename);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ success: false, error: "Not found" });
-  }
-  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-  return res.sendFile(filePath);
-});
-
-// Legacy /uploads/employee-photos/* — keep working for old URLs already in browser cache
-const UPLOADS_PUBLIC_ALLOWLIST = new Set(["/employee-photos/"]);
-app.use("/uploads", (req, res, _next) => {
-  const isAllowed = [...UPLOADS_PUBLIC_ALLOWLIST].some(prefix => req.path.startsWith(prefix));
-  if (!isAllowed) {
-    return res.status(403).json({
-      success: false,
-      message: "Direct access blocked. Use the secure document endpoint.",
-    });
-  }
-  return express.static(uploadsPath)(req, res, _next);
+// Legacy /uploads/* static passthrough is blocked entirely — it served the
+// same employee-photo PII with no authentication. Old cached URLs now 403
+// instead of silently leaking photos; clients must use the secure
+// /api/files/employee-photos/:filename endpoint.
+app.use("/uploads", (_req, res) => {
+  return res.status(403).json({
+    success: false,
+    message: "Direct access blocked. Use the secure document endpoint.",
+  });
 });
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
