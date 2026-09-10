@@ -129,7 +129,8 @@ export const vendorPaymentLedgerService = {
     paymentId: string,
     payload: DispatchPaymentPayload,
     actorUserId: string,
-    actorRole?: string
+    actorRole?: string,
+    externalConnection?: PoolConnection
   ) {
     if (!PAYMENT_MODES.includes(payload.paymentMode)) {
       throw requestError(400, "Invalid payment mode");
@@ -141,12 +142,17 @@ export const vendorPaymentLedgerService = {
       throw requestError(400, "Payment amount must be greater than zero");
     }
 
-    const connection = await db.getConnection();
+    // Lets payment-voucher.service.ts's release() run this inside its own already-open
+    // transaction (same shape vendor-payment.service.ts's updatePayment already uses) instead
+    // of committing separately — a voucher release and the vendor-payment ledger row it
+    // produces are one atomic unit, not two.
+    const owns = !externalConnection;
+    const connection = externalConnection ?? await db.getConnection();
     let transactionRowId = "";
     let auditSummary: Record<string, unknown> = {};
     let referenceLock: string | null = null;
     try {
-      await connection.beginTransaction();
+      if (owns) await connection.beginTransaction();
       const payment = await lockedPayment(connection, paymentId);
       if (["Paid", "Closed", "Rejected"].includes(String(payment.payment_status))) {
         throw requestError(409, `Payment is locked in status ${payment.payment_status}`);
@@ -341,30 +347,41 @@ export const vendorPaymentLedgerService = {
         actorRole,
         auditSummary
       );
-      await connection.commit();
+      if (owns) await connection.commit();
     } catch (error) {
-      await connection.rollback();
+      if (owns) await connection.rollback();
       throw error;
     } finally {
       if (referenceLock) {
         await connection.query(`SELECT RELEASE_LOCK(?)`, [referenceLock]).catch(() => undefined);
       }
-      connection.release();
+      if (owns) connection.release();
     }
 
-    await logSensitiveAction({
-      actor_user_id: actorUserId,
-      actor_role: actorRole,
-      action_type: "VENDOR_PAYMENT_INSTALLMENT_DISPATCHED",
-      module_key: "FINANCE",
-      entity_type: "vendor_payment_transaction",
-      entity_id: transactionRowId,
-      change_summary: auditSummary,
-    }).catch(() => undefined);
+    if (owns) {
+      await logSensitiveAction({
+        actor_user_id: actorUserId,
+        actor_role: actorRole,
+        action_type: "VENDOR_PAYMENT_INSTALLMENT_DISPATCHED",
+        module_key: "FINANCE",
+        entity_type: "vendor_payment_transaction",
+        entity_id: transactionRowId,
+        change_summary: auditSummary,
+      }).catch(() => undefined);
 
+      return {
+        payment: await this.getPayment(paymentId),
+        transactions: await this.listTransactions(paymentId),
+      };
+    }
+
+    // The caller owns this transaction and hasn't committed yet — a plain `db` read here
+    // would go through a different, uncommitted-blind connection (or the row simply
+    // wouldn't exist there yet). Return what was already computed in-memory instead; the
+    // caller commits and does its own post-commit logging once the whole transaction lands.
     return {
-      payment: await this.getPayment(paymentId),
-      transactions: await this.listTransactions(paymentId),
+      payment: { grn_number: (auditSummary as any).grn_number ?? null },
+      transactions: [{ id: transactionRowId, tds_amount: (auditSummary as any).tds_amount ?? 0, net_amount: (auditSummary as any).net_amount ?? 0, sequence_no: (auditSummary as any).installment_sequence ?? null }],
     };
   },
 
