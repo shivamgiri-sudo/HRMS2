@@ -110,7 +110,7 @@ router.use(requireAuth);
 router.get(
   "/vendor-payments/capabilities",
   requireRole(...PAYMENT_READ_ROLES),
-  (req: AuthenticatedRequest, res) => {
+  h(async (req: AuthenticatedRequest, res) => {
     const roles = allRoles(req);
     const canWrite = roles.has("accounts_head") || roles.has("super_admin");
     /*
@@ -130,17 +130,25 @@ router.get(
      */
     const user = actor(req);
     const hasGlobalRead = hasGlobalFinanceScope(user.role, user.roles);
+    const scope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: undefined,
+    });
+    const scopeBranchNames = await vendorPaymentService.getScopeBranchNames(scope);
     res.json({
       success: true,
       data: {
         canRead: true,
         canWrite,
         readScope: hasGlobalRead ? "organisation" : "branch",
+        scopeBranchNames,
         writeRole: canWrite ? paymentWriteRole(req) : null,
         paymentModel: "installment_ledger",
       },
     });
-  }
+  })
 );
 
 router.get(

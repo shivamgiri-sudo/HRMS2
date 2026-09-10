@@ -861,4 +861,14 @@ export const vendorPaymentService = {
       ready: pendingCount === 0,
     };
   },
+
+  async getScopeBranchNames(scope: FinanceBranchScope): Promise<string[]> {
+    if (scope.mode === "all" || scope.branchIds.length === 0) return [];
+    const placeholders = scope.branchIds.map(() => "?").join(", ");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_name FROM branch_master WHERE id IN (${placeholders})`,
+      scope.branchIds
+    );
+    return rows.map((row) => String(row.branch_name)).filter(Boolean);
+  },
 };

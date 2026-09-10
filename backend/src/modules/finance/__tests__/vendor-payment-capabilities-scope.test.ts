@@ -30,6 +30,7 @@ vi.mock("../vendor-payment.service.js", () => ({
     listBanks: vi.fn(async () => []),
     listPayments: vi.fn(async () => ({ rows: [], total: 0 })),
     getPayment: vi.fn(),
+    getScopeBranchNames: vi.fn(async () => []),
   },
 }));
 vi.mock("../vendor-payment-ledger.service.js", () => ({
