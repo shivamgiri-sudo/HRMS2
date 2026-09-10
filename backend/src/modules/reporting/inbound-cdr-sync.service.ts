@@ -236,6 +236,47 @@ export function buildPlans(): ClientPlan[] {
 
 interface Ref extends RowDataPacket { id: string }
 
+/**
+ * mysql2 returns a DATE column as a JS Date object by default (no
+ * `dateStrings` option set on this pool) -- `String(new Date(...))` gives
+ * "Thu Sep 10 2026 00:00:00 GMT+0530 (India Standard Time)", not an ISO
+ * date, so the old `String(row.CallDate).slice(0, 10)` produced "Thu Sep 10"
+ * and MySQL rejected it as an invalid date on insert. Caught live on the
+ * first real sync run once dialer_db's LAN path came back (2026-09-10).
+ *
+ * `.toISOString()` is deliberately NOT used to fix this: it converts to
+ * UTC, and on this host (IST, UTC+5:30) that rolls a local midnight date
+ * back to the previous day -- verified live against a real
+ * `SELECT DATE('2026-09-10')`, whose Date object's own toISOString() comes
+ * back "2026-09-09T18:30:00.000Z". The LOCAL calendar components
+ * (getFullYear/getMonth/getDate) are what the driver's own toString()
+ * already shows as correct, so those are used instead.
+ */
+export function formatCallDate(raw: unknown): string {
+  if (raw instanceof Date) {
+    const y = raw.getFullYear();
+    const m = String(raw.getMonth() + 1).padStart(2, "0");
+    const d = String(raw.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return String(raw).slice(0, 10);
+}
+
+/**
+ * Bellavita's and Neemans' queries each carry TWO placeholders (one per CTE
+ * that filters on CallDate >= ?), but every plan was bound with a single
+ * one-element params array -- the other five clients have exactly one `?`
+ * each, so this went unnoticed until a real dialer_db connection actually
+ * ran these two queries and MySQL errored on the unbound second `?`.
+ * Counting the literal `?` occurrences (the only values ever bound here)
+ * is safe and avoids hardcoding a per-plan parameter count that could drift
+ * out of sync with the SQL text again.
+ */
+export function paramsFor(sql: string, value: string): string[] {
+  const count = (sql.match(/\?/g) ?? []).length;
+  return Array(count).fill(value);
+}
+
 export async function syncInboundCdrDaily(
   importedByUserId: string,
   lookbackDays = 30,
@@ -259,15 +300,15 @@ export async function syncInboundCdrDaily(
       continue;
     }
     try {
-      const [dailyRows] = await dialerPool.query(plan.dailySql, [sinceDate]);
-      const [mandateRows] = await dialerPool.query(plan.mandateSql, [sinceDate]);
+      const [dailyRows] = await dialerPool.query(plan.dailySql, paramsFor(plan.dailySql, sinceDate));
+      const [mandateRows] = await dialerPool.query(plan.mandateSql, paramsFor(plan.mandateSql, sinceDate));
       const mandateByDate = new Map(
-        (mandateRows as MandateRow[]).map((m) => [String(m.CallDate).slice(0, 10), m]),
+        (mandateRows as MandateRow[]).map((m) => [formatCallDate(m.CallDate), m]),
       );
 
       let rowsUpserted = 0;
       for (const row of dailyRows as DailyRow[]) {
-        const callDate = String(row.CallDate).slice(0, 10);
+        const callDate = formatCallDate(row.CallDate);
         const mandate = mandateByDate.get(callDate);
         await db.execute(
           `INSERT INTO inbound_cdr_daily_actual
