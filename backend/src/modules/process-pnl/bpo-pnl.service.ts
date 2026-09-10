@@ -2219,13 +2219,34 @@ export const bpoPnlService = {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
     const before = await readExistingConfigRow("process_revenue_rule", id);
+
+    // This form is process-wide (no LOB picker), which historically left process_lob_id
+    // NULL -- invisible to every LOB-scoped reader (P&L LOB table, dataStatus), even though
+    // the rule itself was saved and approved. Every process today resolves to exactly one
+    // LOB (the system-created "Core / Unallocated" default), so auto-resolving to it here
+    // closes that gap at the source instead of requiring another manual DB relink later.
+    // If a process ever legitimately has more than one LOB, this intentionally leaves
+    // process_lob_id NULL rather than guessing which one -- same discipline as the manual
+    // fix this replaces.
+    let processLobId: string | null =
+      typeof payload.processLobId === "string" && payload.processLobId ? payload.processLobId : null;
+    if (!processLobId && payload.processId) {
+      const [lobRows] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM process_lob_master WHERE process_id = ? LIMIT 2",
+        [payload.processId]
+      );
+      if (lobRows.length === 1) {
+        processLobId = String(lobRows[0].id);
+      }
+    }
+
     await db.execute(
       `INSERT INTO process_revenue_rule
-        (id, process_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
+        (id, process_id, process_lob_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
          fx_to_inr, monthly_minimum_commitment, included_units, overage_rate, mandated_seats,
          quality_gate_pct, sla_gate_pct, effective_from, effective_to, status, approved_by, approved_at,
          approval_reference, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          contract_id=VALUES(contract_id), rule_name=VALUES(rule_name), billing_model=VALUES(billing_model),
          metric_key=VALUES(metric_key), rate_amount=VALUES(rate_amount), currency_code=VALUES(currency_code),
@@ -2234,10 +2255,12 @@ export const bpoPnlService = {
          quality_gate_pct=VALUES(quality_gate_pct), sla_gate_pct=VALUES(sla_gate_pct),
          effective_from=VALUES(effective_from), effective_to=VALUES(effective_to), status=VALUES(status),
          approved_by=VALUES(approved_by), approved_at=VALUES(approved_at),
-         approval_reference=VALUES(approval_reference), updated_by=VALUES(updated_by)`,
+         approval_reference=VALUES(approval_reference), updated_by=VALUES(updated_by),
+         process_lob_id=COALESCE(process_lob_id, VALUES(process_lob_id))`,
       [
         id,
         payload.processId,
+        processLobId,
         payload.contractId ?? null,
         payload.ruleName,
         payload.billingModel,
