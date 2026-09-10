@@ -1188,7 +1188,7 @@ export async function salarySheetExport(
       0 AS admin_chrg,
       COALESCE(esa.ctc_annual, 0) AS ctc,
       spr.id AS run_id,
-      DATE_FORMAT(spr.created_at, '%Y-%m-%d') AS sal_date,
+      DATE_FORMAT(spr.created_at, '%d-%b-%Y') AS sal_date,
       COALESCE(eu.uan, '') AS uan,
       COALESCE(e.epf_number, eu.member_id, '') AS epf_no,
       COALESCE(e.esic_number, '') AS esic_no,

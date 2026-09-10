@@ -389,10 +389,52 @@ const KNOWN_IMPORT_RPCS = new Set([
   // found this session (398,363 rows). See
   // housing-owner-lead-pipeline-bulk.service.ts.
   "import_housing_owner_lead_pipeline_batch",
-  // GNC's Agent Productivity Report -- same report shape Mydashboards' own
-  // GNC APR Upload writes to db_masmis.gnc_apr, confirmed live real but
-  // stale (last row 2026-05-30). See gnc-apr-daily-bulk.service.ts.
+  // GNC's Agent Productivity Report -- writes into the SAME live
+  // db_masmis.gnc_apr table Mydashboards already uses (confirmed real but
+  // stale, last row 2026-05-30), per explicit user instruction. Reconciled
+  // 2026-09-10 from an earlier new-table approach; see sql/1741 and
+  // gnc-apr-masmis-bulk.service.ts.
   "import_gnc_apr_batch",
+  // Bla Bli Blu's real Dial Desk complaint/query ticket export -- an HTML
+  // export off the DialDesk website, no DB backing anywhere. See
+  // bla-bli-blu-dd-tagging-bulk.service.ts.
+  "import_bla_bli_blu_dd_tagging_batch",
+  // GNC's "Date & Camp wise Overall Sale" sheet -- per explicit user
+  // instruction, writes into the SAME already-live db_masmis.gnc_sale
+  // table the separate My Dashboards tool (github.com/tausifansari-mcn/
+  // Mydashboards) already uses, rather than a new mas_hrms table. See
+  // gnc-sale-masmis-bulk.service.ts.
+  "import_gnc_sale_masmis_batch",
+  // Bla Bli Blu's real Auto Call Back / after-hours contact logs -- HTML
+  // exports off the same DialDesk/Smartping websites as sql/1739's DD
+  // Tagging file, found in the same local folder. See
+  // bla-bli-blu-auto-callback-bulk.service.ts / bla-bli-blu-after-hour-
+  // bulk.service.ts.
+  "import_bla_bli_blu_auto_callback_batch",
+  "import_bla_bli_blu_after_hour_batch",
+  // Bla Bli Blu's real Smartping CDR export -- disposition/outcome fields
+  // only (call metadata is already live in dialer_db.cdr_bla_bli_blu,
+  // joined by Session Id = call_uuid). See
+  // bla-bli-blu-call-disposition-bulk.service.ts.
+  "import_bla_bli_blu_call_disposition_batch",
+  // Bla Bli Blu's real direct Shopify order export, distinct from the
+  // workbook's own curated Overall Sales Raw sheet (sql/1729). See
+  // bla-bli-blu-shopify-sales-bulk.service.ts.
+  "import_bla_bli_blu_shopify_sales_batch",
+  // Bellavita's real "Sale" sheet -- writes into the SAME already-live
+  // db_masmis.bb_sale table Mydashboards already uses. See
+  // bb-sale-masmis-bulk.service.ts.
+  "import_bb_sale_masmis_batch",
+  "import_bb_apr_masmis_batch",
+  "import_bvo_repeat_cdr_masmis_batch",
+  "import_bvo_repeat_allocation_masmis_batch",
+  "import_bb_cart_masmis_batch",
+  "import_bb_chat_masmis_batch",
+  "import_bvo_order_export_masmis_batch",
+  "import_neemans_sale_raw_masmis_batch",
+  "import_neemans_allocation_masmis_batch",
+  "import_neemans_cart_masmis_batch",
+  "import_neemans_apr_masmis_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -907,10 +949,13 @@ async function dispatchImport(
   }
 
   if (rpc_name === "import_gnc_apr_batch") {
-    const { importGncAprBatch } = await import(
-      "../bulk-upload/gnc-apr-daily-bulk.service.js"
+    // Reconciled 2026-09-10: redirected from the retired gnc_apr_daily_actual
+    // (mas_hrms) to db_masmis.gnc_apr directly, per explicit user instruction
+    // to use the same table My Dashboards already writes into. See sql/1741.
+    const { importGncAprMasmisBatch } = await import(
+      "../bulk-upload/gnc-apr-masmis-bulk.service.js"
     );
-    const data = await importGncAprBatch(id, userId);
+    const data = await importGncAprMasmisBatch(id, userId);
     return { success: true, data };
   }
 
@@ -967,6 +1012,142 @@ async function dispatchImport(
       "../bulk-upload/housing-owner-lead-pipeline-bulk.service.js"
     );
     const data = await importHousingOwnerLeadPipelineBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_dd_tagging_batch") {
+    const { importBlaBliBluDdTaggingBatch } = await import(
+      "../bulk-upload/bla-bli-blu-dd-tagging-bulk.service.js"
+    );
+    const data = await importBlaBliBluDdTaggingBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_gnc_sale_masmis_batch") {
+    const { importGncSaleMasmisBatch } = await import(
+      "../bulk-upload/gnc-sale-masmis-bulk.service.js"
+    );
+    const data = await importGncSaleMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_auto_callback_batch") {
+    const { importBlaBliBluAutoCallbackBatch } = await import(
+      "../bulk-upload/bla-bli-blu-auto-callback-bulk.service.js"
+    );
+    const data = await importBlaBliBluAutoCallbackBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_after_hour_batch") {
+    const { importBlaBliBluAfterHourBatch } = await import(
+      "../bulk-upload/bla-bli-blu-after-hour-bulk.service.js"
+    );
+    const data = await importBlaBliBluAfterHourBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_call_disposition_batch") {
+    const { importBlaBliBluCallDispositionBatch } = await import(
+      "../bulk-upload/bla-bli-blu-call-disposition-bulk.service.js"
+    );
+    const data = await importBlaBliBluCallDispositionBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_shopify_sales_batch") {
+    const { importBlaBliBluShopifySalesBatch } = await import(
+      "../bulk-upload/bla-bli-blu-shopify-sales-bulk.service.js"
+    );
+    const data = await importBlaBliBluShopifySalesBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bb_sale_masmis_batch") {
+    const { importBbSaleMasmisBatch } = await import(
+      "../bulk-upload/bb-sale-masmis-bulk.service.js"
+    );
+    const data = await importBbSaleMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bb_apr_masmis_batch") {
+    const { importBbAprMasmisBatch } = await import(
+      "../bulk-upload/bb-apr-masmis-bulk.service.js"
+    );
+    const data = await importBbAprMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bvo_repeat_cdr_masmis_batch") {
+    const { importBvoRepeatCdrMasmisBatch } = await import(
+      "../bulk-upload/bvo-repeat-cdr-masmis-bulk.service.js"
+    );
+    const data = await importBvoRepeatCdrMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bvo_repeat_allocation_masmis_batch") {
+    const { importBvoRepeatAllocationMasmisBatch } = await import(
+      "../bulk-upload/bvo-repeat-allocation-masmis-bulk.service.js"
+    );
+    const data = await importBvoRepeatAllocationMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bb_cart_masmis_batch") {
+    const { importBbCartMasmisBatch } = await import(
+      "../bulk-upload/bb-cart-masmis-bulk.service.js"
+    );
+    const data = await importBbCartMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bb_chat_masmis_batch") {
+    const { importBbChatMasmisBatch } = await import(
+      "../bulk-upload/bb-chat-masmis-bulk.service.js"
+    );
+    const data = await importBbChatMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bvo_order_export_masmis_batch") {
+    const { importBvoOrderExportMasmisBatch } = await import(
+      "../bulk-upload/bvo-order-export-masmis-bulk.service.js"
+    );
+    const data = await importBvoOrderExportMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_sale_raw_masmis_batch") {
+    const { importNeemansSaleRawMasmisBatch } = await import(
+      "../bulk-upload/neemans-sale-raw-masmis-bulk.service.js"
+    );
+    const data = await importNeemansSaleRawMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_allocation_masmis_batch") {
+    const { importNeemansAllocationMasmisBatch } = await import(
+      "../bulk-upload/neemans-allocation-masmis-bulk.service.js"
+    );
+    const data = await importNeemansAllocationMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_cart_masmis_batch") {
+    const { importNeemansCartMasmisBatch } = await import(
+      "../bulk-upload/neemans-cart-masmis-bulk.service.js"
+    );
+    const data = await importNeemansCartMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_apr_masmis_batch") {
+    const { importNeemansAprMasmisBatch } = await import(
+      "../bulk-upload/neemans-apr-masmis-bulk.service.js"
+    );
+    const data = await importNeemansAprMasmisBatch(id, userId);
     return { success: true, data };
   }
 

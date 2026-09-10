@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { notifyGrnStage } from "./grn-notify.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
 
@@ -233,7 +234,8 @@ export const grnValidationControlService = {
   ) {
     // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
     const [typeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year
+      `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year,
+              vendor_name, amount_with_tax, amount
          FROM grn_request WHERE id = ? LIMIT 1`,
       [grnId]
     );
@@ -269,6 +271,18 @@ export const grnValidationControlService = {
       grn_number: typeRows[0].grn_number ?? null,
       remarks,
     });
+    // Same fix as grnSmartService.review() — this is the submit path every allocation-aware GRN
+    // actually goes through (requireAllocationsForSubmit hard-blocks anything without
+    // allocations rather than falling through), so it needed the same wiring grn.service.ts's
+    // submit() had but this path never reached. See grn-notify.ts's header.
+    await notifyGrnStage(
+      grnId,
+      typeRows[0].grn_number ? String(typeRows[0].grn_number) : null,
+      typeRows[0].branch_id ? String(typeRows[0].branch_id) : null,
+      typeRows[0].vendor_name ? String(typeRows[0].vendor_name) : null,
+      Number(typeRows[0].amount_with_tax ?? typeRows[0].amount ?? 0) || null,
+      "branch_head",
+    );
     return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
   },
 

@@ -26,59 +26,7 @@ import {
 } from "../process-pnl/budget-headroom-gate.service.js";
 import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
-import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
-
-/**
- * Bell notification for a GRN awaiting a stage. GRN approval was entirely notification-silent
- * before this — Work Inbox's derived GRN_APPROVAL_PENDING query (work-inbox.service.ts) surfaces
- * it on the Work Inbox page, but nothing ever wrote a `work_inbox_item` row, so the bell
- * (GET /api/inbox, which reads work_inbox_item only — see inbox.service.ts) never showed a GRN
- * at all. Mirrors leave.service.ts's submission notify: resolve every user holding the stage's
- * role in this GRN's branch, raise one item each. Non-fatal by design — a notification failure
- * must never roll back or block the GRN transition that triggered it.
- */
-async function notifyGrnStage(
-  grnId: string,
-  grnNumber: string | null,
-  branchId: string | null,
-  vendorName: string | null,
-  amount: number | null,
-  role: "branch_head" | "finance_head",
-) {
-  try {
-    const { inboxService } = await import("../inbox/inbox.service.js");
-    const userIds = await resolveRoleHolderUserIds(role, branchId);
-    const amountLabel = amount != null ? `₹${Number(amount).toLocaleString("en-IN")}` : "";
-    for (const userId of userIds) {
-      await inboxService.createItem({
-        user_id: userId,
-        type: "grn_approval_pending",
-        title: `[ACTION REQUIRED] GRN ${grnNumber ?? ""}${vendorName ? ` — ${vendorName}` : ""}`,
-        description: `Awaiting your ${role === "branch_head" ? "Branch Head" : "Finance Head"} review${amountLabel ? ` (${amountLabel})` : ""}.`,
-        entity_type: "grn_request",
-        entity_id: grnId,
-        action_url: "/finance/grn",
-        priority: "high",
-      });
-    }
-  } catch {
-    // Non-fatal — notification failure must not block the GRN transition.
-  }
-}
-
-/** The decision is made — close the bell alert(s) raised for this GRN, at any stage. */
-async function resolveGrnNotifications(grnId: string) {
-  try {
-    const { inboxService } = await import("../inbox/inbox.service.js");
-    await inboxService.resolveItems({
-      entity_type: "grn_request",
-      entity_id: grnId,
-      types: ["grn_approval_pending"],
-    });
-  } catch {
-    // Non-fatal.
-  }
-}
+import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =

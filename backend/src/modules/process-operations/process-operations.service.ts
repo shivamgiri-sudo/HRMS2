@@ -108,11 +108,27 @@ export interface MetricSection {
 }
 
 /**
- * Section order is an argument about how to read the page: coverage before the
- * rates it qualifies, outcomes before the behaviour that explains them, and the
- * workforce last because it is the reason the rest moves rather than a result.
+ * Section order is the "Process Performance Card" reading order requested
+ * 2026-09-10: headcount/operations first (the staffing and dialler reality
+ * this month), then quality (what the AI/QA passes found over those same
+ * calls), then hygiene last (data-quality housekeeping -- unresolved punches,
+ * correction load, roster ack -- real, but the least urgent read on the
+ * page). Quality itself keeps its prior internal order (coverage before the
+ * rates it qualifies, outcomes before the behaviour that explains them).
  */
 const SECTIONS: Array<{ key: string; title: string; blurb: string; members: string[] }> = [
+  {
+    key: "operations",
+    title: "Headcount & operations",
+    blurb: "Staffing and dialler reality for this process, this period -- what the rest of the page explains.",
+    members: [
+      "AHT", "INBOUND_SL_PCT", "INBOUND_AL_PCT", "BLA_INBOUND_AL_PCT",
+      "OUTBOUND_CONNECT_PCT", "AGENT_OCCUPANCY_PCT", "AGENT_UTILISATION_PCT",
+      "CHAT_TICKETS", "CHAT_RESOLVED_PCT", "CHAT_FRT_SLA_PCT",
+      "SHRINKAGE_PCT", "SHIFT_MINUTES_AVG", "PROCESS_JOINERS", "PROCESS_EXITS",
+      "PROC_ATTENDANCE_PCT",
+    ],
+  },
   {
     key: "conversion",
     title: "Conversation & conversion",
@@ -165,24 +181,12 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
     ],
   },
   {
-    key: "telephony",
-    title: "Telephony",
-    blurb: "From the dialler feeds.",
+    key: "hygiene",
+    title: "Hygiene",
+    blurb: "Data-quality housekeeping -- real gaps, but the least urgent read on this page.",
     members: [
-      "AHT", "INBOUND_SL_PCT", "INBOUND_AL_PCT", "BLA_INBOUND_AL_PCT",
-      "OUTBOUND_CONNECT_PCT", "AGENT_OCCUPANCY_PCT", "AGENT_UTILISATION_PCT",
-      "CHAT_TICKETS", "CHAT_RESOLVED_PCT", "CHAT_FRT_SLA_PCT",
-    ],
-  },
-  {
-    key: "workforce",
-    title: "Workforce",
-    blurb: "The same people, and usually the reason the numbers above moved.",
-    members: [
-      "SHRINKAGE_PCT", "UNRESOLVED_PUNCH_PCT", "CORRECTION_LOAD_PCT",
-      "ROSTER_ACK_PCT", "ATTENDANCE_ISSUES_OPEN", "ATTENDANCE_NO_EVIDENCE",
-      "SHIFT_MINUTES_AVG", "PROCESS_JOINERS", "PROCESS_EXITS",
-      "PROC_ATTENDANCE_PCT",
+      "UNRESOLVED_PUNCH_PCT", "CORRECTION_LOAD_PCT", "ROSTER_ACK_PCT",
+      "ATTENDANCE_ISSUES_OPEN", "ATTENDANCE_NO_EVIDENCE",
     ],
   },
 ];
@@ -1349,6 +1353,449 @@ export async function getProcessVoiceOfCustomer(
   };
 }
 
+export interface ClapScenarioBreakdown {
+  available: boolean;
+  reason: string | null;
+  clap: "Customer" | "Logistic" | "Agent" | "Product";
+  total: number;
+  scenarios: Array<{ scenario: string; count: number; pct: number }>;
+}
+
+/**
+ * Phase B of the Mydashboards port (2026-09-10 plan) -- the sub-scenario
+ * drill for one CLAP bucket: clicking "Agent: 34%" on the breakdown bar
+ * shouldn't just filter quotes, it should say WHICH real scenarios make up
+ * that 34%. Groups by the exact same q.scenario/q.scenario1 fields
+ * CLAP_CASE itself classifies on, over the exact same employee/date window
+ * getProcessVoiceOfCustomer already resolves -- this is a second read of
+ * the same rows, one level more granular, not a new data source.
+ */
+export async function getClapScenarioBreakdown(
+  userId: string, processId: string, period: ReportPeriod, clap: "Customer" | "Logistic" | "Agent" | "Product",
+): Promise<ClapScenarioBreakdown | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapScenarioBreakdown => ({
+    available: false, reason, clap, total: 0, scenarios: [],
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  // Caught live verifying this: for rows that reach CLAP_CASE's
+  // Complaint/Repeat branch, q.scenario is ALWAYS literally 'Complaint' or
+  // 'Repeat' -- that's the branch condition, not a sub-scenario -- and the
+  // real differentiator CLAP_CASE actually classified on for those rows is
+  // q.scenario1 (Dispatch/Delivery/RTO/Fraud/etc., see that CASE branch).
+  // For every other row, q.scenario itself is what CLAP_CASE keyed on, so
+  // this reports whichever field actually drove that row's classification,
+  // never both (that would double-count the same call under two labels).
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT x.scenario, COUNT(*) AS n
+       FROM (
+         SELECT
+             CASE WHEN q.scenario IN ('Complaint','Repeat')
+                  THEN COALESCE(NULLIF(TRIM(q.scenario1), ''), q.scenario)
+                  ELSE q.scenario END AS scenario
+           FROM db_audit.call_quality_assessment q
+          WHERE q.User IN (${inList}) AND q.quality_percentage IS NOT NULL
+            AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+            AND (${CLAP_CASE}) = ?
+       ) x
+      GROUP BY x.scenario
+      ORDER BY n DESC`,
+    [...employeeCodes, from, to, clap],
+  );
+  const total = (rows as any[]).reduce((s, r) => s + Number(r.n), 0);
+  if (!total) return { ...unavailable(`No ${clap}-classified calls in this period.`), available: true };
+
+  const scenarios = (rows as any[]).map((r) => ({
+    scenario: String(r.scenario ?? "").trim() || "(blank)",
+    count: Number(r.n),
+    pct: Math.round((Number(r.n) / total) * 1000) / 10,
+  }));
+
+  return { available: true, reason: null, clap, total, scenarios };
+}
+
+export interface ClapScenarioCall {
+  available: boolean;
+  reason: string | null;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    qualityPercentage: number | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+/**
+ * Row-level companion to getClapScenarioBreakdown -- same window/CLAP
+ * resolution, same Complaint/Repeat scenario1 fix, but returns the actual
+ * calls (capped, newest first) instead of counts, so a reader can click one
+ * of the real scenarios one level further into an individual call. Not a
+ * data dump -- RawRowsPanel/CSV already covers that; this is a list to
+ * click into getCallDetail from.
+ */
+export async function getClapScenarioCalls(
+  userId: string, processId: string, period: ReportPeriod,
+  clap: "Customer" | "Logistic" | "Agent" | "Product", scenario: string,
+): Promise<ClapScenarioCall | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ClapScenarioCall => ({ available: false, reason, calls: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  // Same resolved-scenario expression as getClapScenarioBreakdown, filtered
+  // down to the one scenario label the reader actually clicked -- matched
+  // in an outer WHERE against the inner computed column, same reason that
+  // breakdown query needed a subquery: only_full_group_by rejects a bare
+  // CASE expression as a filter target inline.
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT x.User AS employee_code, DATE_FORMAT(x.CallDate, '%Y-%m-%d %H:%i:%s') AS call_date,
+            x.quality_percentage, x.has_transcript, x.has_recording
+       FROM (
+         SELECT q.User, q.CallDate, q.quality_percentage,
+             (q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != '') AS has_transcript,
+             (q.call_recording IS NOT NULL AND TRIM(q.call_recording) != '') AS has_recording,
+             CASE WHEN q.scenario IN ('Complaint','Repeat')
+                  THEN COALESCE(NULLIF(TRIM(q.scenario1), ''), q.scenario)
+                  ELSE q.scenario END AS resolved_scenario
+           FROM db_audit.call_quality_assessment q
+          WHERE q.User IN (${inList}) AND q.quality_percentage IS NOT NULL
+            AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+            AND (${CLAP_CASE}) = ?
+       ) x
+      WHERE x.resolved_scenario = ?
+      ORDER BY x.CallDate DESC
+      LIMIT 50`,
+    [...employeeCodes, from, to, clap, scenario],
+  );
+
+  const calls = (rows as any[]).map((r) => ({
+    employeeCode: String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    callDate: String(r.call_date),
+    qualityPercentage: r.quality_percentage === null ? null : Number(r.quality_percentage),
+    hasTranscript: Boolean(r.has_transcript),
+    hasRecording: Boolean(r.has_recording),
+  }));
+
+  if (!calls.length) return { ...unavailable(`No calls found for "${scenario}" in this period.`), available: true };
+  return { available: true, reason: null, calls };
+}
+
+export interface FatalCallsResult {
+  available: boolean; reason: null | string;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    scenario: string | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+/**
+ * Fatal calls -- Mydashboards' own dedicated red-gradient section, missing
+ * from this page until now. A call is fatal when ALL SIX of
+ * FATAL_PARAM_COLS score 0 (verbatim from this session's own
+ * fix-quality-score.mjs CQ formula port, not re-derived) -- the domain rule
+ * that a genuinely severe miss on any of these zeroes the whole call's
+ * score, regardless of how the other 13+ parameters scored. Each row opens
+ * the exact same CallDetailDrawer the CLAP scenario drill already uses
+ * (getCallDetail, keyed the same way) -- the second real consumer that
+ * makes generalizing that drawer into shared infrastructure a fair call
+ * later, not speculative infrastructure built ahead of a real second use.
+ */
+const FATAL_PARAM_COLS = [
+  "address_recorded_completely", "correct_and_complete_information", "case_escalated_correctly",
+  "customer_concern_acknowledged", "proper_hold_procedure", "proper_transfer_and_language",
+];
+
+export async function getFatalCalls(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<FatalCallsResult | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): FatalCallsResult => ({ available: false, reason, calls: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT q.User AS employee_code, DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i:%s') AS call_date, q.scenario,
+            (q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != '') AS has_transcript,
+            (q.call_recording IS NOT NULL AND TRIM(q.call_recording) != '') AS has_recording
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND (${fatalSql})
+      ORDER BY q.CallDate DESC
+      LIMIT 50`,
+    [...employeeCodes, from, to],
+  );
+
+  const calls = (rows as any[]).map((r) => ({
+    employeeCode: String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    callDate: String(r.call_date),
+    scenario: r.scenario ?? null,
+    hasTranscript: Boolean(r.has_transcript),
+    hasRecording: Boolean(r.has_recording),
+  }));
+
+  if (!calls.length) return { ...unavailable("No fatal calls in this period — a genuine, good result."), available: true };
+  return { available: true, reason: null, calls };
+}
+
+export interface EmployeeRecentCalls {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    callDate: string; qualityPercentage: number | null; scenario: string | null;
+    hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+/**
+ * Third real consumer of CallDetailDrawer: AnalystBreakdownPanel is generic
+ * over ANY metric (workforce, hygiene, quality -- whatever metricKey the
+ * caller is drilled into), so this does NOT assume the employee has quality-
+ * audit data just because a metric score exists for them -- an employee
+ * genuinely not in db_audit.call_quality_assessment (e.g. this metric came
+ * from a manual upload, not the audit pass) gets an honest "not audited"
+ * reason, not an empty list indistinguishable from "audited, zero calls".
+ */
+export async function getEmployeeRecentCalls(
+  userId: string, processId: string, employeeCode: string, period: ReportPeriod,
+): Promise<EmployeeRecentCalls | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): EmployeeRecentCalls => ({ available: false, reason, calls: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employees WHERE process_id = ? AND employee_code = ? LIMIT 1`,
+    [processId, employeeCode],
+  );
+  if (!(empRows as any[]).length) return null;
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User = ? AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      [employeeCode],
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls for this analyst in the last 90 days — this metric may come from a different source than the quality-audit pass.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i:%s') AS call_date, quality_percentage, scenario,
+            (Transcribe_Text IS NOT NULL AND TRIM(Transcribe_Text) != '') AS has_transcript,
+            (call_recording IS NOT NULL AND TRIM(call_recording) != '') AS has_recording
+       FROM db_audit.call_quality_assessment
+      WHERE User = ? AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+      ORDER BY CallDate DESC
+      LIMIT 20`,
+    [employeeCode, from, to],
+  );
+
+  const calls = (rows as any[]).map((r) => ({
+    callDate: String(r.call_date),
+    qualityPercentage: r.quality_percentage === null ? null : Number(r.quality_percentage),
+    scenario: r.scenario ?? null,
+    hasTranscript: Boolean(r.has_transcript),
+    hasRecording: Boolean(r.has_recording),
+  }));
+
+  if (!calls.length) return { ...unavailable("No audited calls for this analyst in this period."), available: true };
+  return { available: true, reason: null, calls };
+}
+
+/**
+ * The exact 19 parameters Mydashboards' validated CQ formula scores per call
+ * (backend/scripts/fix-quality-score.mjs's own CQ_PARAM_COLS, not re-typed
+ * from scratch), with a human-readable label per column for the call-detail
+ * drawer. Clovia (client_id 468) scores a 20th, express_empathy -- handled
+ * by simply including it whenever the column is present on the row, not by
+ * a second hardcoded list.
+ */
+const CQ_PARAM_LABELS: Record<string, string> = {
+  call_answered_within_5_seconds: "Answered within 5 seconds",
+  customer_concern_acknowledged: "Customer concern acknowledged",
+  professionalism_maintained: "Professionalism maintained",
+  assurance_or_appreciation_provided: "Assurance or appreciation provided",
+  pronunciation_and_clarity: "Pronunciation and clarity",
+  enthusiasm_and_no_fumbling: "Enthusiasm, no fumbling",
+  active_listening: "Active listening",
+  politeness_and_no_sarcasm: "Politeness, no sarcasm",
+  proper_grammar: "Proper grammar",
+  accurate_issue_probing: "Accurate issue probing",
+  proper_hold_procedure: "Proper hold procedure",
+  proper_transfer_and_language: "Proper transfer and language",
+  dead_air_under_10_seconds: "Dead air under 10 seconds",
+  case_escalated_correctly: "Case escalated correctly",
+  address_recorded_completely: "Address recorded completely",
+  correct_and_complete_information: "Correct and complete information",
+  upselling_or_offers_suggested: "Upselling or offers suggested",
+  further_assistance_offered: "Further assistance offered",
+  proper_call_closure: "Proper call closure",
+  express_empathy: "Express empathy",
+};
+const CQ_PARAM_COLS = [
+  "call_answered_within_5_seconds", "customer_concern_acknowledged", "professionalism_maintained",
+  "assurance_or_appreciation_provided", "pronunciation_and_clarity", "enthusiasm_and_no_fumbling",
+  "active_listening", "politeness_and_no_sarcasm", "proper_grammar", "accurate_issue_probing",
+  "proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds",
+  "case_escalated_correctly", "address_recorded_completely", "correct_and_complete_information",
+  "upselling_or_offers_suggested", "further_assistance_offered", "proper_call_closure",
+  "express_empathy",
+];
+
+export interface CallDetail {
+  available: boolean;
+  reason: string | null;
+  employeeCode: string; employeeName: string; callDate: string;
+  qualityPercentage: number | null;
+  scenario: string | null; scenario1: string | null;
+  transcript: string | null; recordingUrl: string | null;
+  parameters: Array<{ column: string; label: string; value: boolean | null }>;
+}
+
+/**
+ * One call's full audit detail -- the transcript-left/scored-parameters-
+ * right view. Keyed by (employeeCode, callDate) since that's the same
+ * natural pair every sibling function in this file already joins/filters
+ * this upstream table on; no better single primary key surfaced when this
+ * table's columns were inspected for this phase.
+ */
+export async function getCallDetail(
+  userId: string, processId: string, employeeCode: string, callDate: string,
+): Promise<CallDetail | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  // Scoping check: this employee code must actually belong to a readable
+  // process, not just any code the caller happens to pass -- the same
+  // employee/process ownership check every sibling function here relies on,
+  // just done explicitly for a single code instead of an IN-list.
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code = ? LIMIT 1`,
+    [processId, employeeCode],
+  );
+  const emp = (empRows as any[])[0];
+  if (!emp) return null;
+
+  const paramCols = CQ_PARAM_COLS.map((c) => `\`${c}\``).join(", ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT quality_percentage, scenario, scenario1, Transcribe_Text, call_recording, ${paramCols}
+       FROM db_audit.call_quality_assessment
+      WHERE User = ? AND CallDate = ?
+      LIMIT 1`,
+    [employeeCode, callDate],
+  );
+  const row = (rows as any[])[0];
+  if (!row) {
+    return {
+      available: false, reason: "No audit record found for this call.",
+      employeeCode, employeeName: String(emp.name).trim(), callDate,
+      qualityPercentage: null, scenario: null, scenario1: null, transcript: null, recordingUrl: null, parameters: [],
+    };
+  }
+
+  const parameters = CQ_PARAM_COLS
+    .filter((c) => row[c] !== undefined) // express_empathy is absent from most clients' rows entirely
+    .map((c) => ({
+      column: c, label: CQ_PARAM_LABELS[c] ?? c,
+      value: row[c] === null ? null : Number(row[c]) === 1,
+    }));
+
+  return {
+    available: true, reason: null,
+    employeeCode, employeeName: String(emp.name).trim(), callDate,
+    qualityPercentage: row.quality_percentage === null ? null : Number(row.quality_percentage),
+    scenario: row.scenario ?? null, scenario1: row.scenario1 ?? null,
+    transcript: row.Transcribe_Text ?? null, recordingUrl: row.call_recording ?? null,
+    parameters,
+  };
+}
+
 /**
  * Root Cause vs. Workforce — the question the CLAP panel above cannot answer on
  * its own: is a spike in Agent-attributed complaints a coaching problem, or is
@@ -1560,6 +2007,16 @@ export interface ProcessBusinessHealth {
     activeHc: number;
     mandatedHc: number | null;
     gap: number | null;
+    /** max(mandate - activeHc, 0) -- sanctioned seats still open to hire into.
+     *  Same magnitude as `shortfall` below; kept as a separate field because
+     *  the dashboard shows it in a neutral "seats open" framing next to
+     *  mandate, distinct from shortfall's red/warning framing. Null when no
+     *  mandate is configured -- there is nothing to be "available" against. */
+    availableCount: number | null;
+    /** max(activeHc - mandate, 0) -- staffed beyond the sanctioned mandate. */
+    buffer: number | null;
+    /** max(mandate - activeHc, 0) -- staffed below the sanctioned mandate. */
+    shortfall: number | null;
   };
   hiring: {
     available: boolean;
@@ -1567,6 +2024,15 @@ export interface ProcessBusinessHealth {
     openRequisitions: number;
     openPositions: number;
     candidatesInPipeline: number;
+    /** SUM(fulfilled_headcount) across every requisition ever raised for this
+     *  process -- how many seats have actually been filled through the
+     *  requisition pipeline, not a proxy for total joiners (someone could
+     *  join outside a requisition, e.g. a transfer). */
+    hiredCount: number;
+    /** Alias of `openPositions`, exposed under the label the dashboard uses
+     *  for this figure -- requested minus already-fulfilled headcount, summed
+     *  across every still-open requisition. */
+    pendingHiringCount: number;
   };
 }
 
@@ -1705,24 +2171,32 @@ export async function getProcessBusinessHealth(
   const seatRaw = (seatRows as any[])[0]?.total_seats;
   const revenueRuleSeats = seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
 
+  // Buffer/shortfall/available-count are all derived from the same gap, once a
+  // mandate exists -- factored out so all three headcount branches below stay
+  // in sync rather than repeating the max(...,0) pair three times.
+  const staffingSplit = (mandate: number | null): { availableCount: number | null; buffer: number | null; shortfall: number | null } =>
+    mandate === null
+      ? { availableCount: null, buffer: null, shortfall: null }
+      : { availableCount: Math.max(mandate - activeHc, 0), buffer: Math.max(activeHc - mandate, 0), shortfall: Math.max(mandate - activeHc, 0) };
+
   let headcount: ProcessBusinessHealth["headcount"];
   if (hcMandate === null && revenueRuleSeats === null) {
     headcount = {
       available: false, reason: "No sanctioned headcount mandate or contracted seat count configured for this process.",
-      activeHc, mandatedHc: null, gap: null,
+      activeHc, mandatedHc: null, gap: null, ...staffingSplit(null),
     };
   } else if (hcMandate !== null && revenueRuleSeats !== null && hcMandate !== revenueRuleSeats) {
     headcount = {
       available: true,
       reason: `Two disagreeing sources: HC mandate says ${hcMandate}, the revenue rule's contracted seats say ${revenueRuleSeats}. Shown separately rather than picking one.`,
-      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate,
+      activeHc, mandatedHc: hcMandate, gap: activeHc - hcMandate, ...staffingSplit(hcMandate),
     };
   } else {
     const resolved = hcMandate ?? revenueRuleSeats!;
     headcount = {
       available: true,
       reason: hcMandate === null ? "From the revenue rule's contracted seats — no formal HC mandate configured." : null,
-      activeHc, mandatedHc: resolved, gap: activeHc - resolved,
+      activeHc, mandatedHc: resolved, gap: activeHc - resolved, ...staffingSplit(resolved),
     };
   }
 
@@ -1738,6 +2212,16 @@ export async function getProcessBusinessHealth(
   const openRequisitions = Number((reqRows as any[])[0]?.open_reqs ?? 0);
   const openPositions = Number((reqRows as any[])[0]?.open_positions ?? 0);
 
+  // "Hired Count" -- fulfilled_headcount summed across every requisition this
+  // process has ever raised (open or closed), not scoped to a period: this is
+  // a running total of seats actually filled through the requisition
+  // pipeline, the same denominator hiring managers already track it against.
+  const [hiredRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(fulfilled_headcount), 0) AS hired FROM job_requisition WHERE process_id = ?`,
+    [processId],
+  );
+  const hiredCount = Number((hiredRows as any[])[0]?.hired ?? 0);
+
   let candidatesInPipeline = 0;
   if (processName) {
     const [candRows] = await db.execute<RowDataPacket[]>(
@@ -1747,6 +2231,7 @@ export async function getProcessBusinessHealth(
   }
   const hiring: ProcessBusinessHealth["hiring"] = {
     available: true, reason: null, openRequisitions, openPositions, candidatesInPipeline,
+    hiredCount, pendingHiringCount: openPositions,
   };
 
   return { available: true, reason: null, periodCode, finance, headcount, hiring };

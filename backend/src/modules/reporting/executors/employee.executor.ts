@@ -24,6 +24,8 @@ import {
   fetchPageWithTotal,
 } from "./types.js";
 import { identitySpineSelect, identitySpineJoins } from "../identity-spine.js";
+import { resolvePii } from "../../../shared/piiCiphertext.js";
+import { resolveAccountNumber } from "../../../shared/fieldEncryption.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -131,25 +133,114 @@ export async function employeeMaster(
     params.push(options.cursor);
   }
 
+  // Single, consolidated status column. The old query carried both `employment_status`
+  // (raw HR text) and `employee_status` (a binary Active/Inactive CASE on active_status) —
+  // for the overwhelming majority of rows these render the same thing, and the Report
+  // Library correctly read that as one fact shown twice. active_status is the definition
+  // of "active" everywhere else in this codebase (see headcount() above); the raw text
+  // still carries value for exited employees (resigned/terminated/absconding), so it wins
+  // when the employee is inactive, not when they aren't.
+  const statusExpr = `
+    CASE
+      WHEN e.active_status = 1 THEN 'Active'
+      ELSE COALESCE(NULLIF(e.employment_status,''), 'Inactive')
+    END`;
+
+  // "Salary date" = the CTC/salary-structure effective date, not the joining date and not
+  // a monthly payroll-run date. Sourced from employee_salary_assignment.effective_from on
+  // the latest ACTIVE assignment row (per business ruling this report follows elsewhere:
+  // never invent a value where the assignment table has none).
   const base = `
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           e.official_email, e.mobile, e.employment_status,
-           CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
-           e.date_of_joining, e.date_of_exit,
+           ${statusExpr} AS status,
+           e.official_email,
+           e.personal_email,
+           e.mobile AS contact_number,
+           e.personal_phone AS personal_contact_number,
+           DATE_FORMAT(e.date_of_birth, '%d-%b-%Y') AS date_of_birth,
+           DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS date_of_joining,
+           DATE_FORMAT(e.date_of_exit, '%d-%b-%Y') AS date_of_leaving,
+           -- Tenure/AON: joined-to-(exit or today), in whole years + months. Never guessed for
+           -- an employee with no joining date.
+           CASE WHEN e.date_of_joining IS NULL THEN NULL ELSE
+             CONCAT(
+               TIMESTAMPDIFF(YEAR, e.date_of_joining, COALESCE(e.date_of_exit, CURDATE())), 'y ',
+               TIMESTAMPDIFF(MONTH, e.date_of_joining, COALESCE(e.date_of_exit, CURDATE())) % 12, 'm'
+             )
+           END AS tenure,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           des.designation_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager
+           COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager,
+           addr_cur.address_line1  AS current_address_line1,
+           addr_cur.address_line2  AS current_address_line2,
+           addr_cur.city           AS current_city,
+           addr_cur.state          AS current_state,
+           addr_cur.pincode        AS current_pincode,
+           addr_perm.address_line1 AS permanent_address_line1,
+           addr_perm.address_line2 AS permanent_address_line2,
+           addr_perm.city          AS permanent_city,
+           addr_perm.state         AS permanent_state,
+           addr_perm.pincode       AS permanent_pincode,
+           DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_effective_date,
+           esa.ctc_annual           AS ctc_annual,
+           ssm.structure_name       AS salary_structure_name,
+           bd.bank_name             AS bank_name,
+           bd.bank_branch           AS bank_branch,
+           bd.ifsc_code             AS ifsc_code,
+           bd.account_holder_name   AS bank_account_holder_name,
+           bd.account_number_enc    AS _bank_account_number_enc,
+           bd.account_number        AS _bank_account_number_legacy,
+           COALESCE(NULLIF(TRIM(eu.uan),''), NULLIF(TRIM(e.uan_number),'')) AS uan_number,
+           e.pan_number_encrypted   AS _pan_number_enc,
+           e.pan_number             AS _pan_number_legacy,
+           si.pan_number            AS _pan_number_statutory,
+           e.aadhaar_number_encrypted AS _aadhaar_number_enc,
+           e.aadhaar_number         AS _aadhaar_number_legacy,
+           e.aadhaar_last4          AS _aadhaar_last4,
+           si.aadhaar_id            AS _aadhaar_id_statutory,
+           -- PF eligibility: HRMS statutory record is the source, an approved PF opt-out
+           -- overrides it. This is NOT the payroll-authoritative answer (that requires a
+           -- specific payroll period and reads through db_bill — see
+           -- statutory-applicability.service.ts); it is the standing HRMS-side record, and
+           -- is labelled UNRESOLVED rather than guessed when neither exists.
+           CASE
+             WHEN pf_optout.employee_id IS NOT NULL THEN 'No (Opted Out)'
+             WHEN si.pf_eligible = 1 THEN 'Yes'
+             WHEN si.id IS NOT NULL AND si.pf_eligible = 0 THEN 'No'
+             ELSE 'Unresolved'
+           END AS pf_eligible
       FROM employees e
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
       LEFT JOIN process_master p    ON p.id = e.process_id
+      LEFT JOIN designation_master des ON des.id = e.designation_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
+      LEFT JOIN employee_address addr_cur  ON addr_cur.employee_id  = e.id AND addr_cur.address_type  = 'current'
+      LEFT JOIN employee_address addr_perm ON addr_perm.employee_id = e.id AND addr_perm.address_type = 'permanent'
+      LEFT JOIN employee_bank_detail bd ON bd.employee_id = e.id
+      LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+      LEFT JOIN employee_statutory_info si ON si.employee_id = e.id
+      LEFT JOIN (
+        SELECT eso.employee_id
+          FROM employee_statutory_override eso
+         WHERE eso.override_type = 'pf_opt_out' AND eso.status = 'approved'
+           AND (eso.effective_from_month IS NULL OR eso.effective_from_month <= DATE_FORMAT(CURDATE(), '%Y-%m'))
+         GROUP BY eso.employee_id
+      ) pf_optout ON pf_optout.employee_id = e.id
+      LEFT JOIN (
+        SELECT employee_id, structure_id, ctc_annual, effective_from,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY effective_from DESC) AS rn
+          FROM employee_salary_assignment
+         WHERE active_status = 1
+      ) esa ON esa.employee_id = e.id AND esa.rn = 1
+      LEFT JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
@@ -164,8 +255,32 @@ export async function employeeMaster(
     ? (rows[rows.length - 1]._cursor as number)
     : null;
 
-  // Strip internal cursor field from output
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  // Strip internal cursor field and resolve encrypted/multi-source PII in JS — the same
+  // resolvePii/resolveAccountNumber helpers the employee-profile endpoint uses, so this
+  // report never re-implements (and re-diverges from) that decryption logic.
+  const out = rows.map(({
+    _cursor: _,
+    _bank_account_number_enc, _bank_account_number_legacy,
+    _pan_number_enc, _pan_number_legacy, _pan_number_statutory,
+    _aadhaar_number_enc, _aadhaar_number_legacy, _aadhaar_last4, _aadhaar_id_statutory,
+    ...rest
+  }) => {
+    const pan = resolvePii(_pan_number_enc as string | null, _pan_number_legacy as string | null);
+    const panValue = (pan.value && pan.value.trim()) || (_pan_number_statutory as string | null) || null;
+
+    const aadhaar = resolvePii(_aadhaar_number_enc as string | null, _aadhaar_number_legacy as string | null);
+    const aadhaarValue = (aadhaar.value && aadhaar.value.trim())
+      || (_aadhaar_id_statutory as string | null)
+      || (_aadhaar_last4 ? `XXXXXXXX${_aadhaar_last4}` : null);
+
+    const accountNumber = resolveAccountNumber({
+      account_number_enc: _bank_account_number_enc as string | null,
+      account_number: _bank_account_number_legacy as Buffer | string | null,
+    });
+
+    return { ...rest, pan_number: panValue, aadhaar_number: aadhaarValue, bank_account_number: accountNumber };
+  });
+
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
@@ -440,7 +555,7 @@ export async function newJoinExport(
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
-      DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
+      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,
       COALESCE(e.mobile, '') AS mobile_no,
@@ -567,8 +682,8 @@ export async function leftEmployeeExport(
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(e.mobile, '') AS mobile_no,
-      DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
-      DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
+      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
+      DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%d-%b-%Y') AS left_date,
       COALESCE(er.exit_reason_category, '') AS left_remarks,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,

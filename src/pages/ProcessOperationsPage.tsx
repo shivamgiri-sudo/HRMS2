@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useEffect } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -6,9 +6,9 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronRight, Clock,
-  Database, Download, Filter, Headphones, Lightbulb, Loader2, Minus, Package, PenLine, Radio,
-  ShieldAlert, Sparkles, Target, Truck, Upload, User, Users, Users2, X,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Briefcase, CheckCircle2, ChevronRight, Clock,
+  Database, Download, Filter, Headphones, Hourglass, Lightbulb, Loader2, Minus, Package, PenLine, Radio,
+  ShieldAlert, Sparkles, Target, Truck, Upload, User, UserCheck, UserPlus, Users, Users2, X,
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
@@ -186,6 +186,45 @@ interface ClapVoiceOfCustomer {
   };
 }
 
+interface ClapScenarioBreakdown {
+  available: boolean; reason: string | null;
+  clap: "Customer" | "Logistic" | "Agent" | "Product"; total: number;
+  scenarios: Array<{ scenario: string; count: number; pct: number }>;
+}
+
+interface ClapScenarioCall {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    qualityPercentage: number | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+interface FatalCallsResult {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    scenario: string | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+interface EmployeeRecentCalls {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    callDate: string; qualityPercentage: number | null; scenario: string | null;
+    hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+interface CallDetail {
+  available: boolean; reason: string | null;
+  employeeCode: string; employeeName: string; callDate: string;
+  qualityPercentage: number | null;
+  scenario: string | null; scenario1: string | null;
+  transcript: string | null; recordingUrl: string | null;
+  parameters: Array<{ column: string; label: string; value: boolean | null }>;
+}
+
 interface ProcessBusinessHealth {
   available: boolean; reason: string | null;
   periodCode: string;
@@ -199,10 +238,12 @@ interface ProcessBusinessHealth {
   headcount: {
     available: boolean; reason: string | null;
     activeHc: number; mandatedHc: number | null; gap: number | null;
+    availableCount: number | null; buffer: number | null; shortfall: number | null;
   };
   hiring: {
     available: boolean; reason: string | null;
     openRequisitions: number; openPositions: number; candidatesInPipeline: number;
+    hiredCount: number; pendingHiringCount: number;
   };
 }
 
@@ -224,12 +265,12 @@ interface WorkforceCorrelation {
 }
 
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
+  operations: { accent: "#06B6D4", tint: "linear-gradient(135deg,#ECFEFF 0%,#CFFAFE 100%)", icon: Headphones },
   conversion: { accent: C_BLUE, tint: "linear-gradient(135deg,#EFF6FF 0%,#DBEAFE 100%)", icon: Target },
   risk: { accent: C_RED, tint: "linear-gradient(135deg,#FEF2F2 0%,#FEE2E2 100%)", icon: ShieldAlert },
   conduct: { accent: C_PURPLE, tint: "linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 100%)", icon: Sparkles },
   quality: { accent: C_GREEN, tint: "linear-gradient(135deg,#ECFDF5 0%,#D1FAE5 100%)", icon: Activity },
-  telephony: { accent: "#06B6D4", tint: "linear-gradient(135deg,#ECFEFF 0%,#CFFAFE 100%)", icon: Headphones },
-  workforce: { accent: C_AMBER, tint: "linear-gradient(135deg,#FFFBEB 0%,#FEF3C7 100%)", icon: Users2 },
+  hygiene: { accent: C_AMBER, tint: "linear-gradient(135deg,#FFFBEB 0%,#FEF3C7 100%)", icon: Users2 },
   other: { accent: C_SLATE, tint: "linear-gradient(135deg,#F8FAFC 0%,#F1F5F9 100%)", icon: Activity },
 };
 
@@ -536,12 +577,25 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
     <ChartCard title="Voice of the Customer"
       subtitle={`${voc.totalAuditedCalls.toLocaleString("en-IN")} audited call${voc.totalAuditedCalls === 1 ? "" : "s"} — what's actually behind them, not just a score`}>
       <div className="px-3">
-        {/* CLAP breakdown -- real root cause, not agent quality alone */}
+        {/* CLAP breakdown -- real root cause, not agent quality alone. Segments
+            for Agent/Logistic/Product double as the category selector below
+            (the same setCategory() the buttons already call) -- Customer has
+            no quotes bucket (see the category selector comment) so stays a
+            plain, non-interactive segment rather than a dead click target. */}
         <div className="flex h-6 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-          {voc.clapBreakdown.map((c) => (
-            <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
-              style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
-          ))}
+          {voc.clapBreakdown.map((c) => {
+            const clickable = c.clap === "Agent" || c.clap === "Logistic" || c.clap === "Product";
+            const segCategory = c.clap.toLowerCase() as "agent" | "logistic" | "product";
+            return clickable ? (
+              <button key={c.clap} type="button" onClick={() => setCategory(segCategory)}
+                title={`${c.clap}: ${c.pct}% (${c.count} calls) — click to see quotes`}
+                className="cursor-pointer transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+                style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
+            ) : (
+              <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
+                style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
+            );
+          })}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
           {voc.clapBreakdown.map((c) => {
@@ -578,6 +632,8 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
           })}
         </div>
 
+        <ScenarioBreakdownRow processId={processId} period={period} category={category} />
+
         <div className="grid sm:grid-cols-2 gap-3 mt-2.5 mb-1">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
@@ -608,6 +664,295 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
         </div>
       </div>
     </ChartCard>
+  );
+}
+
+/**
+ * Fatal calls -- Mydashboards' own dedicated red-gradient section, missing
+ * from this page until now. A fatal call is one where all six of the
+ * severity-critical parameters scored 0 (see FATAL_PARAM_COLS on the
+ * backend) -- the domain rule that a severe miss on any of these zeroes the
+ * whole call, independent of how the other parameters scored. Each row
+ * opens the same CallDetailDrawer the CLAP scenario drill already uses --
+ * this is the second real consumer of that component, not a speculative one.
+ */
+function FatalCallsPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "fatal-calls", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<FatalCallsResult>>(
+      `/api/process-operations/${processId}/fatal-calls?period=${period}`),
+  });
+  const fc = data?.data;
+  const { openCall, drawer } = useCallDetailDrawer(processId);
+
+  return (
+    <ChartCard title="Fatal calls"
+      subtitle="Every audited call where a severity-critical parameter failed outright, regardless of the rest of the score">
+      <div className="px-3">
+        {isLoading || !fc ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Checking for fatal calls…
+          </div>
+        ) : !fc.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{fc.reason}</p>
+        ) : !fc.calls.length ? (
+          <div className="rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 px-2.5 py-2 flex items-center gap-2">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+            <p className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">{fc.reason}</p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-red-200 dark:border-red-900 overflow-hidden">
+            <div className="px-2.5 py-1.5 bg-gradient-to-r from-red-700 to-red-600 text-white text-[10px] font-bold uppercase tracking-wide">
+              {fc.calls.length} fatal call{fc.calls.length === 1 ? "" : "s"} this period
+            </div>
+            <div className="max-h-56 overflow-y-auto">
+              {fc.calls.map((c, i) => (
+                <button key={i} type="button"
+                  onClick={() => c.hasTranscript && openCall({ employeeCode: c.employeeCode, callDate: c.callDate })}
+                  disabled={!c.hasTranscript}
+                  title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
+                  className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 text-[10.5px] border-t border-red-100 dark:border-red-900/50 first:border-t-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:bg-red-50/70 dark:hover:bg-red-950/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
+                  <span className="text-slate-500 shrink-0 w-32">{c.callDate}</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-medium truncate w-28 shrink-0">{c.employeeName}</span>
+                  <span className="text-slate-500 truncate flex-1">{c.scenario ?? "—"}</span>
+                  {c.hasTranscript ? <ChevronRight size={11} className="text-slate-300 shrink-0" /> : <span className="w-2.5 shrink-0" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      {drawer}
+    </ChartCard>
+  );
+}
+
+/**
+ * Sub-scenario drill for the selected CLAP category (Phase B of the
+ * Mydashboards port, 2026-09-10 plan) -- the category selector above answers
+ * "how many quotes", this answers "which real scenarios make up that share",
+ * a ranked inline-bar list matching the pattern already used elsewhere on
+ * this page (see the "Biggest drivers" Pareto chart). A category with no
+ * classified calls this period says so rather than show an empty chart.
+ */
+function ScenarioBreakdownRow({ processId, period, category }: {
+  processId: string; period: ReportPeriod; category: "agent" | "logistic" | "product";
+}) {
+  const clap = (category.charAt(0).toUpperCase() + category.slice(1)) as ClapScenarioBreakdown["clap"];
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "clap-scenarios", processId, period, clap],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapScenarioBreakdown>>(
+      `/api/process-operations/${processId}/voice-of-customer/scenarios?period=${period}&clap=${clap}`),
+  });
+  const sb = data?.data;
+  const [expandedScenario, setExpandedScenario] = useState<string | null>(null);
+  const { openCall, drawer } = useCallDetailDrawer(processId);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-2">
+        <Loader2 className="h-3 w-3 animate-spin" />Loading which scenarios make up this share…
+      </div>
+    );
+  }
+  if (!sb?.available || !sb.scenarios.length) {
+    return (
+      <p className="text-[10px] text-slate-400 italic mt-2">
+        {sb?.reason ?? "No scenario breakdown available for this category."}
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-slate-200 dark:border-slate-800 px-2.5 py-2 bg-slate-50/50 dark:bg-slate-800/30">
+      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">
+        Which real scenarios make up {clap} — {sb.total} call{sb.total === 1 ? "" : "s"} — click one for the real calls
+      </p>
+      <div className="space-y-1">
+        {sb.scenarios.slice(0, 6).map((s) => {
+          const open = expandedScenario === s.scenario;
+          return (
+            <Fragment key={s.scenario}>
+              <button type="button" onClick={() => setExpandedScenario(open ? null : s.scenario)}
+                className="w-full flex items-center gap-2 cursor-pointer rounded hover:bg-white dark:hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 py-0.5">
+                <ChevronRight size={10} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+                <span className="text-[10px] text-slate-600 dark:text-slate-300 w-28 shrink-0 truncate text-left" title={s.scenario}>
+                  {s.scenario}
+                </span>
+                <div className="flex-1 h-3.5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full rounded" style={{ width: `${Math.max(2, s.pct)}%`, background: CLAP_META[clap].color }} />
+                </div>
+                <span className="text-[9.5px] tabular-nums text-slate-500 w-14 shrink-0 text-right">
+                  {s.count} ({s.pct}%)
+                </span>
+              </button>
+              {open && (
+                <ScenarioCallsList processId={processId} period={period} clap={clap} scenario={s.scenario}
+                  onSelectCall={openCall} />
+              )}
+            </Fragment>
+          );
+        })}
+      </div>
+      {drawer}
+    </div>
+  );
+}
+
+/** The real calls behind one clicked scenario -- click a row to open its full audit detail. */
+function ScenarioCallsList({ processId, period, clap, scenario, onSelectCall }: {
+  processId: string; period: ReportPeriod; clap: ClapScenarioBreakdown["clap"]; scenario: string;
+  onSelectCall: (call: { employeeCode: string; callDate: string }) => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "clap-scenario-calls", processId, period, clap, scenario],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapScenarioCall>>(
+      `/api/process-operations/${processId}/voice-of-customer/scenario-calls?period=${period}&clap=${clap}&scenario=${encodeURIComponent(scenario)}`),
+  });
+  const sc = data?.data;
+
+  if (isLoading) {
+    return (
+      <div className="pl-4 py-1 flex items-center gap-1.5 text-[9.5px] text-slate-400">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading the real calls…
+      </div>
+    );
+  }
+  if (!sc?.available || !sc.calls.length) {
+    return <p className="pl-4 py-1 text-[9.5px] text-slate-400 italic">{sc?.reason ?? "No calls to show."}</p>;
+  }
+
+  return (
+    <div className="pl-4 pr-1 py-1 space-y-0.5 max-h-40 overflow-y-auto">
+      {sc.calls.map((c, i) => (
+        <button key={i} type="button"
+          onClick={() => c.hasTranscript && onSelectCall({ employeeCode: c.employeeCode, callDate: c.callDate })}
+          disabled={!c.hasTranscript}
+          title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
+          className="w-full flex items-center gap-2 text-left rounded px-1 py-0.5 text-[9.5px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:bg-white dark:hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
+          <span className="text-slate-500 shrink-0">{c.callDate}</span>
+          <span className="text-slate-700 dark:text-slate-300 truncate">{c.employeeName}</span>
+          <span className="ml-auto tabular-nums font-semibold shrink-0"
+            style={{ color: c.qualityPercentage === null ? undefined : c.qualityPercentage >= 80 ? C_GREEN : C_RED_TEXT }}>
+            {c.qualityPercentage === null ? "—" : `${c.qualityPercentage.toFixed(0)}%`}
+          </span>
+          {c.hasTranscript ? <ChevronRight size={10} className="text-slate-300 shrink-0" /> : <span className="w-2.5 shrink-0" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The open/close state + drawer render that all three CallDetailDrawer
+ * consumers (CLAP scenario drill, Fatal Calls, an analyst's own recent
+ * calls) were each independently carrying -- the exact same four lines of
+ * `useState` + conditional render, tripled. CallDetailDrawer itself was
+ * already the one real shared component; this just stops re-deriving the
+ * state that opens it. `openCall` is stable across renders (useCallback),
+ * so passing it straight into a child's onSelectCall prop never causes an
+ * extra re-render of that child.
+ */
+function useCallDetailDrawer(processId: string): {
+  openCall: (call: { employeeCode: string; callDate: string }) => void;
+  drawer: React.ReactNode;
+} {
+  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
+  const openCall = useCallback((call: { employeeCode: string; callDate: string }) => setSelectedCall(call), []);
+  const drawer = selectedCall ? (
+    <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
+      callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
+  ) : null;
+  return { openCall, drawer };
+}
+
+/**
+ * The call-detail drawer (Phase C of the Mydashboards port) -- transcript on
+ * the left, this call's own scored parameters on the right, so the raw
+ * evidence and the judgment sit in one view. Same right-side Sheet drawer
+ * convention already used elsewhere on this page, sized to this page's
+ * widest existing drawer since a two-pane view needs the room.
+ */
+function CallDetailDrawer({ processId, employeeCode, callDate, onClose }: {
+  processId: string; employeeCode: string; callDate: string; onClose: () => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "call-detail", processId, employeeCode, callDate],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<CallDetail>>(
+      `/api/process-operations/${processId}/call-detail?employeeCode=${encodeURIComponent(employeeCode)}&callDate=${encodeURIComponent(callDate)}`),
+  });
+  const cd = data?.data;
+
+  return (
+    <Sheet open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="w-full sm:max-w-[63rem] p-0 overflow-y-auto">
+        <div className="px-5 py-4 bg-gradient-to-br from-slate-800 to-slate-900 text-white">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-bold">{cd?.employeeName ?? employeeCode}</p>
+              <p className="text-[11px] text-white/60 mt-0.5">{callDate}
+                {cd?.scenario && ` · ${cd.scenario}${cd.scenario1 ? ` — ${cd.scenario1}` : ""}`}
+              </p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="Close"
+              className="ml-auto p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/20 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1">
+              <X size={15} />
+            </button>
+          </div>
+          {cd?.qualityPercentage !== null && cd?.qualityPercentage !== undefined && (
+            <p className="text-[11px] mt-2">
+              Quality score: <span className="font-bold tabular-nums">{cd.qualityPercentage.toFixed(1)}%</span>
+            </p>
+          )}
+        </div>
+
+        {isLoading || !cd ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500 px-5 py-6">
+            <Loader2 className="h-4 w-4 animate-spin" />Loading this call's transcript and scored parameters…
+          </div>
+        ) : !cd.available ? (
+          <p className="text-sm text-slate-400 italic px-5 py-6">{cd.reason}</p>
+        ) : (
+          <div className="flex flex-col lg:flex-row">
+            {/* Left: raw evidence -- the transcript, unformatted, plus the recording if one exists. */}
+            <div className="flex-1 min-w-0 px-5 py-4 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Transcript</p>
+              {cd.recordingUrl && (
+                <audio controls preload="metadata" src={cd.recordingUrl} className="w-full h-9 mb-3" />
+              )}
+              {cd.transcript ? (
+                <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 p-3 max-h-[28rem] overflow-y-auto">
+                  <p className="text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-300">
+                    {cd.transcript}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-400 italic">No transcript recorded for this call.</p>
+              )}
+            </div>
+            {/* Right: the judgment -- every scored parameter, pass/fail/blank. */}
+            <div className="w-full lg:w-64 shrink-0 px-5 py-4 bg-slate-50/50 dark:bg-slate-800/30">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Scored parameters</p>
+              <div className="space-y-1">
+                {cd.parameters.map((p) => (
+                  <div key={p.column} className="flex items-center gap-1.5 text-[10.5px] rounded px-1.5 py-1"
+                    style={{ background: p.value === null ? undefined : p.value ? "#DCFCE7" : "#FEE2E2" }}>
+                    <span className="shrink-0 w-3 font-bold"
+                      style={{ color: p.value === null ? "#94A3B8" : p.value ? "#166534" : "#991B1B" }}>
+                      {p.value === null ? "—" : p.value ? "✓" : "✗"}
+                    </span>
+                    <span className="text-slate-700 dark:text-slate-300">{p.label}</span>
+                  </div>
+                ))}
+              </div>
+              {cd.parameters.every((p) => p.value !== false) && (
+                <p className="text-[9.5px] text-slate-400 italic mt-2">No parameters failed on this call.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -764,18 +1109,199 @@ const REVENUE_STATUS_LABEL: Record<string, string> = {
 };
 
 /** A single stat in the Business Health grid — value, its own honest-null state, a caption. */
-function HealthStat({ label, value, caption, tone }: {
-  label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral";
+function HealthStat({ label, value, caption, tone, icon: Icon, fillPct, fillGood }: {
+  label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral"; icon?: typeof Users;
+  /** 0-100 -- when set, draws a Mydashboards-style fill bar under the value
+   *  (e.g. headcount/mandate). Clamped to a 4% minimum so a real-but-tiny
+   *  fill never reads as visually empty, same as the reference component. */
+  fillPct?: number; fillGood?: boolean;
 }) {
-  const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED : C_SLATE;
+  const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED_TEXT : C_SLATE;
+  const noData = value === "no data";
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px]">
-      <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide truncate">{label}</p>
-      <p className={`text-sm font-bold tabular-nums mt-0.5 ${value === "no data" ? "text-slate-400 text-xs font-normal italic" : ""}`}
-        style={value === "no data" ? undefined : { color }}>
+    <div className="relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px] transition-shadow hover:shadow-sm">
+      {/* MetricCard idiom (Mydashboards): a solid-color top strip instead of a
+          tinted border, so the accent stays crisp at this radius, plus the
+          icon chip's background derived from the exact same hex the strip
+          uses -- never a separately-chosen "-light" shade that can drift. */}
+      {!noData && <div className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color }} />}
+      <div className="flex items-start justify-between gap-1.5">
+        <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide truncate">{label}</p>
+        {Icon && (
+          <span className="shrink-0 rounded-md p-1" style={{ background: noData ? undefined : `${color}18` }}>
+            <Icon className="h-3 w-3" style={{ color: noData ? "#94A3B8" : color }} />
+          </span>
+        )}
+      </div>
+      <p className={`text-sm font-bold tabular-nums mt-0.5 ${noData ? "text-slate-400 text-xs font-normal italic" : ""}`}
+        style={noData ? undefined : { color }}>
         {value}
       </p>
       {caption && <p className="text-[9px] text-slate-400 mt-0.5 leading-tight">{caption}</p>}
+      {fillPct !== undefined && (
+        <div className="mt-1.5 h-1 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+          <div className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${Math.min(100, Math.max(4, fillPct))}%`, background: fillGood ? C_GREEN : C_RED_TEXT }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface Insight {
+  severity: "critical" | "warning";
+  title: string;
+  detail: string;
+  action: string;
+  sectionKey: string;
+}
+
+/**
+ * The "read this first" strip at the top of the Process Performance Card —
+ * the same idea as Mydashboards' rule-based root-cause/insight panels, but
+ * every card here is derived live from this page's own already-verified
+ * numbers (targetStatus() against a metric's real configured target, the
+ * same headcount/shortfall this page already computed), not static canned
+ * copy keyed by metric name. An insight that can't point at a real target
+ * miss or a real shortfall simply isn't generated -- an empty panel is the
+ * honest "nothing worth flagging" case, not a placeholder.
+ */
+function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefined): Insight[] {
+  const insights: Insight[] = [];
+
+  if (health?.available && health.headcount.available && (health.headcount.shortfall ?? 0) > 0) {
+    const sf = health.headcount.shortfall!;
+    insights.push({
+      severity: "critical",
+      title: `Understaffed by ${sf} against mandate`,
+      detail: `${health.headcount.activeHc} active headcount against a sanctioned ${health.headcount.mandatedHc} — ${sf} seat${sf === 1 ? "" : "s"} short.`,
+      action: health.hiring.openRequisitions > 0
+        ? `${health.hiring.openRequisitions} requisition${health.hiring.openRequisitions === 1 ? "" : "s"} already open — chase fulfillment, not a new raise.`
+        : "No requisition raised yet for this gap — that's the actionable next step.",
+      sectionKey: "operations",
+    });
+  }
+
+  const sectionOrder = ["operations", "conversion", "risk", "conduct", "quality", "hygiene"];
+  for (const key of sectionOrder) {
+    const section = ops.sections.find((s) => s.key === key);
+    if (!section) continue;
+    const fails = section.metrics
+      .filter((m) => targetStatus(m) === "fail")
+      // Worst-first: rank by how far the value sits from its own target, in
+      // the metric's own unit -- a metric with no target never reaches here
+      // (targetStatus() returns null), so this division is always real.
+      .sort((a, b) => Math.abs(b.value! - b.targetValue!) - Math.abs(a.value! - a.targetValue!));
+    if (!fails.length) continue;
+    const worst = fails[0];
+    insights.push({
+      severity: key === "hygiene" ? "warning" : "critical",
+      title: `${worst.label} missing target`,
+      detail: `${formatValue(worst.value, worst.unit)} against ${targetCaption(worst) ?? "its configured target"}${
+        fails.length > 1 ? ` — ${fails.length - 1} more metric${fails.length - 1 === 1 ? "" : "s"} in ${section.title} also missing target` : ""}.`,
+      action: `Open ${section.title} below for the full breakdown.`,
+      sectionKey: key,
+    });
+  }
+
+  return insights;
+}
+
+interface ParetoBar { label: string; gapPct: number; cumulativePct: number }
+
+/**
+ * CallMaster's Pareto pattern (bar = driver size, line = cumulative %) for
+ * "which target misses matter most" -- every metric that's missing target,
+ * ranked by relative gap (|value - target| / target, so a percentage metric
+ * and a seconds metric are comparable on the same axis) rather than raw
+ * units, worst first, cumulative % running to 100 by construction since it's
+ * the same fails list divided by its own total.
+ */
+function deriveParetoData(ops: Operations): ParetoBar[] {
+  const fails = [...ops.sections.flatMap((s) => s.metrics), ...ops.ungrouped]
+    .filter((m) => targetStatus(m) === "fail" && m.targetValue !== 0)
+    .map((m) => ({ label: m.label, gap: Math.abs((m.value! - m.targetValue!) / m.targetValue!) * 100 }))
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 8); // worst 8 -- a real Pareto reads as a curve, not a wall of bars
+  const total = fails.reduce((s, f) => s + f.gap, 0);
+  if (!total) return [];
+  let running = 0;
+  return fails.map((f) => {
+    running += f.gap;
+    return { label: f.label, gapPct: Math.round(f.gap * 10) / 10, cumulativePct: Math.round((running / total) * 1000) / 10 };
+  });
+}
+
+function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
+  // Shares the exact queryKey BusinessHealthPanel uses -- react-query dedupes
+  // this against that component's own fetch, so this panel costs zero extra
+  // network requests, not a second poll of the same endpoint.
+  const { data } = useQuery({
+    queryKey: ["process-operations", "business-health", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessBusinessHealth>>(
+      `/api/process-operations/${processId}/business-health`),
+    staleTime: 60_000,
+  });
+  const health = data?.data;
+  const insights = useMemo(() => deriveInsights(ops, health), [ops, health]);
+  const pareto = useMemo(() => deriveParetoData(ops), [ops]);
+
+  if (!insights.length) {
+    return (
+      <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 px-3.5 py-2.5 flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+        <p className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">
+          Nothing missing target right now — headcount, quality and hygiene are all within their configured targets.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3.5 pt-3 pb-2">
+        <Lightbulb className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+          Read this first — {insights.length} thing{insights.length === 1 ? "" : "s"} missing target
+        </p>
+      </div>
+      <div className="grid gap-2 px-3.5 pb-3.5 sm:grid-cols-2">
+        {insights.map((ins, i) => {
+          const color = ins.severity === "critical" ? C_RED_TEXT : C_AMBER;
+          return (
+            <div key={i} className="rounded-lg border px-2.5 py-2" style={{ borderColor: `${color}40`, background: `${color}0c` }}>
+              <p className="text-[11px] font-bold" style={{ color }}>{ins.title}</p>
+              <p className="text-[10.5px] text-slate-600 dark:text-slate-300 mt-0.5 leading-snug">{ins.detail}</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 italic">→ {ins.action}</p>
+            </div>
+          );
+        })}
+      </div>
+      {pareto.length >= 2 && (
+        <div className="px-3.5 pb-3.5">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
+            Biggest drivers — relative gap vs. each metric's own target, ranked worst first
+          </p>
+          <div className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={pareto} margin={{ top: 4, right: 24, bottom: 0, left: -14 }}>
+                <CartesianGrid {...GRID} vertical={false} />
+                <XAxis dataKey="label" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
+                  interval={0} angle={-20} textAnchor="end" height={46} />
+                <YAxis yAxisId="left" unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} width={40} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} width={40} />
+                <Tooltip contentStyle={TOOLTIP_STYLE}
+                  formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, n === "gapPct" ? "Gap vs. target" : "Cumulative"]} />
+                <Bar yAxisId="left" dataKey="gapPct" radius={[3, 3, 0, 0]} name="gapPct">
+                  {pareto.map((p, i) => <Cell key={p.label} fill={i === 0 ? C_RED_TEXT : C_AMBER} />)}
+                </Bar>
+                <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="cumulativePct"
+                  stroke={C_SLATE} strokeWidth={1.5} dot={{ r: 2.5, fill: C_SLATE }} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -816,7 +1342,8 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
       <div className="px-3 space-y-4">
         {/* Finance */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_BLUE }} />
             Revenue &amp; margin
           </p>
           {finance.available ? (
@@ -862,18 +1389,25 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
 
         {/* Headcount vs mandate */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_PURPLE }} />
             Headcount vs. sanctioned mandate
           </p>
           <div className="flex flex-wrap gap-2">
-            <HealthStat label="Active headcount" value={String(headcount.activeHc)} />
+            <HealthStat label="Headcount" value={String(headcount.activeHc)} icon={Users}
+              caption={headcount.available && headcount.mandatedHc ? `of ${headcount.mandatedHc} mandate` : undefined}
+              fillPct={headcount.available && headcount.mandatedHc ? (headcount.activeHc / headcount.mandatedHc) * 100 : undefined}
+              fillGood={headcount.available && headcount.mandatedHc ? headcount.activeHc >= headcount.mandatedHc : undefined} />
             {headcount.available ? (
               <>
-                <HealthStat label="Mandated headcount" value={String(headcount.mandatedHc)}
+                <HealthStat label="Mandate" value={String(headcount.mandatedHc)} icon={Target}
                   caption={headcount.reason ? "see note below" : undefined} />
-                <HealthStat label="Gap" value={`${(headcount.gap ?? 0) > 0 ? "+" : ""}${headcount.gap}`}
-                  caption={headcount.gap === 0 ? "exactly at mandate" : headcount.gap! > 0 ? "over mandate" : "under mandate"}
-                  tone={headcount.gap === 0 ? "neutral" : headcount.gap! > 0 ? "good" : "bad"} />
+                <HealthStat label="Available count" value={String(headcount.availableCount)} icon={UserCheck}
+                  caption="sanctioned seats still open" tone={headcount.availableCount === 0 ? "neutral" : "bad"} />
+                <HealthStat label="Buffer" value={`+${headcount.buffer}`} icon={ArrowUpRight}
+                  caption="staffed above mandate" tone={headcount.buffer! > 0 ? "good" : "neutral"} />
+                <HealthStat label="Shortfall" value={`-${headcount.shortfall}`} icon={AlertTriangle}
+                  caption="staffed below mandate" tone={headcount.shortfall! > 0 ? "bad" : "neutral"} />
               </>
             ) : (
               <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-2.5 py-2 flex items-center">
@@ -888,16 +1422,19 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
 
         {/* Hiring pipeline */}
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+            <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_AMBER }} />
             Hiring pipeline
           </p>
           <div className="flex flex-wrap gap-2">
-            <HealthStat label="Open requisitions" value={String(hiring.openRequisitions)}
+            <HealthStat label="Requisition open" value={String(hiring.openRequisitions)} icon={Briefcase}
               tone={hiring.openRequisitions > 0 ? "neutral" : "good"} />
-            <HealthStat label="Open positions" value={String(hiring.openPositions)}
-              tone={hiring.openPositions > 0 ? "bad" : "good"} />
-            <HealthStat label="Candidates in pipeline" value={String(hiring.candidatesInPipeline)}
-              caption="Matched by process name, not a hard link" />
+            <HealthStat label="Hired count" value={String(hiring.hiredCount)} icon={UserPlus}
+              caption="filled via requisition, ever" tone="good" />
+            <HealthStat label="Pending hiring count" value={String(hiring.pendingHiringCount)} icon={Hourglass}
+              caption="requested minus fulfilled" tone={hiring.pendingHiringCount > 0 ? "bad" : "good"} />
+            <HealthStat label="Candidates in pipeline" value={String(hiring.candidatesInPipeline)} icon={Users2}
+              caption="matched by process name, not a hard link" />
           </div>
           {hiring.openRequisitions === 0 && hiring.candidatesInPipeline === 0 && (
             <p className="text-[9.5px] text-slate-400 italic mt-1.5">
@@ -958,6 +1495,56 @@ function FunnelChart({ metrics }: { metrics: Reading[] }) {
             ))}
           </LineChart>
         </ResponsiveContainer>
+      </div>
+    </ChartCard>
+  );
+}
+
+const FUNNEL_STAGE_COLORS = [C_SLATE, C_BLUE, C_PURPLE, C_GREEN];
+
+/**
+ * The same four funnel metrics FunnelChart already plots over time, but as a
+ * snapshot funnel of the latest reading only (Mydashboards' hand-rolled
+ * FunnelBar/JourneyFunnel idiom) -- each stage's own width IS its %, so the
+ * shape of the funnel narrowing is visible at a glance, with the stage-to-
+ * stage drop-off called out underneath. No new data: every value here is
+ * the same Reading.value FunnelChart already receives.
+ */
+function FunnelSnapshot({ metrics }: { metrics: Reading[] }) {
+  const stages: Array<[string, string]> = [
+    ["FUNNEL_SCORED_PCT", "Scored"], ["FUNNEL_OPENING_PCT", "Opening"],
+    ["FUNNEL_OFFER_PCT", "Offer"], ["FUNNEL_SALE_PCT", "Sale"],
+  ];
+  const present = stages
+    .map(([key, label]) => ({ key, label, value: metrics.find((m) => m.metricKey === key)?.value ?? null }))
+    .filter((s): s is { key: string; label: string; value: number } => s.value !== null);
+  if (present.length < 2) return null;
+
+  return (
+    <ChartCard title="Conversion funnel — latest reading"
+      subtitle="Each bar's width is its own % of all scored calls; drop-off is stage-to-stage">
+      <div className="px-3 space-y-2 py-1">
+        {present.map((s, i) => {
+          const prevValue = i > 0 ? present[i - 1].value : null;
+          const dropoffPct = prevValue !== null && prevValue > 0 ? ((prevValue - s.value) / prevValue) * 100 : null;
+          return (
+            <div key={s.key}>
+              <div className="flex items-center justify-between text-[10px] mb-0.5">
+                <span className="font-semibold text-slate-600 dark:text-slate-300">{s.label}</span>
+                <span className="tabular-nums font-bold text-slate-700 dark:text-slate-200">{s.value.toFixed(1)}%</span>
+              </div>
+              <div className="h-5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                <div className="h-full rounded transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(4, s.value))}%`, background: FUNNEL_STAGE_COLORS[i] }} />
+              </div>
+              {dropoffPct !== null && dropoffPct > 0.05 && (
+                <p className="text-[9px] mt-0.5" style={{ color: C_RED_TEXT }}>
+                  ↓ {dropoffPct.toFixed(1)}% drop from {present[i - 1].label}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </ChartCard>
   );
@@ -1136,6 +1723,27 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
       `/api/process-operations/${processId}/metric/${metricKey}/raw?date=${date}`),
   });
   const r = data?.data;
+  const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" } | null>(null);
+  const sortedRows = useMemo(() => {
+    if (!r || !sort) return r?.rows ?? [];
+    const { col, dir } = sort;
+    return [...r.rows].sort((a, b) => {
+      const av = a[col]; const bv = b[col];
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      // Numeric columns compare as numbers even though the value arrives as
+      // an unknown (raw DB rows carry strings/numbers/dates all mixed) --
+      // fall back to locale string compare for anything that isn't a clean
+      // number on both sides, same "don't guess" rule as formatCellValue.
+      const an = Number(av); const bn = Number(bv);
+      const cmp = (!Number.isNaN(an) && !Number.isNaN(bn))
+        ? an - bn
+        : String(av).localeCompare(String(bv));
+      return dir === "asc" ? cmp : -cmp;
+    });
+  }, [r, sort]);
+  const toggleSort = (col: string) => setSort((s) =>
+    s?.col === col ? (s.dir === "asc" ? { col, dir: "desc" } : null) : { col, dir: "asc" });
   return (
     <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
       <td colSpan={columnCount} className="px-2 py-2">
@@ -1157,7 +1765,7 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
                 {r.truncated ? ` · showing first ${r.rows.length.toLocaleString()}` : ""}
               </p>
               <button type="button"
-                onClick={() => downloadCsv(`${metricKey}_${date}.csv`, r.columns, r.rows)}
+                onClick={() => downloadCsv(`${metricKey}_${date}.csv`, r.columns, sortedRows)}
                 title="Download the rows shown here as a .csv file"
                 className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded">
                 <Download size={11} />CSV
@@ -1167,11 +1775,17 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
               <table className="w-full text-[10px]">
                 <thead className="bg-white dark:bg-slate-900 text-slate-400 sticky top-0">
                   <tr>{r.columns.map((c) => (
-                    <th key={c} className="text-left px-2 py-1 font-semibold font-mono">{c}</th>
+                    <th key={c} className="text-left px-2 py-1 font-semibold font-mono">
+                      <button type="button" onClick={() => toggleSort(c)}
+                        className="inline-flex items-center gap-0.5 cursor-pointer hover:text-slate-600 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded">
+                        {c}
+                        {sort?.col === c && <span className="text-[8px]">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                      </button>
+                    </th>
                   ))}</tr>
                 </thead>
                 <tbody>
-                  {r.rows.map((row, i) => (
+                  {sortedRows.map((row, i) => (
                     <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
                       {r.columns.map((c) => (
                         <td key={c} className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
@@ -1338,6 +1952,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
       `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { openCall, drawer } = useCallDetailDrawer(processId);
   const ab = data?.data;
   const invalidateBreakdown = () => qc.invalidateQueries({
     queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
@@ -1402,9 +2017,21 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                           {a.designation && <span className="block text-[10px] text-slate-400 pl-4">{a.designation}</span>}
                         </td>
                         <td className="px-2 py-1.5 font-mono text-slate-500">{a.employeeCode || "—"}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold"
-                          style={{ color: a.value === null ? undefined : pass === null ? undefined : pass ? C_GREEN : C_RED }}>
-                          {a.value === null ? <span className="text-slate-400 italic font-normal">no data</span> : formatValue(a.value, ab.unit)}
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                          <span style={{ color: a.value === null ? undefined : pass === null ? undefined : pass ? C_GREEN : C_RED }}>
+                            {a.value === null ? <span className="text-slate-400 italic font-normal">no data</span> : formatValue(a.value, ab.unit)}
+                          </span>
+                          {/* Tier badge (Mydashboards' TQ/MQ/BQ idiom): only two real
+                              tiers here since this is one score against one target, not
+                              a percentile band across analysts -- a fabricated "near
+                              target" middle tier would need a threshold this system
+                              doesn't define anywhere else. */}
+                          {pass !== null && (
+                            <span className="ml-1.5 inline-block rounded-full px-1.5 py-0.5 text-[8.5px] font-bold align-middle"
+                              style={{ background: pass ? "#DCFCE7" : "#FEE2E2", color: pass ? "#166534" : "#991B1B" }}>
+                              {pass ? "On target" : "Below"}
+                            </span>
+                          )}
                         </td>
                         <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">
                           {a.teamLeader ? `${a.teamLeader.name} (${a.teamLeader.employeeCode})` : <span className="text-slate-400 italic">none on record</span>}
@@ -1415,7 +2042,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                       </tr>
                       {open && (
                         <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
-                          <td colSpan={5} className="px-2 py-2">
+                          <td colSpan={5} className="px-2 py-2 space-y-2">
                             {a.reportsTo.length ? (
                               <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                                 <span className="text-slate-400 shrink-0">Full reporting chain:</span>
@@ -1432,6 +2059,10 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                               <p className="text-[10px] text-slate-400 italic">
                                 No one is recorded as this analyst's manager — the reporting chain stops here.
                               </p>
+                            )}
+                            {a.employeeCode && (
+                              <EmployeeRecentCallsRow processId={processId} employeeCode={a.employeeCode} period={period}
+                                onSelectCall={openCall} />
                             )}
                           </td>
                         </tr>
@@ -1452,7 +2083,60 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
           </p>
         </div>
       )}
+      {drawer}
     </section>
+  );
+}
+
+/**
+ * Third real consumer of CallDetailDrawer -- this analyst's own recent
+ * audited calls, regardless of which metric the breakdown table above is
+ * showing (AnalystBreakdownPanel is generic over any metric). An employee
+ * genuinely outside the quality-audit pass (this metric came from a manual
+ * upload or a different source) gets an honest reason, not an empty list
+ * indistinguishable from "audited, zero calls".
+ */
+function EmployeeRecentCallsRow({ processId, employeeCode, period, onSelectCall }: {
+  processId: string; employeeCode: string; period: ReportPeriod;
+  onSelectCall: (call: { employeeCode: string; callDate: string }) => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "employee-calls", processId, employeeCode, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<EmployeeRecentCalls>>(
+      `/api/process-operations/${processId}/employee-calls?employeeCode=${encodeURIComponent(employeeCode)}&period=${period}`),
+  });
+  const ec = data?.data;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />Checking this analyst's own audited calls…
+      </div>
+    );
+  }
+  if (!ec?.available || !ec.calls.length) {
+    return <p className="text-[9.5px] text-slate-400 italic">{ec?.reason ?? "No audited calls to show."}</p>;
+  }
+
+  return (
+    <div>
+      <span className="text-[9.5px] text-slate-400 block mb-1">This analyst's own recent audited calls:</span>
+      <div className="flex flex-wrap gap-1">
+        {ec.calls.slice(0, 10).map((c, i) => (
+          <button key={i} type="button"
+            onClick={() => c.hasTranscript && onSelectCall({ employeeCode, callDate: c.callDate })}
+            disabled={!c.hasTranscript}
+            title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
+            <span className="text-slate-500">{c.callDate.slice(5, 16)}</span>
+            <span className="font-semibold tabular-nums"
+              style={{ color: c.qualityPercentage === null ? undefined : c.qualityPercentage >= 80 ? C_GREEN : C_RED_TEXT }}>
+              {c.qualityPercentage === null ? "—" : `${c.qualityPercentage.toFixed(0)}%`}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2359,6 +3043,7 @@ export default function ProcessOperationsPage() {
   const qual = ops?.sections.find((s) => s.key === "quality");
   const risk = ops?.sections.find((s) => s.key === "risk");
   const charts = [
+    conv ? <FunnelSnapshot key="fs" metrics={conv.metrics} /> : null,
     conv ? <FunnelChart key="f" metrics={conv.metrics} /> : null,
     qual ? <QualityRadar key="q" metrics={qual.metrics} /> : null,
     risk ? <RiskBars key="r" metrics={risk.metrics} /> : null,
@@ -2528,13 +3213,22 @@ export default function ProcessOperationsPage() {
                   </div>
                 )}
 
+                {/* Process Performance Card reading order: an insights strip
+                    first (what actually needs a look, derived from this
+                    page's own real target checks), then headcount &
+                    operations (the staffing/dialler reality this period),
+                    then quality, then hygiene last -- see the SECTIONS
+                    comment in process-operations.service.ts. */}
+                {current && ops && <ProcessCardInsightsPanel processId={current} ops={ops} />}
+                {current && <BusinessHealthPanel processId={current} />}
+
                 {charts.length > 0 && (
                   <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
                 )}
 
                 {current && <VoiceOfCustomerPanel processId={current} period={period} />}
+                {current && <FatalCallsPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
-                {current && <BusinessHealthPanel processId={current} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
                   ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]

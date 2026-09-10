@@ -207,9 +207,9 @@ reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: tru
 // ── GET /api/reports/suite/:code/export ──────────────────────────────────────
 // Immediate XLSX download.
 // super_admin: allowed for ALL reports regardless of sensitivity.
-// All other roles: only internal/confidential reports with ≤5000 rows.
+// All other roles: only internal/confidential reports with ≤50000 rows.
 // Returns 403 if not allowed, 422 if row count > cap or file > 20 MB.
-const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 5000);
+const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 50000);
 const EXPORT_BYTE_CAP = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520);
 const IMMEDIATE_LEVELS = new Set<SensitivityLevel>(['internal', 'confidential']);
 
@@ -2930,7 +2930,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, from);
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS report_date,
+      sql = `SELECT DATE_FORMAT(adr.record_date,'%d-%b-%Y') AS report_date,
                     COUNT(DISTINCT e.id) AS active_agents,
                     SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
@@ -2943,8 +2943,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
                  AND kda.record_date = adr.record_date AND kda.source = 'apr'
               WHERE ${clauses.join(" AND ")}
-              GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m-%d')
-              ORDER BY report_date DESC`;
+              GROUP BY adr.record_date
+              ORDER BY adr.record_date DESC`;
       break;
     }
 
@@ -3058,8 +3058,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         SELECT
           e.employee_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-          DATE_FORMAT(e.date_of_joining,  '%Y-%m-%d') AS date_of_joining,
-          DATE_FORMAT(e.date_of_leaving,  '%Y-%m-%d') AS date_of_leaving,
+          DATE_FORMAT(e.date_of_joining,  '%d-%b-%Y') AS date_of_joining,
+          DATE_FORMAT(e.date_of_leaving,  '%d-%b-%Y') AS date_of_leaving,
           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           ipr.request_type,

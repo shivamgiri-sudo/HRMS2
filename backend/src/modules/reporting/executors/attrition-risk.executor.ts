@@ -98,7 +98,7 @@ export async function attritionRiskScore(
            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
-           DATE_FORMAT(e.date_of_joining, '%Y-%m-%d')  AS date_of_joining,
+           DATE_FORMAT(e.date_of_joining, '%d-%b-%Y')  AS date_of_joining,
            DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})      AS aon_days,
            CASE
              WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN '0-30'

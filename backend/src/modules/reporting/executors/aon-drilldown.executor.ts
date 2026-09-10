@@ -177,8 +177,8 @@ export async function aonDrilldownEmployees(
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
-           DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
-           DATE_FORMAT(e.date_of_exit, '%Y-%m-%d')     AS date_of_exit,
+           DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%d-%b-%Y') AS join_date,
+           DATE_FORMAT(e.date_of_exit, '%d-%b-%Y')     AS date_of_exit,
            DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) AS tenure_at_exit_days,
            COALESCE(NULLIF(TRIM(m.full_name),''),
                     TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS reporting_manager_name
@@ -199,7 +199,7 @@ export async function aonDrilldownEmployees(
              COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
              COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
              COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
-             DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
+             DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%d-%b-%Y') AS join_date,
              DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) AS aon_days,
              -- IMPORTANT-3 (final whole-branch review): a cohort-month drill deliberately
              -- includes since-left employees alongside active ones (see the cohortMonth
