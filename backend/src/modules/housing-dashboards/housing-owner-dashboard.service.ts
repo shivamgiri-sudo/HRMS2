@@ -285,12 +285,17 @@ export async function getAgentPerformance(f: DashboardFilters) {
     const salesValue = a.salesValue as number;
     return {
       ...a,
+      // Spreading a `Record<string, unknown>` here drops its index signature
+      // from the inferred return type (a TS quirk, not a runtime issue) --
+      // re-stating salesValue explicitly gives the .sort() below a real,
+      // statically-known number instead of an implicit `unknown`.
+      salesValue,
       connectionPct: (a.totalCalls as number) > 0 ? (connected / (a.totalCalls as number)) * 100 : 0,
       conversionPct: connected > 0 ? (salesCount / connected) * 100 : 0,
       avgSale: salesCount > 0 ? salesValue / salesCount : 0,
       revenuePerConnected: connected > 0 ? salesValue / connected : 0,
     };
-  }).sort((a, b) => (b.salesValue as number) - (a.salesValue as number));
+  }).sort((a, b) => b.salesValue - a.salesValue);
 }
 
 export async function getDailyTrend(f: DashboardFilters) {
