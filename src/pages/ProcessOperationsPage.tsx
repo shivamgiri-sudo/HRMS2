@@ -244,6 +244,13 @@ interface ScenarioDistribution { available: boolean; reason: string | null; item
 interface ScoreComponent { key: string; label: string; scorePct: number | null; }
 interface ScoreComponents { available: boolean; reason: string | null; components: ScoreComponent[]; }
 
+interface AchtRow {
+  key: string; label: string;
+  auditCount: number; scorePct: number | null;
+  fatalCount: number; fatalPct: number;
+}
+interface AchtCategorization { available: boolean; reason: string | null; rows: AchtRow[]; }
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -975,6 +982,61 @@ function ScoreComponentsPanel({ processId, period }: { processId: string; period
           <div className="flex items-start justify-between gap-1 flex-wrap">
             {sc.components.map((c) => <RadialGauge key={c.key} label={c.label} pct={c.scorePct} />)}
           </div>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * ACHT (call-length) categorization -- every audited call bucketed by
+ * length_in_sec into Short/Average/Long/Extremely-long, each with its own
+ * quality score and fatal rate. Ported from Mydashboards' source.
+ */
+function AchtCategorizationPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "acht-categorization", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<AchtCategorization>>(
+      `/api/process-operations/${processId}/acht-categorization?period=${period}`),
+  });
+  const acht = data?.data;
+
+  return (
+    <ChartCard title="ACHT categorization" subtitle="Audit quality and fatal rate by how long the call ran">
+      <div className="px-3 pb-1">
+        {isLoading || !acht ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading ACHT categorization…
+          </div>
+        ) : !acht.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{acht.reason}</p>
+        ) : (
+          <table className="w-full text-[10.5px] border-collapse">
+            <thead>
+              <tr className="text-left text-slate-400 uppercase tracking-wide text-[9px]">
+                <th className="pb-1.5 pr-2 font-semibold">Length</th>
+                <th className="pb-1.5 pr-2 font-semibold text-right">Audits</th>
+                <th className="pb-1.5 pr-2 font-semibold text-right">Score</th>
+                <th className="pb-1.5 font-semibold text-right">Fatal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {acht.rows.map((r) => (
+                <tr key={r.key} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="py-1 pr-2 font-medium text-slate-700 dark:text-slate-300">{r.label}</td>
+                  <td className="py-1 pr-2 text-right text-slate-500">{r.auditCount}</td>
+                  <td className="py-1 pr-2 text-right font-semibold text-slate-700 dark:text-slate-300">
+                    {r.scorePct !== null ? `${r.scorePct}%` : "—"}
+                  </td>
+                  <td className="py-1 text-right">
+                    {r.fatalCount > 0
+                      ? <span className="text-red-600 font-semibold">{r.fatalCount} ({r.fatalPct}%)</span>
+                      : <span className="text-slate-400">0</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </ChartCard>
@@ -3660,6 +3722,7 @@ export default function ProcessOperationsPage() {
                 {current && <AgentAuditSummaryPanel processId={current} period={period} />}
                 {current && <ScenarioDistributionPanel processId={current} period={period} />}
                 {current && <ScoreComponentsPanel processId={current} period={period} />}
+                {current && <AchtCategorizationPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

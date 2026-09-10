@@ -1998,6 +1998,107 @@ export async function getScoreComponents(
   return { available: true, reason: null, components };
 }
 
+const ACHT_CATEGORIES = [
+  { key: "short", label: "Short (<1 min)", test: "< 60" },
+  { key: "average", label: "Average (1-5 min)", test: ">= 60 AND CAST(q.length_in_sec AS UNSIGNED) < 301" },
+  { key: "long", label: "Long (5-10 min)", test: ">= 301 AND CAST(q.length_in_sec AS UNSIGNED) < 600" },
+  { key: "extreme", label: "Extremely long (>10 min)", test: ">= 600" },
+] as const;
+
+export interface AchtRow {
+  key: string; label: string;
+  auditCount: number; scorePct: number | null;
+  fatalCount: number; fatalPct: number;
+}
+export interface AchtCategorization {
+  available: boolean; reason: string | null;
+  rows: AchtRow[];
+}
+
+/**
+ * ACHT (call-length) categorization, ported from Mydashboards' source: every
+ * audited call bucketed by db_audit.call_quality_assessment.length_in_sec
+ * (a real column, confirmed live with 17,666 non-null rows in the last 30
+ * days for this DB) into Short/Average/Long/Extremely-long, each with its
+ * own audit count, quality score, and fatal rate -- the same breakdown that
+ * makes a "long calls score worse" or "short calls hide more fatals"
+ * pattern visible, which the single process-wide CQ score can't show.
+ * All four categories are always returned, zero-filled, so the UI never
+ * has to guess whether a missing bucket means "empty" or "not computed".
+ */
+export async function getAchtCategorization(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<AchtCategorization | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): AchtCategorization => ({ available: false, reason, rows: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
+  const categoryCase = `CASE
+      WHEN CAST(q.length_in_sec AS UNSIGNED) < 60 THEN 'short'
+      WHEN CAST(q.length_in_sec AS UNSIGNED) < 301 THEN 'average'
+      WHEN CAST(q.length_in_sec AS UNSIGNED) < 600 THEN 'long'
+      ELSE 'extreme'
+    END`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT category, COUNT(*) audit_count,
+            ROUND(AVG(quality_percentage), 1) score_pct,
+            SUM(CASE WHEN (${fatalSql}) THEN 1 ELSE 0 END) fatal_count
+       FROM (
+         SELECT q.*, ${categoryCase} AS category
+           FROM db_audit.call_quality_assessment q
+          WHERE q.User IN (${inList})
+            AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+            AND q.quality_percentage IS NOT NULL
+            AND q.length_in_sec IS NOT NULL AND TRIM(q.length_in_sec) != ''
+       ) q
+      GROUP BY category`,
+    [...employeeCodes, from, to],
+  );
+
+  const byKey = new Map<string, any>((rows as any[]).map((r) => [String(r.category), r]));
+  if (byKey.size === 0) return { ...unavailable("No audited calls with call-length data in this period."), available: true };
+
+  const result: AchtRow[] = ACHT_CATEGORIES.map((cat) => {
+    const r = byKey.get(cat.key);
+    const auditCount = r ? Number(r.audit_count) : 0;
+    const fatalCount = r ? Number(r.fatal_count) : 0;
+    return {
+      key: cat.key, label: cat.label,
+      auditCount,
+      scorePct: r?.score_pct !== undefined && r?.score_pct !== null ? Number(r.score_pct) : null,
+      fatalCount,
+      fatalPct: auditCount > 0 ? Math.round((fatalCount / auditCount) * 1000) / 10 : 0,
+    };
+  });
+  return { available: true, reason: null, rows: result };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{
