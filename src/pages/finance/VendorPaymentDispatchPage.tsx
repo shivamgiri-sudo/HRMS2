@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Clock,
   Download,
   FileText,
   Filter,
@@ -33,6 +34,7 @@ interface PaymentCapabilities {
   canRead: boolean;
   canWrite: boolean;
   readScope: "organisation" | "branch";
+  scopeBranchNames?: string[];
   writeRole: string | null;
   paymentModel?: "installment_ledger";
 }
@@ -87,6 +89,7 @@ interface BranchOption {
 interface Filters {
   branchId: string;
   month: string;
+  financialYear: string;
   paymentStatus: string;
   dueDateFrom: string;
   dueDateTo: string;
@@ -101,6 +104,13 @@ const PAYMENT_STATUSES = [
   "Rejected",
   "Closed",
 ] as const;
+
+// Approval Backlog panel stages — GRN statuses gating a payment from ever reaching this page's
+// own vendor_payment_tracking grid (Branch Head approval, then Finance Head approval).
+const BACKLOG_STAGES: { key: string; label: string }[] = [
+  { key: "branch_head_approved", label: "Awaiting Finance Head (cleared Branch Head)" },
+  { key: "finance_head_approved", label: "Awaiting Accounts Head (cleared Finance Head)" },
+];
 
 const STATUS_CLASS: Record<string, string> = {
   "Payment Pending": "border-amber-200 bg-amber-50 text-amber-700",
@@ -119,15 +129,53 @@ function money(value: number | string | null | undefined) {
   }).format(Number(value ?? 0));
 }
 
+function Metric({
+  label,
+  value,
+  sub,
+  tone = "slate",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "slate" | "blue" | "emerald" | "rose" | "amber";
+}) {
+  const toneClass = {
+    slate: "text-slate-950",
+    blue: "text-blue-700",
+    emerald: "text-emerald-700",
+    rose: "text-rose-700",
+    amber: "text-amber-700",
+  }[tone];
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">{label}</p>
+      <p className={`mt-2 text-lg font-black ${toneClass}`}>{value}</p>
+      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+    </div>
+  );
+}
+
 function initialFilters(): Filters {
   return {
     branchId: "",
     month: "",
+    financialYear: "",
     paymentStatus: "",
     dueDateFrom: "",
     dueDateTo: "",
     search: "",
   };
+}
+
+function financialYearOptions(): string[] {
+  const now = new Date();
+  const currentStartYear = now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+  const options: string[] = [];
+  for (let year = currentStartYear; year >= 2017; year--) {
+    options.push(`${year}-${String((year + 1) % 100).padStart(2, "0")}`);
+  }
+  return options;
 }
 
 function agingDays(dueDate?: string | null) {
@@ -160,6 +208,7 @@ export default function VendorPaymentDispatchPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showAging, setShowAging] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
+  const [showBacklog, setShowBacklog] = useState(false);
   const [ledgerVendorId, setLedgerVendorId] = useState("");
   const [ledgerVendorSearch, setLedgerVendorSearch] = useState("");
 
@@ -244,6 +293,33 @@ export default function VendorPaymentDispatchPage() {
   const ledgerVendorOptions: { id: string; vendor_code: string; vendor_name: string }[] =
     (ledgerVendorQuery.data as any)?.data ?? (ledgerVendorQuery.data as any) ?? [];
 
+  // GRN approval backlog — GET /api/finance/grns/summary already exists (grn.routes.ts),
+  // already RBAC-scoped the same way as this page's own endpoints, and already returns
+  // branch_head_approved/finance_head_approved counts. No new backend endpoint needed.
+  // payroll_head is on this page's PAYMENT_READ_ROLES but not GRN_READ_ROLES, so a 403 here
+  // is an expected outcome for that role, not an error — pendingApproval degrades to null.
+  const pendingApprovalQuery = useQuery({
+    queryKey: ["grn-approval-summary", filters.branchId],
+    queryFn: () => hrmsApi.get<any>(
+      filters.branchId
+        ? `/api/finance/grns/summary?branchId=${filters.branchId}`
+        : "/api/finance/grns/summary"
+    ),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const pendingApproval: { count: number; value: number } | null = (() => {
+    if (pendingApprovalQuery.isError) return null;
+    const byStatus = (pendingApprovalQuery.data as any)?.data?.byStatus;
+    if (!byStatus) return null;
+    const branchHead = byStatus.branch_head_approved ?? { count: 0, value: 0 };
+    const financeHead = byStatus.finance_head_approved ?? { count: 0, value: 0 };
+    return {
+      count: Number(branchHead.count ?? 0) + Number(financeHead.count ?? 0),
+      value: Number(branchHead.value ?? 0) + Number(financeHead.value ?? 0),
+    };
+  })();
+
   function clearFilters() {
     setFilters(initialFilters());
     setPage(1);
@@ -299,14 +375,28 @@ export default function VendorPaymentDispatchPage() {
             >
               {capabilityLoading ? "Checking access" : canWrite ? "Dispatch access" : "Read-only"}
             </Badge>
-            {capabilities?.readScope && (
-              <Badge variant="outline">{capabilities.readScope} scope</Badge>
-            )}
+            {capabilities?.readScope === "organisation" ? (
+              <Badge variant="outline">organisation scope</Badge>
+            ) : capabilities?.scopeBranchNames && capabilities.scopeBranchNames.length > 0 ? (
+              <Badge variant="outline" title="All branches in the filter bar is narrowed to these on the backend">
+                {capabilities.scopeBranchNames.join(", ")} only
+              </Badge>
+            ) : capabilities?.readScope === "branch" ? (
+              <Badge variant="outline">branch scope</Badge>
+            ) : null}
             <Button size="sm" variant="outline" onClick={() => setShowAging((v) => !v)}>
               <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />Aging
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowLedger((v) => !v)}>
               <FileText className="mr-1.5 h-3.5 w-3.5" />Ledger
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowBacklog((v) => !v)}>
+              <Clock className="mr-1.5 h-3.5 w-3.5" />Backlog
+              {pendingApproval && pendingApproval.count > 0 && (
+                <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-[10px] text-white">
+                  {pendingApproval.count}
+                </span>
+              )}
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowFilters((v) => !v)}>
               <Filter className="mr-1.5 h-3.5 w-3.5" />Filters
@@ -326,11 +416,19 @@ export default function VendorPaymentDispatchPage() {
         </div>
 
         {/* ── KPI strip ── */}
-        <div className="flex gap-3 border-b px-4 py-2 text-xs shrink-0">
-          <span className="text-slate-500">Page due: <b className="text-slate-900">₹{summary.due.toLocaleString("en-IN")}</b></span>
-          <span className="text-slate-500">Paid: <b className="text-slate-900">₹{summary.paid.toLocaleString("en-IN")}</b></span>
-          <span className="text-slate-500">Balance: <b className="text-slate-900">₹{summary.balance.toLocaleString("en-IN")}</b></span>
-          <span className="text-slate-500">Overdue: <b className="text-rose-600">₹{summary.overdue.toLocaleString("en-IN")}</b></span>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 border-b bg-slate-50/40 px-4 py-3 text-xs shrink-0">
+          <Metric label="Page due" value={money(summary.due)} />
+          <Metric label="Paid" value={money(summary.paid)} tone="emerald" />
+          <Metric label="Balance" value={money(summary.balance)} tone="blue" />
+          <Metric label="Overdue" value={money(summary.overdue)} tone="rose" />
+          {pendingApproval && (
+            <Metric
+              label="Pending approval"
+              value={money(pendingApproval.value)}
+              sub={`${pendingApproval.count} GRN${pendingApproval.count === 1 ? "" : "s"}`}
+              tone="amber"
+            />
+          )}
         </div>
 
         {/* ── Filter bar ── */}
@@ -357,7 +455,25 @@ export default function VendorPaymentDispatchPage() {
               className="w-52"
               value={filters.month}
               onChange={(v) => { setFilters((c) => ({ ...c, month: v })); setPage(1); }}
+              emptyLabel="All months"
             />
+            <Select
+              value={filters.financialYear || "_all"}
+              onValueChange={(value) => {
+                setFilters((c) => ({ ...c, financialYear: value === "_all" ? "" : value }));
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="h-7 w-28 text-xs">
+                <SelectValue placeholder="All years" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_all">All years</SelectItem>
+                {financialYearOptions().map((fy) => (
+                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select
               value={filters.paymentStatus || "_all"}
               onValueChange={(value) => {
@@ -472,7 +588,14 @@ export default function VendorPaymentDispatchPage() {
                     <td className="py-1 text-right font-medium tabular-nums">
                       ₹{(p.balance_amount ?? 0).toLocaleString("en-IN")}
                     </td>
-                    <td className="py-1">{p.due_date ? formatISTDate(p.due_date) : "-"}</td>
+                    <td className="py-1">
+                      {p.due_date ? formatISTDate(p.due_date) : "-"}
+                      {p.due_date && agingDays(p.due_date) > 0 && !["Paid", "Closed"].includes(p.payment_status) && (
+                        <div className="text-[10px] font-medium text-rose-600">
+                          {agingDays(p.due_date)} days overdue
+                        </div>
+                      )}
+                    </td>
                     <td className="py-1">
                       <Badge
                         variant={p.payment_status === "Paid" ? "default" : p.payment_status === "On Hold" ? "destructive" : "secondary"}
@@ -495,7 +618,24 @@ export default function VendorPaymentDispatchPage() {
                 ))}
                 {(rows ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={11} className="py-8 text-center text-slate-400">No payments found</td>
+                    <td colSpan={11} className="py-8 text-center text-slate-400">
+                      {activeFilterCount === 0 && pendingApproval && pendingApproval.count > 0 ? (
+                        <>
+                          No payments due for dispatch — {pendingApproval.count} GRN
+                          {pendingApproval.count === 1 ? "" : "s"} ({money(pendingApproval.value)}) are
+                          still awaiting approval before they reach this queue.{" "}
+                          <button
+                            type="button"
+                            className="font-medium text-blue-600 hover:underline"
+                            onClick={() => setShowBacklog(true)}
+                          >
+                            View backlog
+                          </button>
+                        </>
+                      ) : (
+                        "No payments found"
+                      )}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -558,6 +698,44 @@ export default function VendorPaymentDispatchPage() {
         </div>
       )}
 
+      {/* Approval Backlog — GRNs that must clear Branch Head + Finance Head approval before
+          they ever reach vendor_payment_tracking and this page's own grid. Read-only link-out;
+          approving is a different page's job. */}
+      {showBacklog && (
+        <div className="border-t px-4 py-3">
+          <p className="mb-2 text-sm font-semibold text-slate-800">Approval Backlog</p>
+          {pendingApprovalQuery.isError ? (
+            <p className="text-xs text-slate-400">
+              Approval backlog isn't visible for your role — ask a Finance/Accounts Head to check
+              the GRN approval queue directly.
+            </p>
+          ) : !pendingApproval || pendingApproval.count === 0 ? (
+            <p className="text-xs text-slate-400">No GRNs waiting on approval right now.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {BACKLOG_STAGES.map(({ key, label }) => {
+                const byStatus = (pendingApprovalQuery.data as any)?.data?.byStatus ?? {};
+                const bucket = byStatus[key] ?? { count: 0, value: 0 };
+                return (
+                  <div key={key} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-[11px] font-medium text-slate-500 uppercase">{label}</p>
+                    <p className="mt-1 text-base font-semibold tabular-nums text-amber-700">
+                      {money(bucket.value)}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      {bucket.count} GRN{bucket.count === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <a href="/finance/grn" className="mt-3 inline-block text-xs font-medium text-blue-600 hover:underline">
+            Open GRN Approvals →
+          </a>
+        </div>
+      )}
+
       {/* 4-C: Vendor Ledger Panel */}
       {showLedger && (
         <div className="border-t px-4 py-3">
@@ -588,7 +766,13 @@ export default function VendorPaymentDispatchPage() {
                 <thead>
                   <tr className="border-b bg-slate-50">
                     {["GRN No.", "Date", "Invoice No.", "Period", "Due Amt", "TDS", "Net Payable", "Paid", "Balance", "Status", "Due Date", "Branch"].map((h) => (
-                      <th key={h} className="h-8 px-3 text-left font-medium text-slate-500">{h}</th>
+                      <th
+                        key={h}
+                        className="h-8 px-3 text-left font-medium text-slate-500"
+                        title={h === "Period" ? "This is accounting_period — the main grid above filters by due_date instead, so a bill can show a different month here than in the Due date filter." : undefined}
+                      >
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
