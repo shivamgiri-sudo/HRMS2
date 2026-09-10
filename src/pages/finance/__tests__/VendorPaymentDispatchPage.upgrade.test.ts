@@ -88,6 +88,10 @@ describe("VendorPaymentDispatchPage — honest empty state (Task 5)", () => {
   it("empty-row branches on pendingApproval, not a hardcoded string", () => {
     expect(SRC).toMatch(/\(rows \?\? \[\]\)\.length === 0 &&[\s\S]{0,600}pendingApproval[\s\S]{0,600}/);
   });
+
+  it("backlog message is suppressed once any filter is active, so it never blames the wrong cause", () => {
+    expect(SRC).toMatch(/activeFilterCount === 0 && pendingApproval && pendingApproval\.count > 0 \?/);
+  });
 });
 
 describe("VendorPaymentDispatchPage — honest scope badge (Task 6)", () => {

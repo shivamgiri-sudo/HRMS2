@@ -172,7 +172,7 @@ function financialYearOptions(): string[] {
   const now = new Date();
   const currentStartYear = now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
   const options: string[] = [];
-  for (let year = currentStartYear + 1; year >= 2017; year--) {
+  for (let year = currentStartYear; year >= 2017; year--) {
     options.push(`${year}-${String((year + 1) % 100).padStart(2, "0")}`);
   }
   return options;
@@ -619,7 +619,7 @@ export default function VendorPaymentDispatchPage() {
                 {(rows ?? []).length === 0 && (
                   <tr>
                     <td colSpan={11} className="py-8 text-center text-slate-400">
-                      {pendingApproval && pendingApproval.count > 0 ? (
+                      {activeFilterCount === 0 && pendingApproval && pendingApproval.count > 0 ? (
                         <>
                           No payments due for dispatch — {pendingApproval.count} GRN
                           {pendingApproval.count === 1 ? "" : "s"} ({money(pendingApproval.value)}) are
