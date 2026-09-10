@@ -39,6 +39,8 @@ const { stateRef, sideEffects } = vi.hoisted(() => ({
     released: [] as Array<{ lineId: string; amount: number }>,
     auditActions: [] as string[],
     approvalEvents: [] as Array<{ action: string; fromStatus: string; toStatus: string; actorRole: string }>,
+    notifiedStages: [] as Array<"branch_head" | "finance_head">,
+    resolvedNotifications: 0,
   },
 }));
 
@@ -120,6 +122,18 @@ vi.mock("../grn-number-monthly.service.js", () => ({
   allocateMonthlyGrnNumber: vi.fn().mockResolvedValue("GRN/202608/0007"),
   resolveGrnNumberFormat: vi.fn().mockResolvedValue("legacy_branch_fy"),
   resolveAccountingPeriod: vi.fn(() => "2026-08"),
+}));
+
+vi.mock("../grn-notify.js", () => ({
+  notifyGrnStage: vi.fn(async (
+    _grnId: string, _grnNumber: string | null, _branchId: string | null,
+    _vendorName: string | null, _amount: number | null, role: "branch_head" | "finance_head",
+  ) => {
+    sideEffects.notifiedStages.push(role);
+  }),
+  resolveGrnNotifications: vi.fn(async () => {
+    sideEffects.resolvedNotifications += 1;
+  }),
 }));
 
 // ── the fake database ────────────────────────────────────────────────────────
@@ -269,8 +283,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   periodLocked.mockResolvedValue(false);
   for (const key of Object.keys(sideEffects) as Array<keyof typeof sideEffects>) {
-    (sideEffects[key] as unknown[]).length = 0;
+    if (Array.isArray(sideEffects[key])) (sideEffects[key] as unknown[]).length = 0;
   }
+  sideEffects.resolvedNotifications = 0;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -757,5 +772,62 @@ describe("Cancel and reopen", () => {
     await expect(
       grnSmartService.reopen("grn-1", "u-bh", "branch_head")
     ).rejects.toThrow(/Only the GRN creator/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * The bell notification actually fires on the path these GRNs actually take.
+ *
+ * grn.service.ts's submit()/reviewGrn() called notifyGrnStage since 2026-09-09, but router
+ * shadowing (grn.routes.ts:226-230 mounts smartGrnRouter at /grns before grnRouter's own
+ * /grns/:id/submit and /grns/:id/review are registered) means those two are unreachable for any
+ * allocation-aware GRN — confirmed live: work_inbox_item held zero rows of type
+ * 'grn_approval_pending' ever, while finance_approval_event showed 83 real Branch Head approvals
+ * in the same window. grnValidationControlService.submit() and grnSmartService.review() are what
+ * actually run; this pins the notification onto those two.
+ */
+describe("Bell notification fires on the path allocation-aware GRNs actually take", () => {
+  it("submit() notifies the branch_head stage", async () => {
+    stateRef.current = makeState({ grn: baseGrn(), validations: PASSING });
+    const { grnValidationControlService } = await import("../grn-validation-control.service.js");
+    await grnValidationControlService.submit("grn-1", "u1", "branch_admin");
+    expect(sideEffects.notifiedStages).toEqual(["branch_head"]);
+  });
+
+  it("a Branch Head approval closes its own alert and opens the finance_head stage", async () => {
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
+    expect(sideEffects.resolvedNotifications).toBe(1);
+    expect(sideEffects.notifiedStages).toEqual(["finance_head"]);
+  });
+
+  it("a Branch Head rejection closes its own alert and opens nothing further — the chain ends", async () => {
+    stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await grnSmartService.review("grn-1", "rejected", "wrong vendor", "u-bh", "branch_head");
+    expect(sideEffects.resolvedNotifications).toBe(1);
+    expect(sideEffects.notifiedStages).toEqual([]);
+  });
+
+  it("a Finance Head's own decision (approve or reject) closes its alert and raises nothing new — Finance Head is the final stage", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
+    expect(sideEffects.resolvedNotifications).toBe(1);
+    expect(sideEffects.notifiedStages).toEqual([]);
+  });
+
+  it("a refused review (wrong stage, maker-checker, etc.) notifies nobody — no transition occurred", async () => {
+    stateRef.current = makeState({ grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser" }) });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head")
+    ).rejects.toThrow();
+    expect(sideEffects.resolvedNotifications).toBe(0);
+    expect(sideEffects.notifiedStages).toEqual([]);
   });
 });

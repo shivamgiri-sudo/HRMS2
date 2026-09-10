@@ -30,6 +30,7 @@ import {
   grnPeriodAllocationService,
   resolveEligiblePeriods,
 } from "./grn-period-allocation.service.js";
+import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
 
 export interface SmartAllocationInput {
   /** Required for a budgeted allocation. Omit for an unbudgeted row (the GRN itself must carry
@@ -2736,12 +2737,23 @@ export const grnSmartService = {
     let imprestLedgerEntryId: string | null = null;
     let newStatus = "";
     let grnNumber: string | null = null;
+    // Captured inside the transaction below, for the bell notification raised after it commits —
+    // `grn` is declared inside the try block and goes out of scope at `finally`. Mirrors
+    // grn.service.ts's reviewGrn(), the sibling (legacy) approval path.
+    let notifyBranchId: string | null = null;
+    let notifyVendorName: string | null = null;
+    let notifyAmount: number | null = null;
+    let notifyGrnNumber: string | null = null;
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
       const allocations = await loadAllocations(connection, grnId, true);
       if (!allocations.length) throw new Error("Smart GRN has no saved cost allocations");
       const role = actorRole.toLowerCase();
+      notifyBranchId = grn.branch_id ? String(grn.branch_id) : null;
+      notifyVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
+      notifyAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
+      notifyGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
 
       // P0-2: a type with no payment/ledger/reversal lifecycle must not be approved. Covers
       // `salary` as well as `provision` now — see grn-type-support.ts.
@@ -2938,6 +2950,15 @@ export const grnSmartService = {
       connection.release();
     }
     if (paymentId) await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
+    // The stage this decision cleared is done with; close its bell alert regardless of outcome,
+    // then raise the next stage's alert only when the chain continues (Branch Head approving
+    // moves it to Finance Head). Finance Head's own decision ends the chain either way, so
+    // nothing new is raised there. Mirrors grn.service.ts's reviewGrn() — see grn-notify.ts's
+    // header for why this call, not that one, is the one that actually fires in production.
+    await resolveGrnNotifications(grnId);
+    if (actorRole.toLowerCase() === "branch_head" && decision === "approved") {
+      await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head");
+    }
     return { success: true, newStatus, paymentId, grnNumber };
   },
 
