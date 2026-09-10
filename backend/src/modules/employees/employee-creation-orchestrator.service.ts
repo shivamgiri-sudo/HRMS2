@@ -47,6 +47,7 @@ import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
 import { cropFaceForProfilePhoto } from './face-crop.util.js';
 import { normalizeBloodGroup } from './bloodGroup.util.js';
+import { normalizeMaritalStatus } from './maritalStatus.util.js';
 import { writeEmployeePhotoBuffer } from './employee.photo.compat.routes.js';
 import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
@@ -412,7 +413,7 @@ export async function createEmployeeFromCandidate(
         candRow?.gender ?? null,
         candRow?.date_of_birth ?? null,
         toStoredName(candRow?.father_name),
-        candRow?.marital_status || null,
+        normalizeMaritalStatus(candRow?.marital_status),
         // Normalised, never stored raw: the onboarding field is free text and holds the
         // same 'NA' / 'B+ve' shapes as the legacy employee rows. An unrecognisable value
         // becomes NULL so the card prints an honest blank instead of a fake reading.
