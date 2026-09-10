@@ -38,9 +38,16 @@ async function main() {
 
   const t0 = Date.now();
   for (let i = 0; i < rows.length; i++) {
+    // ON DUPLICATE KEY UPDATE id=id (a no-op) rather than a plain INSERT:
+    // withTransientRetry can retry a statement that actually succeeded
+    // server-side before a transient error was reported client-side (a
+    // real ER_DUP_ENTRY on this row's own randomUUID() was hit live at
+    // row ~19,730 of a first attempt) -- across 398,363 attempts that
+    // stops being negligible. Idempotent by construction either way.
     await db.execute(
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
-       VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')`,
+       VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')
+       ON DUPLICATE KEY UPDATE id = id`,
       [randomUUID(), batchId, i + 1, JSON.stringify(rows[i]), JSON.stringify(rows[i])],
     );
     if ((i + 1) % 10000 === 0) {
