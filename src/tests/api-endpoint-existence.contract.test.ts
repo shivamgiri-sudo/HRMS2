@@ -354,6 +354,14 @@ const KNOWN_MISSING: Record<string, string> = {
  * "nobody serves this" with "nobody calls this" teaches people to stop reading its output.
  */
 const NOT_A_REQUEST: Record<string, string> = {
+  "/api/housing-dashboards/housing-owner":
+    "the `base` argument NativeHousingDashboards.tsx passes into useFilterOptions(base), which " +
+    "fetches `${base}/filter-options` -- a real, mounted route (housing-dashboards.routes.ts). " +
+    "The static scan can't see the template-literal suffix the hook appends at call time, so it " +
+    "reads the bare base string as its own request.",
+  "/api/housing-dashboards/housing-premium":
+    "same shape as housing-owner above -- the useFilterOptions(base) argument, not a fetch target " +
+    "on its own; the real call is `${base}/filter-options`, a mounted route.",
   "/api/files/company-feed":
     "a prefix in AuthedImage.tsx's PUBLIC_CATEGORIES, used by isPublicUrl(src) to decide whether to attach an auth header to a URL it was given. It is a predicate, never a fetch target, so the backend is not expected to mount it.",
 };
