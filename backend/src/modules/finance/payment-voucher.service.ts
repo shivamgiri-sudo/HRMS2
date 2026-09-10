@@ -4,7 +4,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
-import { vendorPaymentService } from "./vendor-payment.service.js";
+import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
 
@@ -441,40 +441,28 @@ export const paymentVoucherService = {
       const amount = roundMoney(Number(v.amount));
 
       if (v.source_type === "vendor_grn") {
-        const [[vpt]] = await connection.execute<RowDataPacket[]>(
-          `SELECT id, grn_number, due_amount, tds_deducted_amount, paid_amount
-             FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
-          [v.linked_vendor_payment_id],
-        );
-        if (!vpt) throw new PaymentVoucherError("Linked vendor payment record no longer exists", 404);
-        const vp = vpt as any;
-        const isFirstRelease = Number(vp.paid_amount ?? 0) === 0;
-        const newPaidAmount = roundMoney(Number(vp.paid_amount ?? 0) + amount);
-        const dueAmount = roundMoney(Number(vp.due_amount));
-        if (newPaidAmount > dueAmount + 0.01) {
-          throw new PaymentVoucherError(
-            "This GRN's balance has changed since this voucher was raised — releasing it would overpay the GRN. Reject this voucher and raise a new one for the correct remaining amount.",
-          );
-        }
-
-        // Reuses the exact same write path today's dispatch screen uses (vendor_payment_tracking
-        // update + grn_request cascade) — this is what makes "all payment details reflect back
-        // into Vendor Payment" true, rather than a second, drifting implementation of the same
-        // update. Runs inside THIS transaction via the externalConnection parameter.
-        await vendorPaymentService.updatePayment(
+        // Reuses the exact same write path the Vendor Payment page's own "Pay" button uses
+        // (vendor_payment_transaction ledger row + TDS calc + vendor_payment_tracking/grn_request
+        // update) — this is what makes "all payment details reflect back into Vendor Payment"
+        // actually true, rather than a second, thinner implementation of the same update that
+        // used to skip the per-installment ledger row and TDS calculation entirely. Runs inside
+        // THIS transaction via the externalConnection parameter (Task 2).
+        const dispatchResult = await vendorPaymentLedgerService.dispatch(
           v.linked_vendor_payment_id,
           {
-            paidAmount: newPaidAmount,
             paymentMode: paymentMode as any,
             paymentDate,
             bankId: (bankAccount as any).bank_id,
-            transactionId: transactionRef ?? undefined,
+            transactionId: transactionRef,
+            paymentAmount: amount,
             remarks: `Released via Payment Voucher ${v.voucher_number}`,
           },
           actorUserId,
           actorRole,
           connection,
         );
+        const lastTransaction = dispatchResult.transactions[dispatchResult.transactions.length - 1];
+        const grnNumberForNarration = (dispatchResult.payment as any)?.grn_number ?? "";
 
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
@@ -489,7 +477,7 @@ export const paymentVoucherService = {
             id,
             amount,
             v.payable_account_id,
-            `Vendor payment released — GRN ${vp.grn_number ?? ""} — voucher ${v.voucher_number}`.trim(),
+            `Vendor payment released — GRN ${grnNumberForNarration} — voucher ${v.voucher_number}`.trim(),
             transactionRef,
             runningBalance,
             actorUserId,
@@ -497,16 +485,15 @@ export const paymentVoucherService = {
         );
 
         // TDS withheld is not cash leaving the bank — it never touches running_balance. There is
-        // no general-ledger/journal table in this schema yet (the PRD's data model is
-        // bank-ledger centric, not full double-entry), so this row is booked here as a
+        // no general-ledger/journal table in this schema yet, so this row is booked as a
         // zero-cash memo against "TDS Payable" purely so the liability is visible next to the
-        // payment that created it — debit=credit=0 is deliberate, not a bug. Booked once, on
-        // the first release against this GRN: tds_deducted_amount is fixed once per GRN today
-        // (no per-installment TDS field exists anywhere vendor_payment_tracking is written), so
-        // splitting it proportionally across partial releases would invent a rule this system
-        // has no basis for. Flagged in the implementation plan for review.
-        const tds = roundMoney(Number(vp.tds_deducted_amount ?? 0));
-        if (isFirstRelease && tds > 0) {
+        // payment that created it — debit=credit=0 is deliberate, not a bug. Sized to what
+        // dispatch() actually computed for THIS installment — dispatch() calculates TDS per
+        // installment from the vendor's own TDS settings, so this is correct for partial or
+        // multiple releases against the same GRN, unlike the "first release only" approximation
+        // this replaced.
+        const tds = roundMoney(Number(lastTransaction?.tds_amount ?? 0));
+        if (tds > 0) {
           const [[tdsAccount]] = await connection.execute<RowDataPacket[]>(
             `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`,
           );
@@ -522,7 +509,7 @@ export const paymentVoucherService = {
                 paymentDate,
                 id,
                 (tdsAccount as any).id,
-                `TDS withheld on GRN ${vp.grn_number ?? ""} — voucher ${v.voucher_number} (liability memo, no cash movement)`.trim(),
+                `TDS withheld on GRN ${grnNumberForNarration} — voucher ${v.voucher_number} (liability memo, no cash movement)`.trim(),
                 runningBalance,
                 actorUserId,
               ],
