@@ -1531,6 +1531,92 @@ export async function getClapScenarioCalls(
   return { available: true, reason: null, calls };
 }
 
+export interface FatalCallsResult {
+  available: boolean; reason: null | string;
+  calls: Array<{
+    employeeCode: string; employeeName: string; callDate: string;
+    scenario: string | null; hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+/**
+ * Fatal calls -- Mydashboards' own dedicated red-gradient section, missing
+ * from this page until now. A call is fatal when ALL SIX of
+ * FATAL_PARAM_COLS score 0 (verbatim from this session's own
+ * fix-quality-score.mjs CQ formula port, not re-derived) -- the domain rule
+ * that a genuinely severe miss on any of these zeroes the whole call's
+ * score, regardless of how the other 13+ parameters scored. Each row opens
+ * the exact same CallDetailDrawer the CLAP scenario drill already uses
+ * (getCallDetail, keyed the same way) -- the second real consumer that
+ * makes generalizing that drawer into shared infrastructure a fair call
+ * later, not speculative infrastructure built ahead of a real second use.
+ */
+const FATAL_PARAM_COLS = [
+  "address_recorded_completely", "correct_and_complete_information", "case_escalated_correctly",
+  "customer_concern_acknowledged", "proper_hold_procedure", "proper_transfer_and_language",
+];
+
+export async function getFatalCalls(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<FatalCallsResult | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): FatalCallsResult => ({ available: false, reason, calls: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, CONCAT(first_name, ' ', COALESCE(last_name,'')) AS name
+       FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const nameByCode = new Map<string, string>((empRows as any[]).map((r) => [String(r.employee_code), String(r.name).trim()]));
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const fatalSql = FATAL_PARAM_COLS.map((c) => `q.\`${c}\` = 0`).join(" AND ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT q.User AS employee_code, DATE_FORMAT(q.CallDate, '%Y-%m-%d %H:%i:%s') AS call_date, q.scenario,
+            (q.Transcribe_Text IS NOT NULL AND TRIM(q.Transcribe_Text) != '') AS has_transcript,
+            (q.call_recording IS NOT NULL AND TRIM(q.call_recording) != '') AS has_recording
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND (${fatalSql})
+      ORDER BY q.CallDate DESC
+      LIMIT 50`,
+    [...employeeCodes, from, to],
+  );
+
+  const calls = (rows as any[]).map((r) => ({
+    employeeCode: String(r.employee_code),
+    employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
+    callDate: String(r.call_date),
+    scenario: r.scenario ?? null,
+    hasTranscript: Boolean(r.has_transcript),
+    hasRecording: Boolean(r.has_recording),
+  }));
+
+  if (!calls.length) return { ...unavailable("No fatal calls in this period — a genuine, good result."), available: true };
+  return { available: true, reason: null, calls };
+}
+
 /**
  * The exact 19 parameters Mydashboards' validated CQ formula scores per call
  * (backend/scripts/fix-quality-score.mjs's own CQ_PARAM_COLS, not re-typed
