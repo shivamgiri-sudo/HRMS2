@@ -277,6 +277,13 @@ interface FatalAnalysis {
 interface DayWiseScenarioRow { date: string; complaint: number; request: number; query: number; saleDone: number; total: number; }
 interface DayWiseScenarioAudit { available: boolean; reason: string | null; days: DayWiseScenarioRow[]; }
 
+interface DayWiseRepeatRow { date: string; uniqueCalls: number; repeatCalls: number; repeatPct: number; }
+interface RepeatAnalysis {
+  available: boolean; reason: string | null;
+  grandUnique: number; grandRepeat: number; grandPct: number;
+  dayWise: DayWiseRepeatRow[];
+}
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1351,6 +1358,70 @@ function DayWiseScenarioAuditPanel({ processId, period }: { processId: string; p
               </BarChart>
             </ResponsiveContainer>
           </div>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Repeat Analysis tab -- ported from Mydashboards' getRepeatAnalysis: a
+ * caller (by MobileNo) is a repeat if the same number appears on more than
+ * one audited call. Grand totals + a day-wise unique-vs-repeat area chart.
+ * The source's full phone-number x date pivot (unbounded cardinality) is
+ * deliberately not ported.
+ */
+function RepeatAnalysisPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "repeat-analysis", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<RepeatAnalysis>>(
+      `/api/process-operations/${processId}/repeat-analysis?period=${period}`),
+  });
+  const ra = data?.data;
+  const chartData = useMemo(
+    () => ra?.dayWise.map((d) => ({ date: d.date.slice(5), Unique: d.uniqueCalls, Repeat: d.repeatCalls })) ?? [],
+    [ra],
+  );
+
+  return (
+    <ChartCard title="Repeat analysis" subtitle="Callers (by phone number) who called more than once in this period">
+      <div className="px-3 pb-1">
+        {isLoading || !ra ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading repeat analysis…
+          </div>
+        ) : !ra.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{ra.reason}</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="rounded-lg border border-slate-100 dark:border-slate-800 px-2 py-1.5">
+                <div className="text-[13px] font-bold text-slate-700 dark:text-slate-200">{ra.grandUnique.toLocaleString()}</div>
+                <div className="text-[8.5px] text-slate-500 uppercase tracking-wide">Unique callers</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 dark:border-slate-800 px-2 py-1.5">
+                <div className={`text-[13px] font-bold ${ra.grandRepeat > 0 ? "text-amber-600" : "text-slate-700 dark:text-slate-200"}`}>{ra.grandRepeat.toLocaleString()}</div>
+                <div className="text-[8.5px] text-slate-500 uppercase tracking-wide">Repeat calls</div>
+              </div>
+              <div className="rounded-lg border border-slate-100 dark:border-slate-800 px-2 py-1.5">
+                <div className="text-[13px] font-bold text-slate-700 dark:text-slate-200">{ra.grandPct}%</div>
+                <div className="text-[8.5px] text-slate-500 uppercase tracking-wide">Repeat share</div>
+              </div>
+            </div>
+            <div className="h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -24 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Area type="monotone" dataKey="Unique" stroke={C_BLUE} fill={C_BLUE} fillOpacity={0.15} strokeWidth={1.5} />
+                  <Area type="monotone" dataKey="Repeat" stroke={C_AMBER} fill={C_AMBER} fillOpacity={0.3} strokeWidth={1.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </>
         )}
       </div>
     </ChartCard>
@@ -4042,6 +4113,7 @@ export default function ProcessOperationsPage() {
                 {current && <CustomerRiskCardsPanel processId={current} period={period} />}
                 {current && <FatalAnalysisPanel processId={current} period={period} />}
                 {current && <DayWiseScenarioAuditPanel processId={current} period={period} />}
+                {current && <RepeatAnalysisPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

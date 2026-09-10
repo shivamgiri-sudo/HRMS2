@@ -2754,6 +2754,111 @@ export async function getDayWiseScenarioAudit(
   return { available: true, reason: null, days };
 }
 
+export interface DayWiseRepeatRow { date: string; uniqueCalls: number; repeatCalls: number; repeatPct: number; }
+export interface RepeatAnalysis {
+  available: boolean; reason: string | null;
+  grandUnique: number; grandRepeat: number; grandPct: number;
+  dayWise: DayWiseRepeatRow[];
+}
+
+/**
+ * Repeat Analysis tab -- ported from Mydashboards' getRepeatAnalysis: a
+ * caller (identified by MobileNo, a real column) is a repeat if the same
+ * number appears on more than one audited call in the window. grandUnique
+ * = distinct phone numbers (first-occurrence, like COUNTIF=1); grandRepeat
+ * = total calls minus distinct numbers (subsequent calls, like COUNTIF>1) --
+ * the exact arithmetic Mydashboards' source uses, not "distinct repeaters".
+ *
+ * NOT ported: the source's full phone-number x date pivot table (every
+ * caller's day-by-day call pattern). That's real, unbounded-cardinality
+ * data (every distinct phone number this process has ever audited) with a
+ * genuinely different risk profile than every other component ported so
+ * far -- left out rather than risk an unbounded result set.
+ */
+export async function getRepeatAnalysis(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<RepeatAnalysis | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): RepeatAnalysis => ({
+    available: false, reason, grandUnique: 0, grandRepeat: 0, grandPct: 0, dayWise: [],
+  });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [[grandRows], [dayRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT MobileNo) grand_unique, COUNT(*) - COUNT(DISTINCT MobileNo) grand_repeat
+         FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList})
+          AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND MobileNo IS NOT NULL AND TRIM(MobileNo) != ''
+          AND quality_percentage IS NOT NULL`,
+      [...employeeCodes, from, to],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(q.CallDate, '%Y-%m-%d') call_date,
+              COUNT(DISTINCT q.MobileNo) unique_calls,
+              COUNT(DISTINCT CASE WHEN r.MobileNo IS NOT NULL THEN q.MobileNo END) repeat_calls
+         FROM db_audit.call_quality_assessment q
+         LEFT JOIN (
+           SELECT MobileNo FROM db_audit.call_quality_assessment
+            WHERE User IN (${inList})
+              AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+              AND MobileNo IS NOT NULL AND TRIM(MobileNo) != '' AND quality_percentage IS NOT NULL
+            GROUP BY MobileNo HAVING COUNT(*) > 1
+         ) r ON q.MobileNo = r.MobileNo
+        WHERE q.User IN (${inList})
+          AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.MobileNo IS NOT NULL AND TRIM(q.MobileNo) != ''
+          AND q.quality_percentage IS NOT NULL
+        GROUP BY call_date
+        ORDER BY call_date ASC`,
+      [...employeeCodes, from, to, ...employeeCodes, from, to],
+    ),
+  ]);
+
+  const g = (grandRows as any[])[0];
+  const grandUnique = Number(g?.grand_unique ?? 0);
+  const grandRepeat = Number(g?.grand_repeat ?? 0);
+  if (!grandUnique && !grandRepeat) return { ...unavailable("No audited calls with a caller number in this period for this process."), available: true };
+
+  const dayWise: DayWiseRepeatRow[] = (dayRows as any[]).map((r) => {
+    const uniqueCalls = Number(r.unique_calls); const repeatCalls = Number(r.repeat_calls);
+    return { date: String(r.call_date), uniqueCalls, repeatCalls, repeatPct: uniqueCalls > 0 ? Math.round((repeatCalls / uniqueCalls) * 100) : 0 };
+  });
+
+  const totalCalls = grandUnique + grandRepeat;
+  return {
+    available: true, reason: null, grandUnique, grandRepeat,
+    grandPct: totalCalls > 0 ? Math.round((grandRepeat / totalCalls) * 1000) / 10 : 0,
+    dayWise,
+  };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{
