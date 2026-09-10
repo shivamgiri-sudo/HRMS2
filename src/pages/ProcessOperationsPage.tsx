@@ -2025,6 +2025,52 @@ function EmployeeUploadBox({ processId, metricKey, period, onSaved }: {
   );
 }
 
+/**
+ * Top/Bottom performer split (Mydashboards' side-by-side Top-10/Bottom-5
+ * leaderboard idiom) -- the analyst table below is already sorted worst-
+ * first, direction-aware, with nulls (no reading this period) sorted last;
+ * this is the exact same list, just the two ends pulled forward as a quick
+ * summary instead of making the reader scroll a long table to find them.
+ * Only renders once there are enough scored analysts (6+) for "top" and
+ * "bottom" to mean something different from "the whole list".
+ */
+function TopBottomPerformers({ analysts, unit, direction }: {
+  analysts: AnalystScore[]; unit: string | null; direction: string | null;
+}) {
+  const scored = analysts.filter((a) => a.value !== null);
+  if (scored.length < 6) return null;
+
+  const bottom = scored.slice(0, 5); // already worst-first
+  const top = [...scored].slice(-5).reverse(); // best-first
+
+  const Card = ({ title, rows, good }: { title: string; rows: AnalystScore[]; good: boolean }) => (
+    <div className={`rounded-lg border px-2.5 py-2 ${good
+      ? "border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/20"
+      : "border-red-200 dark:border-red-900 bg-red-50/70 dark:bg-red-950/20"}`}>
+      <p className={`text-[9px] font-bold uppercase tracking-wide mb-1.5 ${good ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
+        {title}
+      </p>
+      <div className="space-y-1">
+        {rows.map((a) => (
+          <div key={a.employeeId} className="flex items-center justify-between gap-2 text-[10.5px]">
+            <span className="text-slate-700 dark:text-slate-300 truncate">{a.name}</span>
+            <span className={`font-bold tabular-nums shrink-0 ${good ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
+              {formatValue(a.value, unit)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-2 gap-2 mb-2">
+      <Card title={direction === "lower_is_better" ? "Best (lowest)" : "Top performers"} rows={top} good={true} />
+      <Card title="Needs coaching" rows={bottom} good={false} />
+    </div>
+  );
+}
+
 function AnalystBreakdownPanel({ processId, metricKey, period }: {
   processId: string; metricKey: string; period: ReportPeriod;
 }) {
@@ -2066,6 +2112,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
         </div>
       ) : (
         <div>
+          <TopBottomPerformers analysts={ab.analysts} unit={ab.unit} direction={ab.direction} />
           <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 max-h-96 overflow-y-auto">
             <table className="w-full text-[11px]">
               <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 sticky top-0">
