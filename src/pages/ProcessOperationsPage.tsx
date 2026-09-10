@@ -1676,17 +1676,32 @@ function FunnelSnapshot({ metrics }: { metrics: Reading[] }) {
 function QualityRadar({ metrics }: { metrics: Reading[] }) {
   const data = metrics
     .filter((m) => m.value !== null && (m.unit ?? "").toLowerCase().startsWith("percent"))
-    .map((m) => ({ axis: m.label.replace(/ %$/, "").replace(/^Call /, ""), value: Number(m.value) }));
+    .map((m) => {
+      // Full label kept for the tooltip; the axis tick gets a short form --
+      // long originals ("Offer Accepted % (of calls offered)", "Opening
+      // Success % (AI)") were overflowing past the card edge at outerRadius
+      // 70%, clipping the first/last few characters of the labels on both
+      // sides. Strip the unit suffix, any parenthetical qualifier, and the
+      // redundant "Call " prefix, then hard-cap what's left.
+      const full = m.label.replace(/ %$/, "").replace(/^Call /, "");
+      const short = full.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      const axis = short.length > 16 ? `${short.slice(0, 15)}…` : short;
+      return { axis, full, value: Number(m.value) };
+    });
   if (data.length < 3) return null;
   return (
     <ChartCard title="Quality shape" subtitle="Evenly strong, or lopsided? Each axis is a scored parameter">
       <div className="h-60">
         <ResponsiveContainer width="100%" height="100%">
-          <RadarChart data={data} outerRadius="70%">
+          <RadarChart data={data} outerRadius="55%" margin={{ top: 16, right: 28, bottom: 16, left: 28 }}>
             <PolarGrid stroke="#E2E8F0" />
             <PolarAngleAxis dataKey="axis" tick={{ fontSize: 10, fill: "#64748B" }} />
             <PolarRadiusAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#94A3B8" }} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(1)}%`, ""]} />
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              labelFormatter={(_, payload) => payload?.[0]?.payload?.full ?? ""}
+              formatter={(v: number) => [`${v.toFixed(1)}%`, ""]}
+            />
             <Radar dataKey="value" stroke={C_GREEN} fill={C_GREEN} fillOpacity={0.3} />
           </RadarChart>
         </ResponsiveContainer>
