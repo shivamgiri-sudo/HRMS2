@@ -73,6 +73,9 @@ interface Reading {
   numerator: number | null; denominator: number | null;
   /** 'manual' when the latest reading was hand-entered, 'connector' when a real pipeline wrote it. */
   source: string | null;
+  /** When the latest reading was actually written -- pairs with `provisional`
+   *  to say HOW stale a same-day connector figure is, not just that it's today's. */
+  computedAt: string | null;
 }
 interface Section { key: string; title: string; blurb: string | null; metrics: Reading[] }
 interface FeedRow {
@@ -186,6 +189,7 @@ interface ProcessBusinessHealth {
     available: boolean; reason: string | null;
     revenue: number | null; revenueStatus: string | null;
     grn: number | null; agentSalary: number | null;
+    agentSalaryIsRealThisMonth: boolean;
     ebit: number | null; operatingProfitPct: number | null;
   };
   headcount: {
@@ -266,6 +270,28 @@ function targetCaption(r: Reading): string | null {
   if (r.targetValue === null || !r.direction) return null;
   const op = r.direction === "higher_is_better" ? "≥" : "≤";
   return `Target ${op} ${formatValue(r.targetValue, r.unit)}`;
+}
+
+/**
+ * How stale a same-day connector figure actually is -- "today" alone doesn't
+ * say whether this number reflects 6am or 11pm, and for an attendance-derived
+ * metric those are very different pictures (people written absent become
+ * present as punches arrive through the day). Null when there's nothing to
+ * time -- no reading, or a manual entry, which has no meaningful "as of".
+ */
+function freshnessCaption(r: Reading): { short: string; full: string } | null {
+  if (!r.provisional || !r.computedAt) return null;
+  const computed = new Date(r.computedAt);
+  const minutesAgo = Math.round((Date.now() - computed.getTime()) / 60000);
+  const hh = String(computed.getHours()).padStart(2, "0");
+  const mm = String(computed.getMinutes()).padStart(2, "0");
+  const ago = minutesAgo < 60 ? `${minutesAgo}m ago`
+    : minutesAgo < 1440 ? `${Math.round(minutesAgo / 60)}h ago`
+    : `${Math.round(minutesAgo / 1440)}d ago`;
+  return {
+    short: ago,
+    full: `Today's figure as computed at ${hh}:${mm} (${ago}) — may not reflect attendance changes since then. It will update next time the feed runs, not live on this page.`,
+  };
 }
 
 /** A chart panel with the reference dashboards' navy header. */
@@ -368,10 +394,15 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
               <PenLine className="h-2 w-2" />manual
             </span>
           )}
-          {r.provisional && (
-            <span title="Today is still in progress — this will move as the day fills in"
-              className="rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-blue-700">today</span>
-          )}
+          {r.provisional && (() => {
+            const fresh = freshnessCaption(r);
+            return (
+              <span title={fresh?.full ?? "Today is still in progress — this will move as the day fills in"}
+                className="rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-blue-700">
+                {fresh ? `today · ${fresh.short}` : "today"}
+              </span>
+            );
+          })()}
           {stale && (
             <span title={`Last reading ${r.staleDays} days ago — history, not current`}
               className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8.5px] font-bold bg-white/70 text-amber-700">
@@ -424,6 +455,12 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
         </p>
         <div className="ml-auto flex shrink-0 gap-0.5">
           {r.source === "manual" && <PenLine className="h-2 w-2 text-purple-500" aria-label="Typed in by hand" />}
+          {r.provisional && (
+            <span title={freshnessCaption(r)?.full ?? "Today is still in progress — this will move as the day fills in"}
+              className="text-[7.5px] font-bold text-blue-600 whitespace-nowrap">
+              {freshnessCaption(r)?.short ?? "today"}
+            </span>
+          )}
           {stale && <Clock className="h-2 w-2 text-amber-600" aria-label={`Last reading ${r.staleDays} days ago`} />}
         </div>
       </div>
@@ -613,9 +650,9 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
             Agent-attributed complaints vs. green-floor share
           </p>
-          <div className="h-40">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={wc.daily} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%" minWidth={280}>
+              <LineChart data={wc.daily} margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                 <CartesianGrid {...GRID} vertical={false} />
                 <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
                   tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
@@ -642,9 +679,9 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
           </p>
           {hasRoster ? (
             <>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={wc.daily} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={280}>
+                  <LineChart data={wc.daily} margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                     <CartesianGrid {...GRID} vertical={false} />
                     <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
                       tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
@@ -780,16 +817,32 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
                   caption={finance.revenueStatus ? REVENUE_STATUS_LABEL[finance.revenueStatus] ?? finance.revenueStatus : undefined}
                   tone={finance.revenue && finance.revenue > 0 ? "good" : "neutral"} />
                 <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} />
-                <HealthStat label="Agent salary" value={currency(finance.agentSalary)} />
-                <HealthStat label="EBIT" value={currency(finance.ebit)}
-                  tone={finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"} />
-                <HealthStat label="Op %" value={finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`}
-                  tone={finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"} />
+                {finance.agentSalaryIsRealThisMonth ? (
+                  <>
+                    <HealthStat label="Agent salary" value={currency(finance.agentSalary)} />
+                    <HealthStat label="EBIT" value={currency(finance.ebit)}
+                      tone={finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"} />
+                    <HealthStat label="Op %" value={finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`}
+                      tone={finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"} />
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-2.5 py-2 flex items-center max-w-[280px]">
+                    <p className="text-[10.5px] text-slate-400 italic">
+                      Agent salary, EBIT and Op % withheld — no payroll run processed for this month yet.
+                    </p>
+                  </div>
+                )}
               </div>
               {finance.revenue === 0 && (
                 <p className="text-[9.5px] text-slate-400 italic mt-1.5">
                   Revenue shows ₹0 because no revenue rule was in effect for this exact month — not because the
-                  process earned nothing. Expenses (GRN, salary) are real regardless.
+                  process earned nothing. GRN above is real regardless.
+                </p>
+              )}
+              {!finance.agentSalaryIsRealThisMonth && finance.revenue !== null && finance.revenue > 0 && (
+                <p className="text-[9.5px] text-amber-600 dark:text-amber-400 mt-1.5">
+                  Revenue for the month is a recognized figure (the committed monthly rate, not pro-rated by day) —
+                  it isn't directly comparable to a cost figure that hasn't been produced yet either.
                 </p>
               )}
             </>
