@@ -94,20 +94,42 @@ describe("tallyExportService.buildEnvelope isFinal", () => {
   });
 
   it("is true only when every returned row's period is closed", async () => {
-    execute.mockResolvedValueOnce([[
-      { voucher_id: "v1", voucher_number: "PV1", voucher_type: "payment", entry_date: "2026-09-01", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 1000, credit_amount: 0, tds_deducted_amount: 0, period_status: "closed" },
-      { voucher_id: "v2", voucher_number: "PV2", voucher_type: "payment", entry_date: "2026-09-02", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 2000, credit_amount: 0, tds_deducted_amount: 0, period_status: "closed" },
-    ]]);
+    execute
+      .mockResolvedValueOnce([[
+        { voucher_id: "v1", voucher_number: "PV1", voucher_type: "payment", entry_date: "2026-09-01", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 1000, credit_amount: 0, period_status: "closed" },
+        { voucher_id: "v2", voucher_number: "PV2", voucher_type: "payment", entry_date: "2026-09-02", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 2000, credit_amount: 0, period_status: "closed" },
+      ]])
+      .mockResolvedValueOnce([[]]) // TDS totals per voucher — none here
+      .mockResolvedValueOnce([[]]); // TDS memo ledger names — none here
     const result = await tallyExportService.buildEnvelope("acct-1");
     expect(result.isFinal).toBe(true);
   });
 
   it("is false when the range mixes a closed and a still-open period", async () => {
-    execute.mockResolvedValueOnce([[
-      { voucher_id: "v1", voucher_number: "PV1", voucher_type: "payment", entry_date: "2026-09-01", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 1000, credit_amount: 0, tds_deducted_amount: 0, period_status: "closed" },
-      { voucher_id: "v2", voucher_number: "PV2", voucher_type: "payment", entry_date: "2026-09-15", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 2000, credit_amount: 0, tds_deducted_amount: 0, period_status: null },
-    ]]);
+    execute
+      .mockResolvedValueOnce([[
+        { voucher_id: "v1", voucher_number: "PV1", voucher_type: "payment", entry_date: "2026-09-01", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 1000, credit_amount: 0, period_status: "closed" },
+        { voucher_id: "v2", voucher_number: "PV2", voucher_type: "payment", entry_date: "2026-09-15", narration: "n", bank_ledger: "Bank", party_ledger: "Party", debit_amount: 2000, credit_amount: 0, period_status: null },
+      ]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[]]);
     const result = await tallyExportService.buildEnvelope("acct-1");
     expect(result.isFinal).toBe(false);
+  });
+
+  it("collapses a multi-GRN voucher's several cash rows into ONE exported voucher, summing amounts and TDS", async () => {
+    execute
+      .mockResolvedValueOnce([[
+        { voucher_id: "v1", voucher_number: "PV/HQ/202609/0002", voucher_type: "payment", entry_date: "2026-09-10", narration: "Vendor payment released — GRN A — voucher PV/HQ/202609/0002", created_at: "2026-09-10T08:00:00Z", bank_ledger: "Bank", party_ledger: "Vendor Payables", debit_amount: 8000, credit_amount: 0, period_status: "closed" },
+        { voucher_id: "v1", voucher_number: "PV/HQ/202609/0002", voucher_type: "payment", entry_date: "2026-09-10", narration: "Vendor payment released — GRN B — voucher PV/HQ/202609/0002", created_at: "2026-09-10T08:00:01Z", bank_ledger: "Bank", party_ledger: "Vendor Payables", debit_amount: 5000, credit_amount: 0, period_status: "closed" },
+      ]])
+      .mockResolvedValueOnce([[{ voucher_id: "v1", tds_total: 300 }]]) // combined TDS across both GRNs
+      .mockResolvedValueOnce([[{ voucher_id: "v1", tally_ledger_name: "TDS Payable" }]]);
+    const result = await tallyExportService.buildEnvelope("acct-1");
+    expect(result.entryCount).toBe(1);
+    // One <VOUCHER> block, not two sharing the same VOUCHERNUMBER.
+    expect((result.xml.match(/<VOUCHER /g) ?? []).length).toBe(1);
+    expect(result.xml).toContain("<AMOUNT>13000.00</AMOUNT>"); // 8000 + 5000, the summed cash leg
+    expect(result.xml).toContain("<AMOUNT>300.00</AMOUNT>"); // combined TDS
   });
 });

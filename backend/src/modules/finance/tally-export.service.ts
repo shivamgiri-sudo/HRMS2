@@ -72,64 +72,107 @@ async function fetchVoucherRows(bankAccountId: string, from?: string, to?: strin
   if (from) { conditions.push("bale.entry_date >= ?"); params.push(from); }
   if (to) { conditions.push("bale.entry_date <= ?"); params.push(to); }
 
-  // The MAIN cash entry per voucher — the one with a real (non-zero) amount. The TDS memo row
-  // (if any) is fetched separately below, keyed off the same voucher_id.
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // One payment voucher release now inserts ONE cash ledger row PER allocated GRN (Payment
+  // Voucher multi-GRN support, 2026-09-10) — a voucher covering 3 GRNs of the same vendor
+  // produces 3 rows here, all sharing voucher_id/voucher_number. These must collapse back into
+  // ONE Tally <VOUCHER> per payment_voucher (grouped in JS below), or Tally would receive
+  // several vouchers all claiming the same VOUCHERNUMBER — a real defect this fix closes.
+  const [cashRows] = await db.execute<RowDataPacket[]>(
     `SELECT bale.voucher_id, pv.voucher_number, pv.voucher_type, bale.entry_date, bale.narration,
+            bale.created_at,
             cba.tally_ledger_name AS bank_ledger, pam.tally_ledger_name AS party_ledger,
             bale.debit_amount, bale.credit_amount,
-            vpt.tds_deducted_amount,
             brp.status AS period_status
        FROM bank_account_ledger_entry bale
        JOIN payment_voucher pv ON pv.id = bale.voucher_id
        JOIN company_bank_account cba ON cba.id = bale.bank_account_id
        JOIN payable_account_master pam ON pam.id = bale.payable_account_id
-       LEFT JOIN vendor_payment_tracking vpt ON vpt.id = pv.linked_vendor_payment_id
        LEFT JOIN bank_reconciliation_period brp ON brp.id = bale.reconciliation_period_id
       WHERE ${conditions.join(" AND ")} AND (bale.debit_amount > 0 OR bale.credit_amount > 0)
       ORDER BY bale.entry_date ASC, bale.created_at ASC`,
     params,
   );
 
-  const result: VoucherExportRow[] = [];
-  for (const row of rows as RowDataPacket[]) {
-    const netAmount = Number(row.debit_amount) > 0 ? Number(row.debit_amount) : Number(row.credit_amount);
+  if ((cashRows as RowDataPacket[]).length === 0) return [];
 
-    // Does this voucher have a TDS memo row? (debit=credit=0, same voucher_id, distinct from the
-    // main entry above by amount alone). Only true for vendor_grn vouchers whose first release
-    // withheld TDS — see payment-voucher.service.ts's release().
-    let tdsLedger: string | null = null;
-    let tdsAmount = 0;
-    const tds = Number(row.tds_deducted_amount ?? 0);
-    if (tds > 0) {
-      const [[memo]] = await db.execute<RowDataPacket[]>(
-        `SELECT pam.tally_ledger_name
+  const voucherIds = [...new Set((cashRows as RowDataPacket[]).map((r) => String(r.voucher_id)))];
+  const placeholders = voucherIds.map(() => "?").join(",");
+
+  // TDS withheld per voucher: sum across every GRN this voucher paid, read from
+  // payment_voucher_grn_allocation joined to vendor_payment_tracking's own tds_deducted_amount
+  // — NOT the zero-cash memo ledger row itself, which never carried the amount (debit=credit=0
+  // by design, see payment-voucher.service.ts). Falls back to the voucher's single
+  // linked_vendor_payment_id for a voucher raised before the allocation table existed.
+  const [tdsRows] = voucherIds.length
+    ? await db.execute<RowDataPacket[]>(
+        `SELECT pv.id AS voucher_id,
+                COALESCE(
+                  (SELECT SUM(vpt.tds_deducted_amount)
+                     FROM payment_voucher_grn_allocation pvga
+                     JOIN vendor_payment_tracking vpt ON vpt.id = pvga.vendor_payment_tracking_id
+                    WHERE pvga.payment_voucher_id = pv.id),
+                  (SELECT vpt2.tds_deducted_amount FROM vendor_payment_tracking vpt2 WHERE vpt2.id = pv.linked_vendor_payment_id),
+                  0
+                ) AS tds_total
+           FROM payment_voucher pv
+          WHERE pv.id IN (${placeholders})`,
+        voucherIds,
+      )
+    : [[]];
+  const tdsByVoucher = new Map<string, number>();
+  for (const r of tdsRows as RowDataPacket[]) tdsByVoucher.set(String(r.voucher_id), Number(r.tds_total ?? 0));
+
+  // One TDS-memo ledger row's payable_account (e.g. "TDS Payable") per voucher — every memo row
+  // for one voucher points at the same account, so any one of them names the right ledger.
+  const [memoRows] = voucherIds.length
+    ? await db.execute<RowDataPacket[]>(
+        `SELECT bale.voucher_id, pam.tally_ledger_name
            FROM bank_account_ledger_entry bale
            JOIN payable_account_master pam ON pam.id = bale.payable_account_id
-          WHERE bale.voucher_id = ? AND bale.debit_amount = 0 AND bale.credit_amount = 0
-          LIMIT 1`,
-        [row.voucher_id],
-      );
-      if (memo) {
-        tdsLedger = String((memo as any).tally_ledger_name);
-        tdsAmount = tds;
-      }
-    }
+          WHERE bale.voucher_id IN (${placeholders}) AND bale.debit_amount = 0 AND bale.credit_amount = 0
+          GROUP BY bale.voucher_id, pam.tally_ledger_name`,
+        voucherIds,
+      )
+    : [[]];
+  const tdsLedgerByVoucher = new Map<string, string>();
+  for (const r of memoRows as RowDataPacket[]) tdsLedgerByVoucher.set(String(r.voucher_id), String((r as any).tally_ledger_name));
+
+  type Grouped = { rows: RowDataPacket[] };
+  const grouped = new Map<string, Grouped>();
+  for (const row of cashRows as RowDataPacket[]) {
+    const key = String(row.voucher_id);
+    if (!grouped.has(key)) grouped.set(key, { rows: [] });
+    grouped.get(key)!.rows.push(row);
+  }
+
+  const result: VoucherExportRow[] = [];
+  for (const [voucherId, { rows }] of grouped) {
+    const first = rows[0];
+    const netAmount = rows.reduce(
+      (sum, r) => sum + (Number(r.debit_amount) > 0 ? Number(r.debit_amount) : Number(r.credit_amount)),
+      0,
+    );
+    const tdsAmount = tdsByVoucher.get(voucherId) ?? 0;
+    const tdsLedger = tdsAmount > 0 ? tdsLedgerByVoucher.get(voucherId) ?? null : null;
 
     result.push({
-      voucher_id: String(row.voucher_id),
-      voucher_number: String(row.voucher_number),
-      voucher_type: row.voucher_type,
-      entry_date: String(row.entry_date).slice(0, 10),
-      narration: String(row.narration ?? ""),
-      bank_ledger: String(row.bank_ledger),
-      party_ledger: String(row.party_ledger),
+      voucher_id: voucherId,
+      voucher_number: String(first.voucher_number),
+      voucher_type: first.voucher_type,
+      entry_date: String(first.entry_date).slice(0, 10),
+      narration:
+        rows.length > 1
+          ? `${String(first.narration ?? "").split(" — GRN ")[0]} — ${rows.length} GRNs`
+          : String(first.narration ?? ""),
+      bank_ledger: String(first.bank_ledger),
+      party_ledger: String(first.party_ledger),
       net_amount: netAmount,
       tds_ledger: tdsLedger,
       tds_amount: tdsAmount,
-      period_status: row.period_status ? String(row.period_status) : null,
+      period_status: first.period_status ? String(first.period_status) : null,
     });
   }
+  result.sort((a, b) => a.entry_date.localeCompare(b.entry_date) || a.voucher_number.localeCompare(b.voucher_number));
   return result;
 }
 
