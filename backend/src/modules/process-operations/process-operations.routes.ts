@@ -232,6 +232,27 @@ router.get("/:processId/fatal-calls", requireAuth, requireRole(...VIEWER_ROLES),
 }));
 
 /**
+ * One analyst's own recent audited calls -- third real consumer of
+ * CallDetailDrawer, reached from AnalystBreakdownPanel's per-employee
+ * expansion (any metric, not just quality ones). Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/employee-calls", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const employeeCode = req.query.employeeCode as string;
+  if (!employeeCode) {
+    return res.status(400).json({ success: false, code: "BAD_REQUEST", message: "employeeCode is required." });
+  }
+  const data = await svc.getEmployeeRecentCalls(req.authUser!.id, req.params.processId, employeeCode, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process/employee, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
  * Root Cause vs. Workforce: the CLAP Agent-share trend alongside ramp-cohort
  * tenure, attrition and roster staffing gap for the same process/dates — a
  * plain juxtaposition, not a computed correlation (see the service function

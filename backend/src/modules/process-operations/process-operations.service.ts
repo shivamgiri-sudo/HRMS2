@@ -1617,6 +1617,76 @@ export async function getFatalCalls(
   return { available: true, reason: null, calls };
 }
 
+export interface EmployeeRecentCalls {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    callDate: string; qualityPercentage: number | null; scenario: string | null;
+    hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
+/**
+ * Third real consumer of CallDetailDrawer: AnalystBreakdownPanel is generic
+ * over ANY metric (workforce, hygiene, quality -- whatever metricKey the
+ * caller is drilled into), so this does NOT assume the employee has quality-
+ * audit data just because a metric score exists for them -- an employee
+ * genuinely not in db_audit.call_quality_assessment (e.g. this metric came
+ * from a manual upload, not the audit pass) gets an honest "not audited"
+ * reason, not an empty list indistinguishable from "audited, zero calls".
+ */
+export async function getEmployeeRecentCalls(
+  userId: string, processId: string, employeeCode: string, period: ReportPeriod,
+): Promise<EmployeeRecentCalls | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): EmployeeRecentCalls => ({ available: false, reason, calls: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employees WHERE process_id = ? AND employee_code = ? LIMIT 1`,
+    [processId, employeeCode],
+  );
+  if (!(empRows as any[]).length) return null;
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User = ? AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      [employeeCode],
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls for this analyst in the last 90 days — this metric may come from a different source than the quality-audit pass.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i:%s') AS call_date, quality_percentage, scenario,
+            (Transcribe_Text IS NOT NULL AND TRIM(Transcribe_Text) != '') AS has_transcript,
+            (call_recording IS NOT NULL AND TRIM(call_recording) != '') AS has_recording
+       FROM db_audit.call_quality_assessment
+      WHERE User = ? AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+      ORDER BY CallDate DESC
+      LIMIT 20`,
+    [employeeCode, from, to],
+  );
+
+  const calls = (rows as any[]).map((r) => ({
+    callDate: String(r.call_date),
+    qualityPercentage: r.quality_percentage === null ? null : Number(r.quality_percentage),
+    scenario: r.scenario ?? null,
+    hasTranscript: Boolean(r.has_transcript),
+    hasRecording: Boolean(r.has_recording),
+  }));
+
+  if (!calls.length) return { ...unavailable("No audited calls for this analyst in this period."), available: true };
+  return { available: true, reason: null, calls };
+}
+
 /**
  * The exact 19 parameters Mydashboards' validated CQ formula scores per call
  * (backend/scripts/fix-quality-score.mjs's own CQ_PARAM_COLS, not re-typed

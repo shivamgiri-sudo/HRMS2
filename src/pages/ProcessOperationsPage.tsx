@@ -208,6 +208,14 @@ interface FatalCallsResult {
   }>;
 }
 
+interface EmployeeRecentCalls {
+  available: boolean; reason: string | null;
+  calls: Array<{
+    callDate: string; qualityPercentage: number | null; scenario: string | null;
+    hasTranscript: boolean; hasRecording: boolean;
+  }>;
+}
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1927,6 +1935,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
       `/api/process-operations/${processId}/metric/${metricKey}/by-analyst?period=${period}`),
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedCall, setSelectedCall] = useState<{ employeeCode: string; callDate: string } | null>(null);
   const ab = data?.data;
   const invalidateBreakdown = () => qc.invalidateQueries({
     queryKey: ["process-operations", "by-analyst", processId, metricKey, period],
@@ -2016,7 +2025,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                       </tr>
                       {open && (
                         <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
-                          <td colSpan={5} className="px-2 py-2">
+                          <td colSpan={5} className="px-2 py-2 space-y-2">
                             {a.reportsTo.length ? (
                               <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                                 <span className="text-slate-400 shrink-0">Full reporting chain:</span>
@@ -2033,6 +2042,10 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                               <p className="text-[10px] text-slate-400 italic">
                                 No one is recorded as this analyst's manager — the reporting chain stops here.
                               </p>
+                            )}
+                            {a.employeeCode && (
+                              <EmployeeRecentCallsRow processId={processId} employeeCode={a.employeeCode} period={period}
+                                onSelectCall={setSelectedCall} />
                             )}
                           </td>
                         </tr>
@@ -2053,7 +2066,63 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
           </p>
         </div>
       )}
+      {selectedCall && (
+        <CallDetailDrawer processId={processId} employeeCode={selectedCall.employeeCode}
+          callDate={selectedCall.callDate} onClose={() => setSelectedCall(null)} />
+      )}
     </section>
+  );
+}
+
+/**
+ * Third real consumer of CallDetailDrawer -- this analyst's own recent
+ * audited calls, regardless of which metric the breakdown table above is
+ * showing (AnalystBreakdownPanel is generic over any metric). An employee
+ * genuinely outside the quality-audit pass (this metric came from a manual
+ * upload or a different source) gets an honest reason, not an empty list
+ * indistinguishable from "audited, zero calls".
+ */
+function EmployeeRecentCallsRow({ processId, employeeCode, period, onSelectCall }: {
+  processId: string; employeeCode: string; period: ReportPeriod;
+  onSelectCall: (call: { employeeCode: string; callDate: string }) => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "employee-calls", processId, employeeCode, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<EmployeeRecentCalls>>(
+      `/api/process-operations/${processId}/employee-calls?employeeCode=${encodeURIComponent(employeeCode)}&period=${period}`),
+  });
+  const ec = data?.data;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />Checking this analyst's own audited calls…
+      </div>
+    );
+  }
+  if (!ec?.available || !ec.calls.length) {
+    return <p className="text-[9.5px] text-slate-400 italic">{ec?.reason ?? "No audited calls to show."}</p>;
+  }
+
+  return (
+    <div>
+      <span className="text-[9.5px] text-slate-400 block mb-1">This analyst's own recent audited calls:</span>
+      <div className="flex flex-wrap gap-1">
+        {ec.calls.slice(0, 10).map((c, i) => (
+          <button key={i} type="button"
+            onClick={() => c.hasTranscript && onSelectCall({ employeeCode, callDate: c.callDate })}
+            disabled={!c.hasTranscript}
+            title={c.hasTranscript ? "Open this call's full audit detail" : "No transcript recorded for this call"}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9.5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
+            <span className="text-slate-500">{c.callDate.slice(5, 16)}</span>
+            <span className="font-semibold tabular-nums"
+              style={{ color: c.qualityPercentage === null ? undefined : c.qualityPercentage >= 80 ? C_GREEN : C_RED_TEXT }}>
+              {c.qualityPercentage === null ? "—" : `${c.qualityPercentage.toFixed(0)}%`}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
