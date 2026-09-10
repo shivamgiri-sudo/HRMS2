@@ -154,7 +154,7 @@ export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilter
   const fetcher = () => bpoPnlAllocationOverlayService.getSummary(filters) as Promise<Record<string, unknown>>;
 
   const fresh = await pnlSummaryCache.get<Record<string, unknown>>(key);
-  if (fresh) return fresh as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
+  if (fresh) return fresh as Awaited<ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>>;
 
   const stale = staleAllocationSummary.get(key);
   if (stale) {
@@ -173,7 +173,7 @@ export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilter
       })();
       refreshInFlight.set(key, refresh);
     }
-    return stale.value as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
+    return stale.value as Awaited<ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>>;
   }
 
   // First-ever call for this key this process lifetime: nothing to serve yet, so this one
@@ -181,7 +181,7 @@ export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilter
   const value = await fetcher();
   await pnlSummaryCache.set(key, value, 60);
   staleAllocationSummary.set(key, { value, computedAt: Date.now() });
-  return value as ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>;
+  return value as Awaited<ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>>;
 }
 
 export function shiftPeriod(period: string, delta: number) {
