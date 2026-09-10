@@ -246,7 +246,7 @@ interface ProcessBusinessHealth {
   headcount: {
     available: boolean; reason: string | null;
     activeHc: number; mandatedHc: number | null; gap: number | null;
-    availableCount: number | null; buffer: number | null; shortfall: number | null;
+    availableCount: number; buffer: number | null; shortfall: number | null;
   };
   hiring: {
     available: boolean; reason: string | null;
@@ -1525,7 +1525,7 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
                 <HealthStat label="Mandate" value={String(headcount.mandatedHc)} icon={Target}
                   caption={headcount.reason ? "see note below" : undefined} />
                 <HealthStat label="Available count" value={String(headcount.availableCount)} icon={UserCheck}
-                  caption="sanctioned seats still open" tone={headcount.availableCount === 0 ? "neutral" : "bad"} />
+                  caption="staffed on this process right now" tone="neutral" />
                 <HealthStat label="Buffer" value={`+${headcount.buffer}`} icon={ArrowUpRight}
                   caption="staffed above mandate" tone={headcount.buffer! > 0 ? "good" : "neutral"} />
                 <HealthStat label="Shortfall" value={`-${headcount.shortfall}`} icon={AlertTriangle}

@@ -2078,12 +2078,14 @@ export interface ProcessBusinessHealth {
     activeHc: number;
     mandatedHc: number | null;
     gap: number | null;
-    /** max(mandate - activeHc, 0) -- sanctioned seats still open to hire into.
-     *  Same magnitude as `shortfall` below; kept as a separate field because
-     *  the dashboard shows it in a neutral "seats open" framing next to
-     *  mandate, distinct from shortfall's red/warning framing. Null when no
-     *  mandate is configured -- there is nothing to be "available" against. */
-    availableCount: number | null;
+    /** activeHc, uncapped by mandate -- how many people are staffed on this
+     *  process right now, full stop. Previously computed as max(mandate -
+     *  activeHc, 0), an exact duplicate of `shortfall` below that always read
+     *  0 whenever a process was fully or over-staffed (flagged live 2026-09-10
+     *  against Onfido: 222 staffed vs. 181 mandate showed "Available count: 0"
+     *  on a process with no shortage at all). User's call: this field means
+     *  the raw available headcount, not a mandate-relative figure. */
+    availableCount: number;
     /** max(activeHc - mandate, 0) -- staffed beyond the sanctioned mandate. */
     buffer: number | null;
     /** max(mandate - activeHc, 0) -- staffed below the sanctioned mandate. */
@@ -2255,13 +2257,15 @@ export async function getProcessBusinessHealth(
   const seatRaw = (seatRows as any[])[0]?.total_seats;
   const revenueRuleSeats = seatRaw !== null && seatRaw !== undefined ? Number(seatRaw) : null;
 
-  // Buffer/shortfall/available-count are all derived from the same gap, once a
-  // mandate exists -- factored out so all three headcount branches below stay
-  // in sync rather than repeating the max(...,0) pair three times.
-  const staffingSplit = (mandate: number | null): { availableCount: number | null; buffer: number | null; shortfall: number | null } =>
+  // Buffer/shortfall are derived from the mandate gap, so null when no mandate
+  // exists -- factored out so all three headcount branches below stay in sync
+  // rather than repeating the max(...,0) pair three times. availableCount is
+  // NOT part of that gap: it's activeHc itself, always real regardless of
+  // whether a mandate is configured.
+  const staffingSplit = (mandate: number | null): { availableCount: number; buffer: number | null; shortfall: number | null } =>
     mandate === null
-      ? { availableCount: null, buffer: null, shortfall: null }
-      : { availableCount: Math.max(mandate - activeHc, 0), buffer: Math.max(activeHc - mandate, 0), shortfall: Math.max(mandate - activeHc, 0) };
+      ? { availableCount: activeHc, buffer: null, shortfall: null }
+      : { availableCount: activeHc, buffer: Math.max(activeHc - mandate, 0), shortfall: Math.max(mandate - activeHc, 0) };
 
   let headcount: ProcessBusinessHealth["headcount"];
   if (hcMandate === null && revenueRuleSeats === null) {
