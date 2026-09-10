@@ -352,10 +352,6 @@ const KNOWN_IMPORT_RPCS = new Set([
   // Discount % column" into a Google Sheet with no DB backing anywhere. See
   // housing-owner-sale-raw-bulk.service.ts.
   "import_housing_owner_sale_raw_batch",
-  // Housing Owner's "Call Logs" -- a cleaned Tata Dialer Agent Performance
-  // export, per its SOP, with no DB backing anywhere. See
-  // housing-owner-call-logs-bulk.service.ts.
-  "import_housing_owner_call_logs_batch",
   // LP BPO Leads (M) export, Regional/Non Regional dashboards -- columns read
   // verbatim from real samples; no DB backing exists anywhere. See
   // lp-leads-bulk.service.ts.
@@ -366,12 +362,12 @@ const KNOWN_IMPORT_RPCS = new Set([
   // See du-apr-daily-bulk.service.ts.
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
-  // LP's BPO CR Reports (call log) and Mascallnet NRGN Call History
-  // exports, Regional/Non Regional dashboards -- columns read verbatim
-  // from real samples; no DB backing exists anywhere. See
-  // lp-cdr-cr-report-bulk.service.ts.
-  "import_lp_cdr_regional_batch",
-  "import_lp_cdr_non_regional_batch",
+  // LP's Mascallnet NRGN Call History export, Regional/Non Regional
+  // dashboards -- columns read verbatim from real samples; no DB backing
+  // exists anywhere. See lp-cdr-cr-report-bulk.service.ts. (The sibling
+  // BPO CR Reports/CDR sheet's own table, lp_cdr_raw, was RETRACTED
+  // 2026-09-10 -- db_masmis.CR_lp_regional/CR_lp_non_regional already
+  // carry that exact data live.)
   "import_lp_cr_report_regional_batch",
   "import_lp_cr_report_non_regional_batch",
   // DU Digital's Agent ID -> MAS employee code directory, Korea/Thailand
@@ -383,10 +379,6 @@ const KNOWN_IMPORT_RPCS = new Set([
   // found while auditing the same workbook used for Sale Raw; no DB
   // backing exists anywhere. See housing-premium-agent-target-bulk.service.ts.
   "import_housing_premium_agent_target_batch",
-  // Housing Premium's CDR call log -- found while auditing the same
-  // workbook used for Sale Raw; no DB backing exists anywhere. See
-  // housing-premium-cdr-bulk.service.ts.
-  "import_housing_premium_cdr_batch",
   // GNC's Agent Productivity Report -- same report shape Mydashboards' own
   // GNC APR Upload writes to db_masmis.gnc_apr, confirmed live real but
   // stale (last row 2026-05-30). See gnc-apr-daily-bulk.service.ts.
@@ -872,14 +864,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_housing_owner_call_logs_batch") {
-    const { importHousingOwnerCallLogsBatch } = await import(
-      "../bulk-upload/housing-owner-call-logs-bulk.service.js"
-    );
-    const data = await importHousingOwnerCallLogsBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_lp_leads_regional_batch") {
     const { importLpLeadsRegionalBatch } = await import(
       "../bulk-upload/lp-leads-bulk.service.js"
@@ -920,22 +904,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_lp_cdr_regional_batch") {
-    const { importLpCdrRegionalBatch } = await import(
-      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
-    );
-    const data = await importLpCdrRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lp_cdr_non_regional_batch") {
-    const { importLpCdrNonRegionalBatch } = await import(
-      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
-    );
-    const data = await importLpCdrNonRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_lp_cr_report_regional_batch") {
     const { importLpCrReportRegionalBatch } = await import(
       "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
@@ -973,14 +941,6 @@ async function dispatchImport(
       "../bulk-upload/housing-premium-agent-target-bulk.service.js"
     );
     const data = await importHousingPremiumAgentTargetBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_housing_premium_cdr_batch") {
-    const { importHousingPremiumCdrBatch } = await import(
-      "../bulk-upload/housing-premium-cdr-bulk.service.js"
-    );
-    const data = await importHousingPremiumCdrBatch(id, userId);
     return { success: true, data };
   }
 

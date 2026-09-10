@@ -3,23 +3,19 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 
 /**
- * LP's "10. CR Reports" / "11. CDR" (per its own SOP: "Open BPO Panel...
- * Select Mascallnet NRGN Call History... Paste into CR Reports sheet" /
- * "Select BPO CR Reports... Paste into CDR sheet" -- no DB backing exists
- * for either). Columns read verbatim from two real samples: "Lp Regional
- * Sale Dashboard July26.xlsx" and "Lp Non Regional Dashboard July'26.xlsx",
- * sheets "CDR" and "CR Report".
+ * LP's "10. CR Reports" (per its own SOP: "Open BPO Panel... Select
+ * Mascallnet NRGN Call History... Paste into CR Reports sheet" -- no DB
+ * backing exists). Columns read verbatim from two real samples: "Lp
+ * Regional Sale Dashboard July26.xlsx" and "Lp Non Regional Dashboard
+ * July'26.xlsx", sheet "CR Report".
  *
- * The CDR sheet's own "Connected Time" column is corrupted at the source
- * (its cell format is time-only, but the underlying value decodes to
- * nonsense years) -- deliberately not read here.
+ * The sibling "11. CDR" sheet (lp_cdr_raw) was RETRACTED 2026-09-10:
+ * db_masmis.CR_lp_regional/CR_lp_non_regional already carry this exact
+ * call-detail-record data live (same ticket/task ref, agent, campaign,
+ * disconnected time, call duration, lead status/sub-status, disposition).
+ * CR Report's own content (loan status, unsecured_loan_amount) has no
+ * such overlap in any CR_lp_* table -- kept.
  */
-
-export const LP_CDR_HEADERS = [
-  "Ticket_Ref", "Unique", "Date", "Agent_Name", "Client_Name", "Campaign",
-  "CallNumber", "Disconnected_Time", "Call_Duration", "Feedback",
-  "Lead_Status", "Lead_Sub_Status", "Dispo", "Attempt",
-] as const;
 
 export const LP_CR_REPORT_HEADERS = [
   "Name", "Mobile", "Email", "Status", "Unsecured_Loan", "AgentName", "CreatedOn",
@@ -30,28 +26,6 @@ export function parseNullableAmount(raw: unknown): number | null {
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
-}
-
-export function parseNullableInt(raw: unknown): number | null {
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : null;
-}
-
-/** Call_Duration arrives as HH:MM:SS or MM:SS text in the real sample (e.g. "00:01:42"). */
-export function parseDurationSeconds(raw: unknown): number | null {
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  const parts = v.split(":").map((p) => Number(p));
-  if (parts.length === 3 && parts.every(Number.isFinite)) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
-  if (parts.length === 2 && parts.every(Number.isFinite)) {
-    return parts[0] * 60 + parts[1];
-  }
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : null;
 }
 
 const MONTHS: Record<string, number> = {
@@ -81,22 +55,6 @@ export function parseDate(raw: unknown): string | null {
   return null;
 }
 
-/**
- * "Disconnected Time" arrives as "01 Jul 2026 17:43" -- a date-and-time in
- * one text field, unlike every other date column this session which is
- * date-only. Parsed to a full DATETIME string for MySQL.
- */
-export function parseDateTime(raw: unknown): string | null {
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  const m = /^(\d{1,2})\s+([A-Za-z]{3})\w*\s+(\d{4})\s+(\d{1,2}):(\d{2})/.exec(v);
-  if (m && MONTHS[m[2].toLowerCase()]) {
-    const date = `${m[3]}-${String(MONTHS[m[2].toLowerCase()]).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-    return `${date} ${m[4].padStart(2, "0")}:${m[5]}:00`;
-  }
-  return null;
-}
-
 interface BatchRow extends RowDataPacket {
   id: string;
   row_no: number;
@@ -120,94 +78,6 @@ async function writeErrors(errorUpdates: Array<{ rowId: string; message: string 
       WHERE id IN (${ids.map(() => "?").join(",")})`,
     [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
   );
-}
-
-async function importCdrBatch(
-  batchId: string,
-  importedByUserId: string,
-  dashboardLabel: "REGIONAL" | "NON_REGIONAL",
-): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
-  const [batchRows] = await db.execute<BatchRow[]>(
-    `SELECT id, row_no, normalized_data FROM upload_batch_row
-      WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
-      ORDER BY row_no`,
-    [batchId],
-  );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
-
-  const processId = await resolveLpProcessId();
-  const errors: string[] = [];
-  const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
-
-  for (const row of batchRows) {
-    const data =
-      typeof row.normalized_data === "string"
-        ? JSON.parse(row.normalized_data)
-        : ((row.normalized_data ?? {}) as Record<string, unknown>);
-
-    if (!processId) {
-      const msg = `Row ${row.row_no}: no "Lawyer Panel" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
-    }
-
-    const ticketRef = String(data["Ticket_Ref"] ?? "").trim();
-    const callSeq = parseNullableInt(data["Unique"]);
-    const reportDate = parseDate(data["Date"]);
-    if (!ticketRef || callSeq === null || !reportDate) {
-      const msg = `Row ${row.row_no}: "Ticket_Ref", "Unique" and "Date" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
-    }
-
-    try {
-      await db.execute(
-        `INSERT INTO lp_cdr_raw
-           (id, process_id, dashboard_label, ticket_ref, call_seq, report_date, agent_name,
-            lead_name, campaign, branch_code, disconnected_at, call_duration_seconds,
-            feedback, lead_status, lead_sub_status, dispo, attempt_total,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            agent_name = VALUES(agent_name),
-            lead_name = VALUES(lead_name),
-            campaign = VALUES(campaign),
-            branch_code = VALUES(branch_code),
-            disconnected_at = VALUES(disconnected_at),
-            call_duration_seconds = VALUES(call_duration_seconds),
-            feedback = VALUES(feedback),
-            lead_status = VALUES(lead_status),
-            lead_sub_status = VALUES(lead_sub_status),
-            dispo = VALUES(dispo),
-            attempt_total = VALUES(attempt_total)`,
-        [
-          randomUUID(), processId, dashboardLabel, ticketRef, callSeq, reportDate,
-          String(data["Agent_Name"] ?? "").trim() || null,
-          String(data["Client_Name"] ?? "").trim() || null,
-          String(data["Campaign"] ?? "").trim() || null,
-          String(data["CallNumber"] ?? "").trim() || null,
-          parseDateTime(data["Disconnected_Time"]),
-          parseDurationSeconds(data["Call_Duration"]),
-          String(data["Feedback"] ?? "").trim() || null,
-          String(data["Lead_Status"] ?? "").trim() || null,
-          String(data["Lead_Sub_Status"] ?? "").trim() || null,
-          String(data["Dispo"] ?? "").trim() || null,
-          parseNullableInt(data["Attempt"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
-
-  await writeErrors(errorUpdates);
-  return { importedRows, errorRows, errors };
 }
 
 async function importCrReportBatch(
@@ -285,12 +155,6 @@ async function importCrReportBatch(
   return { importedRows, errorRows, errors };
 }
 
-export async function importLpCdrRegionalBatch(batchId: string, importedByUserId: string) {
-  return importCdrBatch(batchId, importedByUserId, "REGIONAL");
-}
-export async function importLpCdrNonRegionalBatch(batchId: string, importedByUserId: string) {
-  return importCdrBatch(batchId, importedByUserId, "NON_REGIONAL");
-}
 export async function importLpCrReportRegionalBatch(batchId: string, importedByUserId: string) {
   return importCrReportBatch(batchId, importedByUserId, "REGIONAL");
 }
