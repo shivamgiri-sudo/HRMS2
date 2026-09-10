@@ -293,7 +293,8 @@ function EsiDrawer({
               </Button>
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              ZIP includes PAN card, photo, and bank information PDF for ESI portal upload.
+              ZIP includes PAN card, Aadhaar, photo, and a filled ESI Declaration Form (DOB, gender,
+              father's/husband's name, address, nominee &amp; bank details) for ESI portal upload.
               Missing documents are noted in manifest.txt inside the ZIP.
             </p>
           </section>
@@ -403,7 +404,7 @@ export default function EsiRegDocsTab() {
           <div>
             <h2 className="text-lg font-bold">ESI Registration Documents</h2>
             <p className="text-sm text-purple-100 mt-0.5">
-              Download PAN Card, Photo &amp; Bank Information for ESI portal registration.
+              Download PAN Card, Aadhaar, Photo &amp; a filled ESI Declaration Form for ESI portal registration.
             </p>
           </div>
         </div>

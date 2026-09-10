@@ -224,15 +224,39 @@ esiRegDocsRouter.get(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
+/**
+ * This used to be `generateBankInfoPdf` — the only document this route always
+ * generates, and it only ever carried bank fields (name, ESIC number, masked
+ * account). That is not an ESI registration document: ESIC's Declaration Form
+ * needs DOB, gender, marital status, father's/husband's name, address, mobile
+ * and nominee details too, and Payroll HR was getting a bank slip instead.
+ *
+ * Every field below already exists and is populated on `employees` — confirmed
+ * live 2026-09-10 via schema-snapshot.json — this was a wiring gap, not a data
+ * gap. Bank details still come from `employee_bank_detail` (the same source
+ * the rest of this file uses), joined against `employees` for everything else
+ * in one query rather than two.
+ */
+async function generateEsiDeclarationPdf(employeeId: string): Promise<Buffer> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_type,
-            CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-            e.employee_code, e.esic_number
-     FROM employee_bank_detail ebd
-     JOIN employees e ON e.id = ebd.employee_id
-     WHERE ebd.employee_id = ?
-     ORDER BY ebd.created_at DESC LIMIT 1`,
+    `SELECT
+       e.employee_code, e.esic_number, e.uan_number, e.epf_number,
+       e.pan_number, e.aadhaar_number,
+       CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
+       e.father_name, e.gender, e.marital_status, e.date_of_birth,
+       COALESCE(e.mobile, e.personal_phone)               AS mobile,
+       e.nominee_name, e.nominee_relation,
+       COALESCE(e.address1, e.address_line1)               AS address1,
+       COALESCE(e.address2, e.address_line2)               AS address2,
+       e.city, e.state, e.pincode,
+       ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_type
+     FROM employees e
+     LEFT JOIN employee_bank_detail ebd
+       ON ebd.employee_id = e.id
+      AND ebd.id = (SELECT id FROM employee_bank_detail
+                     WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
+     WHERE e.id = ?
+     LIMIT 1`,
     [employeeId]
   );
   const row = (rows as RowDataPacket[])[0];
@@ -244,28 +268,66 @@ async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    doc.fontSize(16).font("Helvetica-Bold").text("ESI Registration — Bank Information", { align: "center" });
+    doc.fontSize(16).font("Helvetica-Bold").text("ESI Registration — Declaration Form", { align: "center" });
     doc.moveDown();
 
     if (!row) {
-      doc.fontSize(12).font("Helvetica").text("Bank details not on record for this employee.");
-    } else {
-      const mask = (acct: string) => acct ? `****${acct.slice(-4)}` : "Not provided";
-      doc.fontSize(12).font("Helvetica");
-      const fields: [string, string][] = [
-        ["Employee Code", row.employee_code ?? ""],
-        ["Employee Name", row.name ?? ""],
-        ["ESIC Number", row.esic_number ?? "Not assigned"],
-        ["Bank Name", row.bank_name ?? ""],
-        ["Account Number (Masked)", mask(row.account_number ?? "")],
-        ["IFSC Code", row.ifsc_code ?? ""],
-        ["Account Type", row.account_type ?? ""],
-      ];
-      for (const [label, value] of fields) {
-        doc.font("Helvetica-Bold").text(`${label}: `, { continued: true });
-        doc.font("Helvetica").text(value);
-      }
+      doc.fontSize(12).font("Helvetica").text("Employee record not found.");
+      doc.end();
+      return;
     }
+
+    const mask = (acct: string | null) => (acct ? `****${acct.slice(-4)}` : "Not provided");
+    const fmtDate = (d: unknown) => {
+      if (!d) return "Not provided";
+      const parsed = new Date(d as string);
+      return Number.isNaN(parsed.getTime()) ? "Not provided" : parsed.toLocaleDateString("en-IN");
+    };
+    const val = (v: unknown) => (v === null || v === undefined || v === "" ? "Not provided" : String(v));
+    const address = [row.address1, row.address2, row.city, row.state, row.pincode]
+      .filter((p) => p !== null && p !== undefined && p !== "")
+      .join(", ");
+
+    const section = (title: string) => {
+      doc.moveDown(0.5);
+      doc.fontSize(12).font("Helvetica-Bold").fillColor("#333").text(title);
+      doc.fillColor("#000");
+      doc.moveDown(0.2);
+    };
+    const field = (label: string, value: string) => {
+      doc.fontSize(11).font("Helvetica-Bold").text(`${label}: `, { continued: true });
+      doc.font("Helvetica").text(value);
+    };
+
+    section("Employee Identity");
+    field("Employee Code", val(row.employee_code));
+    field("Employee Name", val(row.name));
+    field("Father's / Husband's Name", val(row.father_name));
+    field("Date of Birth", fmtDate(row.date_of_birth));
+    field("Gender", val(row.gender));
+    field("Marital Status", val(row.marital_status));
+    field("Mobile Number", val(row.mobile));
+
+    section("Statutory Identifiers");
+    field("ESIC Number", val(row.esic_number ?? "Not assigned"));
+    field("UAN Number", val(row.uan_number));
+    field("EPF Number", val(row.epf_number));
+    field("PAN Number", val(row.pan_number));
+    field("Aadhaar Number", val(row.aadhaar_number));
+
+    section("Address");
+    field("Residential Address", address || "Not provided");
+
+    section("Nominee Details");
+    field("Nominee Name", val(row.nominee_name));
+    field("Relation with Employee", val(row.nominee_relation));
+
+    section("Bank Details (for ESI benefit disbursal)");
+    field("Bank Name", val(row.bank_name));
+    field("Account Number (Masked)", mask(row.account_number ?? null));
+    field("IFSC Code", val(row.ifsc_code));
+    field("Account Type", val(row.account_type));
+
     doc.end();
   });
 }
@@ -391,13 +453,15 @@ async function appendEsiPack(
 
   // Always generated rather than fetched, so it exists even when nothing was
   // uploaded — which for most of this population is the only content the pack
-  // would otherwise have.
+  // would otherwise have. Carries the actual ESI Declaration Form fields (DOB,
+  // gender, marital status, father's/husband's name, address, mobile, nominee),
+  // not just bank details — see generateEsiDeclarationPdf().
   try {
-    archive.append(await generateBankInfoPdf(emp.id), { name: at("Bank_Information.pdf") });
-    manifest.push("OK  Bank_Information.pdf");
+    archive.append(await generateEsiDeclarationPdf(emp.id), { name: at("ESI_Declaration_Form.pdf") });
+    manifest.push("OK  ESI_Declaration_Form.pdf");
     found++;
   } catch {
-    manifest.push("--  Bank information could not be generated");
+    manifest.push("--  ESI Declaration Form could not be generated");
     missing++;
   }
 
