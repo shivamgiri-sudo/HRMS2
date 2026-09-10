@@ -1139,7 +1139,14 @@ function DailyQualityTrendPanel({ processId }: { processId: string }) {
   const trend = data?.data;
   const chartData = useMemo(
     () => trend?.days.map((d) => ({
-      date: d.date.slice(5), score: d.avgScore, audits: d.auditCount,
+      date: d.date.slice(5), score: d.avgScore,
+      // Recharts renders a null value as no bar at all -- indistinguishable
+      // from the gap between bars. A day with zero audits is real
+      // information (not a rendering gap), so it gets a small fixed-height
+      // placeholder bar instead; the real (null) score still drives color
+      // and the tooltip, this only controls what's visually there to hover.
+      displayHeight: d.avgScore ?? 3,
+      audits: d.auditCount,
     })) ?? [],
     [trend],
   );
@@ -1169,8 +1176,9 @@ function DailyQualityTrendPanel({ processId }: { processId: string }) {
                   <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
                   <ReferenceLine y={trend.targetPct} stroke={C_GREEN} strokeDasharray="4 3" strokeWidth={1.5} />
                   <Tooltip contentStyle={TOOLTIP_STYLE}
-                    formatter={(v: number, name: string) => name === "score" ? [`${v}%`, "Score"] : [v, "Audits"]} />
-                  <Bar dataKey="score" radius={[3, 3, 0, 0]}>
+                    formatter={(_: number, __: string, item: any) =>
+                      item?.payload?.score === null ? ["No audits", "Score"] : [`${item.payload.score}%`, "Score"]} />
+                  <Bar dataKey="displayHeight" radius={[3, 3, 0, 0]}>
                     {chartData.map((d, i) => <Cell key={i} fill={barColor(d.score, trend.targetPct)} />)}
                   </Bar>
                 </BarChart>
