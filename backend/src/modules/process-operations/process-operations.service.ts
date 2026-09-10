@@ -239,19 +239,31 @@ function daysSince(dateStr: string): number {
 export async function listProcesses(userId: string, windowDays = 45) {
   const allowed = await readableProcessIds(userId);
   if (!allowed.size) return [];
+  // Day-1 visibility: this used to INNER JOIN process_metric_actual, so a
+  // brand-new process was invisible in this picker entirely until someone
+  // hand-wired a KPI Studio data source for it -- hiding even the parts of
+  // the page (Business Health, headcount vs. mandate, hiring pipeline) that
+  // read generically by process_id and need zero per-process setup. Now
+  // starts from process_master and LEFT JOINs the metrics, so every active,
+  // readable process is selectable from the day it's created; a process
+  // with nothing computed yet just shows metrics=0/latest=null here, and
+  // the page itself already renders that honestly (confirmed: getProcessOperations
+  // resolves the process from process_master directly, not from this table,
+  // and already tolerates an empty metrics result set).
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.process_id, p.process_name, p.process_code,
+    `SELECT p.id AS process_id, p.process_name, p.process_code,
             p.branch_id, bm.branch_name, bm.branch_code,
             COUNT(DISTINCT a.metric_key) metrics,
             MAX(a.score_date) latest,
             (SELECT COUNT(*) FROM employees e
               WHERE e.process_id = p.id AND e.active_status = 1) headcount
-       FROM process_metric_actual a
-       JOIN process_master p ON p.id = a.process_id AND p.active_status = 1
+       FROM process_master p
+       LEFT JOIN process_metric_actual a
+         ON a.process_id = p.id AND a.actual_value IS NOT NULL
+            AND a.score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
        LEFT JOIN branch_master bm ON bm.id = p.branch_id
-      WHERE a.actual_value IS NOT NULL
-        AND a.score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-      GROUP BY a.process_id, p.process_name, p.process_code, p.id, p.branch_id, bm.branch_name, bm.branch_code
+      WHERE p.active_status = 1
+      GROUP BY p.id, p.process_name, p.process_code, p.branch_id, bm.branch_name, bm.branch_code
       ORDER BY metrics DESC, p.process_name`,
     [windowDays],
   );

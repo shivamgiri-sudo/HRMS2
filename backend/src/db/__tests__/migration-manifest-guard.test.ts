@@ -239,6 +239,13 @@ describe("migration manifest — duplicates", () => {
     // 1739-1746 batch (Bla Bli Blu / GNC / Bellavita / Neemans uploaders). Same shape as
     // every jump above; renaming either side is the one thing that would break
     // schema_migrations' by-filename tracking.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(88);
+    //
+    // 88 -> 89 (2026-09-10): merging worktree-payment-voucher-phase1 a fourth time (vendor
+    // advance payments / reconciliation hardening) into main. This merge's own conflict
+    // resolution on this exact manifest silently dropped the branch's 1739-1741 entries
+    // above (a real regression, caught by this test and re-added) while a fifth concurrent
+    // batch independently registered 1747_gnc_allocation_masmis_uploader.sql against the
+    // branch's own 1747_vendor_advance_payments.sql. Same shape as every jump above.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(89);
   });
 });
