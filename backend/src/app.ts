@@ -22,6 +22,7 @@ import { leaveSecureRouter } from "./modules/leave/leave.secure.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { payrollSecureRouter } from "./modules/payroll/payroll.secure.routes.js";
 import { payrollPublicRouter } from "./modules/payroll/payroll.public.routes.js";
+import { nocCasePublicRouter } from "./modules/payroll/noc-case-public.routes.js";
 import { payrollStatutoryConfigCompatRouter } from "./modules/payroll/payroll-statutory-config.compat.routes.js";
 import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat.routes.js";
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
@@ -555,6 +556,12 @@ app.use("/api/public/joining-kit", publicJoiningKitRouter);
 // URLs -- the API credentials for the same platforms stay behind
 // /api/social-feed/admin/*, which is super_admin / hr_admin.
 app.use("/api/public/social-links", socialLinksPublicRouter);
+// The NOC Certificate employee form is reached from a bearer-less token link
+// (email/WhatsApp/SMS), so it must sit above the "/api" clientRouter mount
+// below that applies requireAuth to every /api/* path -- same load-bearing
+// requirement the router's own file header documents (same failure mode as
+// the joining-kit and EPF links if mounted below it).
+app.use("/api/public/noc", nocCasePublicRouter);
 app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);
