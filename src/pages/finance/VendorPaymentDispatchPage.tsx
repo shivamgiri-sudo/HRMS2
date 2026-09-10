@@ -603,7 +603,24 @@ export default function VendorPaymentDispatchPage() {
                 ))}
                 {(rows ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={11} className="py-8 text-center text-slate-400">No payments found</td>
+                    <td colSpan={11} className="py-8 text-center text-slate-400">
+                      {pendingApproval && pendingApproval.count > 0 ? (
+                        <>
+                          No payments due for dispatch — {pendingApproval.count} GRN
+                          {pendingApproval.count === 1 ? "" : "s"} ({money(pendingApproval.value)}) are
+                          still awaiting approval before they reach this queue.{" "}
+                          <button
+                            type="button"
+                            className="font-medium text-blue-600 hover:underline"
+                            onClick={() => setShowBacklog(true)}
+                          >
+                            View backlog
+                          </button>
+                        </>
+                      ) : (
+                        "No payments found"
+                      )}
+                    </td>
                   </tr>
                 )}
               </tbody>

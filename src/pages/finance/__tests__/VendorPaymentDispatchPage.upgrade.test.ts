@@ -77,3 +77,15 @@ describe("VendorPaymentDispatchPage — Approval Backlog panel (Task 4)", () => 
     expect(SRC).toMatch(/href="\/finance\/grn|to="\/finance\/grn|navigate\(.\/finance\/grn/);
   });
 });
+
+describe("VendorPaymentDispatchPage — honest empty state (Task 5)", () => {
+  it("empty-row branch explains the approval backlog when one exists, otherwise falls back to the plain message", () => {
+    expect(SRC).toMatch(/No payments due for dispatch/);
+    expect(SRC).toMatch(/awaiting approval before they reach this queue/);
+    expect(SRC).toContain("No payments found");
+  });
+
+  it("empty-row branches on pendingApproval, not a hardcoded string", () => {
+    expect(SRC).toMatch(/\(rows \?\? \[\]\)\.length === 0 &&[\s\S]{0,600}pendingApproval[\s\S]{0,600}/);
+  });
+});
