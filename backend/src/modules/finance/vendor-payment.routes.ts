@@ -25,6 +25,11 @@ const PAYMENT_READ_ROLES = [
   "branch_head",
   "admin",
   "finance",
+  // `financeRoles` in src/config/routes/finance.routes.tsx (shared across most Finance page
+  // gates) has always included payroll_head, but it was missing here — a payroll_head-only user
+  // could open /finance/vendor-payment-tracking and every single data call (capabilities, banks,
+  // list, aging, ledger, transactions) 403'd, i.e. a permanently broken page for that role.
+  "payroll_head",
 ] as const;
 // Mirrors `pnlRoles` in src/config/routes/finance.routes.tsx exactly — the role list that can
 // open the P&L Master & Control Center page this endpoint feeds (its Governance tab). Kept
@@ -550,10 +555,15 @@ router.get(
   requireRole(...PAYMENT_READ_ROLES),
   h(async (req, res) => {
     const user = actor(req);
+    // requestedBranchId was missing here while every sibling route (list/export/aging above)
+    // threads it through — VendorPaymentDispatchPage.tsx's branch filter visibly narrowed the
+    // main table and the Aging panel but silently had no effect on this Vendor Ledger panel on
+    // the same page, which always fell back to the caller's own default scope.
     const branchScope = await resolveFinanceBranchScopeSet({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const data = await vendorPaymentService.getVendorLedger({
       vendorId: req.params.vendorId,

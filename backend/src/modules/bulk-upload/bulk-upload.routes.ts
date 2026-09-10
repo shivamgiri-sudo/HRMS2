@@ -399,6 +399,30 @@ const KNOWN_IMPORT_RPCS = new Set([
   // the same workbook family; no DB backing exists anywhere. See
   // clovia-ib-cdr-bulk.service.ts.
   "import_clovia_ib_cdr_batch",
+  // Clovia's Outbound Report, full outbound call log -- found while
+  // auditing the same workbook family; no DB backing exists anywhere.
+  // See clovia-outbound-cdr-bulk.service.ts.
+  "import_clovia_outbound_cdr_batch",
+  // Clovia's Feedback (CSAT/DSAT survey) -- found while auditing the same
+  // workbook family; no DB backing exists anywhere. See
+  // clovia-feedback-bulk.service.ts.
+  "import_clovia_feedback_batch",
+  // Clovia's Rechurn Calls, abandoned-call follow-up tracking -- found
+  // while auditing the same workbook family; no DB backing exists
+  // anywhere. See clovia-rechurn-calls-bulk.service.ts.
+  "import_clovia_rechurn_calls_batch",
+  // Clovia's Quality Raw, per-chat/email QA audit scorecard -- found
+  // while auditing the same workbook family; no DB backing exists
+  // anywhere. See clovia-quality-audit-bulk.service.ts.
+  "import_clovia_quality_audit_batch",
+  // Bella Vita Repeat LOB's own APR sheet -- found while auditing the
+  // same dashboard used for the Repeat LOB sales fields; no DB backing
+  // exists anywhere. See bella-repeat-apr-daily-bulk.service.ts.
+  "import_bella_repeat_apr_daily_batch",
+  // Bella Vita Repeat LOB's own Alignment roster -- found while auditing
+  // the same dashboard; no DB backing exists anywhere. See
+  // bella-repeat-alignment-bulk.service.ts.
+  "import_bella_repeat_alignment_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1005,6 +1029,54 @@ async function dispatchImport(
       "../bulk-upload/clovia-ib-cdr-bulk.service.js"
     );
     const data = await importCloviaIbCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_outbound_cdr_batch") {
+    const { importCloviaOutboundCdrBatch } = await import(
+      "../bulk-upload/clovia-outbound-cdr-bulk.service.js"
+    );
+    const data = await importCloviaOutboundCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_feedback_batch") {
+    const { importCloviaFeedbackBatch } = await import(
+      "../bulk-upload/clovia-feedback-bulk.service.js"
+    );
+    const data = await importCloviaFeedbackBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_rechurn_calls_batch") {
+    const { importCloviaRechurnCallsBatch } = await import(
+      "../bulk-upload/clovia-rechurn-calls-bulk.service.js"
+    );
+    const data = await importCloviaRechurnCallsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_quality_audit_batch") {
+    const { importCloviaQualityAuditBatch } = await import(
+      "../bulk-upload/clovia-quality-audit-bulk.service.js"
+    );
+    const data = await importCloviaQualityAuditBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bella_repeat_apr_daily_batch") {
+    const { importBellaRepeatAprDailyBatch } = await import(
+      "../bulk-upload/bella-repeat-apr-daily-bulk.service.js"
+    );
+    const data = await importBellaRepeatAprDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bella_repeat_alignment_batch") {
+    const { importBellaRepeatAlignmentBatch } = await import(
+      "../bulk-upload/bella-repeat-alignment-bulk.service.js"
+    );
+    const data = await importBellaRepeatAlignmentBatch(id, userId);
     return { success: true, data };
   }
 

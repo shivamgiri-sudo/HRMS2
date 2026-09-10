@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPlans } from "../inbound-cdr-sync.service.js";
+import { buildPlans, formatCallDate, paramsFor } from "../inbound-cdr-sync.service.js";
 
 /**
  * These tests do NOT hit dialer_db (that host was unreachable from this
@@ -95,10 +95,68 @@ describe("buildPlans", () => {
     expect(du.mandateSql).toContain("3 AS Mandate");
   });
 
-  it("every daily query is parameterised on CallDate (a single ? bound to the lookback date), never string-interpolated", () => {
+  it("every daily/mandate query is parameterised on CallDate, never string-interpolated", () => {
     for (const plan of plans) {
       expect(plan.dailySql).toContain("CallDate >= ?");
       expect(plan.mandateSql).toContain("CallDate >= ?");
     }
+  });
+
+  /**
+   * Regression: Bellavita's and Neemans' daily queries each carry TWO CTEs
+   * that both filter on CallDate >= ? -- every other client has exactly
+   * one. A single one-element params array bound against these two left
+   * their second `?` unbound, and the first real dialer_db connection
+   * (2026-09-10) failed both with a SQL syntax error at that exact spot.
+   */
+  it("Bellavita and Neemans' daily queries carry two CallDate placeholders (one per CTE), not one", () => {
+    const bv = plans.find((p) => p.code === "BELLAVITA")!;
+    const neemans = plans.find((p) => p.code === "NEEMANS")!;
+    expect((bv.dailySql.match(/\?/g) ?? []).length).toBe(2);
+    expect((neemans.dailySql.match(/\?/g) ?? []).length).toBe(2);
+  });
+
+  it("every other client's daily query carries exactly one CallDate placeholder", () => {
+    for (const plan of plans) {
+      if (plan.code === "BELLAVITA" || plan.code === "NEEMANS") continue;
+      expect((plan.dailySql.match(/\?/g) ?? []).length).toBe(1);
+    }
+  });
+
+  it("every mandate query carries exactly one CallDate placeholder, for all seven clients", () => {
+    for (const plan of plans) {
+      expect((plan.mandateSql.match(/\?/g) ?? []).length).toBe(1);
+    }
+  });
+});
+
+/** Regression: `paramsFor` must bind exactly as many copies as the SQL text has `?`s -- not a hardcoded count. */
+describe("paramsFor", () => {
+  it("repeats the value once per real placeholder in a two-CTE query (Bellavita/Neemans shape)", () => {
+    const twoPlaceholderSql = "SELECT * FROM t WHERE CallDate >= ? UNION SELECT * FROM u WHERE CallDate >= ?";
+    expect(paramsFor(twoPlaceholderSql, "2026-08-11")).toEqual(["2026-08-11", "2026-08-11"]);
+  });
+
+  it("binds a single value for a single-placeholder query (every other client's shape)", () => {
+    const onePlaceholderSql = "SELECT * FROM t WHERE CallDate >= ?";
+    expect(paramsFor(onePlaceholderSql, "2026-08-11")).toEqual(["2026-08-11"]);
+  });
+});
+
+/**
+ * Regression: mysql2 returns a DATE column as a JS Date object (no
+ * `dateStrings` set on the dialer pool) -- `String(new Date(...))` gives
+ * "Thu Sep 10 2026 00:00:00 GMT+0530 (India Standard Time)", not an ISO
+ * date. The old `String(row.CallDate).slice(0, 10)` produced "Thu Sep 10"
+ * and MySQL rejected every INSERT with ER_TRUNCATED_WRONG_VALUE on the
+ * very first real dialer_db sync (2026-09-10).
+ */
+describe("formatCallDate", () => {
+  it("formats a real Date object (what mysql2 actually returns for a DATE column) as an ISO date, not toString()", () => {
+    const realMysqlDate = new Date(2026, 8, 10); // JS months are 0-indexed: September
+    expect(formatCallDate(realMysqlDate)).toBe("2026-09-10");
+  });
+  it("still accepts an already-ISO string defensively", () => {
+    expect(formatCallDate("2026-09-10")).toBe("2026-09-10");
   });
 });
