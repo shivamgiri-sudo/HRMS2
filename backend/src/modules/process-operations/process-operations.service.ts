@@ -2099,6 +2099,298 @@ export async function getAchtCategorization(
   return { available: true, reason: null, rows: result };
 }
 
+/**
+ * Critical Signals categorization -- ported VERBATIM from Mydashboards'
+ * NEG_CAT (inbound-quality.service.ts): ~135 exact-string matches against
+ * real historical `top_negative_words` values, followed by ~55 LOWER()/LIKE
+ * keyword-fallback rules, in the same priority order (exact matches first,
+ * first WHEN wins). Copied rather than re-derived -- these are literal
+ * business classifications of real observed text, not a formula to
+ * recompute, and guessing new rules risks silently misclassifying signals
+ * this list already got right.
+ *
+ * NOT ported: Mydashboards' admin-editable `db_audit.neg_category_keywords`
+ * table (hourly-refreshed dynamic extension, its own management endpoint).
+ * That is real, separate scope -- a keyword-administration feature, not a
+ * categorization formula -- left as a genuine follow-up rather than
+ * silently invented here.
+ */
+const CRITICAL_SIGNALS_CASE = `CASE
+  WHEN q.top_negative_words = 'discontinuing, pathetic, negative feedback' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud, pressure, complaint' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, delayed, lack of communication' THEN 'Frustration'
+  WHEN q.top_negative_words = 'delay, disappointed, bad experience, very bad impression' THEN 'Threat'
+  WHEN q.top_negative_words = 'cancel, problem, wait, frustration, delay' THEN 'Frustration'
+  WHEN q.top_negative_words = 'time pass, naalaayak' THEN 'Slang'
+  WHEN q.top_negative_words = 'inconvenience, problem, face, short, video' THEN 'Threat'
+  WHEN q.top_negative_words = 'Frustrated, Spilled, Damage, Inconvenience' THEN 'Frustration'
+  WHEN q.top_negative_words = 'pathetic, harassment, stupid' THEN 'Abuse'
+  WHEN q.top_negative_words = 'damage, used, less quantity' THEN 'Frustration'
+  WHEN q.top_negative_words = 'bakvaas, third class, bakvaas experience' THEN 'Threat'
+  WHEN q.top_negative_words = 'harass' THEN 'Abuse'
+  WHEN q.top_negative_words = 'embarrassment' THEN 'Frustration'
+  WHEN q.top_negative_words = 'frustration' THEN 'Frustration'
+  WHEN q.top_negative_words = 'cheat, fraud, complaint' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustration, threatened legal action' THEN 'Threat'
+  WHEN q.top_negative_words = 'scam' THEN 'Threat'
+  WHEN q.top_negative_words = 'missing, frustrated, requesting, refund' THEN 'Frustration'
+  WHEN q.top_negative_words = 'spam calls, lottery scam' THEN 'Threat'
+  WHEN q.top_negative_words = 'inconvenience, costly, smell' THEN 'Sarcasm'
+  WHEN q.top_negative_words = 'gutka paan' THEN 'Slang'
+  WHEN q.top_negative_words = 'bigad gaya, bura impression, fake remarks, maafi chaahoongi' THEN 'Frustration'
+  WHEN q.top_negative_words = 'inconvenience, not satisfying' THEN 'Threat'
+  WHEN q.top_negative_words = 'damage, inconvenience' THEN 'Threat'
+  WHEN q.top_negative_words = 'missing, incomplete, inconvenience' THEN 'Threat'
+  WHEN q.top_negative_words = 'faulty, issue' THEN 'Threat'
+  WHEN q.top_negative_words = 'fake website' THEN 'Threat'
+  WHEN q.top_negative_words = 'Scam, Spam, Loot' THEN 'Threat'
+  WHEN q.top_negative_words = 'harass, mental harassment, fake, warning, court case' THEN 'Threat'
+  WHEN q.top_negative_words = 'inconvenience, missing, disappointing, unexpected' THEN 'Threat'
+  WHEN q.top_negative_words = 'damage, leaked, inconvenience' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, delay, expiration, unavailable' THEN 'Frustration'
+  WHEN q.top_negative_words = 'bullshit, irritating, ridiculous' THEN 'Slang'
+  WHEN q.top_negative_words = 'frustrated, inconvenience' THEN 'Frustration'
+  WHEN q.top_negative_words = 'Inconvenience, Delay' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud' THEN 'Threat'
+  WHEN q.top_negative_words = 'security concerns' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, dissatisfied, threatens, negative feedback' THEN 'Frustration'
+  WHEN q.top_negative_words = 'gatia, locha, gatiya' THEN 'Slang'
+  WHEN q.top_negative_words = 'fraud, jooth, reject, cheat' THEN 'Threat'
+  WHEN q.top_negative_words = 'tampered, missing, used' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud, scam, fraudulent, fraudster' THEN 'Threat'
+  WHEN q.top_negative_words = 'contradicting, frustration, delay, confusion' THEN 'Frustration'
+  WHEN q.top_negative_words = 'bad, very bad, demand, frustration, dissatisfied' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud, spam, data leak' THEN 'Threat'
+  WHEN q.top_negative_words = 'upset, don''t trust, mad' THEN 'Frustration'
+  WHEN q.top_negative_words = 'irritating, spamming, annoying' THEN 'Threat'
+  WHEN q.top_negative_words = 'compromise, scammers, fishing site' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrating, poor, panicking, frustrating' THEN 'Frustration'
+  WHEN q.top_negative_words = 'zero star, rare' THEN 'Threat'
+  WHEN q.top_negative_words = 'fake call, fraud call, avoid' THEN 'Threat'
+  WHEN q.top_negative_words = 'low quality, illegal business, misleading' THEN 'Threat'
+  WHEN q.top_negative_words = 'fraudulent, fake, scam' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, dissatisfaction' THEN 'Frustration'
+  WHEN q.top_negative_words = 'Bakvaas' THEN 'Slang'
+  WHEN q.top_negative_words = 'dissatisfied, frustration, negative review' THEN 'Frustration'
+  WHEN q.top_negative_words = 'delay, issue, complaint' THEN 'Frustration'
+  WHEN q.top_negative_words = 'leak, damage' THEN 'Threat'
+  WHEN q.top_negative_words = 'inconvenience, frustrated, delay' THEN 'Frustration'
+  WHEN q.top_negative_words = 'misguide' THEN 'Threat'
+  WHEN q.top_negative_words = 'shocked, leak' THEN 'Threat'
+  WHEN q.top_negative_words = 'fraud call' THEN 'Threat'
+  WHEN q.top_negative_words = 'damaged, broken, cannot, forgot' THEN 'Threat'
+  WHEN q.top_negative_words = 'damaged' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, delay, missing' THEN 'Threat'
+  WHEN q.top_negative_words = 'smell' THEN 'Sarcasm'
+  WHEN q.top_negative_words = 'heavy, issue, problem, allergy' THEN 'Threat'
+  WHEN q.top_negative_words = 'complicated, fed up, private, reluctance' THEN 'Threat'
+  WHEN q.top_negative_words = 'discontinued, unavailable, disappointing, not available, out of stock' THEN 'Frustration'
+  WHEN q.top_negative_words = 'dissatisfaction, fraudulent, loss' THEN 'Threat'
+  WHEN q.top_negative_words = 'confuse, force, chutiya' THEN 'Abuse'
+  WHEN q.top_negative_words = 'Misbehave by Delivery boy' THEN 'Abuse'
+  WHEN q.top_negative_words = 'Mat lagao idhar idhar, sokira' THEN 'Sarcasm'
+  WHEN q.top_negative_words = 'Inconvenience, Wrong, Return, Not received' THEN 'Frustration'
+  WHEN q.top_negative_words = 'reviews, fraud, problem' THEN 'Threat'
+  WHEN q.top_negative_words = 'Frustration, Wrong with service, Frustration' THEN 'Frustration'
+  WHEN q.top_negative_words = 'lost, delay, inconvenience, issue, complaint' THEN 'Threat'
+  WHEN q.top_negative_words = 'missing, missing item' THEN 'Threat'
+  WHEN q.top_negative_words = 'Badtamizi' THEN 'Slang'
+  WHEN q.top_negative_words = 'missing, wrong, dissatisfaction, inconvenience' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fake rewards, unavailable, frustration, dissatisfaction' THEN 'Threat'
+  WHEN q.top_negative_words = 'half, fraud, incorrect, concerns, frustration' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, lack of resolution, delivery issues' THEN 'Frustration'
+  WHEN q.top_negative_words = 'delay, complaint, frustrated, escalate' THEN 'Frustration'
+  WHEN q.top_negative_words = 'Chor, Thag, Kutton' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustration, disconnecting' THEN 'Frustration'
+  WHEN q.top_negative_words = 'frustrated, loss, harassment' THEN 'Frustration'
+  WHEN q.top_negative_words = 'frustrated, reluctant, uncooperative' THEN 'Frustration'
+  WHEN q.top_negative_words = 'scam, waste of time, ghatiya, shame, shit' THEN 'Threat'
+  WHEN q.top_negative_words = 'pathetic' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud, water instead of perfume' THEN 'Threat'
+  WHEN q.top_negative_words = 'trouble, inconvenience, frustration' THEN 'Frustration'
+  WHEN q.top_negative_words = 'ladai, phaahi, karvai, misbehave' THEN 'Abuse'
+  WHEN q.top_negative_words = 'daadoo, ukhaadoo' THEN 'Slang'
+  WHEN q.top_negative_words = 'wait, check, concern, delay' THEN 'Frustration'
+  WHEN q.top_negative_words = 'inconvenience, mistake, refund, initiated, incorrect' THEN 'Frustration'
+  WHEN q.top_negative_words = 'inconvenience' THEN 'Frustration'
+  WHEN q.top_negative_words = 'none' THEN 'No'
+  WHEN q.top_negative_words = 'samajh nahin pa rahi hai' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fake, market, fake, market' THEN 'Threat'
+  WHEN q.top_negative_words = 'slow, frustration, nonsense' THEN 'Frustration'
+  WHEN q.top_negative_words = 'refund, wait, complaint' THEN 'Frustration'
+  WHEN q.top_negative_words = 'Fake, Review, Ganda' THEN 'Abuse'
+  WHEN q.top_negative_words = 'received different, wrong one, apologize, inconvenience' THEN 'Frustration'
+  WHEN q.top_negative_words = 'inconvenience, missing, leakage, not working' THEN 'Threat'
+  WHEN q.top_negative_words = 'concern, inconvenience' THEN 'Threat'
+  WHEN q.top_negative_words = 'Unreachable, Blood boils' THEN 'Slang'
+  WHEN q.top_negative_words = 'defected, old, leakage' THEN 'Threat'
+  WHEN q.top_negative_words = 'inconvenience, damaged, disappointed' THEN 'Threat'
+  WHEN q.top_negative_words = 'rude behavior, inconvenience' THEN 'Abuse'
+  WHEN q.top_negative_words = 'irritate, frustrated' THEN 'Frustration'
+  WHEN q.top_negative_words = 'loss one customer, dissatisfaction' THEN 'Threat'
+  WHEN q.top_negative_words = 'Unavailable, Restricted, Unavailable, Unreachable, Issue' THEN 'Frustration'
+  WHEN q.top_negative_words = 'ridiculous, inconvenience, too long' THEN 'Frustration'
+  WHEN q.top_negative_words = 'complaint, dissatisfied, frustration, delay, missing' THEN 'Frustration'
+  WHEN q.top_negative_words = 'I don''t like this product.' THEN 'Sarcasm'
+  WHEN q.top_negative_words = 'fraud, missing, inconvenience' THEN 'Threat'
+  WHEN q.top_negative_words = 'complaint, dissatisfied, wrong product, replacement, limitations' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud, police' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrated, delays, lack of response' THEN 'Frustration'
+  WHEN q.top_negative_words = 'ridiculous' THEN 'Slang'
+  WHEN q.top_negative_words = 'broken, dissatisfied, complaining, demanding' THEN 'Frustration'
+  WHEN q.top_negative_words = 'half order, wrong, missing, dissatisfied' THEN 'Frustration'
+  WHEN q.top_negative_words = 'penalty, CIBIL, frustration' THEN 'Threat'
+  WHEN q.top_negative_words = 'frustrating, annoying, disappointing' THEN 'Frustration'
+  WHEN q.top_negative_words = 'Ghatiya' THEN 'Frustration'
+  WHEN q.top_negative_words = 'irritated, fucking, thak gaya' THEN 'Frustration'
+  WHEN q.top_negative_words = 'irritated, least interested, struggled' THEN 'Frustration'
+  WHEN q.top_negative_words = 'dubaara, kuchh nahin aaya, solah, koi faayda hi nahin, cash on delivery order, koi free gift receive nahin hota' THEN 'Frustration'
+  WHEN q.top_negative_words = 'frustration, delay, inconvenience, not responding' THEN 'Frustration'
+  WHEN q.top_negative_words = 'psycho' THEN 'Frustration'
+  WHEN q.top_negative_words = 'refund, dissatisfaction, confusion' THEN 'Frustration'
+  WHEN q.top_negative_words = 'fraud, poor' THEN 'Threat'
+  WHEN q.top_negative_words = 'wasted, fake, bad, complaint, unsatisfied' THEN 'Frustration'
+  WHEN q.top_negative_words = 'mislead, crime, unfair practices, consumer court' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%frustration%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%frustrated%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%fir%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%gatia%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%fraud%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%bakvaas%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%scam%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%pathetic%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%dissatisfaction%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%inconvenience%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%fake%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%disappointed%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%pareshaan%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%misbehave%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%frustrating%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%unpleasant%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%angry%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%mahanga%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%band kar do%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%disappointing%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%dissatisfied%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%loot%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%irritating%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%farzi%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%unsatisfied%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%barbaad%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%unsatisfactory%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%ghatiya%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%cheating%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%paagal%' THEN 'Slang'
+  WHEN LOWER(q.top_negative_words) LIKE '%badboo%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%shut up%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%randipana%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%bullshit%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%unhappy%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%terrible%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%horrible%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%awful%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%very bad%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%bad experience%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%worst%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%not satisfied%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%not happy%' THEN 'Frustration'
+  WHEN LOWER(q.top_negative_words) LIKE '%rude%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%abusive%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%insult%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%offensive%' THEN 'Abuse'
+  WHEN LOWER(q.top_negative_words) LIKE '%consumer court%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%social media%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%lawyer%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%blackmail%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%police complaint%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%legal action%' THEN 'Threat'
+  WHEN LOWER(q.top_negative_words) LIKE '%consumer forum%' THEN 'Threat'
+  ELSE 'No'
+END`;
+
+const CRITICAL_SIGNAL_KEYS = ["Frustration", "Threat", "Abuse", "Slang", "Sarcasm"] as const;
+const CRITICAL_SIGNAL_META: Record<string, { label: string; emoji: string }> = {
+  Frustration: { label: "Frustration", emoji: "😤" },
+  Threat: { label: "Threat", emoji: "⚠️" },
+  Abuse: { label: "Abuse", emoji: "🚫" },
+  Slang: { label: "Slang", emoji: "💬" },
+  Sarcasm: { label: "Sarcasm", emoji: "🙃" },
+};
+
+export interface CriticalSignal { key: string; label: string; emoji: string; count: number; pct: number; }
+export interface CriticalSignals {
+  available: boolean; reason: string | null;
+  totalExamined: number;
+  signals: CriticalSignal[];
+}
+
+/**
+ * Critical Signals -- share of examined calls carrying each of five
+ * negative-language categories (Frustration/Threat/Abuse/Slang/Sarcasm),
+ * classified from top_negative_words via CRITICAL_SIGNALS_CASE above.
+ * "Examined" means quality_percentage IS NOT NULL, the same audited-call
+ * gate every sibling function here uses -- a call this text is 'No' for
+ * genuinely was examined and found clean, distinct from never being
+ * examined at all.
+ */
+export async function getCriticalSignals(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<CriticalSignals | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): CriticalSignals => ({ available: false, reason, totalExamined: 0, signals: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT category, COUNT(*) cnt FROM (
+        SELECT ${CRITICAL_SIGNALS_CASE} AS category
+          FROM db_audit.call_quality_assessment q
+         WHERE q.User IN (${inList})
+           AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+           AND q.quality_percentage IS NOT NULL
+     ) x
+     GROUP BY category`,
+    [...employeeCodes, from, to],
+  );
+
+  const total = (rows as any[]).reduce((s, r) => s + Number(r.cnt), 0);
+  if (!total) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const byCategory = new Map<string, number>((rows as any[]).map((r) => [String(r.category), Number(r.cnt)]));
+  const signals: CriticalSignal[] = CRITICAL_SIGNAL_KEYS.map((key) => {
+    const count = byCategory.get(key) ?? 0;
+    return {
+      key, label: CRITICAL_SIGNAL_META[key]!.label, emoji: CRITICAL_SIGNAL_META[key]!.emoji,
+      count, pct: Math.round((count / total) * 1000) / 10,
+    };
+  });
+  return { available: true, reason: null, totalExamined: total, signals };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{

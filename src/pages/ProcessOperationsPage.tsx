@@ -251,6 +251,9 @@ interface AchtRow {
 }
 interface AchtCategorization { available: boolean; reason: string | null; rows: AchtRow[]; }
 
+interface CriticalSignal { key: string; label: string; emoji: string; count: number; pct: number; }
+interface CriticalSignals { available: boolean; reason: string | null; totalExamined: number; signals: CriticalSignal[]; }
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -1037,6 +1040,46 @@ function AchtCategorizationPanel({ processId, period }: { processId: string; per
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/**
+ * Critical Signals -- Frustration/Threat/Abuse/Slang/Sarcasm, classified
+ * from top_negative_words (CRITICAL_SIGNALS_CASE, ported verbatim from
+ * Mydashboards' source). Five emoji tiles matching the reference UI.
+ */
+function CriticalSignalsPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "critical-signals", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<CriticalSignals>>(
+      `/api/process-operations/${processId}/critical-signals?period=${period}`),
+  });
+  const cs = data?.data;
+
+  return (
+    <ChartCard title="Critical signals" subtitle="Share of examined calls carrying each negative-language category">
+      <div className="px-3 pb-2">
+        {isLoading || !cs ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading critical signals…
+          </div>
+        ) : !cs.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{cs.reason}</p>
+        ) : (
+          <div className="grid grid-cols-5 gap-1.5">
+            {cs.signals.map((s) => (
+              <div key={s.key} className="flex flex-col items-center gap-0.5 rounded-lg border border-slate-100 dark:border-slate-800 px-1 py-2">
+                <span className="text-lg leading-none">{s.emoji}</span>
+                <span className={`text-[12px] font-bold ${s.pct > 0 ? "text-slate-700 dark:text-slate-200" : "text-slate-300 dark:text-slate-600"}`}>
+                  {s.pct}%
+                </span>
+                <span className="text-[8.5px] text-slate-500 dark:text-slate-400 uppercase tracking-wide text-center leading-tight">{s.label}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </ChartCard>
@@ -3723,6 +3766,7 @@ export default function ProcessOperationsPage() {
                 {current && <ScenarioDistributionPanel processId={current} period={period} />}
                 {current && <ScoreComponentsPanel processId={current} period={period} />}
                 {current && <AchtCategorizationPanel processId={current} period={period} />}
+                {current && <CriticalSignalsPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length
