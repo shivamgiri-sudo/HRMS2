@@ -241,6 +241,9 @@ interface ScenarioDistributionChild { scenario1: string; count: number; pct: num
 interface ScenarioDistributionItem { scenario: string; count: number; pct: number; children: ScenarioDistributionChild[]; }
 interface ScenarioDistribution { available: boolean; reason: string | null; items: ScenarioDistributionItem[]; }
 
+interface ScoreComponent { key: string; label: string; scorePct: number | null; }
+interface ScoreComponents { available: boolean; reason: string | null; components: ScoreComponent[]; }
+
 interface CallDetail {
   available: boolean; reason: string | null;
   employeeCode: string; employeeName: string; callDate: string;
@@ -917,6 +920,61 @@ function AgentAuditSummaryPanel({ processId, period }: { processId: string; peri
               </table>
             </div>
           </>
+        )}
+      </div>
+    </ChartCard>
+  );
+}
+
+/** A single circular gauge, pure SVG (no chart library) -- radius/stroke
+ *  fixed so five of these sit evenly in one row on a phone-width screen. */
+function RadialGauge({ label, pct }: { label: string; pct: number | null }) {
+  const r = 30; const stroke = 6; const c = 2 * Math.PI * r;
+  const value = pct ?? 0;
+  const color = value >= 90 ? C_GREEN : value >= 75 ? C_AMBER : C_RED;
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <svg width={76} height={76} viewBox="0 0 76 76" className="-rotate-90">
+        <circle cx={38} cy={38} r={r} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-slate-100 dark:text-slate-800" />
+        {pct !== null && (
+          <circle cx={38} cy={38} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
+            strokeDasharray={c} strokeDashoffset={c - (value / 100) * c}
+            className="transition-all duration-500" />
+        )}
+      </svg>
+      <div className="-mt-[52px] text-[13px] font-bold" style={{ color: pct !== null ? color : "#94A3B8" }}>
+        {pct !== null ? `${pct}%` : "—"}
+      </div>
+      <div className="mt-[22px] text-[9.5px] text-center text-slate-500 dark:text-slate-400 font-medium leading-tight max-w-[76px]">{label}</div>
+    </div>
+  );
+}
+
+/**
+ * Score Components -- the five skill-group gauges (Opening/Soft Skill/Hold/
+ * Resolution/Closing), ported from Mydashboards' verified source grouping.
+ */
+function ScoreComponentsPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["process-operations", "score-components", processId, period],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ScoreComponents>>(
+      `/api/process-operations/${processId}/score-components?period=${period}`),
+  });
+  const sc = data?.data;
+
+  return (
+    <ChartCard title="Score components" subtitle="Five skill groups behind the overall call quality score">
+      <div className="px-3 pb-2">
+        {isLoading || !sc ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading score components…
+          </div>
+        ) : !sc.available ? (
+          <p className="text-xs text-slate-400 italic py-1">{sc.reason}</p>
+        ) : (
+          <div className="flex items-start justify-between gap-1 flex-wrap">
+            {sc.components.map((c) => <RadialGauge key={c.key} label={c.label} pct={c.scorePct} />)}
+          </div>
         )}
       </div>
     </ChartCard>
@@ -3601,6 +3659,7 @@ export default function ProcessOperationsPage() {
                 {current && <FatalCallsPanel processId={current} period={period} />}
                 {current && <AgentAuditSummaryPanel processId={current} period={period} />}
                 {current && <ScenarioDistributionPanel processId={current} period={period} />}
+                {current && <ScoreComponentsPanel processId={current} period={period} />}
                 {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
                 {[...ops.sections, ...(ops.ungrouped.length

@@ -1891,6 +1891,113 @@ export async function getScenarioDistribution(
   return { available: true, reason: null, items };
 }
 
+/**
+ * The five Score Components groupings, ported verbatim from Mydashboards'
+ * source (the SQL block feeding its opening_skill/soft_skill/hold_procedure/
+ * resolution/closing columns) -- not re-derived, since the grouping itself
+ * (which of the 20 CQ parameters belongs to which "skill") is a domain
+ * judgement call already made and verified there, not something to guess.
+ */
+const SCORE_COMPONENT_GROUPS: Array<{ key: string; label: string; cols: string[] }> = [
+  { key: "opening_skill", label: "Opening skill", cols: ["call_answered_within_5_seconds"] },
+  {
+    key: "soft_skill", label: "Soft skill", cols: [
+      "professionalism_maintained", "assurance_or_appreciation_provided", "pronunciation_and_clarity",
+      "enthusiasm_and_no_fumbling", "active_listening", "politeness_and_no_sarcasm",
+      "proper_grammar", "accurate_issue_probing", "customer_concern_acknowledged",
+    ],
+  },
+  { key: "hold_procedure", label: "Hold procedure", cols: ["proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds"] },
+  {
+    key: "resolution", label: "Resolution", cols: [
+      "case_escalated_correctly", "address_recorded_completely",
+      "correct_and_complete_information", "upselling_or_offers_suggested",
+    ],
+  },
+  { key: "closing", label: "Closing", cols: ["further_assistance_offered", "proper_call_closure"] },
+];
+/** Scenario1 values where the call structurally can't be graded on any of
+ *  the five skill groups (dropped/blank) -- counted as a full pass for every
+ *  group rather than penalising a call nobody could actually score. Same
+ *  exception Mydashboards' source applies to every Score Components bucket. */
+const UNGRADABLE_SCENARIO1 = ["Call Drop in between", "Short Call/Blank Call"];
+
+export interface ScoreComponent { key: string; label: string; scorePct: number | null; }
+export interface ScoreComponents {
+  available: boolean; reason: string | null;
+  components: ScoreComponent[];
+}
+
+/**
+ * The five Score Components gauges (Opening/Soft Skill/Hold/Resolution/
+ * Closing), each a per-call average of excludeBlankRatio(group cols) --
+ * a blank parameter is excluded from both numerator and denominator (a call
+ * never graded on a column neither helps nor hurts its score on it, matching
+ * how the Quality Parameters-style per-parameter scores already work
+ * elsewhere on this page), with UNGRADABLE_SCENARIO1 calls scored as a full
+ * pass for every group since there was nothing to grade.
+ */
+export async function getScoreComponents(
+  userId: string, processId: string, period: ReportPeriod,
+): Promise<ScoreComponents | null> {
+  const allowed = await readableProcessIds(userId);
+  if (!allowed.has(processId)) return null;
+
+  const unavailable = (reason: string): ScoreComponents => ({ available: false, reason, components: [] });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE process_id = ? AND employee_code IS NOT NULL AND employee_code != ''`,
+    [processId],
+  );
+  const employeeCodes = (empRows as any[]).map((r) => String(r.employee_code));
+  if (!employeeCodes.length) return unavailable("This process has no employees to attribute audited calls to.");
+  const inList = employeeCodes.map(() => "?").join(",");
+
+  const range = periodRange(period, new Date());
+  let from: string; let to: string;
+  if (range) { from = range.from; to = range.to; }
+  else {
+    const [latestRows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) latest FROM db_audit.call_quality_assessment
+        WHERE User IN (${inList}) AND quality_percentage IS NOT NULL
+          AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+      employeeCodes,
+    );
+    const latest = (latestRows as any[])[0]?.latest;
+    if (!latest) return unavailable("No audited calls in the last 90 days for this process.");
+    const d = isoDate(latest);
+    from = d; to = d;
+  }
+
+  const ungradableSql = `q.scenario1 IN (${UNGRADABLE_SCENARIO1.map(() => "?").join(",")})`;
+  const groupSelects = SCORE_COMPONENT_GROUPS.map((g) => {
+    const num = g.cols.map((c) => `(CASE WHEN q.\`${c}\` IS NOT NULL THEN IF(q.\`${c}\` = 1, 1, 0) ELSE 0 END)`).join(" + ");
+    const den = g.cols.map((c) => `(CASE WHEN q.\`${c}\` IS NOT NULL THEN 1 ELSE 0 END)`).join(" + ");
+    return `ROUND(AVG(CASE WHEN ${ungradableSql} THEN 1 ELSE (${num}) / NULLIF(${den}, 0) END) * 100, 1) AS ${g.key}`;
+  }).join(",\n        ");
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${groupSelects}
+       FROM db_audit.call_quality_assessment q
+      WHERE q.User IN (${inList})
+        AND q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+        AND q.quality_percentage IS NOT NULL`,
+    [
+      ...SCORE_COMPONENT_GROUPS.map(() => UNGRADABLE_SCENARIO1).flat(),
+      ...employeeCodes, from, to,
+    ],
+  );
+
+  const row = (rows as any[])[0];
+  if (!row) return { ...unavailable("No audited calls in this period for this process."), available: true };
+
+  const components: ScoreComponent[] = SCORE_COMPONENT_GROUPS.map((g) => ({
+    key: g.key, label: g.label,
+    scorePct: row[g.key] !== null ? Number(row[g.key]) : null,
+  }));
+  return { available: true, reason: null, components };
+}
+
 export interface EmployeeRecentCalls {
   available: boolean; reason: string | null;
   calls: Array<{
