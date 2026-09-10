@@ -6,6 +6,55 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
+/**
+ * Latest Payment Voucher raised against each vendor_payment_tracking row, as a joinable
+ * subquery. Shared verbatim by listPayments() and getPayment() so the grid and the drill-down
+ * can never disagree about a due's voucher state.
+ *
+ * ROW_NUMBER() picks the most recently raised voucher per due — a due can accumulate several
+ * over time (raised, rejected, raised again), and only the newest one governs what the page
+ * may do now. The full history is a separate query in getPayment().
+ *
+ * Reads through payment_voucher_grn_allocation, whose idx_pvga_grn index covers
+ * vendor_payment_tracking_id, so this join stays cheap at grid page sizes.
+ */
+const LATEST_VOUCHER_JOIN = `
+  LEFT JOIN (
+    SELECT pvga.vendor_payment_tracking_id,
+           pv.id AS voucher_id,
+           pv.voucher_number,
+           pv.status AS voucher_status,
+           pv.raised_at AS voucher_raised_at,
+           pv.ceo_approved_at AS voucher_ceo_approved_at,
+           pv.released_at AS voucher_released_at,
+           pv.rejection_reason AS voucher_rejection_reason,
+           ROW_NUMBER() OVER (
+             PARTITION BY pvga.vendor_payment_tracking_id ORDER BY pv.raised_at DESC, pv.id DESC
+           ) AS rn
+      FROM payment_voucher_grn_allocation pvga
+      JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+  ) pvl ON pvl.vendor_payment_tracking_id = vpt.id AND pvl.rn = 1`;
+
+/**
+ * Voucher statuses that mean "a voucher is mid-flight for this due".
+ *
+ * 'released' is excluded because the money has already moved — the pre-existing
+ * Paid/balance guards cover that case. 'rejected' is excluded because it is terminal and must
+ * not block a fresh voucher or a direct dispatch.
+ *
+ * DUPLICATED, DELIBERATELY: vendor-payment-ledger.service.ts's dispatch() enforces the same
+ * set in SQL inside its own row lock. The UI gate and the server guard must agree; if you
+ * change one, change the other.
+ */
+const ACTIVE_VOUCHER_STATUSES = ["raised", "ceo_approved", "changes_requested"];
+
+function withActiveVoucherFlag(row: RowDataPacket): Record<string, any> {
+  return {
+    ...(row as Record<string, any>),
+    active_voucher: ACTIVE_VOUCHER_STATUSES.includes(String(row.voucher_status ?? "")),
+  };
+}
+
 export interface VendorPaymentFilters {
   financialYear?: string;
   month?: string;
@@ -248,7 +297,20 @@ export const vendorPaymentService = {
               -- chasing payment, so joining beats asking them to open each GRN.
               g.invoice_number,
               g.bill_date,
-              g.billing_cycle_status
+              g.billing_cycle_status,
+              -- Reverse visibility into the Payment Voucher workflow. A due can be paid two
+              -- ways — the direct dispatch on this page, or a voucher raised on
+              -- /finance/payment-vouchers that CEO approves and Finance Head releases. Both
+              -- write the same vendor_payment_tracking row, so this page has to show whether a
+              -- voucher is already in flight, otherwise Accounts would pay something the CEO
+              -- is still deciding on.
+              pvl.voucher_id,
+              pvl.voucher_number,
+              pvl.voucher_status,
+              pvl.voucher_raised_at,
+              pvl.voucher_ceo_approved_at,
+              pvl.voucher_released_at,
+              pvl.voucher_rejection_reason
          FROM vendor_payment_tracking vpt
          LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
@@ -256,6 +318,7 @@ export const vendorPaymentService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
          LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
          LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+         ${LATEST_VOUCHER_JOIN}
          ${where}
         ORDER BY vpt.due_date ASC, vpt.created_at ASC
         LIMIT ${limit} OFFSET ${offset}`,
@@ -263,14 +326,14 @@ export const vendorPaymentService = {
     );
 
     return {
-      rows,
+      rows: rows.map(withActiveVoucherFlag),
       total: Number(countRows[0]?.total ?? 0),
       page,
       limit,
     };
   },
 
-  async getPayment(id: string) {
+  async getPayment(id: string): Promise<Record<string, any> | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.*,
               bm.bank_name AS bank_master_name,
@@ -280,18 +343,43 @@ export const vendorPaymentService = {
               ccm.cost_centre_name,
               vm.vendor_type,
               vm.contact_email,
-              vm.contact_phone
+              vm.contact_phone,
+              pvl.voucher_id,
+              pvl.voucher_number,
+              pvl.voucher_status,
+              pvl.voucher_raised_at,
+              pvl.voucher_ceo_approved_at,
+              pvl.voucher_released_at,
+              pvl.voucher_rejection_reason
          FROM vendor_payment_tracking vpt
          LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
          LEFT JOIN process_master pm ON pm.id = vpt.process_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
          LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         ${LATEST_VOUCHER_JOIN}
         WHERE vpt.id = ?
         LIMIT 1`,
       [id]
     );
-    return rows[0] ?? null;
+    if (!rows[0]) return null;
+
+    // Every voucher ever raised against this due, newest first — the drill-down mandate wants
+    // the whole approval history, not just the current one. Kept as a second query rather than
+    // widening the join: one due can carry N vouchers and a join would multiply the base row.
+    const [voucherHistory] = await db.execute<RowDataPacket[]>(
+      `SELECT pv.id, pv.voucher_number, pv.status, pv.amount AS voucher_amount,
+              pv.raised_by, pv.raised_at, pv.ceo_approved_by, pv.ceo_approved_at,
+              pv.released_by, pv.released_at, pv.rejection_reason,
+              pvga.allocated_amount
+         FROM payment_voucher_grn_allocation pvga
+         JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+        WHERE pvga.vendor_payment_tracking_id = ?
+        ORDER BY pv.raised_at DESC, pv.id DESC`,
+      [id]
+    );
+
+    return { ...withActiveVoucherFlag(rows[0]), voucher_history: voucherHistory };
   },
 
   /**

@@ -76,6 +76,9 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       "vpt-1",
       expect.objectContaining({ paymentMode: "NEFT", paymentDate: "2026-09-10", paymentAmount: 5000, transactionId: "UTR123" }),
       "fh-1", "finance_head", conn,
+      // 6th arg: this voucher's own id, so dispatch()'s active-voucher guard skips the voucher
+      // currently being released (still 'ceo_approved' at this point) instead of blocking it.
+      "pv-1",
     );
   });
 
@@ -147,8 +150,8 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
 
     await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR125" });
 
-    expect(dispatch).toHaveBeenNthCalledWith(1, "vpt-1", expect.objectContaining({ paymentAmount: 3000, allowSharedReference: true }), "fh-1", "finance_head", conn);
-    expect(dispatch).toHaveBeenNthCalledWith(2, "vpt-2", expect.objectContaining({ paymentAmount: 2000, allowSharedReference: true }), "fh-1", "finance_head", conn);
+    expect(dispatch).toHaveBeenNthCalledWith(1, "vpt-1", expect.objectContaining({ paymentAmount: 3000, allowSharedReference: true }), "fh-1", "finance_head", conn, "pv-1");
+    expect(dispatch).toHaveBeenNthCalledWith(2, "vpt-2", expect.objectContaining({ paymentAmount: 2000, allowSharedReference: true }), "fh-1", "finance_head", conn, "pv-1");
   });
 
   it("does not set allowSharedReference for a single-GRN release", async () => {
@@ -166,7 +169,7 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
 
     await paymentVoucherService.release("pv-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-10", transactionRef: "UTR128" });
 
-    expect(dispatch).toHaveBeenCalledWith("vpt-1", expect.objectContaining({ allowSharedReference: false }), "fh-1", "finance_head", conn);
+    expect(dispatch).toHaveBeenCalledWith("vpt-1", expect.objectContaining({ allowSharedReference: false }), "fh-1", "finance_head", conn, "pv-1");
   });
 });
 

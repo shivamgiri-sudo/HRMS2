@@ -139,7 +139,16 @@ export const vendorPaymentLedgerService = {
     payload: DispatchPaymentPayload,
     actorUserId: string,
     actorRole?: string,
-    externalConnection?: PoolConnection
+    externalConnection?: PoolConnection,
+    /**
+     * The payment_voucher this dispatch is the execution of, when called from
+     * payment-voucher.service.ts's release(). At that moment the voucher is still
+     * 'ceo_approved' — it only flips to 'released' after this call returns — so without
+     * excluding it, the active-voucher guard below would find the very voucher being released
+     * and block its own release. Left undefined for a direct dispatch from the Vendor Payment
+     * Dispatch page, where any active voucher legitimately blocks.
+     */
+    callingVoucherId?: string
   ) {
     if (!PAYMENT_MODES.includes(payload.paymentMode)) {
       throw requestError(400, "Invalid payment mode");
@@ -168,6 +177,35 @@ export const vendorPaymentLedgerService = {
       }
       if (String(payment.payment_status) === "On Hold") {
         throw requestError(409, "Release the payment hold before dispatching an installment");
+      }
+
+      // A due can be paid two ways: directly from the Vendor Payment Dispatch page, or through
+      // a Payment Voucher (Finance Head raises, CEO approves, Finance Head releases). Once a
+      // voucher is in flight the voucher is the only legitimate route — a direct dispatch here
+      // would pay money the CEO is still deciding on, and leave the voucher stranded.
+      //
+      // Runs inside the same transaction and row lock as the rest of dispatch(), so a voucher
+      // raised concurrently with an in-flight dispatch is still caught.
+      //
+      // Status set mirrors ACTIVE_VOUCHER_STATUSES in vendor-payment.service.ts, which drives
+      // the matching UI gate. Change one, change the other.
+      const [activeVoucherRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT pv.id, pv.voucher_number, pv.status
+           FROM payment_voucher_grn_allocation pvga
+           JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+          WHERE pvga.vendor_payment_tracking_id = ?
+            AND pv.status IN ('raised','ceo_approved','changes_requested')
+            AND pv.id <> ?
+          ORDER BY pv.raised_at DESC
+          LIMIT 1`,
+        [paymentId, callingVoucherId ?? ""]
+      );
+      const activeVoucher = activeVoucherRows[0];
+      if (activeVoucher) {
+        throw requestError(
+          409,
+          `Payment Voucher ${activeVoucher.voucher_number} is already ${activeVoucher.status} for this due. Complete it through the voucher's Release action instead of a direct dispatch.`
+        );
       }
 
       const currentPaid = roundMoney(Number(payment.paid_amount ?? 0));

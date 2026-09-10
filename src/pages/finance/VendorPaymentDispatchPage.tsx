@@ -26,9 +26,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useHasRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 import { PaymentDispatchSheet } from "@/components/finance/vendor/PaymentDispatchSheet";
+// The voucher chain is reachable from this page too: raise for one due, then approve/release in
+// the same drawer the Payment Vouchers page uses. Both write one payment_voucher row.
+import { PaymentVoucherDrawer } from "@/components/finance/vendor/PaymentVoucherDrawer";
+import { RaiseVoucherForSingleDueDialog } from "@/components/finance/vendor/RaiseVoucherForSingleDueDialog";
+import { VoucherStatusBadge } from "@/components/finance/vendor/VoucherStatusBadge";
 
 interface PaymentCapabilities {
   canRead: boolean;
@@ -73,6 +79,23 @@ interface VendorPayment {
   remarks?: string | null;
   grn_file_name?: string | null;
   payment_proof_file_name?: string | null;
+  tds_deducted_amount?: number | null;
+  vendor_id?: string | null;
+  /**
+   * The most recently raised Payment Voucher against this due, joined on by the list/detail
+   * queries. A due can be settled either here (direct dispatch) or through the voucher chain
+   * on /finance/payment-vouchers — both write this same row, so this page has to show which.
+   * Null on every due that has never had a voucher raised, which is most of them.
+   */
+  voucher_id?: string | null;
+  voucher_number?: string | null;
+  voucher_status?: "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested" | null;
+  voucher_raised_at?: string | null;
+  voucher_ceo_approved_at?: string | null;
+  voucher_released_at?: string | null;
+  voucher_rejection_reason?: string | null;
+  /** Server-computed: a voucher is mid-flight, so direct dispatch is blocked for this due. */
+  active_voucher?: boolean;
 }
 
 interface BankMaster {
@@ -206,6 +229,13 @@ export default function VendorPaymentDispatchPage() {
   const [filters, setFilters] = useState<Filters>(initialFilters());
   const [selected, setSelected] = useState<VendorPayment | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // Voucher surfaces. The drawer and the dispatch sheet are siblings, never nested — opening a
+  // voucher from inside the sheet closes the sheet and opens the drawer.
+  const [voucherDrawerId, setVoucherDrawerId] = useState<string | null>(null);
+  const [raiseForDue, setRaiseForDue] = useState<VendorPayment | null>(null);
+  // Raising is Finance Head's call, matching VOUCHER_RAISE_ROLES on the server. Accounts Head
+  // keeps the direct-dispatch button; this is the other route, not a replacement for it.
+  const canRaiseVoucher = useHasRole("finance_head", "super_admin");
   const [showAging, setShowAging] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
   const [showBacklog, setShowBacklog] = useState(false);
@@ -548,7 +578,8 @@ export default function VendorPaymentDispatchPage() {
                   <th className="h-8 min-w-[80px] text-right font-medium text-slate-500">Balance</th>
                   <th className="h-8 min-w-[80px] text-left font-medium text-slate-500">Due date</th>
                   <th className="h-8 min-w-[80px] text-left font-medium text-slate-500">Status</th>
-                  <th className="h-8 w-16 text-left font-medium text-slate-500">Action</th>
+                  <th className="h-8 min-w-[110px] text-left font-medium text-slate-500">Voucher</th>
+                  <th className="h-8 min-w-[130px] text-left font-medium text-slate-500">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -605,20 +636,49 @@ export default function VendorPaymentDispatchPage() {
                       </Badge>
                     </td>
                     <td className="py-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs"
-                        onClick={(e) => { e.stopPropagation(); setSelected(p); setSheetOpen(true); }}
-                      >
-                        Pay
-                      </Button>
+                      {p.voucher_status ? (
+                        <button
+                          type="button"
+                          className="cursor-pointer text-left"
+                          title={`${p.voucher_number ?? "Voucher"} — open approval detail`}
+                          onClick={(e) => { e.stopPropagation(); setVoucherDrawerId(p.voucher_id ?? null); }}
+                        >
+                          <VoucherStatusBadge status={p.voucher_status} className="text-[10px]" />
+                          <div className="truncate max-w-[110px] text-[10px] text-slate-400">{p.voucher_number}</div>
+                        </button>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="py-1">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-xs"
+                          onClick={(e) => { e.stopPropagation(); setSelected(p); setSheetOpen(true); }}
+                        >
+                          Pay
+                        </Button>
+                        {/* Only offered where it can actually succeed: no voucher already in
+                            flight (the server rejects a second one) and something still owed. */}
+                        {canRaiseVoucher && !p.active_voucher && Number(p.balance_amount ?? 0) > 0 && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-xs text-blue-700 hover:bg-blue-50"
+                            onClick={(e) => { e.stopPropagation(); setRaiseForDue(p); }}
+                          >
+                            Raise
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {(rows ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={11} className="py-8 text-center text-slate-400">
+                    <td colSpan={12} className="py-8 text-center text-slate-400">
                       {activeFilterCount === 0 && pendingApproval && pendingApproval.count > 0 ? (
                         <>
                           No payments due for dispatch — {pendingApproval.count} GRN
@@ -809,6 +869,27 @@ export default function VendorPaymentDispatchPage() {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onSaved={() => void refetch()}
+        onOpenVoucher={(voucherId) => {
+          // Hand off, don't nest: close the sheet, then open the drawer on the voucher.
+          setSheetOpen(false);
+          setVoucherDrawerId(voucherId);
+        }}
+      />
+
+      {/* Same drawer the Payment Vouchers page mounts — one component, so a voucher offers the
+          identical CEO-approve / release / review actions whichever page opened it. */}
+      <PaymentVoucherDrawer
+        voucherId={voucherDrawerId}
+        open={!!voucherDrawerId}
+        onOpenChange={(o) => { if (!o) setVoucherDrawerId(null); }}
+        onChanged={() => void refetch()}
+      />
+
+      <RaiseVoucherForSingleDueDialog
+        payment={raiseForDue}
+        open={!!raiseForDue}
+        onOpenChange={(o) => { if (!o) setRaiseForDue(null); }}
+        onRaised={() => void refetch()}
       />
     </DashboardLayout>
   );

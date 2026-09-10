@@ -1,9 +1,7 @@
 // src/pages/finance/PaymentVouchersPage.tsx
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  CheckCircle2, Circle, Clock, IndianRupee, Plus, XCircle,
-} from "lucide-react";
+import { IndianRupee, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -15,136 +13,17 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useHasRole } from "@/hooks/useUserRole";
-import { cn } from "@/lib/utils";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { useAuth } from "@/contexts/AuthContext";
+// Voucher vocabulary, formatters and the drill-down drawer now live outside this page so the
+// Vendor Payment Dispatch page renders the identical thing for the identical voucher.
+import { STATUS_LABEL, STATUS_TONE, money, type Voucher } from "@/lib/finance/paymentVoucherStatus";
+import { PaymentVoucherDrawer } from "@/components/finance/vendor/PaymentVoucherDrawer";
 
-type Voucher = {
-  id: string;
-  voucher_number: string;
-  voucher_type: string;
-  source_type: "vendor_grn" | "imprest_allocation" | "general";
-  particulars: string | null;
-  bank_account_id: string;
-  bank_account_name: string | null;
-  payable_account_id: string;
-  payable_account_name: string | null;
-  linked_vendor_payment_id: string | null;
-  grn_number: string | null;
-  vendor_name: string | null;
-  linked_imprest_manager_id: string | null;
-  imprest_manager_name: string | null;
-  amount: number;
-  remarks: string | null;
-  reason: string | null;
-  status: "draft" | "raised" | "ceo_approved" | "rejected" | "released" | "changes_requested";
-  raised_by: string | null;
-  raised_at: string | null;
-  ceo_approved_by: string | null;
-  ceo_approved_at: string | null;
-  released_by: string | null;
-  released_at: string | null;
-  accounts_reviewed_by: string | null;
-  accounts_reviewed_at: string | null;
-  review_note: string | null;
-  payment_mode: string | null;
-  payment_date: string | null;
-  transaction_ref: string | null;
-  rejection_reason: string | null;
-  changes_requested_note: string | null;
-  head: string | null;
-  sub_head: string | null;
-  created_at: string;
-  approval_events?: Array<{ action: string; actor_user_id: string; actor_role: string; created_at: string; remarks: string | null }>;
-  audit_log?: Array<{ action_type: string; created_at: string }>;
-  consumption_since_replenishment?: { sinceDate: string; rows: Array<{ transaction_date: string; amount: number; grn_number: string | null; expense_head: string | null; narration: string | null }> } | null;
-  grn_allocations?: Array<{
-    vendor_payment_tracking_id: string; allocated_amount: number; grn_number: string | null; vendor_name: string | null;
-    head: string | null; sub_head: string | null; due_date: string | null; due_amount: number; tds_deducted_amount: number;
-    paid_amount: number; balance_amount: number;
-  }>;
-};
-
-const PAYMENT_MODES = ["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other"];
-
-function money(value: unknown) {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value ?? 0));
-}
-function dateTime(value: string | null | undefined) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(d);
-}
-
-const STATUS_TONE: Record<Voucher["status"], string> = {
-  draft: "border-slate-200 bg-slate-50 text-slate-600",
-  raised: "border-amber-200 bg-amber-50 text-amber-800",
-  ceo_approved: "border-blue-200 bg-blue-50 text-blue-800",
-  released: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  rejected: "border-rose-200 bg-rose-50 text-rose-800",
-  changes_requested: "border-orange-200 bg-orange-50 text-orange-800",
-};
-const STATUS_LABEL: Record<Voucher["status"], string> = {
-  draft: "Draft", raised: "Awaiting CEO", ceo_approved: "Awaiting Release", released: "Released", rejected: "Rejected",
-  changes_requested: "Changes Requested",
-};
-
-type StageState = "done" | "current" | "rejected" | "upcoming";
-type Stage = { key: string; label: string; state: StageState; who: string | null; at: string | null; note: string | null };
-
-/** Stage state derived purely from the voucher's own columns — same principle as
- *  BudgetTopupPanel's buildApprovalStages, extended from two stages to three. */
-function buildStages(v: Voucher): Stage[] {
-  const rejected = v.status === "rejected";
-  return [
-    { key: "raised", label: "Raised", state: "done", who: v.raised_by, at: v.raised_at, note: null },
-    {
-      key: "ceo",
-      label: "CEO Approval",
-      state: rejected ? "rejected" : v.ceo_approved_at ? "done" : v.status === "raised" ? "current" : "upcoming",
-      who: v.ceo_approved_by, at: v.ceo_approved_at, note: rejected ? v.rejection_reason : null,
-    },
-    {
-      key: "release",
-      label: "Release",
-      state: v.released_at ? "done" : rejected ? "upcoming" : v.status === "ceo_approved" ? "current" : "upcoming",
-      who: v.released_by, at: v.released_at, note: null,
-    },
-  ];
-}
-const STAGE_BAR: Record<StageState, string> = { done: "bg-emerald-500", current: "bg-amber-400", rejected: "bg-rose-500", upcoming: "bg-slate-200" };
-const STAGE_TEXT: Record<StageState, string> = { done: "text-emerald-700", current: "text-amber-700", rejected: "text-rose-700", upcoming: "text-slate-400" };
-function StageIcon({ state }: { state: StageState }) {
-  if (state === "done") return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />;
-  if (state === "rejected") return <XCircle className="h-3.5 w-3.5 shrink-0 text-rose-600" aria-hidden />;
-  if (state === "current") return <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />;
-  return <Circle className="h-3.5 w-3.5 shrink-0 text-slate-300" aria-hidden />;
-}
-function ApprovalTrack({ stages }: { stages: Stage[] }) {
-  return (
-    <ol className="flex items-stretch gap-2" aria-label="Voucher approval progress">
-      {stages.map((s) => (
-        <li key={s.key} className="min-w-0 flex-1">
-          <div className={cn("h-1 rounded-full transition-colors duration-200", STAGE_BAR[s.state])} />
-          <div className="mt-1.5 flex items-center gap-1">
-            <StageIcon state={s.state} />
-            <span className={cn("truncate text-[10px] font-bold uppercase tracking-wide", STAGE_TEXT[s.state])}>{s.label}</span>
-          </div>
-          <p className="mt-0.5 truncate text-[11px] leading-tight text-slate-500">
-            {s.state === "upcoming" ? "Not yet reached" : s.state === "current" ? "Awaiting decision" : (dateTime(s.at) !== "—" ? dateTime(s.at) : (s.state === "rejected" ? "Rejected" : "Done"))}
-          </p>
-        </li>
-      ))}
-    </ol>
-  );
-}
 
 const emptyRaiseForm = {
   sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation",
@@ -162,24 +41,15 @@ const emptyRaiseForm = {
 
 export default function PaymentVouchersPage() {
   const { toast } = useToast();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   // Role model (2026-09-10): Finance Head both raises and releases — CEO approval is the one
   // blocking gate between the two. Accounts Head no longer releases; they review afterward.
   const canRaise = useHasRole("finance_head", "super_admin");
-  const canApprove = useHasRole("ceo", "super_admin");
-  const canRelease = useHasRole("finance_head", "super_admin");
-  const canReview = useHasRole("accounts_head", "super_admin");
 
   const [tab, setTab] = useState<"all" | "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested">("all");
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [raiseForm, setRaiseForm] = useState(emptyRaiseForm);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [rejectNote, setRejectNote] = useState("");
-  const [changesNote, setChangesNote] = useState("");
-  const [resubmitBankAccountId, setResubmitBankAccountId] = useState("");
-  const [reviewNote, setReviewNote] = useState("");
-  const [releaseForm, setReleaseForm] = useState({ paymentMode: "", paymentDate: new Date().toISOString().slice(0, 10), transactionRef: "" });
 
   const vouchersQuery = useQuery({
     queryKey: ["payment-vouchers", tab],
@@ -238,12 +108,6 @@ export default function PaymentVouchersPage() {
   });
   const flaggedManagerIds = new Set((replenishmentFlagsQuery.data ?? []).map((f: any) => f.id));
 
-  const detailQuery = useQuery({
-    queryKey: ["payment-voucher-detail", detailId],
-    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: Voucher }>(`/api/finance/payment-vouchers/${detailId}`)).data,
-    enabled: !!detailId,
-  });
-
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["payment-vouchers"] });
     queryClient.invalidateQueries({ queryKey: ["payment-voucher-detail"] });
@@ -270,45 +134,6 @@ export default function PaymentVouchersPage() {
       setRaiseOpen(false);
       setRaiseForm(emptyRaiseForm);
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/ceo-approve`, {})).data,
-    onSuccess: () => { toast({ title: "Voucher approved" }); invalidate(); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-  const rejectMutation = useMutation({
-    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/reject`, { note: rejectNote?.trim() || undefined })).data,
-    onSuccess: () => { toast({ title: "Voucher rejected" }); invalidate(); setRejectNote(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-  const requestChangesMutation = useMutation({
-    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/request-changes`, { note: changesNote.trim() })).data,
-    onSuccess: () => { toast({ title: "Changes requested" }); invalidate(); setChangesNote(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-  const resubmitMutation = useMutation({
-    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/resubmit`, {
-      bankAccountId: resubmitBankAccountId || undefined,
-    })).data,
-    onSuccess: () => { toast({ title: "Voucher resubmitted" }); invalidate(); setResubmitBankAccountId(""); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-  const releaseMutation = useMutation({
-    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/release`, {
-      paymentMode: releaseForm.paymentMode,
-      paymentDate: releaseForm.paymentDate,
-      transactionRef: releaseForm.transactionRef?.trim() || undefined,
-    })).data,
-    onSuccess: () => { toast({ title: "Voucher released" }); invalidate(); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-  const reviewMutation = useMutation({
-    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/review`, {
-      note: reviewNote?.trim() || undefined,
-    })).data,
-    onSuccess: () => { toast({ title: "Review recorded" }); invalidate(); setReviewNote(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -558,189 +383,13 @@ export default function PaymentVouchersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Drill-down drawer */}
-      <Sheet open={!!detailId} onOpenChange={(o) => !o && setDetailId(null)}>
-        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
-          <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle className="text-sm font-semibold">{detailQuery.data?.voucher_number ?? "Payment Voucher"}</SheetTitle>
-          </SheetHeader>
-          <div className="flex-1 space-y-5 overflow-y-auto p-4">
-            {detailQuery.data && (
-              <>
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Approval Progress</h3>
-                  <ApprovalTrack stages={buildStages(detailQuery.data)} />
-                </section>
-
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Details</h3>
-                  <dl className="grid grid-cols-2 gap-y-2 text-sm">
-                    <dt className="text-slate-500">Purpose</dt>
-                    <dd className="font-semibold text-gray-800">
-                      {detailQuery.data.source_type === "vendor_grn" ? (detailQuery.data.vendor_name ?? detailQuery.data.grn_number)
-                        : detailQuery.data.source_type === "imprest_allocation" ? detailQuery.data.imprest_manager_name
-                        : (detailQuery.data.particulars ?? "General payment")}
-                    </dd>
-                    {detailQuery.data.source_type === "vendor_grn" && (
-                      <>
-                        <dt className="text-slate-500">Head</dt><dd className="text-gray-600">{detailQuery.data.head ?? "—"}</dd>
-                        <dt className="text-slate-500">Sub Head</dt><dd className="text-gray-600">{detailQuery.data.sub_head ?? "—"}</dd>
-                      </>
-                    )}
-                    <dt className="text-slate-500">Bank Account</dt><dd className="font-semibold text-gray-800">{detailQuery.data.bank_account_name}</dd>
-                    <dt className="text-slate-500">Ledger Head</dt><dd className="font-semibold text-gray-800">{detailQuery.data.payable_account_name}</dd>
-                    <dt className="text-slate-500">Amount</dt><dd className="font-semibold text-gray-800">{money(detailQuery.data.amount)}</dd>
-                    <dt className="text-slate-500">Remarks</dt><dd className="text-gray-600">{detailQuery.data.remarks ?? "—"}</dd>
-                    {detailQuery.data.status === "released" && (
-                      <>
-                        <dt className="text-slate-500">Payment Mode</dt><dd className="text-gray-600">{detailQuery.data.payment_mode}</dd>
-                        <dt className="text-slate-500">Payment Date</dt><dd className="text-gray-600">{detailQuery.data.payment_date}</dd>
-                        <dt className="text-slate-500">Reference</dt><dd className="font-mono text-gray-600">{detailQuery.data.transaction_ref ?? "—"}</dd>
-                        <dt className="text-slate-500">Accounts Review</dt>
-                        <dd className="text-gray-600">
-                          {detailQuery.data.accounts_reviewed_at
-                            ? <>Reviewed {dateTime(detailQuery.data.accounts_reviewed_at)}{detailQuery.data.review_note ? ` — “${detailQuery.data.review_note}”` : ""}</>
-                            : <span className="text-amber-600">Awaiting review</span>}
-                        </dd>
-                      </>
-                    )}
-                    {detailQuery.data.status === "rejected" && (
-                      <><dt className="text-slate-500">Rejection Reason</dt><dd className="text-rose-600">{detailQuery.data.rejection_reason}</dd></>
-                    )}
-                  </dl>
-                </section>
-
-                {detailQuery.data.source_type === "vendor_grn" && (detailQuery.data.grn_allocations?.length ?? 0) > 1 && (
-                  <section>
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">GRNs Paid by This Voucher</h3>
-                    <ul className="space-y-1.5">
-                      {detailQuery.data.grn_allocations!.map((a) => (
-                        <li key={a.vendor_payment_tracking_id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs">
-                          <span className="text-gray-600">{a.grn_number ?? a.vendor_payment_tracking_id} — {a.head ?? "—"} / {a.sub_head ?? "—"}</span>
-                          <span className="font-semibold text-gray-800">{money(a.allocated_amount)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                {detailQuery.data.source_type === "imprest_allocation" && detailQuery.data.consumption_since_replenishment && (
-                  <section>
-                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
-                      Consumed Since Last Replenishment ({detailQuery.data.consumption_since_replenishment.sinceDate})
-                    </h3>
-                    {detailQuery.data.consumption_since_replenishment.rows.length === 0 ? (
-                      <p className="text-sm text-slate-400">Nothing spent since the last top-up</p>
-                    ) : (
-                      <ul className="space-y-1.5">
-                        {detailQuery.data.consumption_since_replenishment.rows.map((r, i) => (
-                          <li key={i} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs">
-                            <span className="text-gray-600">{r.transaction_date} — {r.grn_number ?? r.narration ?? "—"} {r.expense_head ? `(${r.expense_head})` : ""}</span>
-                            <span className="font-semibold text-gray-800">{money(r.amount)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-                )}
-
-                {detailQuery.data.status === "raised" && canApprove && (
-                  <section className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/50 p-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-blue-700">CEO Decision</h3>
-                    <div className="flex gap-2">
-                      <Button className="cursor-pointer bg-emerald-600 hover:bg-emerald-700" disabled={approveMutation.isPending} onClick={() => approveMutation.mutate(detailQuery.data!.id)}>
-                        Approve
-                      </Button>
-                    </div>
-                    <Textarea placeholder="What needs to change? (e.g. use a different bank account)" value={changesNote} onChange={(e) => setChangesNote(e.target.value)} rows={2} />
-                    <Button variant="outline" className="cursor-pointer border-amber-200 text-amber-700 hover:bg-amber-50" disabled={!changesNote.trim() || requestChangesMutation.isPending} onClick={() => requestChangesMutation.mutate(detailQuery.data!.id)}>
-                      Request Changes
-                    </Button>
-                    <Textarea placeholder="Rejection reason (if rejecting)" value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} rows={2} />
-                    <Button variant="outline" className="cursor-pointer border-rose-200 text-rose-700 hover:bg-rose-50" disabled={rejectMutation.isPending} onClick={() => rejectMutation.mutate(detailQuery.data!.id)}>
-                      Reject
-                    </Button>
-                  </section>
-                )}
-
-                {detailQuery.data.status === "changes_requested" && String(detailQuery.data.raised_by) === String(user?.id) && (
-                  <section className="space-y-2 rounded-xl border border-orange-100 bg-orange-50/50 p-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-orange-700">CEO Requested Changes</h3>
-                    <p className="text-sm text-gray-700">{detailQuery.data.changes_requested_note}</p>
-                    <Label>Bank Account</Label>
-                    <Select value={resubmitBankAccountId} onValueChange={setResubmitBankAccountId}>
-                      <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Keep current, or pick a new one" /></SelectTrigger>
-                      <SelectContent>
-                        {(bankAccountsQuery.data ?? []).map((a: any) => (
-                          <SelectItem key={a.id} value={a.id}>{a.account_name} — {a.account_number_masked}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={resubmitMutation.isPending} onClick={() => resubmitMutation.mutate(detailQuery.data!.id)}>
-                      Resubmit for CEO Approval
-                    </Button>
-                  </section>
-                )}
-
-                {detailQuery.data.status === "ceo_approved" && canRelease && (
-                  <section className="space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-emerald-700">Release Payment</h3>
-                    <div>
-                      <Label>Payment Mode</Label>
-                      <Select value={releaseForm.paymentMode} onValueChange={(v) => setReleaseForm((f) => ({ ...f, paymentMode: v }))}>
-                        <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select mode" /></SelectTrigger>
-                        <SelectContent>
-                          {PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Payment Date</Label>
-                      <Input type="date" value={releaseForm.paymentDate} onChange={(e) => setReleaseForm((f) => ({ ...f, paymentDate: e.target.value }))} />
-                    </div>
-                    <div>
-                      <Label>Transaction Ref / UTR / Cheque No.</Label>
-                      <Input value={releaseForm.transactionRef} onChange={(e) => setReleaseForm((f) => ({ ...f, transactionRef: e.target.value }))} />
-                    </div>
-                    <Button className="cursor-pointer bg-emerald-600 hover:bg-emerald-700" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(detailQuery.data!.id)}>
-                      Release Payment
-                    </Button>
-                  </section>
-                )}
-
-                {/* Non-blocking post-release sign-off — the payment has already gone out; this
-                    just records that Accounts Head checked it. */}
-                {detailQuery.data.status === "released" && canReview && !detailQuery.data.accounts_reviewed_at && (
-                  <section className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-indigo-700">Accounts Review</h3>
-                    <p className="text-xs text-slate-500">Already released — this is a sign-off, not an approval gate.</p>
-                    <Textarea placeholder="Review note (optional)" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={2} />
-                    <Button className="cursor-pointer bg-indigo-600 hover:bg-indigo-700" disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate(detailQuery.data!.id)}>
-                      Mark Reviewed
-                    </Button>
-                  </section>
-                )}
-
-                <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Audit Trail</h3>
-                  {(detailQuery.data.audit_log ?? []).length === 0 ? (
-                    <p className="text-sm text-slate-400">None</p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {(detailQuery.data.audit_log ?? []).map((entry, i) => (
-                        <li key={i} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
-                          <span className="font-semibold text-gray-700">{entry.action_type}</span>{" "}
-                          <span className="text-slate-400">— {dateTime(entry.created_at)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              </>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+      {/* Drill-down drawer — the same component the Vendor Payment Dispatch page opens, so a
+          voucher looks and behaves identically whichever page you reached it from. */}
+      <PaymentVoucherDrawer
+        voucherId={detailId}
+        open={!!detailId}
+        onOpenChange={(o) => !o && setDetailId(null)}
+      />
     </div>
     </DashboardLayout>
   );

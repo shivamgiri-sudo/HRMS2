@@ -43,6 +43,15 @@ export interface VendorPayment {
   installment_number?: number;
   is_on_hold?: boolean;
   hold_reason?: string | null;
+  /**
+   * Payment Voucher state joined on by the list/detail queries. When a voucher is mid-flight
+   * this due must be settled through the voucher's Release action, not a direct dispatch —
+   * the server enforces the same rule in vendor-payment-ledger.service.ts's dispatch().
+   */
+  voucher_id?: string | null;
+  voucher_number?: string | null;
+  voucher_status?: "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested" | null;
+  active_voucher?: boolean;
 }
 
 interface PaymentTransaction {
@@ -65,9 +74,12 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  /** Hands the voucher off to the parent page's PaymentVoucherDrawer, which is a sibling of
+   *  this sheet rather than a child — two stacked overlays trap focus badly. */
+  onOpenVoucher?: (voucherId: string) => void;
 }
 
-export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: Props) {
+export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onOpenVoucher }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -248,6 +260,35 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
 
           {/* --- DISPATCH TAB --- */}
           <TabsContent value="dispatch" className="flex-1 overflow-y-auto px-4 py-3">
+            {payment.active_voucher ? (
+              /* Not an error state — the due is simply being settled the other way. Explain
+                 which route owns it and hand the user straight to it, rather than showing a
+                 form whose submit the server would reject with a 409. */
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <h3 className="text-xs font-bold uppercase tracking-wide text-amber-800">
+                  Awaiting Payment Voucher
+                </h3>
+                <p className="mt-1.5 text-sm text-amber-900">
+                  Payment Voucher <span className="font-semibold">{payment.voucher_number}</span> is
+                  {payment.voucher_status === "raised" ? " awaiting CEO approval" :
+                   payment.voucher_status === "ceo_approved" ? " approved and awaiting release by Finance Head" :
+                   " awaiting changes from the Finance Head who raised it"} for this due.
+                </p>
+                <p className="mt-1 text-xs text-amber-700">
+                  Direct dispatch is blocked while a voucher is in flight, so the same payment
+                  cannot go out twice. Release it from the voucher instead.
+                </p>
+                {payment.voucher_id && onOpenVoucher && (
+                  <Button
+                    size="sm"
+                    className="mt-3 cursor-pointer bg-amber-600 hover:bg-amber-700"
+                    onClick={() => onOpenVoucher(payment.voucher_id!)}
+                  >
+                    Open Voucher
+                  </Button>
+                )}
+              </div>
+            ) : (
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <Label className="text-xs">Installment amount *</Label>
@@ -311,6 +352,7 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
                 />
               </div>
             </div>
+            )}
           </TabsContent>
 
           {/* --- HOLD TAB --- */}
@@ -440,7 +482,9 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved }: P
           </Button>
           <Button
             size="sm"
-            disabled={dispatchMutation.isPending || !installmentAmt || !mode || !paymentDate}
+            // active_voucher repeats the tab-level guard on purpose: the footer button stays
+            // mounted across tabs, so without it a voucher-owned due is still one click away.
+            disabled={dispatchMutation.isPending || !installmentAmt || !mode || !paymentDate || !!payment.active_voucher}
             onClick={() => dispatchMutation.mutate()}
           >
             {dispatchMutation.isPending

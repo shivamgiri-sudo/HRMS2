@@ -714,6 +714,9 @@ export const paymentVoucherService = {
             actorUserId,
             actorRole,
             connection,
+            // This voucher is still 'ceo_approved' right now — exempt it from dispatch()'s
+            // active-voucher guard so a release does not block itself.
+            v.id,
           );
           const lastTransaction = dispatchResult.transactions[dispatchResult.transactions.length - 1];
           const grnNumberForNarration = (dispatchResult.payment as any)?.grn_number ?? "";
