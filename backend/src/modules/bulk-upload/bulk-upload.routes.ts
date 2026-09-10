@@ -423,10 +423,6 @@ const KNOWN_IMPORT_RPCS = new Set([
   // the same dashboard; no DB backing exists anywhere. See
   // bella-repeat-alignment-bulk.service.ts.
   "import_bella_repeat_alignment_batch",
-  // Finnable's Audit_Data sheet, AI call-quality audit output -- found
-  // via Drive search; no DB backing exists anywhere. See
-  // finnable-quality-audit-bulk.service.ts.
-  "import_finnable_quality_audit_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1084,13 +1080,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_finnable_quality_audit_batch") {
-    const { importFinnableQualityAuditBatch } = await import(
-      "../bulk-upload/finnable-quality-audit-bulk.service.js"
-    );
-    const data = await importFinnableQualityAuditBatch(id, userId);
-    return { success: true, data };
-  }
 
   if (rpc_name === "import_compliance_audit_batch") {
     const { importComplianceAuditBatch } = await import(
