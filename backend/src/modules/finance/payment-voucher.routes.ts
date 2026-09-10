@@ -113,6 +113,41 @@ paymentVoucherRouter.post(
 );
 
 paymentVoucherRouter.post(
+  "/:id/request-changes",
+  requireWriteAccess,
+  requireRole(...VOUCHER_CEO_ROLES),
+  h(async (req, res) => {
+    try {
+      const a = actor(req);
+      const data = await paymentVoucherService.ceoApprove(req.params.id, a.id, a.role, "request_changes", req.body?.note ?? null);
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to request changes on the payment voucher");
+    }
+  }),
+);
+
+paymentVoucherRouter.post(
+  "/:id/resubmit",
+  requireWriteAccess,
+  requireRole(...VOUCHER_RAISE_ROLES),
+  h(async (req, res) => {
+    try {
+      const a = actor(req);
+      const data = await paymentVoucherService.resubmit(req.params.id, a.id, a.role, {
+        bankAccountId: req.body?.bankAccountId,
+        payableAccountId: req.body?.payableAccountId,
+        amount: req.body?.amount !== undefined ? Number(req.body.amount) : undefined,
+        remarks: req.body?.remarks,
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to resubmit the payment voucher");
+    }
+  }),
+);
+
+paymentVoucherRouter.post(
   "/:id/release",
   requireWriteAccess,
   requireRole(...VOUCHER_RELEASE_ROLES),
