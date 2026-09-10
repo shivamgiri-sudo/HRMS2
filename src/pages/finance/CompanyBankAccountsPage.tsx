@@ -55,6 +55,12 @@ const emptyForm = {
   branchId: "",
   tallyLedgerName: "",
   openingBalance: "0",
+  /** The "as of" date this opening balance is true on — the real bank statement/passbook
+   *  figure for a date you're confident about, not the account's creation date. This is what
+   *  makes an opening balance entered today stand in for months of transaction history that
+   *  never made it into HRMS: everything from this date forward is tracked by the system's
+   *  own ledger, so nothing earlier needs to be reconstructed. */
+  openingBalanceAsOf: new Date().toISOString().slice(0, 10),
 };
 
 export default function CompanyBankAccountsPage() {
@@ -112,6 +118,7 @@ export default function CompanyBankAccountsPage() {
         branchId: form.branchId,
         tallyLedgerName: form.tallyLedgerName.trim(),
         openingBalance: Number(form.openingBalance || 0),
+        openingBalanceAsOf: form.openingBalanceAsOf || undefined,
       };
       if (form.id) {
         return (await hrmsApi.put(`/api/finance/bank-accounts/${form.id}`, payload)).data;
@@ -256,9 +263,25 @@ export default function CompanyBankAccountsPage() {
               <Label>Tally Ledger Name</Label>
               <Input value={form.tallyLedgerName} onChange={(e) => setForm((f) => ({ ...f, tallyLedgerName: e.target.value }))} placeholder="Exact ledger name as it exists in Tally" />
             </div>
+            {!!form.id && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Changing Opening Balance here only takes effect if this account has never had a
+                Payment Voucher released against it. Once any payment has gone through, the
+                running balance in Bank Ledger continues from that payment, not from this field —
+                editing it will not correct an in-use account.
+              </div>
+            )}
             <div>
               <Label>Opening Balance</Label>
               <Input type="number" value={form.openingBalance} onChange={(e) => setForm((f) => ({ ...f, openingBalance: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Opening Balance As Of</Label>
+              <Input type="date" value={form.openingBalanceAsOf} onChange={(e) => setForm((f) => ({ ...f, openingBalanceAsOf: e.target.value }))} />
+              <p className="mt-1 text-xs text-slate-400">
+                The real bank statement figure on this date. Every payment made through HRMS after
+                this date is tracked automatically — earlier months don't need to be entered.
+              </p>
             </div>
           </div>
           <DialogFooter>
@@ -292,6 +315,12 @@ export default function CompanyBankAccountsPage() {
                     <dt className="text-slate-500">IFSC</dt><dd className="font-mono text-gray-800">{detailQuery.data.account.ifsc_code}</dd>
                     <dt className="text-slate-500">Tally Ledger</dt><dd className="font-semibold text-gray-800">{detailQuery.data.account.tally_ledger_name}</dd>
                     <dt className="text-slate-500">Opening Balance</dt><dd className="font-semibold text-gray-800">{money(detailQuery.data.account.opening_balance)}</dd>
+                    <dt className="text-slate-500">As Of</dt>
+                    <dd className="text-gray-600">
+                      {detailQuery.data.account.opening_balance_as_of
+                        ? new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(detailQuery.data.account.opening_balance_as_of))
+                        : <span className="text-amber-600">Not set</span>}
+                    </dd>
                     <dt className="text-slate-500">Created</dt><dd className="text-gray-600">{dateTime(detailQuery.data.account.created_at)}</dd>
                     <dt className="text-slate-500">Updated</dt><dd className="text-gray-600">{dateTime(detailQuery.data.account.updated_at)}</dd>
                   </dl>
@@ -309,6 +338,11 @@ export default function CompanyBankAccountsPage() {
                           id: a.id, bankId: a.bank_id, accountName: a.account_name, accountNumber: "",
                           ifscCode: a.ifsc_code, branchId: a.branch_id, tallyLedgerName: a.tally_ledger_name,
                           openingBalance: String(a.opening_balance),
+                          // Falls back to today rather than "" — editing an account that already
+                          // has transactions can't actually move the running balance (see the
+                          // date field's own note below), so there's no live number to preserve
+                          // here; a blank date field would just read as a bug.
+                          openingBalanceAsOf: a.opening_balance_as_of ?? new Date().toISOString().slice(0, 10),
                         });
                         setDetailId(null);
                         setFormOpen(true);
