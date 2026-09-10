@@ -538,12 +538,25 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
     <ChartCard title="Voice of the Customer"
       subtitle={`${voc.totalAuditedCalls.toLocaleString("en-IN")} audited call${voc.totalAuditedCalls === 1 ? "" : "s"} — what's actually behind them, not just a score`}>
       <div className="px-3">
-        {/* CLAP breakdown -- real root cause, not agent quality alone */}
+        {/* CLAP breakdown -- real root cause, not agent quality alone. Segments
+            for Agent/Logistic/Product double as the category selector below
+            (the same setCategory() the buttons already call) -- Customer has
+            no quotes bucket (see the category selector comment) so stays a
+            plain, non-interactive segment rather than a dead click target. */}
         <div className="flex h-6 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-          {voc.clapBreakdown.map((c) => (
-            <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
-              style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
-          ))}
+          {voc.clapBreakdown.map((c) => {
+            const clickable = c.clap === "Agent" || c.clap === "Logistic" || c.clap === "Product";
+            const segCategory = c.clap.toLowerCase() as "agent" | "logistic" | "product";
+            return clickable ? (
+              <button key={c.clap} type="button" onClick={() => setCategory(segCategory)}
+                title={`${c.clap}: ${c.pct}% (${c.count} calls) — click to see quotes`}
+                className="cursor-pointer transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+                style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
+            ) : (
+              <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
+                style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
+            );
+          })}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
           {voc.clapBreakdown.map((c) => {
@@ -864,6 +877,31 @@ function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefin
   return insights;
 }
 
+interface ParetoBar { label: string; gapPct: number; cumulativePct: number }
+
+/**
+ * CallMaster's Pareto pattern (bar = driver size, line = cumulative %) for
+ * "which target misses matter most" -- every metric that's missing target,
+ * ranked by relative gap (|value - target| / target, so a percentage metric
+ * and a seconds metric are comparable on the same axis) rather than raw
+ * units, worst first, cumulative % running to 100 by construction since it's
+ * the same fails list divided by its own total.
+ */
+function deriveParetoData(ops: Operations): ParetoBar[] {
+  const fails = [...ops.sections.flatMap((s) => s.metrics), ...ops.ungrouped]
+    .filter((m) => targetStatus(m) === "fail" && m.targetValue !== 0)
+    .map((m) => ({ label: m.label, gap: Math.abs((m.value! - m.targetValue!) / m.targetValue!) * 100 }))
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 8); // worst 8 -- a real Pareto reads as a curve, not a wall of bars
+  const total = fails.reduce((s, f) => s + f.gap, 0);
+  if (!total) return [];
+  let running = 0;
+  return fails.map((f) => {
+    running += f.gap;
+    return { label: f.label, gapPct: Math.round(f.gap * 10) / 10, cumulativePct: Math.round((running / total) * 1000) / 10 };
+  });
+}
+
 function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
   // Shares the exact queryKey BusinessHealthPanel uses -- react-query dedupes
   // this against that component's own fetch, so this panel costs zero extra
@@ -876,6 +914,7 @@ function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: 
   });
   const health = data?.data;
   const insights = useMemo(() => deriveInsights(ops, health), [ops, health]);
+  const pareto = useMemo(() => deriveParetoData(ops), [ops]);
 
   if (!insights.length) {
     return (
@@ -908,6 +947,31 @@ function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: 
           );
         })}
       </div>
+      {pareto.length >= 2 && (
+        <div className="px-3.5 pb-3.5">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
+            Biggest drivers — relative gap vs. each metric's own target, ranked worst first
+          </p>
+          <div className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={pareto} margin={{ top: 4, right: 24, bottom: 0, left: -14 }}>
+                <CartesianGrid {...GRID} vertical={false} />
+                <XAxis dataKey="label" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
+                  interval={0} angle={-20} textAnchor="end" height={46} />
+                <YAxis yAxisId="left" unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} width={40} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} width={40} />
+                <Tooltip contentStyle={TOOLTIP_STYLE}
+                  formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, n === "gapPct" ? "Gap vs. target" : "Cumulative"]} />
+                <Bar yAxisId="left" dataKey="gapPct" radius={[3, 3, 0, 0]} name="gapPct">
+                  {pareto.map((p, i) => <Cell key={p.label} fill={i === 0 ? C_RED_TEXT : C_AMBER} />)}
+                </Bar>
+                <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="cumulativePct"
+                  stroke={C_SLATE} strokeWidth={1.5} dot={{ r: 2.5, fill: C_SLATE }} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1279,6 +1343,27 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
       `/api/process-operations/${processId}/metric/${metricKey}/raw?date=${date}`),
   });
   const r = data?.data;
+  const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" } | null>(null);
+  const sortedRows = useMemo(() => {
+    if (!r || !sort) return r?.rows ?? [];
+    const { col, dir } = sort;
+    return [...r.rows].sort((a, b) => {
+      const av = a[col]; const bv = b[col];
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      // Numeric columns compare as numbers even though the value arrives as
+      // an unknown (raw DB rows carry strings/numbers/dates all mixed) --
+      // fall back to locale string compare for anything that isn't a clean
+      // number on both sides, same "don't guess" rule as formatCellValue.
+      const an = Number(av); const bn = Number(bv);
+      const cmp = (!Number.isNaN(an) && !Number.isNaN(bn))
+        ? an - bn
+        : String(av).localeCompare(String(bv));
+      return dir === "asc" ? cmp : -cmp;
+    });
+  }, [r, sort]);
+  const toggleSort = (col: string) => setSort((s) =>
+    s?.col === col ? (s.dir === "asc" ? { col, dir: "desc" } : null) : { col, dir: "asc" });
   return (
     <tr className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
       <td colSpan={columnCount} className="px-2 py-2">
@@ -1300,7 +1385,7 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
                 {r.truncated ? ` · showing first ${r.rows.length.toLocaleString()}` : ""}
               </p>
               <button type="button"
-                onClick={() => downloadCsv(`${metricKey}_${date}.csv`, r.columns, r.rows)}
+                onClick={() => downloadCsv(`${metricKey}_${date}.csv`, r.columns, sortedRows)}
                 title="Download the rows shown here as a .csv file"
                 className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded">
                 <Download size={11} />CSV
@@ -1310,11 +1395,17 @@ function RawRowsPanel({ processId, metricKey, date, columnCount }: {
               <table className="w-full text-[10px]">
                 <thead className="bg-white dark:bg-slate-900 text-slate-400 sticky top-0">
                   <tr>{r.columns.map((c) => (
-                    <th key={c} className="text-left px-2 py-1 font-semibold font-mono">{c}</th>
+                    <th key={c} className="text-left px-2 py-1 font-semibold font-mono">
+                      <button type="button" onClick={() => toggleSort(c)}
+                        className="inline-flex items-center gap-0.5 cursor-pointer hover:text-slate-600 dark:hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded">
+                        {c}
+                        {sort?.col === c && <span className="text-[8px]">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+                      </button>
+                    </th>
                   ))}</tr>
                 </thead>
                 <tbody>
-                  {r.rows.map((row, i) => (
+                  {sortedRows.map((row, i) => (
                     <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
                       {r.columns.map((c) => (
                         <td key={c} className="px-2 py-1 tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
@@ -1545,9 +1636,21 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
                           {a.designation && <span className="block text-[10px] text-slate-400 pl-4">{a.designation}</span>}
                         </td>
                         <td className="px-2 py-1.5 font-mono text-slate-500">{a.employeeCode || "—"}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold"
-                          style={{ color: a.value === null ? undefined : pass === null ? undefined : pass ? C_GREEN : C_RED }}>
-                          {a.value === null ? <span className="text-slate-400 italic font-normal">no data</span> : formatValue(a.value, ab.unit)}
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold">
+                          <span style={{ color: a.value === null ? undefined : pass === null ? undefined : pass ? C_GREEN : C_RED }}>
+                            {a.value === null ? <span className="text-slate-400 italic font-normal">no data</span> : formatValue(a.value, ab.unit)}
+                          </span>
+                          {/* Tier badge (Mydashboards' TQ/MQ/BQ idiom): only two real
+                              tiers here since this is one score against one target, not
+                              a percentile band across analysts -- a fabricated "near
+                              target" middle tier would need a threshold this system
+                              doesn't define anywhere else. */}
+                          {pass !== null && (
+                            <span className="ml-1.5 inline-block rounded-full px-1.5 py-0.5 text-[8.5px] font-bold align-middle"
+                              style={{ background: pass ? "#DCFCE7" : "#FEE2E2", color: pass ? "#166534" : "#991B1B" }}>
+                              {pass ? "On target" : "Below"}
+                            </span>
+                          )}
                         </td>
                         <td className="px-2 py-1.5 text-slate-600 dark:text-slate-300">
                           {a.teamLeader ? `${a.teamLeader.name} (${a.teamLeader.employeeCode})` : <span className="text-slate-400 italic">none on record</span>}
