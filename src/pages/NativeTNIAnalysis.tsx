@@ -30,13 +30,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
+import { localISODate, localFirstOfMonth } from "@/lib/localDate";
+
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
-function today() { return new Date().toISOString().slice(0, 10); }
-function firstOfMonth() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-}
+const today = localISODate;
+const firstOfMonth = localFirstOfMonth;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 

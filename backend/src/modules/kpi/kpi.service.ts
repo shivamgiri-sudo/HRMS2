@@ -225,8 +225,14 @@ export const kpiService = {
     let totalWeight = 0;
     const metrics = templateMetrics.map(tm => {
       const actual = actualMap.get(tm.metric_id) ?? null;
+      // When actual is null (not yet submitted), exclude this metric from the
+      // weighted denominator rather than scoring it as zero — zeroing would
+      // falsely penalise employees who simply haven't entered data yet.
+      if (actual === null) {
+        return { metric_id: tm.metric_id, metric_code: tm.metric_code, target_value: tm.target_value, actual_value: null, weight_pct: tm.weight_pct, achievement_pct: null, direction: tm.direction, status: "pending" as const };
+      }
       let achievementPct = 0;
-      if (actual !== null && tm.target_value > 0) {
+      if (tm.target_value > 0) {
         const raw = tm.direction === "lower_is_better"
           ? tm.target_value / actual
           : actual / tm.target_value;
@@ -234,7 +240,7 @@ export const kpiService = {
       }
       weightedSum += achievementPct * tm.weight_pct;
       totalWeight += tm.weight_pct;
-      return { metric_id: tm.metric_id, metric_code: tm.metric_code, target_value: tm.target_value, actual_value: actual, weight_pct: tm.weight_pct, achievement_pct: achievementPct, direction: tm.direction };
+      return { metric_id: tm.metric_id, metric_code: tm.metric_code, target_value: tm.target_value, actual_value: actual, weight_pct: tm.weight_pct, achievement_pct: achievementPct, direction: tm.direction, status: "submitted" as const };
     });
 
     const weightedScore = totalWeight > 0 ? r2(weightedSum / totalWeight) : 0;

@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
-
+
 import { blankToNull } from "../../shared/sql-values.js";
 export const assetsService = {
   async list(filters: { status?: string; branch_id?: string; category?: string }) {
@@ -92,24 +92,34 @@ export const assetsService = {
   },
 
   async assign(assetId: string, employeeId: string, assignedBy: string, notes?: string, req?: Request) {
-    await db.execute(
-      "UPDATE asset_assignment SET returned_date = CURDATE() WHERE asset_id = ? AND returned_date IS NULL",
-      [assetId]
-    );
-    const id = randomUUID();
-    await db.execute(
-      "INSERT INTO asset_assignment (id, asset_id, employee_id, assigned_date, assigned_by, notes) VALUES (?, ?, ?, CURDATE(), ?, ?)",
-      [id, assetId, employeeId, assignedBy, notes ?? null]
-    );
-    await db.execute("UPDATE asset_master SET status = 'assigned', updated_at = NOW() WHERE id = ?", [assetId]);
-    await logSensitiveAction({
-      actor_user_id: assignedBy, action_type: "ASSET_ASSIGNED", module_key: "ASSETS",
-      entity_type: "asset", entity_id: assetId,
-      change_summary: { employee_id: employeeId },
-      req,
-    });
-    return db.execute<RowDataPacket[]>("SELECT * FROM asset_assignment WHERE id = ? LIMIT 1", [id])
-      .then(([rows]) => (rows as RowDataPacket[])[0]);
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        "UPDATE asset_assignment SET returned_date = CURDATE() WHERE asset_id = ? AND returned_date IS NULL",
+        [assetId]
+      );
+      const id = randomUUID();
+      await conn.execute(
+        "INSERT INTO asset_assignment (id, asset_id, employee_id, assigned_date, assigned_by, notes) VALUES (?, ?, ?, CURDATE(), ?, ?)",
+        [id, assetId, employeeId, assignedBy, notes ?? null]
+      );
+      await conn.execute("UPDATE asset_master SET status = 'assigned', updated_at = NOW() WHERE id = ?", [assetId]);
+      await conn.commit();
+      await logSensitiveAction({
+        actor_user_id: assignedBy, action_type: "ASSET_ASSIGNED", module_key: "ASSETS",
+        entity_type: "asset", entity_id: assetId,
+        change_summary: { employee_id: employeeId },
+        req,
+      });
+      const [rows] = await conn.execute<RowDataPacket[]>("SELECT * FROM asset_assignment WHERE id = ? LIMIT 1", [id]);
+      return (rows as RowDataPacket[])[0];
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   },
 
   async returnAsset(assetId: string, condition: string, returnedBy: string, req?: Request) {

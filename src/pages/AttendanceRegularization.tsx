@@ -14,6 +14,7 @@ import { DiscardDialog } from "@/components/discard/DiscardDialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { localISODate } from "@/lib/localDate";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge"; // kept for stage badges in DetailDialog
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -625,7 +626,7 @@ export default function AttendanceRegularization() {
     resolver: zodResolver(regularizationSchema),
     defaultValues: {
       requestCategory: "punch_correction",
-      attendanceDate: new Date().toISOString().slice(0, 10),
+      attendanceDate: localISODate(),
       currentStatus: "",
       currentLoginTime: "",
       currentLogoutTime: "",
@@ -922,7 +923,7 @@ export default function AttendanceRegularization() {
     onSuccess: () => {
       form.reset({
         requestCategory: form.getValues("requestCategory"),
-        attendanceDate: new Date().toISOString().slice(0, 10),
+        attendanceDate: localISODate(),
         currentStatus: "",
         currentLoginTime: "",
         currentLogoutTime: "",
@@ -1421,7 +1422,7 @@ export default function AttendanceRegularization() {
                           value={batchFromDate}
                           onChange={(e) => { setBatchFromDate(e.target.value); setBatchRangeQueried(false); }}
                           className="mt-1 h-9 text-sm"
-                          max={new Date().toISOString().slice(0, 10)}
+                          max={localISODate()}
                         />
                       </div>
                       <div>
@@ -1431,7 +1432,7 @@ export default function AttendanceRegularization() {
                           value={batchToDate}
                           onChange={(e) => { setBatchToDate(e.target.value); setBatchRangeQueried(false); }}
                           className="mt-1 h-9 text-sm"
-                          max={new Date().toISOString().slice(0, 10)}
+                          max={localISODate()}
                         />
                       </div>
                       <div className="flex items-end">

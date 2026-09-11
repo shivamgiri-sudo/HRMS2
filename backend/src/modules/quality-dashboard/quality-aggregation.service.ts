@@ -115,10 +115,18 @@ export class QualityAggregationService {
             direction: (row.cq_7day_avg || 0) > (row.cq_30day_avg || 0) ? '↗' : (row.cq_7day_avg || 0) < (row.cq_30day_avg || 0) ? '↘' : '→',
             change_pct: Math.round(((row.cq_7day_avg || 0) - (row.cq_current || 0)) * 10) / 10,
           },
-          trend_30day: {
-            direction: (row.cq_30day_avg || 0) > ((row.cq_current || 0) - 3) ? '↗' : '↘',
-            change_pct: -1, // TODO: calculate from 60d vs 30d
-          },
+          trend_30day: (() => {
+            const curr30 = row.cq_30day_avg ?? null;
+            const prev30 = row.cq_prev30day_avg ?? null;
+            if (curr30 === null || prev30 === null || prev30 === 0) {
+              return { direction: '→', change_pct: 0 };
+            }
+            const changePct = Math.round(((curr30 - prev30) / prev30) * 1000) / 10;
+            return {
+              direction: changePct > 0 ? '↗' : changePct < 0 ? '↘' : '→',
+              change_pct: changePct,
+            };
+          })(),
           weekly: row.weekly_breakdown ? JSON.parse(row.weekly_breakdown) : [],
           status: this.getStatus(row.cq_current),
           last_updated: new Date(),

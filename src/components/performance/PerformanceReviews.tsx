@@ -56,13 +56,15 @@ export function PerformanceReviews({ employeeId, employeeName = "Employee" }: Pe
     enabled: !!expandedReview,
   });
 
-  // Upsert employee rating
+  // Upsert employee KPI self-rating
   const upsertRating = useMutation({
-    mutationFn: async ({ reviewId, goalId, rating }: { reviewId: string; goalId: string; rating: number }) => {
+    mutationFn: async ({ goalId, rating, period }: { reviewId: string; goalId: string; rating: number; period: string }) => {
       await hrmsApi.post('/api/kpi/scores', {
-        metric_id: goalId,
-        score: rating,
-        notes: `Review ${reviewId}`,
+        employeeId,
+        metricId: goalId,
+        period,
+        actualValue: rating,
+        source: "manual",
       });
     },
     onSuccess: () => {
@@ -159,7 +161,7 @@ export function PerformanceReviews({ employeeId, employeeName = "Employee" }: Pe
                                     label="Self"
                                     value={rating?.employee_rating ?? null}
                                     onChange={canSelfRate(review.status)
-                                      ? (r) => upsertRating.mutate({ reviewId: review.id, goalId: goal.id, rating: r })
+                                      ? (r) => upsertRating.mutate({ reviewId: review.id, goalId: goal.id, rating: r, period: review.review_period })
                                       : undefined}
                                     readonly={!canSelfRate(review.status)}
                                     size="sm"

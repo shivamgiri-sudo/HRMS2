@@ -3,10 +3,12 @@ import { Activity, Building2, Download, Loader2, LogOut, Printer, RefreshCcw, Sh
 import { VisitorEmpty, VisitorShell, VisitorStat } from "@/components/visitor/VisitorShell";
 import { visitorApi, visitorDateTime, type EmergencyVisitor, type VisitorBranch, type VisitorOccupancy } from "@/features/visitor/visitorApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-
-function csvCell(value: unknown) {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
-}
+import { safeCsvCell, downloadCsv } from "@/lib/safeCsv";
+import { localISODate } from "@/lib/localDate";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function VisitorSecurityOperations() {
   const { hasAnyRole, isLoading: accessLoading } = useWorkforceAccess();
@@ -17,6 +19,7 @@ export default function VisitorSecurityOperations() {
   const [register, setRegister] = useState<EmergencyVisitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState<string | null>(null);
+  const [pendingCheckout, setPendingCheckout] = useState<EmergencyVisitor | null>(null);
   const [message, setMessage] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
@@ -52,8 +55,8 @@ export default function VisitorSecurityOperations() {
     return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
   }, [register, lastUpdated]);
 
-  const checkout = async (visitor: EmergencyVisitor) => {
-    if (!window.confirm(`Check out ${visitor.visitor_name} from ${visitor.branch_name}?`)) return;
+  const confirmCheckout = async (visitor: EmergencyVisitor) => {
+    setPendingCheckout(null);
     setWorkingId(visitor.id); setMessage("");
     try { await visitorApi.checkOut(visitor.id, { gate_code: "SECURITY-OPS", notes: "Checked out from security operations" }); await load(true); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Unable to check out visitor"); }
@@ -61,14 +64,11 @@ export default function VisitorSecurityOperations() {
   };
 
   const exportRegister = () => {
-    const rows = [
+    const rows: unknown[][] = [
       ["Visit number", "Visitor", "Masked mobile", "Branch", "Host", "Checked in at"],
       ...register.map((item) => [item.visit_number, item.visitor_name, item.masked_mobile, item.branch_name, item.host_display_name ?? "", visitorDateTime(item.checked_in_at)]),
     ];
-    const blob = new Blob([rows.map((row) => row.map(csvCell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a"); link.href = url; link.download = `visitor-emergency-register-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(rows, `visitor-emergency-register-${localISODate()}.csv`);
   };
 
   return (
@@ -87,9 +87,35 @@ export default function VisitorSecurityOperations() {
 
         <section className="rounded-3xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
           <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-black text-slate-950">Emergency visitor register</h2><p className="mt-1 text-sm text-slate-500">Use during evacuation, roll call, or site lockdown.</p></div><button onClick={exportRegister} disabled={!register.length} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-40 print:hidden"><Download className="h-4 w-4" />Export CSV</button></div>
-          <div className="p-4 sm:p-5">{loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-[#2784c4]" /></div> : register.length === 0 ? <VisitorEmpty title="No visitors are currently inside" description="The emergency register will populate as guards check approved visitors in." /> : <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left"><thead><tr className="border-b border-slate-200 text-xs font-black uppercase tracking-wide text-slate-400"><th className="px-3 py-3">Visitor</th><th className="px-3 py-3">Contact</th><th className="px-3 py-3">Host</th><th className="px-3 py-3">Branch</th><th className="px-3 py-3">Entry time</th><th className="px-3 py-3 text-right print:hidden">Action</th></tr></thead><tbody>{register.map((visitor) => <tr key={visitor.id} className="border-b border-slate-100 last:border-0"><td className="px-3 py-4"><p className="font-black text-slate-950">{visitor.visitor_name}</p><p className="mt-1 text-xs text-slate-500">{visitor.visit_number}</p></td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitor.masked_mobile}</td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitor.host_display_name || "Unassigned"}</td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitor.branch_name}</td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitorDateTime(visitor.checked_in_at)}</td><td className="px-3 py-4 text-right print:hidden"><button onClick={() => void checkout(visitor)} disabled={workingId === visitor.id} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{workingId === visitor.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}Check out</button></td></tr>)}</tbody></table></div>}</div>
+          <div className="p-4 sm:p-5">{loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-[#2784c4]" /></div> : register.length === 0 ? <VisitorEmpty title="No visitors are currently inside" description="The emergency register will populate as guards check approved visitors in." /> : <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left"><thead><tr className="border-b border-slate-200 text-xs font-black uppercase tracking-wide text-slate-400"><th className="px-3 py-3">Visitor</th><th className="px-3 py-3">Contact</th><th className="px-3 py-3">Host</th><th className="px-3 py-3">Branch</th><th className="px-3 py-3">Entry time</th><th className="px-3 py-3 text-right print:hidden">Action</th></tr></thead><tbody>{register.map((visitor) => <tr key={visitor.id} className="border-b border-slate-100 last:border-0"><td className="px-3 py-4"><p className="font-black text-slate-950">{visitor.visitor_name}</p><p className="mt-1 text-xs text-slate-500">{visitor.visit_number}</p></td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitor.masked_mobile}</td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitor.host_display_name || "Unassigned"}</td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitor.branch_name}</td><td className="px-3 py-4 text-sm font-bold text-slate-700">{visitorDateTime(visitor.checked_in_at)}</td><td className="px-3 py-4 text-right print:hidden"><button onClick={() => setPendingCheckout(visitor)} disabled={workingId === visitor.id} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{workingId === visitor.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}Check out</button></td></tr>)}</tbody></table></div>}</div>
         </section>
       </>}
     </VisitorShell>
+
+    <AlertDialog open={!!pendingCheckout} onOpenChange={(open) => { if (!open) setPendingCheckout(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Check out visitor?</AlertDialogTitle>
+          <AlertDialogDescription>
+            <strong>{pendingCheckout?.visitor_name}</strong> will be checked out from{" "}
+            <strong>{pendingCheckout?.branch_name}</strong>.
+            {pendingCheckout && (
+              <span className="mt-1 block text-xs text-slate-500">
+                Checked in: {visitorDateTime(pendingCheckout.checked_in_at)}
+              </span>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => pendingCheckout && void confirmCheckout(pendingCheckout)}
+            className="bg-slate-950 text-white hover:bg-slate-800"
+          >
+            Check out
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
