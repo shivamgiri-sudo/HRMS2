@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { Upload, FileSpreadsheet, Table2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Upload, FileSpreadsheet, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface QualityDataUploadProps {
   open: boolean;
@@ -22,7 +22,7 @@ interface QualityDataUploadProps {
   onSuccess?: () => void;
 }
 
-type SourceType = "excel" | "google_sheet" | "database";
+type SourceType = "excel" | "database";
 
 export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityDataUploadProps) {
   const [sourceType, setSourceType] = useState<SourceType>("excel");
@@ -32,20 +32,11 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
   // Excel upload
   const [file, setFile] = useState<File | null>(null);
 
-  // Google Sheets
-  const [sheetId, setSheetId] = useState("");
-  const [sheetName, setSheetName] = useState("");
-  const [credentialsFile, setCredentialsFile] = useState<File | null>(null);
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (sourceType === "excel" && !selectedFile.name.endsWith('.xlsx') && !selectedFile.name.endsWith('.xls')) {
+      if (!selectedFile.name.endsWith('.xlsx') && !selectedFile.name.endsWith('.xls')) {
         toast.error("Please upload an Excel file (.xlsx or .xls)");
-        return;
-      }
-      if (sourceType === "google_sheet" && !selectedFile.name.endsWith('.json')) {
-        toast.error("Please upload a Google credentials JSON file");
         return;
       }
       setFile(selectedFile);
@@ -86,46 +77,9 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
     }
   };
 
-  const handleGoogleSheetsConnect = async () => {
-    if (!sheetId || !sheetName || !credentialsFile || !processName) {
-      toast.error("Please fill in all Google Sheets fields");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const credentialsJson = e.target?.result as string;
-
-        const response = await hrmsApi.post('/api/performance-feedback/quality/connect-sheet', {
-          sheet_id: sheetId,
-          sheet_name: sheetName,
-          credentials: credentialsJson,
-          process_name: processName
-        });
-
-        if (response.success) {
-          toast.success("Connected to Google Sheet successfully!");
-          onSuccess?.();
-          handleClose();
-        } else {
-          toast.error(response.message || "Connection failed");
-        }
-      };
-      reader.readAsText(credentialsFile);
-    } catch (error: any) {
-      toast.error(error.message || "Failed to connect to Google Sheet");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSubmit = () => {
+const handleSubmit = () => {
     if (sourceType === "excel") {
       handleExcelUpload();
-    } else if (sourceType === "google_sheet") {
-      handleGoogleSheetsConnect();
     }
   };
 
@@ -133,9 +87,6 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
     setSourceType("excel");
     setProcessName("");
     setFile(null);
-    setSheetId("");
-    setSheetName("");
-    setCredentialsFile(null);
     onOpenChange(false);
   };
 
@@ -148,7 +99,7 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
             Upload Quality Data
           </DialogTitle>
           <DialogDescription>
-            Import quality assessment data from Excel files or Google Sheets
+            Import quality assessment data from Excel files
           </DialogDescription>
         </DialogHeader>
 
@@ -165,12 +116,6 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
                   <div className="flex items-center gap-2">
                     <FileSpreadsheet className="h-4 w-4" />
                     Excel File (.xlsx)
-                  </div>
-                </SelectItem>
-                <SelectItem value="google_sheet">
-                  <div className="flex items-center gap-2">
-                    <Table2 className="h-4 w-4" />
-                    Google Sheets
                   </div>
                 </SelectItem>
               </SelectContent>
@@ -217,59 +162,6 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
             </div>
           )}
 
-          {/* Google Sheets */}
-          {sourceType === "google_sheet" && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="sheetId">Google Sheet ID *</Label>
-                <Input
-                  id="sheetId"
-                  placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
-                  value={sheetId}
-                  onChange={(e) => setSheetId(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Found in the sheet URL: docs.google.com/spreadsheets/d/<strong>[SHEET_ID]</strong>/edit
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="sheetName">Sheet Name *</Label>
-                <Input
-                  id="sheetName"
-                  placeholder="Sheet1"
-                  value={sheetName}
-                  onChange={(e) => setSheetName(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="credentials">Service Account Credentials *</Label>
-                <Input
-                  id="credentials"
-                  type="file"
-                  accept=".json"
-                  onChange={(e) => setCredentialsFile(e.target.files?.[0] || null)}
-                />
-                {credentialsFile && (
-                  <div className="flex items-center gap-2 text-sm text-green-600">
-                    <CheckCircle2 className="h-4 w-4" />
-                    {credentialsFile.name}
-                  </div>
-                )}
-                <Alert>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription className="text-xs">
-                    <strong>How to get credentials:</strong><br />
-                    1. Go to Google Cloud Console<br />
-                    2. Create a Service Account<br />
-                    3. Download JSON credentials<br />
-                    4. Share your Google Sheet with the service account email
-                  </AlertDescription>
-                </Alert>
-              </div>
-            </div>
-          )}
         </div>
 
         <DialogFooter>
@@ -280,12 +172,12 @@ export function QualityDataUpload({ open, onOpenChange, onSuccess }: QualityData
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {sourceType === "excel" ? "Uploading..." : "Connecting..."}
+                Uploading...
               </>
             ) : (
               <>
                 <Upload className="mr-2 h-4 w-4" />
-                {sourceType === "excel" ? "Upload File" : "Connect Sheet"}
+                Upload File
               </>
             )}
           </Button>
