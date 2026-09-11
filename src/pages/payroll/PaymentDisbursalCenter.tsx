@@ -463,11 +463,13 @@ export default function PaymentDisbursalCenter() {
     const setBusy = reexport ? setTransferReexporting : setTransferGenerating;
     setBusy(true);
     try {
-      const base = reexport
-        ? `/api/payroll/bank-readiness/salary-transfer/reexport?run_id=${bankRunId}`
-        : `/api/payroll/bank-readiness/salary-transfer/export?run_id=${bankRunId}`;
-      const path = employeeIds?.length ? `${base}&employee_ids=${employeeIds.join(",")}` : base;
-      const blob = await hrmsApi.getBlob(path);
+      const path = reexport
+        ? `/api/payroll/bank-readiness/salary-transfer/reexport`
+        : `/api/payroll/bank-readiness/salary-transfer/export`;
+      // POST, not a GET query string — a real selection can run into the hundreds of employee
+      // ids and a GET query string has a hard length limit a large one exceeds (real 414 caught
+      // live, 2026-09-11, 797 ids). POST body has no such ceiling.
+      const blob = await hrmsApi.postBlob(path, { run_id: bankRunId, employee_ids: employeeIds ?? [] });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
