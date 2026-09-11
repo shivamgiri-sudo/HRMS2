@@ -55,6 +55,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { FilterMultiSelect } from "@/components/finance/pnl/FilterMultiSelect";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
@@ -458,13 +459,14 @@ export default function PaymentDisbursalCenter() {
   const rejectionReasons = transferItemsQ.data?.rejection_reasons ?? [];
   const correctedReadyItems = transferItems.filter((i) => i.status === "corrected_ready");
 
-  async function downloadSalaryTransferFile(reexport: boolean) {
+  async function downloadSalaryTransferFile(reexport: boolean, employeeIds?: string[]) {
     const setBusy = reexport ? setTransferReexporting : setTransferGenerating;
     setBusy(true);
     try {
-      const path = reexport
+      const base = reexport
         ? `/api/payroll/bank-readiness/salary-transfer/reexport?run_id=${bankRunId}`
         : `/api/payroll/bank-readiness/salary-transfer/export?run_id=${bankRunId}`;
+      const path = employeeIds?.length ? `${base}&employee_ids=${employeeIds.join(",")}` : base;
       const blob = await hrmsApi.getBlob(path);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -473,13 +475,101 @@ export default function PaymentDisbursalCenter() {
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success(reexport ? "Re-export file generated" : "Salary transfer file generated");
+      setEligibleSelectedIds(new Set());
       void qc.invalidateQueries({ queryKey: ["salary-transfer-items", bankRunId] });
+      void qc.invalidateQueries({ queryKey: ["salary-transfer-eligible", bankRunId] });
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to generate file");
     } finally {
       setBusy(false);
     }
   }
+
+  // ── Salary Transfer: employee selection (Branch/Process/Cost Centre/Status filters) ─────────
+  const [eligibleBranchIds, setEligibleBranchIds] = useState<string[]>([]);
+  const [eligibleProcessIds, setEligibleProcessIds] = useState<string[]>([]);
+  const [eligibleCostCentreIds, setEligibleCostCentreIds] = useState<string[]>([]);
+  const [eligibleStatus, setEligibleStatus] = useState<"active" | "inactive" | "both">("active");
+  const [eligibleSelectedIds, setEligibleSelectedIds] = useState<Set<string>>(new Set());
+
+  const branchOptionsQ = useQuery<{ data: Array<{ id: string; branch_name: string }> }>({
+    queryKey: ["st-branch-options"],
+    queryFn: () => hrmsApi.get("/api/access/branches"),
+    enabled: bankInnerTab === "export",
+  });
+  const processOptionsQ = useQuery<{ data: Array<{ id: string; process_name: string }> }>({
+    queryKey: ["st-process-options"],
+    queryFn: () => hrmsApi.get("/api/access/processes"),
+    enabled: bankInnerTab === "export",
+  });
+  const costCentreOptionsQ = useQuery<{ data: Array<{ id: string; cost_centre_code: string; cost_centre_name?: string }> }>({
+    queryKey: ["st-cost-centre-options"],
+    queryFn: () => hrmsApi.get("/api/payroll-masters/cost-centres"),
+    enabled: bankInnerTab === "export",
+  });
+
+  interface EligibleRow {
+    employee_id: string;
+    employee_code: string;
+    employee_name: string;
+    amount: number;
+    account_masked: string;
+    ifsc: string;
+    bank_name: string | null;
+    branch_id: string | null;
+    branch_name: string | null;
+    process_id: string | null;
+    process_name: string | null;
+    cost_centre_id: string | null;
+    cost_centre_name: string | null;
+    employee_status: "active" | "inactive";
+  }
+
+  const eligibleQ = useQuery<{ data: EligibleRow[]; count: number; total_amount: number }>({
+    queryKey: ["salary-transfer-eligible", bankRunId, eligibleBranchIds, eligibleProcessIds, eligibleCostCentreIds, eligibleStatus],
+    queryFn: () => {
+      const p = new URLSearchParams({ run_id: bankRunId, status: eligibleStatus });
+      // Single-value filters server-side; a multi-select UI narrows client-side when >1 picked
+      // (keeps the server contract simple — one branch/process/cost-centre id per call — while
+      // still letting the user tick several and see the union).
+      return hrmsApi.get(`/api/payroll/bank-readiness/salary-transfer/eligible?${p.toString()}`);
+    },
+    enabled: !!bankRunId && bankInnerTab === "export",
+  });
+  const eligibleAllRows = eligibleQ.data?.data ?? [];
+  const eligibleRows = eligibleAllRows.filter((r) => {
+    if (eligibleBranchIds.length && !(r.branch_id && eligibleBranchIds.includes(r.branch_id))) return false;
+    if (eligibleProcessIds.length && !(r.process_id && eligibleProcessIds.includes(r.process_id))) return false;
+    if (eligibleCostCentreIds.length && !(r.cost_centre_id && eligibleCostCentreIds.includes(r.cost_centre_id))) return false;
+    return true;
+  });
+  const eligibleAllOnViewSelected =
+    eligibleRows.length > 0 && eligibleRows.every((r) => eligibleSelectedIds.has(r.employee_id));
+
+  function toggleEligibleRow(id: string) {
+    setEligibleSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleEligibleSelectAll() {
+    setEligibleSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (eligibleAllOnViewSelected) {
+        for (const r of eligibleRows) next.delete(r.employee_id);
+      } else {
+        for (const r of eligibleRows) next.add(r.employee_id);
+      }
+      return next;
+    });
+  }
+
+  // A filter change narrows which rows are on screen — carrying a selection across that change
+  // would silently include employees the user can no longer see, same rule as the exceptions grid.
+  useEffect(() => {
+    setEligibleSelectedIds(new Set());
+  }, [bankRunId, eligibleBranchIds, eligibleProcessIds, eligibleCostCentreIds, eligibleStatus]);
 
   const rejectItemsMutation = useMutation({
     mutationFn: (vars: { item_ids: string[]; reason: string; note: string | null }) =>
@@ -1325,15 +1415,6 @@ export default function PaymentDisbursalCenter() {
                       file
                     </a>
                   </Button>
-                  <Button
-                    variant="outline"
-                    disabled={!bankRunId || transferGenerating}
-                    onClick={() => downloadSalaryTransferFile(false)}
-                    title="Generates the bank-upload .xls in the exact Salary Transfer File format (21 columns, genuine BIFF8)"
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    {transferGenerating ? "Generating…" : "Generate Salary Transfer File (.xls)"}
-                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Debit account, Pay Mod (I for ICICI beneficiaries, N otherwise) and every
@@ -1341,6 +1422,125 @@ export default function PaymentDisbursalCenter() {
                   Only READY employees not already exported for this run are included; a real
                   export batch is recorded so a repeat click never double-pays anyone.
                 </p>
+
+                {/* ── Employee selection for Salary Transfer File ────────────── */}
+                {bankRunId && (
+                  <div className="rounded-md border p-4 space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <FilterMultiSelect
+                        label="Branch"
+                        allLabel="All branches"
+                        options={(branchOptionsQ.data?.data ?? []).map((b) => ({ value: b.id, label: b.branch_name }))}
+                        selected={eligibleBranchIds}
+                        onChange={setEligibleBranchIds}
+                      />
+                      <FilterMultiSelect
+                        label="Process"
+                        allLabel="All processes"
+                        options={(processOptionsQ.data?.data ?? []).map((p) => ({ value: p.id, label: p.process_name }))}
+                        selected={eligibleProcessIds}
+                        onChange={setEligibleProcessIds}
+                      />
+                      <FilterMultiSelect
+                        label="Cost Centre"
+                        allLabel="All cost centres"
+                        options={(costCentreOptionsQ.data?.data ?? []).map((c) => ({
+                          value: c.id,
+                          label: c.cost_centre_name ? `${c.cost_centre_code} — ${c.cost_centre_name}` : c.cost_centre_code,
+                        }))}
+                        selected={eligibleCostCentreIds}
+                        onChange={setEligibleCostCentreIds}
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Status
+                        </span>
+                        <Select value={eligibleStatus} onValueChange={(v) => setEligibleStatus(v as typeof eligibleStatus)}>
+                          <SelectTrigger className="w-32 h-8 text-[13px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="inactive">Inactive</SelectItem>
+                            <SelectItem value="both">Both</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <span className="text-sm text-muted-foreground ml-auto">
+                        {eligibleQ.isLoading ? "loading…" : `${eligibleRows.length} eligible`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <Button
+                        disabled={eligibleSelectedIds.size === 0 || transferGenerating}
+                        onClick={() => downloadSalaryTransferFile(false, [...eligibleSelectedIds])}
+                        title="Generates the bank-upload .xls in the exact Salary Transfer File format (21 columns, genuine BIFF8) for the selected employees only"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        {transferGenerating
+                          ? "Generating…"
+                          : `Generate Salary Transfer File (${eligibleSelectedIds.size} selected)`}
+                      </Button>
+                      {eligibleSelectedIds.size > 0 && (
+                        <Button variant="ghost" size="sm" onClick={() => setEligibleSelectedIds(new Set())}>
+                          Clear selection
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="rounded-md border overflow-auto max-h-96">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted sticky top-0">
+                          <tr>
+                            <th className="px-2 py-2 w-8">
+                              <Checkbox
+                                checked={eligibleAllOnViewSelected}
+                                onCheckedChange={toggleEligibleSelectAll}
+                                aria-label="Select all eligible employees on this view"
+                              />
+                            </th>
+                            {["Code", "Name", "Branch", "Process", "Cost Centre", "Status", "Amount", "Account", "IFSC"].map((h) => (
+                              <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {eligibleQ.isLoading ? (
+                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                          ) : eligibleRows.length === 0 ? (
+                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">No eligible employees for this run/filter combination.</td></tr>
+                          ) : (
+                            eligibleRows.map((r) => (
+                              <tr key={r.employee_id} className={`border-t ${eligibleSelectedIds.has(r.employee_id) ? "bg-sky-50/60" : ""}`}>
+                                <td className="px-2 py-2">
+                                  <Checkbox
+                                    checked={eligibleSelectedIds.has(r.employee_id)}
+                                    onCheckedChange={() => toggleEligibleRow(r.employee_id)}
+                                    aria-label={`Select ${r.employee_code}`}
+                                  />
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.employee_code}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{r.employee_name}</td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.branch_name ?? "—"}</td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.process_name ?? "—"}</td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.cost_centre_name ?? "—"}</td>
+                                <td className="px-3 py-2">
+                                  <Badge variant="outline" className={r.employee_status === "active" ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-200 text-slate-800 border-slate-300"}>
+                                    {r.employee_status}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-2 tabular-nums whitespace-nowrap">₹{Number(r.amount).toLocaleString("en-IN")}</td>
+                                <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.account_masked}</td>
+                                <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.ifsc}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {summary && !summary.gate_clear && (
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm">
