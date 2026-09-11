@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { parseCtcInput, formatCtcPreview } from '@/lib/ctcParser';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
@@ -1009,10 +1010,17 @@ export default function NativeHROnboardingRequests() {
       setFormError('Enter CTC and salary band before calculating salary.');
       return;
     }
+    // See src/lib/ctcParser.ts -- a bare Number() here silently corrupted real offers
+    // (comma-typed "16,500" became 0; period-typed "16.500" became a broken 16.5).
+    const monthlyCtc = parseCtcInput(offer.offered_ctc);
+    if (monthlyCtc === null || monthlyCtc <= 0) {
+      setFormError(`"${offer.offered_ctc}" doesn't look like a valid monthly CTC. Enter digits only, e.g. 16500.`);
+      return;
+    }
     setCalcLoading(true);
     try {
       const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
-        ctc: Number(offer.offered_ctc) * 12,
+        ctc: monthlyCtc * 12,
         bandCode: offer.salary_band,
         pf_eligible: offer.pf_eligible,
         esi_eligible: offer.esi_eligible,
@@ -1062,15 +1070,22 @@ export default function NativeHROnboardingRequests() {
       // `!proposedCtc` alone only catches an empty field -- the *string* "0"
       // is truthy in JS, so a candidate could be submitted with a proposed
       // CTC of zero and no error shown. Checked as a number instead.
-      if (!proposedCtc || !(Number(proposedCtc) > 0)) errors.proposed_ctc = 'Proposed CTC must be greater than zero.';
+      // parseCtcInput (not bare Number()) so a comma/period-grouped entry like
+      // "16,500" or "16.500" is read correctly instead of silently corrupted --
+      // see src/lib/ctcParser.ts for the exact live incident this closes.
+      const parsedProposed = parseCtcInput(proposedCtc);
+      if (parsedProposed === null || !(parsedProposed > 0)) errors.proposed_ctc = 'Proposed CTC must be greater than zero.';
       if (!proposedReason.trim()) errors.proposed_reason = 'Exception reason is required.';
-    } else if (!offer.offered_ctc || !(Number(offer.offered_ctc) > 0)) {
-      // Same truthiness gap as above -- "0" (typed, or left over from a
-      // package whose amount didn't populate) passed this check silently and
-      // produced a ₹0 CTC/gross offer with a negative net-in-hand once
-      // submitted. See ats.onboarding.service.ts saveOffer() for the
-      // matching server-side guard (client validation alone is not enough).
-      errors.offered_ctc = 'Enter a package or a monthly CTC greater than zero.';
+    } else {
+      const parsedOffered = parseCtcInput(offer.offered_ctc);
+      if (parsedOffered === null || !(parsedOffered > 0)) {
+        // Same truthiness gap as above -- "0" (typed, or left over from a
+        // package whose amount didn't populate) passed this check silently and
+        // produced a ₹0 CTC/gross offer with a negative net-in-hand once
+        // submitted. See ats.onboarding.service.ts saveOffer() for the
+        // matching server-side guard (client validation alone is not enough).
+        errors.offered_ctc = 'Enter a package or a monthly CTC greater than zero.';
+      }
     }
     setFormFieldErrors(errors);
     if (Object.keys(errors).length) {
@@ -1087,7 +1102,9 @@ export default function NativeHROnboardingRequests() {
     setFormError(null);
     try {
       const isProposed = offerTab === 'proposed';
-      const monthlyCtc = isProposed ? Number(proposedCtc) : Number(offer.offered_ctc);
+      // parseCtcInput, not bare Number() -- see src/lib/ctcParser.ts. validateOffer()
+      // above already confirmed this parses to a positive number before we get here.
+      const monthlyCtc = (isProposed ? parseCtcInput(proposedCtc) : parseCtcInput(offer.offered_ctc)) ?? 0;
       await hrmsApi.post(`/api/ats/onboarding/requests/${selected.id}/offer`, {
         ...offer,
         offered_ctc: monthlyCtc * 12,
@@ -2579,20 +2596,49 @@ export default function NativeHROnboardingRequests() {
                               </button>
                             </div>
                           ) : (
-                            <input
-                              inputMode="numeric"
-                              className={SEL}
-                              value={offer.offered_ctc}
-                              onChange={(e) => setF('offered_ctc', e.target.value)}
-                              placeholder="e.g. 18000"
-                            />
+                            <>
+                              <input
+                                inputMode="decimal"
+                                className={SEL}
+                                value={offer.offered_ctc}
+                                onChange={(e) => setF('offered_ctc', e.target.value)}
+                                placeholder="e.g. 16500 or 16,500"
+                              />
+                              {/* Live "you typed X, this means Y" readback -- commas and Excel-paste
+                                  period-grouping ("16.500") used to silently corrupt this field into
+                                  a near-zero CTC with no warning. See src/lib/ctcParser.ts. */}
+                              {offer.offered_ctc && (() => {
+                                const parsed = parseCtcInput(offer.offered_ctc);
+                                return parsed !== null && parsed > 0 ? (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    = <span className="font-semibold text-slate-700">{formatCtcPreview(parsed)}</span>/month
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-xs font-medium text-amber-600">
+                                    ⚠ "{offer.offered_ctc}" doesn't read as a valid amount — use digits only.
+                                  </p>
+                                );
+                              })()}
+                            </>
                           )}
                         </Field>
                       </>
                     ) : (
                       <>
                         <Field label="Proposed Monthly CTC" required error={formFieldErrors.proposed_ctc}>
-                          <input inputMode="numeric" className={SEL} value={proposedCtc} onChange={(e) => setProposedCtc(e.target.value)} placeholder="e.g. 18000" />
+                          <input inputMode="decimal" className={SEL} value={proposedCtc} onChange={(e) => setProposedCtc(e.target.value)} placeholder="e.g. 16500 or 16,500" />
+                          {proposedCtc && (() => {
+                            const parsed = parseCtcInput(proposedCtc);
+                            return parsed !== null && parsed > 0 ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                = <span className="font-semibold text-slate-700">{formatCtcPreview(parsed)}</span>/month
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs font-medium text-amber-600">
+                                ⚠ "{proposedCtc}" doesn't read as a valid amount — use digits only.
+                              </p>
+                            );
+                          })()}
                         </Field>
                         <Field label="Exception Reason" required error={formFieldErrors.proposed_reason}>
                           <input className={SEL} value={proposedReason} onChange={(e) => setProposedReason(e.target.value)} placeholder="Skill premium / approval reason" />

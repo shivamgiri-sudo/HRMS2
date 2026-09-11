@@ -8,6 +8,7 @@ import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-h
 import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import { resolveBandPct } from './band-package-ratio.service.js';
+import { parseCtcInput } from './ctc-parser.js';
 import {
   sendOnboardingTokenEmail,
   sendBankResubmitEmail,
@@ -909,13 +910,25 @@ export async function saveOffer(
     bhEmail = (bhRows as RowDataPacket[])[0]?.email ?? null;
   }
 
+  // Parsed once, defensively -- offerData.offered_ctc arrives as a plain number from
+  // the current frontend, but this is the one place a comma/period-grouped string
+  // (a direct API call, or a future caller) would otherwise silently corrupt the
+  // whole offer. See ctc-parser.ts for the exact bug this closes.
+  const annualCtcInput = parseCtcInput(offerData.offered_ctc);
+  if (annualCtcInput === null || !Number.isFinite(annualCtcInput) || annualCtcInput <= 0) {
+    throw Object.assign(
+      new Error(`Offered CTC "${String(offerData.offered_ctc)}" could not be read as a valid amount.`),
+      { statusCode: 400 },
+    );
+  }
+
   // salary_band_master has no basic_pct/hra_pct columns -- that lookup always
   // threw and silently defaulted to 40/40 for every band. Derive the split
   // from salary_package_master instead: the canonical master Payroll Head's
   // tools already read. See band-package-ratio.service.ts.
   const band = await resolveBandPct(
     typeof offerData.salary_band === 'string' ? offerData.salary_band : null,
-    Number(offerData.offered_ctc) / 12,
+    annualCtcInput / 12,
   );
   // Default true (deduct) to match the column's own DB default when a caller
   // omits the field entirely — only an explicit false opts the candidate out.
@@ -930,7 +943,7 @@ export async function saveOffer(
     stateCode = (stateRows as RowDataPacket[])[0]?.state ?? null;
   }
   const components: SalaryComponents = await calculateSalary(
-    Number(offerData.offered_ctc),
+    annualCtcInput,
     band.basicPct,
     band.hraPct,
     false,
