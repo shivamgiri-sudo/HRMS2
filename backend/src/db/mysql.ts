@@ -251,6 +251,11 @@ export const db = {
     return withTransientRetry(() => _pool.query<T>(sql, params as ExecuteParams));
   },
   end: _pool.end.bind(_pool),
+  // Safe literal-escaping for the rare case a value must be interpolated into SQL text
+  // rather than bound as a `?` placeholder (e.g. building one big template string where
+  // inserting a new positional placeholder would risk misaligning existing ones). Never
+  // use this for untrusted/user-supplied input — bind those with `?` instead.
+  escape: _pool.escape.bind(_pool),
 };
 
 // Catch pool-level errors to avoid unhandled rejections
