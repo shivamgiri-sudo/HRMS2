@@ -261,11 +261,11 @@ function OfferBadge({ status }: { status?: string }) {
 function ErrorBanner({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
   if (!message) return null;
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-3">
-      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+    <div role="alert" className="rounded-[var(--radius-card)] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#B91C1C] flex items-start gap-3">
+      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
       <div className="flex-1">
         <p className="font-semibold">{message}</p>
-        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2 min-h-[44px] bg-white">Retry</Button>}
+        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2 min-h-[44px] bg-[var(--color-surface)]">Try again</Button>}
       </div>
     </div>
   );
@@ -1399,7 +1399,7 @@ export default function NativeHROnboardingRequests() {
                     <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
                   </div>
                 )}
-                {bgvQueueError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{bgvQueueError}</div>}
+                {bgvQueueError && <ErrorBanner message={bgvQueueError} onRetry={() => void loadBgvQueue()} />}
                 {!bgvQueueLoading && bgvQueue.length === 0 && !bgvQueueError && (
                   <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-16 text-center">
                     <ShieldCheck className="h-12 w-12 text-emerald-400 mb-3" />
@@ -1658,7 +1658,7 @@ export default function NativeHROnboardingRequests() {
                         <button type="button" onClick={() => { setBgvReviewState(null); setBgvReviewError(null); }}><X className="h-4 w-4 text-slate-400" /></button>
                       </div>
                       <div className="p-5 space-y-4">
-                        {bgvReviewError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{bgvReviewError}</div>}
+                        {bgvReviewError && <ErrorBanner message={bgvReviewError} />}
 
                         <div>
                           <label className="block text-xs font-bold text-slate-600 mb-1.5">Decision</label>

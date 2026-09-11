@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -1072,19 +1073,10 @@ const Attendance = () => {
                 ))}
               </div>
             ) : summaryError ? (
-              <Card className="border-dashed border-red-200 bg-red-50/70 shadow-none">
-                <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-red-500 shadow-sm ring-1 ring-red-200">
-                    <AlertTriangle className="h-7 w-7" />
-                  </div>
-                  <h3 className="text-base font-semibold text-red-950">
-                    Could Not Load Summary
-                  </h3>
-                  <p className="mt-2 max-w-md text-sm leading-6 text-red-600">
-                    Attendance summary could not be loaded. Please try refreshing.
-                  </p>
-                </CardContent>
-              </Card>
+              <ErrorState
+                title="Couldn't load attendance summary"
+                description={summaryError instanceof Error ? summaryError.message : "Attendance summary could not be loaded. Please try refreshing."}
+              />
             ) : !summaryData ? (
               <Card className="border-dashed border-slate-200 bg-slate-50/70 shadow-none">
                 <CardContent className="flex flex-col items-center justify-center py-12 text-center">
@@ -1208,23 +1200,11 @@ const Attendance = () => {
             </div>
 
             {employeeError ? (
-              <div className="rounded-xl border-2 border-red-200 bg-red-50 p-8 text-center">
-                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-red-500" />
-                <h3 className="mb-2 text-lg font-semibold text-red-900">
-                  Failed to Load Employee Information
-                </h3>
-                <p className="mb-4 text-sm text-red-700">
-                  We could not load your employee profile. Retry, or contact HR if the issue continues.
-                </p>
-                <Button
-                  onClick={() => window.location.reload()}
-                  variant="outline"
-                  className="border-red-300 text-red-700 hover:bg-red-100"
-                >
-                  <RefreshCcw className="mr-2 h-4 w-4" />
-                  Retry
-                </Button>
-              </div>
+              <ErrorState
+                title="Couldn't load employee profile"
+                description={employeeError instanceof Error ? employeeError.message : "We could not load your employee profile. Retry, or contact HR if the issue continues."}
+                onRetry={() => void refetchEmployee()}
+              />
             ) : !currentEmployee ? (
               <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-8 text-center">
                 <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-amber-500" />

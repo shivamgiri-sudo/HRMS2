@@ -12,6 +12,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 
 type QueueRow = {
   candidate_id: string;
@@ -540,7 +541,7 @@ export default function NativeJoiningControlRoom() {
 
         <OnboardingTabBar />
 
-        {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {error && <ErrorState title="Couldn't load joining queue" description={error} onRetry={() => void loadQueue()} className="mb-3" />}
         {message && <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
 
         <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
