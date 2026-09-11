@@ -230,7 +230,12 @@ export const paymentVoucherService = {
               cba.account_name AS bank_account_name,
               pam.account_name AS payable_account_name,
               vpt.grn_number, vpt.vendor_name, vpt.due_amount AS vendor_due_amount,
-              im.tally_name AS imprest_manager_name,
+              -- 3 of 41 active imprest_manager rows carry no tally_name (never backfilled
+              -- when the manager master was created) — a bare im.tally_name left "Purpose"
+              -- rendering blank in the drawer for any voucher against one of them. Falls
+              -- back to the linked employee's name, same COALESCE(NULLIF(...),...) idiom
+              -- recipient-resolver.ts already uses for the identical gap elsewhere.
+              COALESCE(NULLIF(TRIM(im.tally_name), ''), NULLIF(TRIM(im_emp.full_name), '')) AS imprest_manager_name,
               -- vendor_advance/vendor_advance_application carry no GRN, so vpt.vendor_name above
               -- is NULL for them — linked_vendor_id + this join is their only vendor identity.
               lv.vendor_name AS linked_vendor_name
@@ -239,6 +244,7 @@ export const paymentVoucherService = {
          LEFT JOIN payable_account_master pam ON pam.id = pv.payable_account_id
          LEFT JOIN vendor_payment_tracking vpt ON vpt.id = pv.linked_vendor_payment_id
          LEFT JOIN imprest_manager im ON im.id = pv.linked_imprest_manager_id
+         LEFT JOIN employees im_emp ON im_emp.id = im.employee_id
          LEFT JOIN vendor_master lv ON lv.id = pv.linked_vendor_id
         WHERE ${conditions.join(" AND ")}
         ORDER BY pv.created_at DESC
@@ -256,13 +262,15 @@ export const paymentVoucherService = {
               vpt.grn_number, vpt.vendor_name, vpt.due_amount AS vendor_due_amount,
               vpt.tds_deducted_amount, vpt.paid_amount AS vendor_paid_amount,
               vpt.head, vpt.sub_head, vpt.due_date, vpt.financial_year,
-              im.tally_name AS imprest_manager_name,
+              -- Same tally_name fallback as list() above.
+              COALESCE(NULLIF(TRIM(im.tally_name), ''), NULLIF(TRIM(im_emp.full_name), '')) AS imprest_manager_name,
               lv.vendor_name AS linked_vendor_name
          FROM payment_voucher pv
          LEFT JOIN company_bank_account cba ON cba.id = pv.bank_account_id
          LEFT JOIN payable_account_master pam ON pam.id = pv.payable_account_id
          LEFT JOIN vendor_payment_tracking vpt ON vpt.id = pv.linked_vendor_payment_id
          LEFT JOIN imprest_manager im ON im.id = pv.linked_imprest_manager_id
+         LEFT JOIN employees im_emp ON im_emp.id = im.employee_id
          LEFT JOIN vendor_master lv ON lv.id = pv.linked_vendor_id
         WHERE pv.id = ?
         LIMIT 1`,
