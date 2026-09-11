@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Request, type RequestHandler, type Resp
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { authService } from "./auth.service.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -480,7 +481,15 @@ router.post("/2fa/send", requireAuth, twoFactorLimiter, h(async (req, res) => {
   if (!["email", "sms"].includes(channel)) {
     return res.status(400).json({ success: false, error: "channel must be email or sms" });
   }
-  await sendTwoFactorChallenge(req.authUser!.id, channel);
+  // SEC-07: bind the OTP challenge to the exact pre_auth login attempt (decode only —
+  // requireAuth already verified the signature to get this far).
+  const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
+  let preAuthChallengeId: string | null = null;
+  try {
+    const decoded = jwt.decode(preAuthToken) as { challengeId?: string } | null;
+    preAuthChallengeId = decoded?.challengeId ?? null;
+  } catch { /* non-fatal — falls back to unlinked challenge */ }
+  await sendTwoFactorChallenge(req.authUser!.id, channel, preAuthChallengeId);
   return res.json({ success: true, message: "Verification code sent" });
 }));
 
