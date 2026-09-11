@@ -227,7 +227,10 @@ function buildAoa(rows: TransferRow[], debitAccount: string, dateLabel: string):
       debitAccount,
       r.account_number,
       sanitizeCell(r.employee_name.toUpperCase()),
-      Number.isInteger(r.amount) ? String(r.amount) : r.amount.toFixed(2),
+      // Whole rupees, no paise — matches the reference file's own sample rows ("2705", not
+      // "2705.00"). Explicit user correction, 2026-09-11: real salary amounts carry paise
+      // (e.g. 18453.58) but the bank file's Amt column must be a round number.
+      String(Math.round(r.amount)),
       payMod(r.ifsc),
       dateLabel,
       r.ifsc,
