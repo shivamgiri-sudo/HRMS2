@@ -54,6 +54,12 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { FilterMultiSelect } from "@/components/finance/pnl/FilterMultiSelect";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -347,6 +353,11 @@ export default function PaymentDisbursalCenter() {
     account_holder_name: string | null;
     name_match_score: number | null;
     verified_at: string | null;
+    bank_name: string | null;
+    branch_name_onboarding: string | null;
+    account_type: string | null;
+    name_on_cheque: string | null;
+    proof_document: { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null } | null;
   }
   const manualReviewQ = useQuery<{ data: ManualReviewRow[]; count: number }>({
     queryKey: ["bank-readiness-manual-review"],
@@ -364,6 +375,49 @@ export default function PaymentDisbursalCenter() {
     },
     onError: (e: any) => toast.error(e?.message ?? "Approval failed"),
   });
+
+  // Row drill-down drawer: full onboarding-typed fields + the uploaded passbook/cheque proof
+  // image, fetched as an authenticated blob (same pattern as EsiRegDocsTab.tsx) — the onboarding
+  // preview route requires a bearer token or a candidate token, never an unauthenticated <img src>.
+  const [manualReviewDrawerRow, setManualReviewDrawerRow] = useState<ManualReviewRow | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [proofPreviewLoading, setProofPreviewLoading] = useState(false);
+  const [proofPreviewError, setProofPreviewError] = useState<string | null>(null);
+  const [proofContentType, setProofContentType] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!manualReviewDrawerRow?.proof_document) {
+      setProofPreviewUrl(null);
+      setProofContentType(null);
+      return;
+    }
+    const docId = manualReviewDrawerRow.proof_document.id;
+    setProofPreviewLoading(true);
+    setProofPreviewError(null);
+    let revoked = false;
+    hrmsApi
+      .getBlob(`/api/ats/onboarding-full/documents/preview/${docId}`)
+      .then((blob: Blob) => {
+        if (revoked) return;
+        setProofContentType(blob.type || null);
+        setProofPreviewUrl(URL.createObjectURL(blob));
+      })
+      .catch((e: any) => {
+        if (!revoked) setProofPreviewError(e?.message ?? "Unable to load the uploaded document.");
+      })
+      .finally(() => {
+        if (!revoked) setProofPreviewLoading(false);
+      });
+    return () => {
+      revoked = true;
+    };
+  }, [manualReviewDrawerRow?.proof_document?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (proofPreviewUrl?.startsWith("blob:")) URL.revokeObjectURL(proofPreviewUrl);
+    };
+  }, [proofPreviewUrl]);
 
   const divergenceQ = useQuery<{ data: Record<string, number | string> }>({
     queryKey: ["bank-readiness-divergence", bankRunId],
@@ -1451,7 +1505,11 @@ export default function PaymentDisbursalCenter() {
                         <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">No employees waiting on manual review right now.</td></tr>
                       ) : (
                         (manualReviewQ.data?.data ?? []).map((r) => (
-                          <tr key={r.employee_id} className="border-t">
+                          <tr
+                            key={r.employee_id}
+                            className="border-t cursor-pointer hover:bg-muted/50"
+                            onClick={() => setManualReviewDrawerRow(r)}
+                          >
                             <td className="px-3 py-2 font-mono text-xs">{r.employee_code}</td>
                             <td className="px-3 py-2">{r.employee_name}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.branch_name ?? "—"}</td>
@@ -1460,7 +1518,7 @@ export default function PaymentDisbursalCenter() {
                             <td className="px-3 py-2">{r.account_holder_name ?? "—"}</td>
                             <td className="px-3 py-2">{r.name_match_score == null ? "—" : `${Math.round(r.name_match_score)}%`}</td>
                             <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDateTime(r.verified_at)}</td>
-                            <td className="px-3 py-2">
+                            <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 size="sm"
                                 disabled={approveManualReviewMutation.isPending}

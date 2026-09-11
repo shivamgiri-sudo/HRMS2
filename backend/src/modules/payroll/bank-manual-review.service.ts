@@ -34,6 +34,17 @@ export interface ManualReviewGapRow {
   account_holder_name: string | null;
   name_match_score: number | null;
   verified_at: string | null;
+  // Everything the candidate actually typed at onboarding, for the reviewer to compare against
+  // the uploaded proof below — not just the verification-provider's derived fields above.
+  bank_name: string | null;
+  branch_name_onboarding: string | null;
+  account_type: string | null;
+  name_on_cheque: string | null;
+  // The passbook/cheque image or PDF the candidate uploaded, if any. Looked up directly against
+  // candidate_onboarding_document rather than trusting cancelled_cheque_document_id — that FK is
+  // populated on only ~0.7% of rows (an auto-link bug on some upload paths leaves it null even
+  // when a real document exists), confirmed live 2026-09-11.
+  proof_document: { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null } | null;
 }
 
 /**
@@ -54,7 +65,9 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
             b.branch_name,
             v.candidate_id, v.ifsc_code, v.input_account_holder_name AS account_holder_name,
             v.name_match_score, v.verified_at,
-            c.bank_account_no
+            c.bank_account_no,
+            obd.bank_name AS ob_bank_name, obd.branch_name AS ob_branch_name,
+            obd.account_type AS ob_account_type, obd.name_on_cheque AS ob_name_on_cheque
        FROM (
          SELECT v1.*
            FROM candidate_bank_verification v1
@@ -70,6 +83,7 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
        JOIN ats_candidate c ON c.id = v.candidate_id
        JOIN employees e ON e.employee_code = c.employee_code
        LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN candidate_onboarding_bank_detail obd ON obd.candidate_id = v.candidate_id
       WHERE e.active_status = 1
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
         AND NOT EXISTS (
@@ -78,9 +92,13 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
         )
       GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name,
                v.candidate_id, v.ifsc_code, v.input_account_holder_name, v.name_match_score,
-               v.verified_at, c.bank_account_no
+               v.verified_at, c.bank_account_no, obd.bank_name, obd.branch_name,
+               obd.account_type, obd.name_on_cheque
       ORDER BY v.verified_at DESC`,
   );
+
+  const candidateIds = (rows as any[]).map((r) => r.candidate_id).filter(Boolean);
+  const proofByCandidate = await getProofDocumentsByCandidate(candidateIds);
 
   return (rows as any[]).map((r) => ({
     employee_id: r.employee_id,
@@ -93,7 +111,48 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
     account_holder_name: r.account_holder_name ?? null,
     name_match_score: r.name_match_score == null ? null : Number(r.name_match_score),
     verified_at: r.verified_at ?? null,
+    bank_name: r.ob_bank_name ?? null,
+    branch_name_onboarding: r.ob_branch_name ?? null,
+    account_type: r.ob_account_type ?? null,
+    name_on_cheque: r.ob_name_on_cheque ?? null,
+    proof_document: proofByCandidate.get(r.candidate_id) ?? null,
   }));
+}
+
+/**
+ * Looks up each candidate's passbook/cheque proof directly against candidate_onboarding_document
+ * by doc_type, NOT via candidate_onboarding_bank_detail.cancelled_cheque_document_id — that FK is
+ * null on ~99.3% of rows even when a real document was uploaded (an auto-link gap on some upload
+ * paths/timings, confirmed live 2026-09-11 against 5 real manual_review candidates: 3 had an
+ * actual uploaded doc, but only 1 of those 3 had the FK set). Picks the most recent doc per
+ * candidate when more than one was uploaded (e.g. both "Bank Passbook" and "Cancelled Cheque").
+ */
+async function getProofDocumentsByCandidate(
+  candidateIds: string[],
+): Promise<Map<string, { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null }>> {
+  const result = new Map<string, { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null }>();
+  if (!candidateIds.length) return result;
+
+  const placeholders = candidateIds.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT candidate_id, id, doc_type, file_original_name, created_at
+       FROM candidate_onboarding_document
+      WHERE candidate_id IN (${placeholders})
+        AND (doc_type LIKE '%cheque%' OR doc_type LIKE '%passbook%' OR doc_type LIKE '%Cheque%' OR doc_type LIKE '%Passbook%')
+      ORDER BY created_at DESC`,
+    candidateIds,
+  );
+  for (const r of rows as any[]) {
+    if (!result.has(r.candidate_id)) {
+      result.set(r.candidate_id, {
+        id: r.id,
+        doc_type: r.doc_type,
+        file_name: r.file_original_name ?? null,
+        uploaded_at: r.created_at ?? null,
+      });
+    }
+  }
+  return result;
 }
 
 /**

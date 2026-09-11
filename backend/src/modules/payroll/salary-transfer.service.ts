@@ -14,9 +14,11 @@
  *     Ben add1, Ben add2, Ben add3, Ben add4,
  *     Add details 1, Add details 2, Add details 3, Add details 4, Add details 5, Remarks
  *   Remarks carries the employee code. Date is DD-MMM-YYYY, upper-cased (e.g. 11-SEP-2026).
- *   Amt is a plain digit string, no thousands separators, two-decimal amounts kept as-is
- *   (the sample carries whole rupees; this module formats to 2 decimals when the amount
- *   genuinely has paise, since the bank template does not say it truncates them).
+ *   Amt is a plain digit string, no thousands separators, WHOLE RUPEES ONLY, rounded — matches
+ *   the reference file's own sample rows ("2705", not "2705.00"). Explicit user correction,
+ *   2026-09-11: real salary amounts carry paise (e.g. 18453.58) but the bank file's Amt column
+ *   must be a round number (buildAoa() below does the actual Math.round()). Re-verified live
+ *   the same day against a freshly generated 701-row file: 0 of 701 rows carried a decimal.
  *   Pay Mod was 'N' on both sample rows (neither is ICICI) — the 'I' case is inferred from
  *   this codebase's own established ICIC-IFSC-prefix rule (payroll.executor.ts), not
  *   independently confirmed against a real ICICI sample row. Flagged, not guessed silently.

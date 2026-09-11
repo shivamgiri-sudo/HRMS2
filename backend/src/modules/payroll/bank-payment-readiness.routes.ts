@@ -70,6 +70,7 @@ import {
   commitTransferNumberImport,
   type TransferImportPreviewRow,
 } from "./salary-transfer.service.js";
+import { autoAssignBankExceptionsToPayrollHr } from "./bank-exception-auto-assign.service.js";
 
 export const bankPaymentReadinessRouter = Router();
 
@@ -298,8 +299,18 @@ bankPaymentReadinessRouter.get(
       loadOverlay(),
       loadLastEmployeeActions(),
     ]);
-    const visible = await resolveVisibleBranchIds(req.authUser!.id);
 
+    // Fire-and-forget: assign any newly-unowned INVALID/MISSING/CONFLICT row to its branch
+    // payroll HR and email employee+manager+payroll HR. Runs over the FULL unfiltered report,
+    // not the current viewer's visible slice — a branch-scoped payroll user opening their own
+    // Exceptions view must not be the only thing that ever triggers assignment for other
+    // branches. Idempotent (see bank-exception-auto-assign.service.ts), so this is cheap on
+    // every request after the first time each exception is seen.
+    void autoAssignBankExceptionsToPayrollHr(report.rows).catch((err) =>
+      console.error("[bank-exceptions] auto-assign pass failed:", err),
+    );
+
+    const visible = await resolveVisibleBranchIds(req.authUser!.id);
     const rows = report.rows
       .filter((r) => (visible ? r.branch_id && visible.has(r.branch_id) : true))
       .filter((r) => (wanted ? r.readiness_class === wanted : includeReady || r.readiness_class !== "READY"))
