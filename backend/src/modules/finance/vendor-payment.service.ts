@@ -698,7 +698,16 @@ export const vendorPaymentService = {
   async createFromGrn(
     grnId: string,
     actorUserId: string,
-    connection?: PoolConnection
+    connection?: PoolConnection,
+    // One-time-remediation escape hatch ONLY — the live submit/review path never passes this
+    // (grn-validation-control.service.ts's VENDOR_INVOICE_ATTACHMENT check already blocks a
+    // vendor GRN from reaching approval without one, with its own audited override mechanism
+    // for a genuine case-by-case exception). This exists solely for
+    // scripts/remediate-attachmentless-approved-vendor-grn-backlog.ts, which needed a single
+    // documented reason to unblock 58 real, already-approved GRNs a raw-SQL backfill script
+    // (backfill-vendor-grn-approved-status.cjs) put in an inconsistent state by setting status
+    // directly and skipping this function — and every remaining call, past and future, entirely.
+    remediationReason?: string,
   ) {
     const executor = connection ?? db;
     const [rows] = await executor.execute<RowDataPacket[]>(
@@ -716,7 +725,8 @@ export const vendorPaymentService = {
     if (!grn.vendor_id || !grn.vendor_name) {
       throw new Error("Vendor GRN has no canonical Vendor Master mapping");
     }
-    if (!grn.attachment_path && !grn.attachment_file_path) {
+    const hasAttachment = !!(grn.attachment_path || grn.attachment_file_path);
+    if (!hasAttachment && !remediationReason?.trim()) {
       throw new Error("Vendor GRN has no invoice/supporting attachment");
     }
 
@@ -776,6 +786,15 @@ export const vendorPaymentService = {
 
     if (!connection) {
       await this.auditCreatedPayment(id, actorUserId);
+    }
+    if (!hasAttachment && remediationReason?.trim()) {
+      await writeFinanceAudit(
+        "VENDOR_PAYMENT_ROW_CREATED_WITHOUT_ATTACHMENT",
+        id,
+        actorUserId,
+        undefined,
+        { grn_id: grnId, grn_number: grn.grn_number, due_amount: dueAmount, reason: remediationReason.trim() },
+      );
     }
     return id;
   },
@@ -851,23 +870,6 @@ export const vendorPaymentService = {
       extraParams
     );
     return rows;
-  },
-
-  /**
-   * Vendor's currently available advance/on-account balance — the latest vendor_advance_ledger
-   * running balance, or 0 if this vendor has never had an advance voucher released. Same
-   * "latest balance_after wins" logic payment-voucher.service.ts's own private copy of this
-   * query uses internally during raise()/release() — this is the read-only, externally-callable
-   * twin, backing the Raise form's inline balance display and the Vendor Payment Dispatch page's
-   * advance badge. A single trivial SELECT, not worth importing across modules for.
-   */
-  async getAdvanceBalance(vendorId: string): Promise<number> {
-    const [[last]] = await db.execute<RowDataPacket[]>(
-      `SELECT balance_after FROM vendor_advance_ledger
-        WHERE vendor_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
-      [vendorId],
-    );
-    return last ? Number((last as any).balance_after) : 0;
   },
 
   async auditCreatedPayment(id: string, actorUserId: string) {
