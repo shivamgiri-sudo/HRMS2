@@ -734,13 +734,11 @@ export async function commitImportBatch(
     throw new Error('Batch has warnings — pass overrideWarnings: true to proceed');
   }
 
-  // Step 5: Maker-checker. Owner ruling 2026-08-22: the rule protects against a plain WFM/team
-  // leader uploader waving their own roster through unreviewed — it was never meant to stop a
-  // super_admin, who has no separate WFM-head "checker" above them in this flow and is trusted to
-  // upload and approve in one step.
-  if (batch.created_by === committedBy && !options.committerIsSuperAdmin) {
-    throw new Error('Uploader cannot approve their own import (maker-checker policy)');
-  }
+  // Step 5: Maker-checker removed (owner ruling 2026-09-11) — the uploader is now allowed to
+  // commit their own import batch. Previously (owner ruling 2026-08-22) a plain WFM/team-leader
+  // uploader was blocked from approving their own batch unless committerIsSuperAdmin; that
+  // restriction is intentionally gone. `options.committerIsSuperAdmin` is kept as an accepted
+  // (now no-op) option so callers/tests passing it don't need to change.
 
   // Step 6: Fetch committable rows (exclude NO_CHANGE, NEEDS_MAPPING, ERROR when overrideWarnings)
   const [importRows] = await db.execute<RowDataPacket[]>(

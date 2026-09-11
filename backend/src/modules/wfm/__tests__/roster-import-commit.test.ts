@@ -246,16 +246,19 @@ describe('commitImportBatch', () => {
     expect(state.committed).toBe(true);
   });
 
-  it('throws on maker-checker violation (same created_by and committedBy)', async () => {
+  it('allows the uploader to commit their own batch — maker-checker removed 2026-09-11', async () => {
     state.batch = makeBatch({ created_by: 'same-user' });
     state.errorCount = 0;
     state.warnCount = 0;
-    await expect(
-      commitImportBatch(1, 'same-user', {})
-    ).rejects.toThrow('Uploader cannot approve their own import (maker-checker policy)');
+    state.importRows = [makeImportRow({ validation_state: 'VALID' })];
+
+    const result = await commitImportBatch(1, 'same-user', {});
+
+    expect(result.assignmentsCreated).toBe(1);
+    expect(state.committed).toBe(true);
   });
 
-  it('super_admin CAN approve their own import — maker-checker exemption', async () => {
+  it('super_admin CAN approve their own import — committerIsSuperAdmin still accepted as a no-op', async () => {
     state.batch = makeBatch({ created_by: 'same-user' });
     state.errorCount = 0;
     state.warnCount = 0;
