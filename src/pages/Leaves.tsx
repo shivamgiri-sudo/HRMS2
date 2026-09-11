@@ -247,7 +247,7 @@ const Leaves = () => {
     enabled: !!user?.id,
   });
 
-  const { data: requests = [], isLoading } = useLeaveRequests();
+  const { data: requests = [], isLoading, isError: isRequestsError, refetch: refetchRequests } = useLeaveRequests();
   const { data: stats } = useLeaveStats();
   const leaveLoad = useLeaveLoadInfo();
 
@@ -835,6 +835,19 @@ const Leaves = () => {
     processedBranchFilter !== "all" ||
     processedProcessFilter !== "all" ||
     processedSearchQuery.trim() !== "";
+
+  if (isRequestsError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <p className="text-sm text-rose-600 font-semibold">Failed to load data. Please try again.</p>
+          <button onClick={() => refetchRequests()} className="text-sm text-blue-600 underline hover:no-underline">
+            Retry
+          </button>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

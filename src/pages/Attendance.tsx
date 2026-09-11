@@ -310,7 +310,7 @@ const Attendance = () => {
     1
   );
 
-  const { data: currentEmployee, error: employeeError, isLoading: employeeLoading } = useQuery<EmployeeSchedule | null>({
+  const { data: currentEmployee, error: employeeError, isLoading: employeeLoading, isError: isErrorEmployee, refetch: refetchEmployee } = useQuery<EmployeeSchedule | null>({
     queryKey: ["current-employee-schedule", user?.id],
     queryFn: async () => {
       const empData = await hrmsApi.get<{ data: { id: string; first_name?: string | null; last_name?: string | null; working_hours_start?: string | null; working_hours_end?: string | null; working_days?: number[] | null } }>(`/api/employees/me`);
@@ -597,6 +597,19 @@ const Attendance = () => {
       </div>
     );
   };
+
+  if (isErrorEmployee) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <p className="text-sm text-rose-600 font-semibold">Failed to load data. Please try again.</p>
+          <button onClick={() => refetchEmployee()} className="text-sm text-blue-600 underline hover:no-underline">
+            Retry
+          </button>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

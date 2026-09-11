@@ -207,7 +207,7 @@ const Employees = () => {
     : statusFilter === "offboarded"
       ? "Terminated"
       : undefined;
-  const { data: directoryData, isLoading: isLoadingEmployees } = useEmployeeDirectory({
+  const { data: directoryData, isLoading: isLoadingEmployees, isError: isErrorEmployees, refetch: refetchEmployees } = useEmployeeDirectory({
     page: currentPage,
     limit: pageSize,
     recordStatus,
@@ -622,6 +622,19 @@ const Employees = () => {
   };
 
   const hasActiveFilters = searchQuery.trim() || departmentFilter !== "all" || processFilter !== "all" || branchFilter !== "all" || statusFilter !== "active";
+
+  if (isErrorEmployees) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <p className="text-sm text-rose-600 font-semibold">Failed to load data. Please try again.</p>
+          <button onClick={() => refetchEmployees()} className="text-sm text-blue-600 underline hover:no-underline">
+            Retry
+          </button>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

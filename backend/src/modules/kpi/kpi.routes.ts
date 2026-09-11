@@ -92,7 +92,17 @@ router.post("/scores/bulk",
 router.post("/scores", requireRole("admin", "manager", "qa"), h(c.recordScore));  // TODO: Add self-scope for employees
 
 // Summary + Leaderboard
-router.get("/summary/:employeeId/:templateId/:period", requireRole("admin", "hr", "super_admin", "manager", "qa"), h(c.getEmployeeSummary));  // TODO: Add self-scope
+router.get("/summary/:employeeId/:templateId/:period",
+  requireRole("admin", "hr", "super_admin", "manager", "qa", "employee"),
+  (req: any, res: any, next: any) => {
+    const isPrivileged = ["admin", "super_admin", "hr", "manager", "qa"].includes(req.authUser?.role ?? "");
+    if (!isPrivileged && req.params.employeeId !== req.authUser?.id) {
+      return res.status(403).json({ error: "You can only view your own scores" });
+    }
+    return next();
+  },
+  h(c.getEmployeeSummary)
+);
 router.get("/leaderboard", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager", "branch_head", "ceo", "team_leader"), h(c.getLeaderboard));
 
 // Family summary — aggregated scores per family for a process/period

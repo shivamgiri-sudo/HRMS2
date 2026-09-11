@@ -461,6 +461,8 @@ export default function NativeHROnboardingRequests() {
   // fraudAlertCount: open critical/high alerts for the selected candidate
   // fraudAcknowledged: HR checked "I have reviewed" — unblocks Approve
   // showFraudPanel: controls collapse of the fraud section
+  // fraudStatus: "idle" before check, "loading" during, "ok" on success, "unknown" if check API failed
+  const [fraudStatus, setFraudStatus] = useState<"idle" | "loading" | "ok" | "unknown">("idle");
   const [fraudAlertCount, setFraudAlertCount] = useState(0);
   const [fraudAcknowledged, setFraudAcknowledged] = useState(false);
   const [showFraudPanel, setShowFraudPanel] = useState(false);
@@ -980,10 +982,12 @@ export default function NativeHROnboardingRequests() {
     setReviewError(null);
     setCostCentres([]);  // cleared — useEffect will populate once selected + allBranches/allCostCentres are ready
     setFraudAlertCount(0);
+    setFraudStatus("idle");
     setFraudAcknowledged(false);
     setShowFraudPanel(false);
     // Load all branch employees upfront for reporting manager dropdown
     void loadManagersByBranch(row.branch_id ?? '');
+    setFraudStatus("loading");
     Promise.allSettled([
       hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
         .then((r: any) => setDetailData(r?.data ?? r))
@@ -996,9 +1000,10 @@ export default function NativeHROnboardingRequests() {
           const alerts: any[] = r?.alerts ?? [];
           const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
           setFraudAlertCount(blocking.length);
+          setFraudStatus("ok");
           if (blocking.length > 0) setShowFraudPanel(true);
         })
-        .catch(() => setFraudAlertCount(0)),
+        .catch(() => { setFraudAlertCount(0); setFraudStatus("unknown"); }),
     ]).finally(() => setDetailLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadManagersByBranch]);
@@ -2381,6 +2386,11 @@ export default function NativeHROnboardingRequests() {
                   placeholder="Push-back remarks (required only when pushing back)…"
                   className={`${SEL} py-2`}
                 />
+                {fraudStatus === "unknown" && (
+                  <p className="text-xs text-amber-700 font-semibold mb-2">
+                    Fraud check unavailable — approval blocked until check completes.
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -2393,10 +2403,10 @@ export default function NativeHROnboardingRequests() {
                   </Button>
                   <Button
                     type="button"
-                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged)}
+                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged) || fraudStatus === "loading" || fraudStatus === "unknown"}
                     onClick={() => void submitReview('approved')}
-                    title={fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
-                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudAlertCount > 0 && !fraudAcknowledged ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                    title={fraudStatus === "loading" ? 'Fraud check in progress' : fraudStatus === "unknown" ? 'Fraud check unavailable — approval blocked' : fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
+                    className={`min-h-[44px] flex-1 text-white transition-all ${(fraudAlertCount > 0 && !fraudAcknowledged) || fraudStatus === "loading" || fraudStatus === "unknown" ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
                   >
                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Approve Profile
                   </Button>
