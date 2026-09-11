@@ -55,6 +55,10 @@ import {
   setDebitAccountConfig,
 } from "./payroll-debit-account-config.service.js";
 import {
+  getManualReviewBankGaps,
+  approveManualReviewBankDetail,
+} from "./bank-manual-review.service.js";
+import {
   generateSalaryTransferBatch,
   getFilteredEligibleTransferRows,
   rejectTransferItems,
@@ -1042,9 +1046,11 @@ bankPaymentReadinessRouter.get(
       `SELECT i.id, i.batch_id, i.employee_id, i.employee_code, i.amount, i.pay_mod, i.account_masked,
               i.status, i.rejection_reason, i.rejection_note, i.rejected_at,
               i.ecs_number, i.transfer_date, i.confirmed_at, i.payslip_unlocked_at, i.created_at,
-              b.batch_number, b.attempt_kind
+              b.batch_number, b.attempt_kind,
+              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name
          FROM salary_transfer_batch_item i
          JOIN salary_transfer_batch b ON b.id = i.batch_id
+         LEFT JOIN employees e ON e.id = i.employee_id
         WHERE i.run_id = ?
         ORDER BY i.created_at DESC`,
       [runId],
@@ -1187,6 +1193,58 @@ bankPaymentReadinessRouter.post(
         : `${result.confirmed} transfer number(s) recorded, ${result.payslips_unlocked} payslip(s) unlocked`,
       data: result,
     });
+  }),
+);
+
+// ─── Manual-review bank gap ────────────────────────────────────────────────────
+//
+// Employees whose onboarding penny-drop landed on manual_review and were never copied into
+// employee_bank_detail (the automatic copy only fires on verification_status = 'verified',
+// by design — see bank-manual-review.service.ts). This is the human-clearance surface that
+// gap never had: read-only masked list + one explicit, audited approval action per employee.
+// Never automatic — approving is a person deciding a manual_review account is good enough.
+
+/** GET /manual-review-queue — masked, read-accessible to the same roles as the exceptions queue. */
+bankPaymentReadinessRouter.get(
+  "/manual-review-queue",
+  requireRole(...READ_ROLES),
+  h(async (_req, res) => {
+    const rows = await getManualReviewBankGaps();
+    return res.json({ success: true, count: rows.length, data: rows });
+  }),
+);
+
+/**
+ * PATCH /manual-review-queue/:employeeId/approve — copies the manual_review account into
+ * employee_bank_detail. Restricted to MANAGE_ROLES (the same roles that can act on any other
+ * bank exception) rather than the broader READ_ROLES, since this is a real write of payment
+ * data, not an annotation.
+ */
+bankPaymentReadinessRouter.patch(
+  "/manual-review-queue/:employeeId/approve",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    const { employeeId } = req.params;
+    const result = await approveManualReviewBankDetail({ employeeId });
+
+    if (result.status === "no_manual_review_row") {
+      return res.status(404).json({ success: false, message: "No manual_review bank verification found for this employee." });
+    }
+    if (result.status === "already_has_primary") {
+      return res.status(409).json({ success: false, message: "This employee already has an active primary bank record — nothing to approve." });
+    }
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "BANK_MANUAL_REVIEW_APPROVED",
+      module_key: "payroll",
+      entity_type: "employee_bank_detail",
+      entity_id: employeeId,
+      change_summary: { source: "candidate_bank_verification.manual_review" },
+      req: req as never,
+    });
+
+    return res.json({ success: true, message: "Bank account approved and copied to the employee record." });
   }),
 );
 
