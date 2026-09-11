@@ -243,6 +243,7 @@ import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-pr
 import { salaryRevisionRouter } from "./modules/salary-revision/salary-revision.routes.js";
 import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
+import { employeeCodeReconciliationRouter } from "./modules/ats/employee-code-reconciliation.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
@@ -783,6 +784,7 @@ app.use("/api/onfido-process", onfidoProcessDashboardRouter);
 app.use("/api/salary-revision", salaryRevisionRouter);
 app.use("/api/salary-change", salaryChangeRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
+app.use("/api/ats/employee-code", employeeCodeReconciliationRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 app.use("/api/ats/command-centre", commandCentreRouter);
