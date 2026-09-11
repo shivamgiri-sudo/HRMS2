@@ -27,6 +27,8 @@
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
+import multer from "multer";
+import { createHash } from "crypto";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
@@ -52,6 +54,17 @@ import {
   getDebitAccountConfig,
   setDebitAccountConfig,
 } from "./payroll-debit-account-config.service.js";
+import {
+  generateSalaryTransferBatch,
+  rejectTransferItems,
+  markItemCorrectedReady,
+  rejectionReasonLabel,
+  REJECTION_REASONS,
+  parseTransferNumberCsv,
+  previewTransferNumberImport,
+  commitTransferNumberImport,
+  type TransferImportPreviewRow,
+} from "./salary-transfer.service.js";
 
 export const bankPaymentReadinessRouter = Router();
 
@@ -860,6 +873,266 @@ bankPaymentReadinessRouter.patch(
     });
 
     return res.json({ success: true, message: "Debit account updated", data: await getDebitAccountConfig() });
+  }),
+);
+
+// ─── Salary Transfer & Reconciliation ─────────────────────────────────────────
+//
+// Generates the exact-format bank file (see salary-transfer.service.ts header for the
+// reference-file inspection this is built from), tracks rejection/correction/re-export, and
+// imports the Transfer Number Update File that unlocks payslips. Reuses hasExportScope — the
+// same org-wide-payroll gate /payment-file already requires — since this endpoint emits full
+// account numbers in the generated file exactly as that one does.
+
+const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+/** GET /salary-transfer/export?run_id=&employee_ids=CSV — generate + download a new batch. */
+bankPaymentReadinessRouter.get(
+  "/salary-transfer/export",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  h(async (req, res) => {
+    const runId = String(req.query.run_id ?? "").trim();
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
+    if (!(await hasExportScope(req.authUser!.id))) {
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+    const employeeIds = String(req.query.employee_ids ?? "").trim()
+      ? String(req.query.employee_ids).split(",").map((s) => s.trim()).filter(Boolean)
+      : null;
+
+    let result;
+    try {
+      result = await generateSalaryTransferBatch({ runId, userId: req.authUser!.id, employeeIds });
+    } catch (err: any) {
+      if (err?.code === "NO_ELIGIBLE_ROWS") {
+        return res.status(409).json({ success: false, message: "No eligible employees to export for this run." });
+      }
+      throw err;
+    }
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "SALARY_TRANSFER_FILE_GENERATED",
+      module_key: "payroll",
+      entity_type: "salary_transfer_batch",
+      entity_id: result.batch_id,
+      change_summary: { run_id: runId, row_count: result.row_count, total_amount: result.total_amount, excluded: result.excluded },
+      req: req as never,
+    });
+
+    res.setHeader("Content-Type", "application/vnd.ms-excel");
+    res.setHeader("Content-Disposition", `attachment; filename="${result.file_name}"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Batch-Number", result.batch_number);
+    res.setHeader("X-Row-Count", String(result.row_count));
+    return res.send(result.buffer);
+  }),
+);
+
+/**
+ * GET /salary-transfer/reexport?run_id=&employee_ids=CSV — same as /export, corrected_ready
+ * population only. GET rather than POST to match the existing anchor-tag download convention
+ * this codebase already uses for /payment-file and /salary-transfer/export, even though it
+ * does create a new batch — the same side-effecting-GET pattern those two already establish.
+ */
+bankPaymentReadinessRouter.get(
+  "/salary-transfer/reexport",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  h(async (req, res) => {
+    const runId = String(req.query.run_id ?? "").trim();
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
+    if (!(await hasExportScope(req.authUser!.id))) {
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+    const employeeIds = String(req.query.employee_ids ?? "").trim()
+      ? String(req.query.employee_ids).split(",").map((s) => s.trim()).filter(Boolean)
+      : null;
+
+    let result;
+    try {
+      result = await generateSalaryTransferBatch({ runId, userId: req.authUser!.id, employeeIds, reexport: true });
+    } catch (err: any) {
+      if (err?.code === "NO_ELIGIBLE_ROWS") {
+        return res.status(409).json({ success: false, message: "No corrected employees are ready for re-export." });
+      }
+      throw err;
+    }
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "SALARY_TRANSFER_FILE_REEXPORTED",
+      module_key: "payroll",
+      entity_type: "salary_transfer_batch",
+      entity_id: result.batch_id,
+      change_summary: { run_id: runId, row_count: result.row_count, total_amount: result.total_amount },
+      req: req as never,
+    });
+
+    res.setHeader("Content-Type", "application/vnd.ms-excel");
+    res.setHeader("Content-Disposition", `attachment; filename="${result.file_name}"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    return res.send(result.buffer);
+  }),
+);
+
+/** GET /salary-transfer/items?run_id= — the workflow queue: exported / rejected / corrected_ready / confirmed. */
+bankPaymentReadinessRouter.get(
+  "/salary-transfer/items",
+  requireRole(...READ_ROLES),
+  h(async (req, res) => {
+    const runId = String(req.query.run_id ?? "").trim();
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT i.id, i.batch_id, i.employee_id, i.employee_code, i.amount, i.pay_mod, i.account_masked,
+              i.status, i.rejection_reason, i.rejection_note, i.rejected_at,
+              i.ecs_number, i.transfer_date, i.confirmed_at, i.payslip_unlocked_at, i.created_at,
+              b.batch_number, b.attempt_kind
+         FROM salary_transfer_batch_item i
+         JOIN salary_transfer_batch b ON b.id = i.batch_id
+        WHERE i.run_id = ?
+        ORDER BY i.created_at DESC`,
+      [runId],
+    );
+    return res.json({
+      success: true,
+      data: (rows as any[]).map((r) => ({ ...r, rejection_reason_label: r.rejection_reason ? rejectionReasonLabel(r.rejection_reason) : null })),
+      rejection_reasons: REJECTION_REASONS.map((r) => ({ value: r, label: rejectionReasonLabel(r) })),
+    });
+  }),
+);
+
+/** PATCH /salary-transfer/items/reject — bulk-mark items rejected with a reason. */
+bankPaymentReadinessRouter.patch(
+  "/salary-transfer/items/reject",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    const { item_ids, reason, note } = req.body as { item_ids?: string[]; reason?: string; note?: string | null };
+    if (!Array.isArray(item_ids) || item_ids.length === 0) {
+      return res.status(400).json({ success: false, message: "item_ids must be a non-empty array" });
+    }
+    if (!REJECTION_REASONS.includes(reason as any)) {
+      return res.status(400).json({ success: false, message: `reason must be one of ${REJECTION_REASONS.join(", ")}` });
+    }
+    let result;
+    try {
+      result = await rejectTransferItems({ itemIds: item_ids, reason: reason as any, note: note ?? null, userId: req.authUser!.id });
+    } catch (err: any) {
+      if (err?.code === "NOTE_REQUIRED") {
+        return res.status(400).json({ success: false, message: "A note is required when reason is 'other'" });
+      }
+      throw err;
+    }
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "SALARY_TRANSFER_ITEM_REJECTED",
+      module_key: "payroll",
+      entity_type: "salary_transfer_batch_item",
+      entity_id: item_ids.join(","),
+      change_summary: { reason, note: note ?? null, updated: result.updated },
+      req: req as never,
+    });
+
+    return res.json({ success: true, message: `${result.updated} item(s) marked rejected`, data: result });
+  }),
+);
+
+/**
+ * PATCH /salary-transfer/items/:itemId/mark-corrected-ready
+ *
+ * Deliberately does NOT accept a new account number here. The only path to "corrected" is the
+ * existing bank-change-request + penny-drop approval flow (profile-approval.service.ts) —
+ * this endpoint just links a rejected transfer item to that outcome once it has already
+ * cleared, so an unapproved edit can never silently replace a payment account.
+ */
+bankPaymentReadinessRouter.patch(
+  "/salary-transfer/items/:itemId/mark-corrected-ready",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    await markItemCorrectedReady(req.params.itemId);
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "SALARY_TRANSFER_ITEM_CORRECTED_READY",
+      module_key: "payroll",
+      entity_type: "salary_transfer_batch_item",
+      entity_id: req.params.itemId,
+      change_summary: {},
+      req: req as never,
+    });
+    return res.json({ success: true, message: "Item marked ready for re-export" });
+  }),
+);
+
+/** POST /salary-transfer/import/preview — multipart file upload, CSV only. Never writes. */
+bankPaymentReadinessRouter.post(
+  "/salary-transfer/import/preview",
+  requireRole(...MANAGE_ROLES),
+  csvUpload.single("file"),
+  h(async (req: any, res) => {
+    const file = req.file as { buffer: Buffer; originalname: string } | undefined;
+    if (!file) return res.status(400).json({ success: false, message: "file is required" });
+    const text = file.buffer.toString("utf8");
+    let rows;
+    try {
+      rows = parseTransferNumberCsv(text);
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message ?? "Could not parse CSV" });
+    }
+    if (rows.length === 0) {
+      return res.status(400).json({ success: false, message: "No data rows found" });
+    }
+    const preview = await previewTransferNumberImport(rows);
+    const sha256 = createHash("sha256").update(file.buffer).digest("hex");
+    const summary = {
+      total: preview.length,
+      will_confirm: preview.filter((r) => r.outcome === "will_confirm").length,
+      unmatched: preview.filter((r) => r.outcome === "unmatched").length,
+      already_confirmed: preview.filter((r) => r.outcome === "already_confirmed").length,
+      invalid: preview.filter((r) => r.outcome === "invalid").length,
+    };
+    return res.json({ success: true, file_name: file.originalname, file_sha256: sha256, summary, data: preview });
+  }),
+);
+
+/** POST /salary-transfer/import/commit — commits a previously previewed set of rows. */
+bankPaymentReadinessRouter.post(
+  "/salary-transfer/import/commit",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    const { file_name, file_sha256, preview } = req.body as {
+      file_name?: string;
+      file_sha256?: string;
+      preview?: TransferImportPreviewRow[];
+    };
+    if (!file_sha256 || !Array.isArray(preview) || preview.length === 0) {
+      return res.status(400).json({ success: false, message: "file_sha256 and preview are required" });
+    }
+    const result = await commitTransferNumberImport({
+      preview,
+      fileName: file_name ?? "transfer-numbers.csv",
+      fileSha256: file_sha256,
+      userId: req.authUser!.id,
+    });
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "SALARY_TRANSFER_NUMBER_IMPORT_COMMITTED",
+      module_key: "payroll",
+      entity_type: "salary_transfer_import",
+      entity_id: file_sha256,
+      change_summary: { ...result },
+      req: req as never,
+    });
+
+    return res.json({
+      success: true,
+      message: result.skipped > 0 && result.confirmed === 0
+        ? "This file was already imported — no changes made (idempotent re-upload)."
+        : `${result.confirmed} transfer number(s) recorded, ${result.payslips_unlocked} payslip(s) unlocked`,
+      data: result,
+    });
   }),
 );
 

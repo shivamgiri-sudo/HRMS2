@@ -32,6 +32,7 @@ import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { assertRunEditable } from "./payrollWindowGuard.js";
 import { isRunClosed, runRankSql } from "./run-status.js";
 import { payslipService } from "./payslip.service.js";
+import { getPayslipLockState } from "./salary-transfer.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
@@ -1506,6 +1507,17 @@ router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, re
     });
     if (!scoped) {
       return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+  }
+
+  // Payslip lock, employee self-service only — Payroll/HR access keeps following the existing
+  // role/scope policy above unchanged, per the salary-transfer spec. Additive: an employee
+  // whose run has no salary_transfer_batch_item row at all sees no gate, exactly as before
+  // this feature existed.
+  if (isSelf) {
+    const lock = await getPayslipLockState(employeeId, runId);
+    if (lock.locked) {
+      return res.status(423).json({ success: false, code: "PAYSLIP_LOCKED", message: lock.reason });
     }
   }
 
