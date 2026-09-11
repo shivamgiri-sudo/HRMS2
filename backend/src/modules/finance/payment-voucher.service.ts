@@ -254,6 +254,50 @@ export const paymentVoucherService = {
     return (rows as RowDataPacket[]).map(maskVoucherRow);
   },
 
+  /** Same escape convention as bank-ledger.service.ts's toCsv() / gst-export.routes.ts — quote
+   *  on comma/quote/newline, and guard a leading =/+/-/@ against formula injection. Reuses
+   *  list()'s own filters (status/sourceType/bankAccountId) so the export always matches
+   *  whatever tab/filter the user is looking at, and a higher row cap than the grid view since
+   *  a CSV download is explicitly asking for the full set, not a paginated page. */
+  async toCsv(filters: { status?: string; sourceType?: string; bankAccountId?: string }) {
+    const rows = await this.list({ ...filters, limit: 5000 });
+    const columns = [
+      "Voucher No.", "Type", "Bank Account", "Payable Account", "Purpose",
+      "Amount", "Status", "Raised At", "CEO Approved At", "Released At", "Remarks",
+    ];
+    const purposeOf = (r: any) =>
+      r.source_type === "vendor_grn" ? (r.vendor_name ?? r.grn_number ?? "")
+      : r.source_type === "imprest_allocation" ? (r.imprest_manager_name ?? "")
+      : r.source_type === "vendor_advance" || r.source_type === "vendor_advance_application" ? (r.linked_vendor_name ?? "")
+      : (r.particulars ?? "");
+    const typeLabel: Record<string, string> = {
+      vendor_grn: "Vendor GRN Payment",
+      imprest_allocation: "Imprest Float Replenishment",
+      vendor_advance: "Vendor Advance",
+      vendor_advance_application: "Apply Vendor Advance",
+      general: "Other / General Payment",
+    };
+    const escape = (value: unknown) => {
+      const text = String(value ?? "");
+      const guarded = /^[=+\-@]/.test(text) ? `'${text}` : text;
+      return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+    };
+    const body = rows.map((r: any) => [
+      r.voucher_number ?? "",
+      typeLabel[r.source_type] ?? r.source_type ?? "",
+      r.bank_account_name ?? "",
+      r.payable_account_name ?? "",
+      purposeOf(r),
+      Number(r.amount ?? 0).toFixed(2),
+      r.status ?? "",
+      r.raised_at ?? "",
+      r.ceo_approved_at ?? "",
+      r.released_at ?? "",
+      r.remarks ?? "",
+    ]);
+    return [columns, ...body].map((row) => row.map(escape).join(",")).join("\n");
+  },
+
   async get(id: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT pv.*,

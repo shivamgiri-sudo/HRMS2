@@ -1,7 +1,7 @@
 // src/pages/finance/PaymentVouchersPage.tsx
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IndianRupee, Plus } from "lucide-react";
+import { Download, IndianRupee, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,6 +40,23 @@ const emptyRaiseForm = {
   amount: "",
   remarks: "",
 };
+
+/** Same download pattern BankLedgerReportPage.tsx already uses for its CSV/Tally XML export. */
+async function downloadCsv(path: string, filename: string, toast: (opts: any) => void) {
+  try {
+    const blob = await hrmsApi.getBlob(path);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toast({ title: "Export failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+  }
+}
 
 export default function PaymentVouchersPage() {
   const { toast } = useToast();
@@ -195,11 +212,24 @@ export default function PaymentVouchersPage() {
               <p className="text-sm text-blue-100">Raise → CEO Approve → Release — three people, three actions, one bank ledger.</p>
             </div>
           </div>
-          {canRaise && (
-            <Button className="cursor-pointer bg-white text-blue-700 hover:bg-blue-50" onClick={() => { setRaiseForm(emptyRaiseForm); setRaiseOpen(true); }}>
-              <Plus className="mr-1.5 h-4 w-4" /> Raise Voucher
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="cursor-pointer border-white/40 bg-white/10 text-white hover:bg-white/20"
+              onClick={() => downloadCsv(
+                `/api/finance/payment-vouchers/export${tab === "all" ? "" : `?status=${tab}`}`,
+                `payment-vouchers-${tab}-${new Date().toISOString().slice(0, 10)}.csv`,
+                toast,
+              )}
+            >
+              <Download className="mr-1.5 h-4 w-4" /> Export CSV
             </Button>
-          )}
+            {canRaise && (
+              <Button className="cursor-pointer bg-white text-blue-700 hover:bg-blue-50" onClick={() => { setRaiseForm(emptyRaiseForm); setRaiseOpen(true); }}>
+                <Plus className="mr-1.5 h-4 w-4" /> Raise Voucher
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 

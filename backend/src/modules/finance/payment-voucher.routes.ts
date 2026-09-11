@@ -59,6 +59,25 @@ paymentVoucherRouter.get(
   }),
 );
 
+/** MUST be registered before the bare "/:id" route below — Express matches routes in
+ *  registration order, and "/:id" is a single-segment wildcard that would otherwise swallow
+ *  "/export" as if it were a voucher id (the same route-shadowing this repo has hit before —
+ *  see company-bank-account.routes.ts's "/balance-change-requests" comment for the pattern). */
+paymentVoucherRouter.get(
+  "/export",
+  requireRole(...VOUCHER_READ_ROLES),
+  h(async (req, res) => {
+    const csv = await paymentVoucherService.toCsv({
+      status: req.query.status ? String(req.query.status) : undefined,
+      sourceType: req.query.sourceType ? String(req.query.sourceType) : undefined,
+      bankAccountId: req.query.bankAccountId ? String(req.query.bankAccountId) : undefined,
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="payment-vouchers-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  }),
+);
+
 paymentVoucherRouter.get(
   "/:id",
   requireRole(...VOUCHER_READ_ROLES),
