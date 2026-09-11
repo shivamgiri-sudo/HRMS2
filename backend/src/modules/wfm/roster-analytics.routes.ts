@@ -485,8 +485,12 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
          FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        LEFT JOIN (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break_minutes
-         FROM wfm_break_log GROUP BY employee_id, session_date
+         -- wfm_break_log has no session_date/break_duration_minutes columns — same
+         -- pre-existing bug as break-compliance below (real columns: break_start,
+         -- duration_minutes; see sql/005_attendance_wfm.sql). This LEFT JOIN's subquery
+         -- still fails to parse regardless of join type, so this 500'd the whole endpoint.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break_minutes
+         FROM wfm_break_log GROUP BY employee_id, DATE(break_start)
        ) wb ON ra.employee_id = wb.employee_id AND ra.roster_date = wb.session_date
        ${whereClause}
        GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time
@@ -549,9 +553,16 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          SUM(CASE WHEN wb.total_break > 30 THEN 1 ELSE 0 END) AS over_break,
          SUM(CASE WHEN wb.total_break < 15 THEN 1 ELSE 0 END) AS under_break
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- wfm_break_log has no session_date/break_duration_minutes columns (that was a
+         -- pre-existing bug predating this merge, reproduced live: "Unknown column
+         -- 'session_date' in 'field list'", breaking this whole endpoint including
+         -- overall/byShift/topViolators, not just the new byProcess added here). The real
+         -- columns are break_start (DATETIME) and duration_minutes (INT) — see
+         -- sql/005_attendance_wfm.sql. Aliased back to the names the rest of this query
+         -- already expects so only these 4 subqueries need the fix.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
@@ -577,9 +588,10 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          AVG(wb.total_break) AS avg_break,
          30 AS budget
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- Same real-column fix as the "overall" query above.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
@@ -607,9 +619,10 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          AVG(wb.total_break - 30) AS avg_excess,
          COUNT(*) AS occurrences
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- Same real-column fix as the "overall" query above.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
@@ -630,9 +643,10 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          AVG(wb.total_break) AS avg_break,
          30 AS budget
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- Same real-column fix as the "overall" query above.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
@@ -997,9 +1011,13 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
        LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date = ?
        LEFT JOIN (
+         -- Same pre-existing wfm_break_log column bug as break-compliance/shift-effectiveness
+         -- above: no session_date or end_time columns exist. Real columns: break_start
+         -- (DATETIME) and break_end (DATETIME, NULL while the break is still open) — see
+         -- sql/005_attendance_wfm.sql.
          SELECT employee_id, 1 AS on_break
          FROM wfm_break_log
-         WHERE session_date = ? AND end_time IS NULL
+         WHERE DATE(break_start) = ? AND break_end IS NULL
        ) wb ON wb.employee_id = e.id
        WHERE e.reporting_manager_id = ?
          AND e.active_status = 1
