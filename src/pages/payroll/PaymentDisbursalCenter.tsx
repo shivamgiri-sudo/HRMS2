@@ -336,6 +336,35 @@ export default function PaymentDisbursalCenter() {
     enabled: bankInnerTab === "remediation",
   });
 
+  // ── Manual-review bank gap ─────────────────────────────────────────────────
+  interface ManualReviewRow {
+    employee_id: string;
+    employee_code: string;
+    employee_name: string;
+    branch_name: string | null;
+    account_masked: string;
+    ifsc_code: string | null;
+    account_holder_name: string | null;
+    name_match_score: number | null;
+    verified_at: string | null;
+  }
+  const manualReviewQ = useQuery<{ data: ManualReviewRow[]; count: number }>({
+    queryKey: ["bank-readiness-manual-review"],
+    queryFn: () => hrmsApi.get("/api/payroll/bank-readiness/manual-review-queue"),
+    enabled: bankInnerTab === "manual-review",
+  });
+  const approveManualReviewMutation = useMutation({
+    mutationFn: (employeeId: string) =>
+      hrmsApi.patch(`/api/payroll/bank-readiness/manual-review-queue/${employeeId}/approve`),
+    onSuccess: () => {
+      toast.success("Bank account approved and copied to the employee record");
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-manual-review"] });
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-summary"] });
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Approval failed"),
+  });
+
   const divergenceQ = useQuery<{ data: Record<string, number | string> }>({
     queryKey: ["bank-readiness-divergence", bankRunId],
     queryFn: () =>
@@ -432,6 +461,7 @@ export default function PaymentDisbursalCenter() {
     batch_id: string;
     employee_id: string;
     employee_code: string;
+    employee_name: string | null;
     amount: number;
     pay_mod: string;
     account_masked: string;
@@ -1065,6 +1095,7 @@ export default function PaymentDisbursalCenter() {
               <TabsList>
                 <TabsTrigger value="exceptions">Exceptions</TabsTrigger>
                 <TabsTrigger value="remediation">HR / Manager list</TabsTrigger>
+                <TabsTrigger value="manual-review">Manual Review</TabsTrigger>
                 <TabsTrigger value="export">Payment file</TabsTrigger>
               </TabsList>
 
@@ -1389,6 +1420,66 @@ export default function PaymentDisbursalCenter() {
                 </div>
               </TabsContent>
 
+              {/* ── Manual review (onboarding penny-drop landed on manual_review) ── */}
+              <TabsContent value="manual-review" className="space-y-3">
+                <div className="rounded-md border border-sky-300 bg-sky-50 p-4 text-sm mt-3">
+                  <p className="font-semibold text-sky-900 flex items-center gap-2">
+                    <HelpCircle className="h-4 w-4" /> These employees submitted bank details
+                    at onboarding, but the penny-drop check couldn't confirm them automatically
+                  </p>
+                  <p className="text-sky-900 mt-1">
+                    Verification landed on "manual review" instead of "verified", so the
+                    account was never copied into the employee's live bank record — by design,
+                    a manual_review account needs a person to clear it. Approving here copies
+                    the exact account already captured at onboarding; it does not change or
+                    re-verify it.
+                  </p>
+                </div>
+                <div className="rounded-md border overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted">
+                      <tr>
+                        {["Code", "Name", "Branch", "Account", "IFSC", "Account holder (onboarding)", "Name match", "Verified at", ""].map((hd) => (
+                          <th key={hd} className="px-3 py-2 text-left font-medium whitespace-nowrap">{hd}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualReviewQ.isLoading ? (
+                        <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">Loading…</td></tr>
+                      ) : (manualReviewQ.data?.data ?? []).length === 0 ? (
+                        <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">No employees waiting on manual review right now.</td></tr>
+                      ) : (
+                        (manualReviewQ.data?.data ?? []).map((r) => (
+                          <tr key={r.employee_id} className="border-t">
+                            <td className="px-3 py-2 font-mono text-xs">{r.employee_code}</td>
+                            <td className="px-3 py-2">{r.employee_name}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.branch_name ?? "—"}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{r.account_masked}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{r.ifsc_code ?? "—"}</td>
+                            <td className="px-3 py-2">{r.account_holder_name ?? "—"}</td>
+                            <td className="px-3 py-2">{r.name_match_score == null ? "—" : `${Math.round(r.name_match_score)}%`}</td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDateTime(r.verified_at)}</td>
+                            <td className="px-3 py-2">
+                              <Button
+                                size="sm"
+                                disabled={approveManualReviewMutation.isPending}
+                                onClick={() => {
+                                  if (!window.confirm(`Approve ${r.employee_code}'s onboarding bank account (${r.account_masked}) for payment?`)) return;
+                                  approveManualReviewMutation.mutate(r.employee_id);
+                                }}
+                              >
+                                Approve
+                              </Button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </TabsContent>
+
               {/* ── Payment file ───────────────────────────────────────────── */}
               <TabsContent value="export" className="space-y-4">
                 <div className="flex items-center gap-3 flex-wrap mt-3">
@@ -1634,7 +1725,7 @@ export default function PaymentDisbursalCenter() {
                         <thead className="bg-muted">
                           <tr>
                             <th className="px-2 py-2 w-8"></th>
-                            {["Code", "Amount", "Pay Mod", "Account", "Batch", "Status", "Rejection reason", "ECS / TRF date"].map((h) => (
+                            {["Code", "Name", "Amount", "Pay Mod", "Account", "Batch", "Status", "Rejection reason", "ECS / TRF date"].map((h) => (
                               <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">{h}</th>
                             ))}
                             <th className="px-3 py-2"></th>
@@ -1642,9 +1733,9 @@ export default function PaymentDisbursalCenter() {
                         </thead>
                         <tbody>
                           {transferItemsQ.isLoading ? (
-                            <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
                           ) : transferItems.length === 0 ? (
-                            <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">No transfer batches generated for this run yet.</td></tr>
+                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">No transfer batches generated for this run yet.</td></tr>
                           ) : (
                             transferItems.map((it) => (
                               <tr key={it.id} className="border-t">
@@ -1663,6 +1754,7 @@ export default function PaymentDisbursalCenter() {
                                   )}
                                 </td>
                                 <td className="px-3 py-2 font-mono text-xs">{it.employee_code}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{it.employee_name ?? "—"}</td>
                                 <td className="px-3 py-2 tabular-nums">₹{Number(it.amount).toLocaleString("en-IN")}</td>
                                 <td className="px-3 py-2">{it.pay_mod}</td>
                                 <td className="px-3 py-2 font-mono text-xs">{it.account_masked}</td>
