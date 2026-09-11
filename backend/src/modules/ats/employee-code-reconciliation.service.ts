@@ -74,12 +74,21 @@ export async function reconcileEmployeeCodeDrift(): Promise<ReconciliationResult
 
   // Check 2 — a code is set but no real employee is linked at all: a genuine unfinished
   // conversion, not a rename artifact. Raise the same work item /generate would have.
+  //
+  // "No bridge row" alone is NOT enough, and shipping without the second condition below
+  // proved it live 2026-09-11: it flagged 26 real people as false-positive orphans — every
+  // one already has a live, exact-matching `employees` row (a June bulk-import batch that,
+  // like some older employees generally, was created directly and never went through the
+  // ats_onboarding_bridge conversion flow at all, correctly, by design — no bridge row was
+  // ever supposed to exist for them). The employees table, not the bridge, is the actual
+  // authority on whether someone exists; only flag when NEITHER says yes.
   const [orphanRows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id AS candidate_id, c.candidate_code, c.employee_code
        FROM ats_candidate c
        LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = c.id AND b.employee_id IS NOT NULL
       WHERE c.employee_code IS NOT NULL
-        AND b.candidate_id IS NULL`,
+        AND b.candidate_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.employee_code = c.employee_code)`,
   );
 
   for (const row of orphanRows as Array<{ candidate_id: string; candidate_code: string; employee_code: string }>) {
