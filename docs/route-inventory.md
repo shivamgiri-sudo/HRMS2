@@ -1,10 +1,10 @@
 # Route Inventory Report
 
-Generated: 2026-09-11T18:02:04.998Z
+Generated: 2026-09-11T20:54:16.435Z
 
-**Total route declarations:** 140
+**Total route declarations:** 141
 **Unique component names:** 41
-**Redirects (Navigate):** 82
+**Redirects (Navigate):** 83
 **Components with multiple paths (duplicates):** 6
 
 ## Duplicates — Components Registered Under Multiple Paths
@@ -48,6 +48,7 @@ Generated: 2026-09-11T18:02:04.998Z
 | `/payroll/salary-disputes/queue` | → /payroll/salary-disputes?tab=queue | src\config\routes\payroll.routes.tsx |
 | `/payroll/salary-disputes/team` | → /payroll/salary-disputes?tab=team | src\config\routes\payroll.routes.tsx |
 | `/employee-lifecycle-v2` | → /employee-lifecycle | src\config\routes\people.routes.tsx |
+| `/exit-management` | → /exit/command-center | src\config\routes\people.routes.tsx |
 | `/engagement/command-center` | → /people-experience/command-center | src\config\routes\people.routes.tsx |
 | `/reviews-management` | → /performance-feedback/assignments | src\config\routes\performance.routes.tsx |
 | `/goals` | → /performance | src\config\routes\performance.routes.tsx |
