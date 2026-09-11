@@ -207,9 +207,19 @@ reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: tru
 // ── GET /api/reports/suite/:code/export ──────────────────────────────────────
 // Immediate XLSX download.
 // super_admin: allowed for ALL reports regardless of sensitivity.
-// All other roles: only internal/confidential reports with ≤50000 rows.
+// All other roles: only internal/confidential reports with ≤80000 rows.
 // Returns 403 if not allowed, 422 if row count > cap or file > 20 MB.
-const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 50000);
+//
+// 80,000 (was 50,000, raised again 2026-09-11): employee-master's own row cap
+// raise yesterday (a1826655) widened its DEFAULT population from active-only
+// (990) to active+inactive (59,029, confirmed live against mas_hrms) so its
+// new Employee Status column would actually carry both values -- but left
+// the cap short of that real population, so the export failed outright
+// (TOO_LARGE) for every caller, every time, regardless of role. This cap is
+// shared across every report in the suite, not employee-master-specific;
+// 80,000 gives real headroom over the current largest known population
+// rather than being tuned to exactly one report's row count today.
+const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 80000);
 const EXPORT_BYTE_CAP = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520);
 const IMMEDIATE_LEVELS = new Set<SensitivityLevel>(['internal', 'confidential']);
 
