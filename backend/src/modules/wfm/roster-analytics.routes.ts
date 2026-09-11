@@ -481,8 +481,18 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
          SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        LEFT JOIN (
          -- wfm_break_log has no session_date/break_duration_minutes columns — same
@@ -845,8 +855,18 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
          SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY m.id, m.full_name, p.process_name, b.branch_name
@@ -895,8 +915,18 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
          SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY p.id, p.process_name, b.branch_name
@@ -938,8 +968,18 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
          -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
          -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
          SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM db_audit.call_quality_assessment GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
        ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter}
        GROUP BY b.id, b.branch_name

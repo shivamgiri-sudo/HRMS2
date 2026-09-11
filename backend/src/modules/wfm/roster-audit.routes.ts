@@ -55,8 +55,16 @@ router.get(
       params.push(String(changeType));
     }
 
-    params.push(maxLimit);
-
+    // Merge-plan Phase B/D bug: this route (and /generation-runs below) 500'd in
+    // production with a generic "unexpected server error" — traced live to
+    // "Incorrect arguments to mysqld_stmt_execute" from mysql2's prepared-statement
+    // path when LIMIT is bound as a `?` placeholder (confirmed via a direct DB script:
+    // the identical query with LIMIT hardcoded works, the same query with `LIMIT ?`
+    // throws). Not a schema/collation issue — every other query in this file, and the
+    // established pattern across the rest of this codebase, interpolates a pre-
+    // validated integer limit directly (`LIMIT ${n}`) rather than binding it. maxLimit
+    // is always a real number here (Math.min(parseInt(...) || default, cap)), never
+    // raw user text, so this is not a SQL-injection risk.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          rda.id,
@@ -86,7 +94,7 @@ router.get(
        LEFT JOIN employees trigger_user ON rgr.triggered_by = trigger_user.id
        WHERE ${conditions.join(' AND ')}
        ORDER BY rda.created_at DESC
-       LIMIT ?`,
+       LIMIT ${maxLimit}`,
       params
     );
 
@@ -336,6 +344,8 @@ router.get(
   wrap(async (req: AuthenticatedRequest, res: Response) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
 
+    // Same LIMIT-as-bound-parameter fix as /trails above — see that comment for the
+    // full diagnosis. limit is always a validated integer, never raw user text.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          rgr.id,
@@ -358,8 +368,7 @@ router.get(
        LEFT JOIN branch_master b ON rgr.branch_id = b.id
        LEFT JOIN employees e ON rgr.triggered_by = e.id
        ORDER BY rgr.started_at DESC
-       LIMIT ?`,
-      [limit]
+       LIMIT ${limit}`
     );
 
     res.json({
