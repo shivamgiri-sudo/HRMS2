@@ -72,6 +72,7 @@ export default function VisitorSecurityOperations() {
   };
 
   return (
+    <>
     <VisitorShell
       eyebrow="Live physical security"
       title="Security operations"
@@ -117,5 +118,6 @@ export default function VisitorSecurityOperations() {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    </>
   );
 }
