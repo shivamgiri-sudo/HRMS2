@@ -99,11 +99,18 @@ export default function CompanyBankAccountsPage() {
   const detailQuery = useQuery({
     queryKey: ["company-bank-account-detail", detailId],
     queryFn: async () => {
-      const [account, audit] = await Promise.all([
-        hrmsApi.get<{ success: boolean; data: BankAccount }>(`/api/finance/bank-accounts/${detailId}`),
-        hrmsApi.get<{ success: boolean; data: any[] }>(`/api/finance/bank-accounts/${detailId}/audit`),
-      ]);
-      return { account: account.data, audit: audit.data ?? [] };
+      // Fetched separately (not Promise.all) on purpose: a failure in the audit-trail
+      // call must never blank out the account details the user actually clicked for.
+      const account = await hrmsApi.get<{ success: boolean; data: BankAccount }>(`/api/finance/bank-accounts/${detailId}`);
+      let audit: any[] = [];
+      let auditError: string | null = null;
+      try {
+        const auditRes = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/finance/bank-accounts/${detailId}/audit`);
+        audit = auditRes.data ?? [];
+      } catch (e) {
+        auditError = e instanceof Error ? e.message : "Failed to load audit trail";
+      }
+      return { account: account.data, audit, auditError };
     },
     enabled: !!detailId,
   });
@@ -304,6 +311,14 @@ export default function CompanyBankAccountsPage() {
             <SheetTitle className="text-sm font-semibold">{detailQuery.data?.account?.account_name ?? "Bank Account"}</SheetTitle>
           </SheetHeader>
           <div className="flex-1 space-y-5 overflow-y-auto p-4">
+            {detailQuery.isLoading && (
+              <p className="text-sm text-slate-400">Loading…</p>
+            )}
+            {detailQuery.isError && (
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                Could not load this account: {(detailQuery.error as Error)?.message ?? "Unknown error"}
+              </p>
+            )}
             {detailQuery.data?.account && (
               <>
                 <section>
@@ -372,7 +387,11 @@ export default function CompanyBankAccountsPage() {
 
                 <section>
                   <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Audit Trail</h3>
-                  {detailQuery.data.audit.length === 0 ? (
+                  {detailQuery.data.auditError ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Audit trail failed to load: {detailQuery.data.auditError}
+                    </p>
+                  ) : detailQuery.data.audit.length === 0 ? (
                     <p className="text-sm text-slate-400">None</p>
                   ) : (
                     <ul className="space-y-2">
