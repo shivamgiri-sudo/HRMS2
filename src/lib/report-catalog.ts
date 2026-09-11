@@ -2455,6 +2455,30 @@ export const REPORT_CATALOG: ReportMeta[] = [
     viewRoles: ["super_admin", "admin", "operations", "quality", "manager", "process_manager"],
     exportRoles: ["super_admin", "admin", "operations", "quality"],
   },
+  {
+    // Mirrors backend/src/modules/reporting/report-catalog.ts exactly (same 7
+    // columns, same order) -- see that file's own comment for why this report
+    // exists: the real Reginald_Men_Abandoned_Cart_Dashboard_SOP_WITH_PATH.xlsx
+    // "Day-wise" tab, pivoted from process_metric_actual.
+    code: "reginald-abandoned-cart-sales-report",
+    name: "Reginald Abandoned Cart Sales (Day-wise)",
+    category: "Operations & Quality",
+    subcategory: "Sales",
+    description: "Daily Abandoned Cart (ABCD) and Repeat (REPT) sales count, revenue and AOV for Reginald, from the real Live Sales Google Form",
+    rowGrain: "One row per date",
+    primaryKey: ["report_date"],
+    columns: [
+      { key: "report_date", label: "Date", format: "date", width: 110 },
+      { key: "process_name", label: "Process", format: "text", width: 120 },
+      { key: "reginald_abcd_sales_count", label: "Abandoned Cart Sales", format: "number", width: 150, align: "right" },
+      { key: "reginald_abcd_revenue", label: "Abandoned Cart Revenue", format: "currency", width: 170, align: "right" },
+      { key: "reginald_abcd_aov", label: "Abandoned Cart AOV", format: "currency", width: 150, align: "right" },
+      { key: "reginald_rept_sales_count", label: "Repeat Sales", format: "number", width: 120, align: "right" },
+      { key: "reginald_rept_revenue", label: "Repeat Revenue", format: "currency", width: 140, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "operations", "quality", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "operations", "quality", "process_manager"],
+  },
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // WFM & ROSTER
