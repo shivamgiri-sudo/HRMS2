@@ -52,6 +52,7 @@ import { chequeValidationRouter } from "./modules/payroll/cheque-validation.rout
 import { disbursalRouter } from "./modules/payroll/disbursal.routes.js";
 import { payrollWindowCronRouter } from "./modules/payroll/payroll-window.routes.js";
 import { nocRouter } from "./modules/payroll/noc.routes.js";
+import { nocCaseRouter } from "./modules/payroll/noc-case.routes.js";
 import { runningSalaryRouter } from "./modules/payroll/running-salary.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import { requireAuth as requireAuthForDpdpGuard } from "./middleware/authMiddleware.js";
@@ -440,6 +441,10 @@ app.use("/api/payroll/cheque-validation", chequeValidationRouter);
 app.use("/api/payroll", disbursalRouter);
 app.use("/api/payroll", payrollWindowCronRouter);
 app.use("/api/payroll/noc", nocRouter);
+// NOC Certificate (Exit Clearance) authenticated endpoints -- built (router-level
+// requireAuth + per-route hasAnyRole/hasScopedAccess, 13 checks) but never mounted.
+// Distinct path from /api/payroll/noc above (singular) -- no collision.
+app.use("/api/payroll/noc-cases", nocCaseRouter);
 app.use("/api/payroll", runningSalaryRouter);
 // NOTE: /api/payroll-masters is mounted once, below, with payrollMastersRouter.
 // A duplicate `app.use("/api/payroll-masters", salaryPackageRouter)` used to sit here —
