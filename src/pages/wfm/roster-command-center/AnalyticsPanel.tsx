@@ -254,12 +254,21 @@ function ScoreRing({ score, size = 80, strokeWidth = 8 }: { score: number; size?
 
 export default function AnalyticsPanel() {
   const [branchId, setBranchId] = useState(ALL);
+  // Merge-plan Phase B bug #4: Quality/Cost endpoints already accept ?processId=
+  // server-side, but the frontend never offered a way to pick one — every call
+  // was branch-only, so process-level correlation/cost data was unreachable.
+  const [processId, setProcessId] = useState(ALL);
   const weekStart = getWeekStart();
   const period = getPreviousMonth();
 
   const { data: branchData } = useQuery({
     queryKey: ["roster-analytics", "branches"],
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
+  });
+
+  const { data: processData } = useQuery({
+    queryKey: ["roster-analytics", "processes"],
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; process_name: string }> }>("/api/processes?limit=200"),
   });
 
   const { data: shrinkageData, isLoading: shrinkageLoading } = useQuery({
@@ -272,19 +281,21 @@ export default function AnalyticsPanel() {
   });
 
   const { data: qualityData, isLoading: qualityLoading } = useQuery({
-    queryKey: ["roster-analytics", "quality", branchId, period],
+    queryKey: ["roster-analytics", "quality", branchId, processId, period],
     queryFn: () => {
       const params = new URLSearchParams({ period });
       if (branchId !== ALL) params.set("branchId", branchId);
+      if (processId !== ALL) params.set("processId", processId);
       return hrmsApi.get<QualityCorrelation>(`/api/roster-analytics/quality-correlation?${params}`);
     },
   });
 
   const { data: costData, isLoading: costLoading } = useQuery({
-    queryKey: ["roster-analytics", "cost", branchId, period],
+    queryKey: ["roster-analytics", "cost", branchId, processId, period],
     queryFn: () => {
       const params = new URLSearchParams({ period });
       if (branchId !== ALL) params.set("branchId", branchId);
+      if (processId !== ALL) params.set("processId", processId);
       return hrmsApi.get<CostImpact>(`/api/roster-analytics/cost-impact?${params}`);
     },
   });
@@ -309,17 +320,31 @@ export default function AnalyticsPanel() {
                 <p className="text-teal-100 text-sm">Shrinkage patterns, quality correlation, cost impact, and forecasting</p>
               </div>
             </div>
-            <Select value={branchId} onValueChange={setBranchId}>
-              <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
-                <SelectValue placeholder="Select Branch" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All Branches</SelectItem>
-                {(branchData?.data ?? []).map((b) => (
-                  <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Select value={branchId} onValueChange={setBranchId}>
+                <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
+                  <SelectValue placeholder="Select Branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All Branches</SelectItem>
+                  {(branchData?.data ?? []).map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Merge-plan Phase B bug #4 */}
+              <Select value={processId} onValueChange={setProcessId}>
+                <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
+                  <SelectValue placeholder="Select Process" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All Processes</SelectItem>
+                  {(processData?.data ?? []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 
@@ -486,6 +511,48 @@ export default function AnalyticsPanel() {
                     </table>
                   </div>
                 </GlassCard>
+
+                {/* Merge-plan Phase B bug #5: processRanking was already computed
+                    server-side but discarded by the frontend — render it. */}
+                {shrinkageData.processRanking.length > 0 ? (
+                  <GlassCard>
+                    <div className="p-4 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-100">
+                          <BarChart3 className="h-5 w-5 text-teal-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-slate-800">Process Shrinkage Ranking</h3>
+                          <p className="text-xs text-slate-500">Highest shrinkage first, by process</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-4 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 rounded-lg">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Process</th>
+                            <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Planned</th>
+                            <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Shrinkage</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {shrinkageData.processRanking.map((p) => (
+                            <tr key={p.processId} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-3 font-semibold text-slate-800">{p.processName}</td>
+                              <td className="px-4 py-3 text-center text-slate-600">{p.planned}</td>
+                              <td className="px-4 py-3 text-center">
+                                <Badge variant={p.shrinkagePct > 15 ? "destructive" : p.shrinkagePct > 10 ? "secondary" : "default"}>
+                                  {p.shrinkagePct}%
+                                </Badge>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </GlassCard>
+                ) : null}
               </>
             ) : null}
           </TabsContent>

@@ -22,13 +22,15 @@
  * 4. Real-time shrinkage meter
  */
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Activity,
@@ -76,6 +78,8 @@ interface ManagerDigest {
   managerName: string;
   managerEmail: string | null;
   date: string;
+  branchId: string | null;
+  branchName: string | null;
   teamSize: number;
   planned: number;
   present: number;
@@ -257,11 +261,10 @@ function ManagerEffectivenessCard({ digest }: { digest: ManagerDigest }) {
 /** Alert row for unplanned absences */
 function AbsenceAlertRow({
   alert,
-  onAction,
 }: {
   alert: LiveAttendanceData["alerts"][0];
-  onAction: () => void;
 }) {
+  const navigate = useNavigate();
   const urgency = alert.minutesSinceShiftStart > 60 ? "critical" : alert.minutesSinceShiftStart > 30 ? "warning" : "info";
 
   return (
@@ -295,10 +298,17 @@ function AbsenceAlertRow({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Send reminder">
-          <Bell className="h-4 w-4 text-slate-500" />
-        </Button>
-        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="View details" onClick={onAction}>
+        {/* Merge-plan Phase B bug #3: the Bell "Send reminder" button is removed — no
+            per-employee reminder endpoint exists, only a bulk one that emails every
+            manager with an open alert (wired to the Quick Actions "Send Mass Alert"
+            button below), so a per-row button here would be misleading. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          title="View employee roster"
+          onClick={() => navigate(`/wfm/employee-roster/${alert.employeeId}`)}
+        >
           <Eye className="h-4 w-4 text-slate-500" />
         </Button>
       </div>
@@ -313,6 +323,46 @@ export default function LiveMonitoringPanel() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedManager, setSelectedManager] = useState<ManagerDigest | null>(null);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  // Merge-plan Phase B bug #3: these were previously non-functional (Bell had no onClick,
+  // "Send Mass Alert"/"Notify All Managers" had none either). Both real endpoints already
+  // exist server-side and operate on the whole current alert/digest set (there is no
+  // per-row "remind this one manager" endpoint), so the per-row Bell button is removed —
+  // wiring it to a bulk endpoint would email every manager, not just this row's — while the
+  // two Quick Actions buttons below now call the real bulk endpoints.
+  const sendMassAlert = useMutation({
+    mutationFn: () => hrmsApi.post<{ sent: number; skipped: number; totalAlerts: number }>(
+      "/api/roster-intelligence/send-unplanned-alerts",
+      {},
+    ),
+    onSuccess: (data) => toast({
+      title: "Mass alert sent",
+      description: `${data.sent} manager(s) notified, ${data.skipped} skipped (no email on file), ${data.totalAlerts} alert(s) total.`,
+    }),
+    onError: (err: any) => toast({
+      title: "Failed to send mass alert",
+      description: err?.message ?? "Unknown error",
+      variant: "destructive",
+    }),
+  });
+
+  const notifyAllManagers = useMutation({
+    mutationFn: () => hrmsApi.post<{ sent: number; skipped: number; total: number }>(
+      "/api/roster-intelligence/send-manager-digests",
+      {},
+    ),
+    onSuccess: (data) => toast({
+      title: "Manager digests sent",
+      description: `${data.sent} of ${data.total} manager(s) notified, ${data.skipped} skipped (no email on file).`,
+    }),
+    onError: (err: any) => toast({
+      title: "Failed to send manager digests",
+      description: err?.message ?? "Unknown error",
+      variant: "destructive",
+    }),
+  });
 
   // Auto-refresh every 2 minutes
   useEffect(() => {
@@ -344,12 +394,19 @@ export default function LiveMonitoringPanel() {
   const alerts = liveData?.alerts ?? [];
   const digests = digestsData?.digests ?? [];
 
-  // Filter by branch if selected
-  const filteredAlerts = branchId === ALL ? alerts : alerts.filter((a) => a.branchName?.toLowerCase().includes(branchId.toLowerCase()));
-  const filteredDigests = branchId === ALL ? digests : digests.filter((d) => {
-    // Match digests by checking if any team member is in the branch
-    return true; // Would need branch info in digest
-  });
+  // Merge-plan Phase B bugs #1/#2: `branchId` state holds the branch UUID (the Select's
+  // `value={b.id}` below), but alerts only carry a branch NAME — comparing a name against a
+  // UUID via .includes() never matched, so this filter silently did nothing. Resolve the
+  // selected id to its real name from the already-fetched branch list first. Digests now
+  // carry a real branchId (backend fix, roster-intelligence.service.ts) instead of the old
+  // `return true` stub that ignored the filter entirely.
+  const selectedBranchName = branchId === ALL
+    ? null
+    : (branchData?.data ?? []).find((b) => b.id === branchId)?.branch_name ?? null;
+  const filteredAlerts = branchId === ALL || !selectedBranchName
+    ? alerts
+    : alerts.filter((a) => a.branchName?.toLowerCase() === selectedBranchName.toLowerCase());
+  const filteredDigests = branchId === ALL ? digests : digests.filter((d) => d.branchId === branchId);
 
   // Calculate summary metrics
   const totalAbsent = filteredAlerts.length;
@@ -501,7 +558,7 @@ export default function LiveMonitoringPanel() {
                 </div>
               ) : (
                 filteredAlerts.slice(0, 15).map((alert) => (
-                  <AbsenceAlertRow key={`${alert.employeeId}-${alert.date}`} alert={alert} onAction={() => {}} />
+                  <AbsenceAlertRow key={`${alert.employeeId}-${alert.date}`} alert={alert} />
                 ))
               )}
               {filteredAlerts.length > 15 && (
@@ -601,13 +658,23 @@ export default function LiveMonitoringPanel() {
                 <RefreshCw className="h-4 w-4" />
                 Refresh All Data
               </Button>
-              <Button variant="outline" className="w-full justify-start gap-2">
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2"
+                onClick={() => sendMassAlert.mutate()}
+                disabled={sendMassAlert.isPending || totalAbsent === 0}
+              >
                 <Bell className="h-4 w-4" />
-                Send Mass Alert
+                {sendMassAlert.isPending ? "Sending…" : `Send Mass Alert${totalAbsent > 0 ? ` (${totalAbsent})` : ""}`}
               </Button>
-              <Button variant="outline" className="w-full justify-start gap-2">
+              <Button
+                variant="outline"
+                className="w-full justify-start gap-2"
+                onClick={() => notifyAllManagers.mutate()}
+                disabled={notifyAllManagers.isPending}
+              >
                 <MessageSquare className="h-4 w-4" />
-                Notify All Managers
+                {notifyAllManagers.isPending ? "Sending…" : "Notify All Managers"}
               </Button>
             </div>
           </GlassCard>

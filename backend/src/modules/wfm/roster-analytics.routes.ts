@@ -614,10 +614,40 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
       params
     );
 
+    // Merge-plan Phase B bug #13: byProcess was hardcoded to [] — implement it
+    // the same way byShift already works, grouped by process instead of shift.
+    const [processRows] = await db.execute<any[]>(
+      `SELECT
+         p.id AS process_id,
+         p.process_name,
+         AVG(wb.total_break) AS avg_break,
+         30 AS budget
+       FROM (
+         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
+         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, session_date
+       ) wb
+       JOIN employees e ON wb.employee_id = e.id
+       JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
+       JOIN process_master p ON e.process_id = p.id
+       WHERE 1=1 ${branchFilter}
+       GROUP BY p.id, p.process_name`,
+      params
+    );
+
+    const byProcess = processRows.map((r: any) => ({
+      processId: r.process_id,
+      processName: r.process_name,
+      compliancePct: r.budget > 0 ? Math.round(Math.min(100, (r.budget / Math.max(r.avg_break, 1)) * 100)) : 90,
+      avgBreakMinutes: Math.round(r.avg_break ?? r.budget ?? 30),
+      budgetMinutes: r.budget ?? 30,
+      trend: 0,
+    }));
+
     res.json({
       overall,
       byShift,
-      byProcess: [],
+      byProcess,
       topViolators: violatorRows.map((r: any) => ({
         employeeId: r.employee_id,
         employeeCode: r.employee_code,
@@ -635,14 +665,110 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
 
 /**
  * GET /api/roster-analytics/shift-recommendations
- * Shift change recommendations for employees
+ * Shift change recommendations for employees.
+ *
+ * Merge-plan Phase B bug #12: was a permanent stub (`{ recommendations: [] }`),
+ * always reporting "everything is optimal" regardless of real data. Owner chose
+ * a rules-based version (not ML) in the merge-plan clarification. Rule: find the
+ * shift with the best observed 30-day adherence in scope (min 5 employees so a
+ * single lucky employee can't set the bar); flag any employee whose own 30-day
+ * adherence on their current shift is below 70% AND meaningfully below that
+ * best shift's average (>=15pp gap), recommending a move to it. No fabricated
+ * numbers — `expectedImprovement` is the real observed gap between the
+ * employee's own adherence and the target shift's cohort average, and
+ * `confidence` is derived from the employee's own sample size (scheduled days).
  */
-router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (_req, res) => {
+router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
-    // Simplified: return empty for now, can be enhanced with ML later
-    res.json({ recommendations: [] });
+    const { db } = await import('../../db/mysql.js');
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+
+    let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
+    const params: string[] = [];
+    if (branchId) {
+      whereClause += ' AND e.branch_id = ?';
+      params.push(branchId);
+    }
+    if (processId) {
+      whereClause += ' AND e.process_id = ?';
+      params.push(processId);
+    }
+
+    // Per-shift cohort adherence (same shape as /shift-effectiveness, minimal fields).
+    const [shiftRows] = await db.execute<any[]>(
+      `SELECT
+         sm.id AS shift_id,
+         sm.shift_name,
+         CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
+         COUNT(DISTINCT ra.employee_id) AS total_employees,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON ra.employee_id = e.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+       ${whereClause}
+       GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time`,
+      params
+    );
+
+    const eligibleShifts = shiftRows.filter((r: any) => Number(r.total_employees) >= 5);
+    if (eligibleShifts.length < 2) {
+      // Can't meaningfully recommend a move without at least 2 real cohorts to compare.
+      res.json({ recommendations: [] });
+      return;
+    }
+
+    const bestShift = eligibleShifts.reduce((best: any, r: any) =>
+      Number(r.adherence_pct) > Number(best.adherence_pct) ? r : best
+    );
+
+    // Per-employee personal adherence + current shift, same 30-day window/filters.
+    const [empRows] = await db.execute<any[]>(
+      `SELECT
+         ra.employee_id,
+         e.employee_code,
+         e.full_name,
+         sm.id AS shift_id,
+         sm.shift_name,
+         CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
+         COUNT(*) AS scheduled_days,
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present_days
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON ra.employee_id = e.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+       ${whereClause}
+       GROUP BY ra.employee_id, e.employee_code, e.full_name, sm.id, sm.shift_name, sm.start_time, sm.end_time
+       HAVING scheduled_days >= 5`,
+      params
+    );
+
+    const recommendations = empRows
+      .filter((r: any) => r.shift_id !== bestShift.shift_id)
+      .map((r: any) => {
+        const personalAdherence = (Number(r.present_days) / Number(r.scheduled_days)) * 100;
+        const gap = Number(bestShift.adherence_pct) - personalAdherence;
+        return { r, personalAdherence, gap };
+      })
+      .filter(({ personalAdherence, gap }) => personalAdherence < 70 && gap >= 15)
+      .sort((a, b) => b.gap - a.gap)
+      .slice(0, 25)
+      .map(({ r, personalAdherence, gap }) => ({
+        employeeId: r.employee_id,
+        employeeCode: r.employee_code,
+        employeeName: r.full_name,
+        currentShift: `${r.shift_name} (${r.shift_time})`,
+        recommendedShift: `${bestShift.shift_name} (${bestShift.shift_time})`,
+        reason: `Personal adherence is ${Math.round(personalAdherence)}% over the last 30 days (${r.present_days}/${r.scheduled_days} scheduled days present), vs ${Math.round(Number(bestShift.adherence_pct))}% average for employees on ${bestShift.shift_name}.`,
+        expectedImprovement: Math.round(gap),
+        confidence: Number(r.scheduled_days) >= 15 ? 'HIGH' : Number(r.scheduled_days) >= 8 ? 'MEDIUM' : 'LOW',
+      }));
+
+    res.json({ recommendations });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[roster-analytics] shift-recommendations error:', msg);
     res.status(500).json({ error: `Failed to get recommendations: ${msg}` });
   }
 });

@@ -128,6 +128,18 @@ const RULE_CONFIG = {
   NIGHT_SHIFT_LIMIT: { label: "Night Shift Limit", icon: Moon, description: "Too many consecutive night shifts" },
 };
 
+// Merge-plan Phase B bug #9: the "Violations" tab's real data (GET /api/wfm/compliance/
+// violations) is attendance-derived exceptions, NOT one of the 5 roster rules above — the
+// API has no per-incident feed for those. The Rule filter used to offer RULE_CONFIG's 5
+// options, none of which this endpoint's rows ever match (their real ruleId is always one
+// of the 3 below), so every one of those 5 choices silently returned zero rows. Filter
+// options now match the real domain instead.
+const EXCEPTION_TYPE_CONFIG = {
+  ABSENT_NO_CALL: { label: "Absent Without Notification", icon: XCircle },
+  LATE_ARRIVAL: { label: "Late Arrival", icon: Clock },
+  ADHERENCE: { label: "Adherence Violation", icon: AlertTriangle },
+};
+
 const SEVERITY_CONFIG = {
   CRITICAL: { tone: "red" as const, label: "Critical" },
   HIGH: { tone: "amber" as const, label: "High" },
@@ -135,12 +147,6 @@ const SEVERITY_CONFIG = {
   LOW: { tone: "green" as const, label: "Low" },
 };
 
-const STATUS_CONFIG = {
-  OPEN: { color: "bg-red-100 text-red-700", label: "Open" },
-  ACKNOWLEDGED: { color: "bg-amber-100 text-amber-700", label: "Acknowledged" },
-  RESOLVED: { color: "bg-green-100 text-green-700", label: "Resolved" },
-  WAIVED: { color: "bg-slate-100 text-slate-700", label: "Waived" },
-};
 
 // ── Subcomponents ────────────────────────────────────────────────────────────
 
@@ -279,23 +285,16 @@ const humanise = (id: string) =>
   id.split(/[_\s]+/).filter(Boolean).map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
 
 function ViolationRow({ violation }: { violation: Violation }) {
-  /*
-   * Both lookups are keyed on values the API supplies, and the API emits ids these maps do
-   * not contain: ruleId is attendance-derived (ABSENT_NO_CALL, LATE_ARRIVAL) rather than one
-   * of the five roster rules, and status is WORKING/WEEK_OFF rather than an OPEN/RESOLVED
-   * lifecycle. Unguarded, `RULE_CONFIG[...]` returns undefined and the `.icon` read below
-   * throws, taking the whole page down on the first real row.
-   */
-  const ruleConfig = RULE_CONFIG[violation.ruleType as keyof typeof RULE_CONFIG] ?? {
+  // Merge-plan Phase B bug #9: ruleType is keyed on EXCEPTION_TYPE_CONFIG's real ids
+  // (ABSENT_NO_CALL/LATE_ARRIVAL/ADHERENCE) now, not the fictional RULE_CONFIG lookup that
+  // never matched. Kept a humanise() fallback for any id the API ever adds that isn't
+  // enumerated here, so an unrecognised id still renders a readable label instead of
+  // crashing.
+  const ruleConfig = EXCEPTION_TYPE_CONFIG[violation.ruleType as keyof typeof EXCEPTION_TYPE_CONFIG] ?? {
     label: humanise(violation.ruleType),
     icon: AlertTriangle,
-    description: "",
   };
   const severityConfig = SEVERITY_CONFIG[violation.severity] ?? SEVERITY_CONFIG.LOW;
-  const statusConfig = STATUS_CONFIG[violation.status as keyof typeof STATUS_CONFIG] ?? {
-    color: "bg-slate-100 text-slate-700",
-    label: humanise(violation.status),
-  };
   const colors = TONE[severityConfig.tone];
   const Icon = ruleConfig.icon;
 
@@ -315,7 +314,6 @@ function ViolationRow({ violation }: { violation: Violation }) {
             <Badge style={{ backgroundColor: colors.iconBg, color: colors.value }}>
               {severityConfig.label}
             </Badge>
-            <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
           </div>
           <p className="text-sm text-slate-600 mt-1">{violation.details}</p>
           <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
@@ -334,18 +332,9 @@ function ViolationRow({ violation }: { violation: Violation }) {
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-2">
-          {violation.status === "OPEN" && (
-            <Button size="sm" variant="outline" className="text-xs">
-              Acknowledge
-            </Button>
-          )}
-          {violation.status !== "RESOLVED" && violation.status !== "WAIVED" && (
-            <Button size="sm" variant="outline" className="text-xs">
-              Resolve
-            </Button>
-          )}
-        </div>
+        {/* Merge-plan Phase B bug #11: Acknowledge/Resolve buttons removed — no DB-backed
+            workflow exists behind either (no acknowledge/resolve table, no status lifecycle
+            beyond the API's raw WORKING/WEEK_OFF roster-day value). Re-add once one does. */}
       </div>
     </div>
   );
@@ -393,11 +382,19 @@ interface ComplianceApiRule {
   ruleName: string;
   violationCount: number;
 }
+interface ComplianceApiBranch {
+  branchId: string;
+  branchName: string;
+  score: number;
+  violations: number;
+  trend: number;
+}
 interface ComplianceApiSummary {
   compliancePct: number;
   totalEmployees: number;
   totalViolations: number;
   rules: ComplianceApiRule[];
+  byBranch?: ComplianceApiBranch[];
   trend: number;
 }
 interface ApiViolation {
@@ -455,9 +452,16 @@ function adaptSummary(raw: ComplianceApiSummary | null | undefined): ComplianceS
     overallScore: Number(raw?.compliancePct ?? 0),
     trend: Number(raw?.trend ?? 0),
     byRule,
-    // The API exposes no per-branch or per-process compliance split. Left empty rather than
-    // faked; the panels that read them render their own empty state.
-    byBranch: [],
+    // Merge-plan Phase B bug #8: /summary now returns real byBranch data (grouped compliance
+    // query, only populated on the "all branches" view — see the route's own comment for
+    // why). byProcess still has no backend support, left empty rather than faked.
+    byBranch: (raw?.byBranch ?? []).map((b) => ({
+      branchId: b.branchId,
+      branchName: b.branchName,
+      score: Number(b.score ?? 0),
+      violations: Number(b.violations ?? 0),
+      trend: Number(b.trend ?? 0),
+    })),
     byProcess: [],
   };
 }
@@ -492,7 +496,6 @@ function adaptViolation(v: ApiViolation): Violation {
 export default function CompliancePanel() {
   const [branchFilter, setBranchFilter] = useState(ALL);
   const [ruleFilter, setRuleFilter] = useState(ALL);
-  const [statusFilter, setStatusFilter] = useState<string>("OPEN");
 
   const { data: branchData } = useQuery({
     queryKey: ["compliance", "branches"],
@@ -510,23 +513,20 @@ export default function CompliancePanel() {
   });
 
   const { data: violationsData, isLoading: violationsLoading, refetch } = useQuery({
-    queryKey: ["compliance", "violations", branchFilter, ruleFilter, statusFilter],
+    queryKey: ["compliance", "violations", branchFilter, ruleFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      // The API filters by ruleId, not ruleType — the parameter name this page used to send
-      // was silently ignored, so the rule dropdown never narrowed anything.
+      // Merge-plan Phase B bug #9: ruleFilter's options are now EXCEPTION_TYPE_CONFIG's real
+      // ids (ABSENT_NO_CALL/LATE_ARRIVAL/ADHERENCE), which the API's ruleId param actually
+      // matches — previously this sent one of the 5 roster-rule ids, which never matched
+      // anything and silently returned zero rows every time a non-"All" option was picked.
       if (ruleFilter !== ALL) params.set("ruleId", ruleFilter);
       const raw = await hrmsApi.get<{ violations: ApiViolation[]; totalCount: number }>(
         `/api/wfm/compliance/violations?${params}`,
       );
       const violations = (raw?.violations ?? []).map(adaptViolation);
-      // status is filtered client-side: the API derives it from the roster day
-      // (WORKING / WEEK_OFF) and has no acknowledge/resolve workflow to filter on.
-      return {
-        violations: statusFilter === ALL ? violations : violations.filter((v) => v.status === statusFilter),
-        total: raw?.totalCount ?? violations.length,
-      };
+      return { violations, total: raw?.totalCount ?? violations.length };
     },
   });
 
@@ -564,7 +564,13 @@ export default function CompliancePanel() {
   const trend = trendData?.trend ?? [];
 
   const totalViolations = Object.values(summary.byRule).reduce((s, r) => s + r.violations, 0);
-  const openViolations = violations.filter((v) => v.status === "OPEN").length;
+  // Merge-plan Phase B bug #9/#11 fallout: this used to filter on v.status === "OPEN", but
+  // the API's real status values are WEEK_OFF/WORKING (there is no acknowledge/resolve
+  // workflow, see the Violation type's own comment) — so this was always 0, showing a
+  // permanent false "no open issues" regardless of real data. Every row the endpoint
+  // returns already IS an open, unresolved exception (its WHERE clause only selects
+  // non-present/half_day attendance), so the honest count is simply how many were returned.
+  const openViolations = violations.length;
 
   return (
       <div className="bg-gradient-to-br from-slate-50 via-amber-50/30 to-orange-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
@@ -669,7 +675,7 @@ export default function CompliancePanel() {
               Overview
             </TabsTrigger>
             <TabsTrigger value="violations" className="data-[state=active]:bg-red-500 data-[state=active]:text-white">
-              Violations
+              Attendance Exceptions
             </TabsTrigger>
             <TabsTrigger value="trend" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">
               Trend
@@ -685,12 +691,15 @@ export default function CompliancePanel() {
                 <ComplianceGauge score={summary.overallScore} />
               </GlassCard>
 
-              {/* Rule Breakdown */}
+              {/* Rule Breakdown — all 5 configured rules. Night Shift Limit (5th) was
+                  computed by the backend and typed in RULE_CONFIG the whole time but never
+                  rendered here (merge-plan Phase B bug #7). */}
               <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <RuleComplianceCard rule="MINIMUM_REST" data={summary.byRule.minimumRest} />
                 <RuleComplianceCard rule="CONSECUTIVE_DAYS" data={summary.byRule.consecutiveDays} />
                 <RuleComplianceCard rule="WEEKOFF_FAIRNESS" data={summary.byRule.weekOffFairness} />
                 <RuleComplianceCard rule="MAX_HOURS_WEEK" data={summary.byRule.maxHoursWeek} />
+                <RuleComplianceCard rule="NIGHT_SHIFT_LIMIT" data={summary.byRule.nightShiftLimit} />
               </div>
             </div>
 
@@ -740,9 +749,20 @@ export default function CompliancePanel() {
             </GlassCard>
           </TabsContent>
 
-          {/* Violations Tab */}
+          {/* Attendance Exceptions Tab (formerly "Violations" — merge-plan Phase B bug #9:
+              relabeled honestly. This data is attendance-derived exceptions — absences and
+              late arrivals — not the 5 roster rules the Overview tab counts; there is no
+              per-incident feed for those, so this tab was never able to show them. */}
           <TabsContent value="violations" className="space-y-4">
-            {/* Filters */}
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-800">
+              Shows attendance exceptions (absences, late arrivals) for the period — a
+              different, more granular list than the 5 roster-rule counts on the Overview tab.
+            </div>
+            {/* Filters — merge-plan Phase B bug #11: the Status filter (Open/Acknowledged/
+                Resolved/Waived) is removed. It filtered on a lifecycle that does not exist —
+                no acknowledge/resolve workflow or table backs it — and its default value
+                ("OPEN") never matched the API's real WEEK_OFF/WORKING status, so this tab
+                showed zero rows by default before today's fix. */}
             <GlassCard className="p-4">
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
@@ -750,30 +770,18 @@ export default function CompliancePanel() {
                   <span className="text-sm font-medium text-slate-600">Filters:</span>
                 </div>
                 <Select value={ruleFilter} onValueChange={setRuleFilter}>
-                  <SelectTrigger className="w-40">
-                    <SelectValue placeholder="All Rules" />
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="All Exception Types" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ALL}>All Rules</SelectItem>
-                    {Object.entries(RULE_CONFIG).map(([key, config]) => (
+                    <SelectItem value={ALL}>All Exception Types</SelectItem>
+                    {Object.entries(EXCEPTION_TYPE_CONFIG).map(([key, config]) => (
                       <SelectItem key={key} value={key}>{config.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-36">
-                    <SelectValue placeholder="All Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>All Status</SelectItem>
-                    <SelectItem value="OPEN">Open</SelectItem>
-                    <SelectItem value="ACKNOWLEDGED">Acknowledged</SelectItem>
-                    <SelectItem value="RESOLVED">Resolved</SelectItem>
-                    <SelectItem value="WAIVED">Waived</SelectItem>
-                  </SelectContent>
-                </Select>
                 <div className="ml-auto text-sm text-slate-500">
-                  {violations.length} violations
+                  {violations.length} exceptions
                 </div>
               </div>
             </GlassCard>
@@ -800,8 +808,11 @@ export default function CompliancePanel() {
           <TabsContent value="trend" className="space-y-4">
             <GlassCard>
               <div className="p-4 border-b border-slate-100">
-                <h3 className="font-semibold text-slate-800">Weekly Violation Trend</h3>
-                <p className="text-xs text-slate-500">Last 8 weeks</p>
+                {/* Merge-plan Phase B bug #10: backend groups by calendar month
+                    (DATE_FORMAT(roster_date,'%Y-%m')) over a 6-month window, not weekly —
+                    the old "Weekly / Last 8 weeks" label was simply wrong. */}
+                <h3 className="font-semibold text-slate-800">Monthly Violation Trend</h3>
+                <p className="text-xs text-slate-500">Last 6 months</p>
               </div>
               <div className="p-6">
                 <TrendChart data={trend} />

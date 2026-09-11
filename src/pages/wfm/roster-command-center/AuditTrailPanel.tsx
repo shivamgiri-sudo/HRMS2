@@ -40,6 +40,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { hrmsApi as api } from '@/lib/hrmsApi';
 
 interface AuditTrail {
@@ -80,6 +81,36 @@ interface GenerationRun {
   triggeredBy: string;
 }
 
+// Merge-plan Phase B bug #17: dedicated detail shapes for the two drill-down
+// drawers (Drill-Down Mandate) — fetched from GET /:id endpoints, never
+// reused from the list payloads above.
+interface AuditTrailDetail {
+  id: string;
+  date: string;
+  changeType: string;
+  changeTypeCode: string;
+  reason: string;
+  ruleApplied: string | null;
+  overrideReason: string | null;
+  timestamp: string;
+  employee: { id: string; code: string; name: string };
+  processName: string | null;
+  branchName: string | null;
+  shift: { name: string; startTime: string; endTime: string } | null;
+  changedBy: string;
+  changedByCode: string | null;
+  run: {
+    id: string; runType: string; status: string;
+    startedAt: string; completedAt: string | null; triggeredBy: string;
+  } | null;
+  relatedChanges: Array<{ id: string; date: string; changeType: string; reason: string; timestamp: string; changedBy: string }>;
+}
+
+interface GenerationRunDetail extends Omit<GenerationRun, 'triggeredBy'> {
+  triggeredBy: { id: string | null; name: string; code: string | null };
+  decisions: Array<{ id: string; date: string; changeType: string; reason: string; timestamp: string; employee: { code: string; name: string } }>;
+}
+
 interface AuditSummary {
   totalChanges: number;
   manualOverrides: number;
@@ -112,6 +143,9 @@ export default function AuditTrailPanel() {
   const [amendCycleId, setAmendCycleId] = useState('');
   const [amendReason, setAmendReason] = useState('');
   const [amendSubmitting, setAmendSubmitting] = useState(false);
+  // Merge-plan Phase B bug #17
+  const [selectedTrailId, setSelectedTrailId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const { data: trailsData, isLoading: trailsLoading, refetch: refetchTrails } = useQuery({
     queryKey: ['roster-audit-trails', dateFrom, dateTo, changeTypeFilter],
@@ -146,6 +180,25 @@ export default function AuditTrailPanel() {
       return res.data as { runs: GenerationRun[] };
     },
     enabled: activeTab === 'runs',
+  });
+
+  // Merge-plan Phase B bug #17: dedicated per-row detail fetches for the drawers.
+  const { data: trailDetail, isLoading: trailDetailLoading } = useQuery({
+    queryKey: ['roster-audit-trail-detail', selectedTrailId],
+    queryFn: async () => {
+      const res = await api.get(`/roster-audit/trails/${selectedTrailId}`);
+      return res.data as AuditTrailDetail;
+    },
+    enabled: !!selectedTrailId,
+  });
+
+  const { data: runDetail, isLoading: runDetailLoading } = useQuery({
+    queryKey: ['roster-audit-run-detail', selectedRunId],
+    queryFn: async () => {
+      const res = await api.get(`/roster-audit/generation-runs/${selectedRunId}`);
+      return res.data as GenerationRunDetail;
+    },
+    enabled: !!selectedRunId,
   });
 
   const getChangeTypeBadge = (type: string, code: string) => {
@@ -414,7 +467,11 @@ export default function AuditTrailPanel() {
                       </TableHeader>
                       <TableBody>
                         {trailsData.trails.map((trail) => (
-                          <TableRow key={trail.id} className="hover:bg-slate-50/50">
+                          <TableRow
+                            key={trail.id}
+                            className="hover:bg-slate-50/50 cursor-pointer"
+                            onClick={() => setSelectedTrailId(trail.id)}
+                          >
                             <TableCell className="font-medium">
                               {new Date(trail.date).toLocaleDateString('en-IN', {
                                 day: '2-digit',
@@ -486,7 +543,8 @@ export default function AuditTrailPanel() {
                     {runsData.runs.map((run) => (
                       <div
                         key={run.id}
-                        className="p-4 hover:bg-slate-50/50 flex items-center justify-between"
+                        className="p-4 hover:bg-slate-50/50 flex items-center justify-between cursor-pointer"
+                        onClick={() => setSelectedRunId(run.id)}
                       >
                         <div className="flex items-center gap-4">
                           <div
@@ -610,6 +668,187 @@ export default function AuditTrailPanel() {
           </div>
         </div>
       )}
+
+      {/* Merge-plan Phase B bug #17: Audit Trail row drill-down (Drill-Down Mandate) */}
+      <Sheet open={!!selectedTrailId} onOpenChange={(open) => !open && setSelectedTrailId(null)}>
+        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Audit Entry {trailDetail?.id ? `#${trailDetail.id}` : ''}
+            </SheetTitle>
+          </SheetHeader>
+          {trailDetailLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : trailDetail ? (
+            <div className="space-y-6 mt-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Change</p>
+                <div className="flex items-center gap-2 mb-2">
+                  {getChangeTypeBadge(trailDetail.changeType, trailDetail.changeTypeCode)}
+                  <span className="text-sm text-slate-500">
+                    {new Date(trailDetail.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-600">{trailDetail.reason}</p>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Employee</p>
+                <p className="text-sm font-medium text-gray-900">{trailDetail.employee.name}</p>
+                <p className="text-xs text-gray-500">{trailDetail.employee.code}</p>
+                <p className="text-xs text-gray-500 mt-1">{trailDetail.processName || '—'} · {trailDetail.branchName || '—'}</p>
+              </div>
+
+              {trailDetail.shift && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Shift</p>
+                  <p className="text-sm text-slate-700">
+                    {trailDetail.shift.name} ({trailDetail.shift.startTime}–{trailDetail.shift.endTime})
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Changed By</p>
+                <p className="text-sm text-slate-700">
+                  {trailDetail.changedBy}{trailDetail.changedByCode ? ` (${trailDetail.changedByCode})` : ''}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {new Date(trailDetail.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+
+              {trailDetail.run && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Generation Run</p>
+                  <p className="text-sm text-slate-700">
+                    {trailDetail.run.runType} run · {getStatusBadge(trailDetail.run.status)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Triggered by {trailDetail.run.triggeredBy}</p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                  Related Changes (±7 days, same employee)
+                </p>
+                {trailDetail.relatedChanges.length > 0 ? (
+                  <div className="space-y-2">
+                    {trailDetail.relatedChanges.map((rc) => (
+                      <div key={rc.id} className="text-sm border-l-2 border-slate-200 pl-3 py-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700">{rc.changeType}</span>
+                          <span className="text-xs text-gray-400">
+                            {new Date(rc.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500">{rc.reason} · {rc.changedBy}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+
+      {/* Merge-plan Phase B bug #17: Generation Run row drill-down (Drill-Down Mandate) */}
+      <Sheet open={!!selectedRunId} onOpenChange={(open) => !open && setSelectedRunId(null)}>
+        <SheetContent className="w-[400px] sm:w-[560px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4" />
+              Generation Run {runDetail?.cycleId ? `· Cycle ${runDetail.cycleId}` : ''}
+            </SheetTitle>
+          </SheetHeader>
+          {runDetailLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : runDetail ? (
+            <div className="space-y-6 mt-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Run</p>
+                <div className="flex items-center gap-2 mb-1">
+                  {getStatusBadge(runDetail.status)}
+                  <Badge variant="outline" className="text-xs">{runDetail.runType}</Badge>
+                </div>
+                <p className="text-sm text-slate-700">
+                  {runDetail.processName || 'All Processes'} · {runDetail.branchName || 'All Branches'}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Triggered by {runDetail.triggeredBy.name}{runDetail.triggeredBy.code ? ` (${runDetail.triggeredBy.code})` : ''}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Stats</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{runDetail.stats.assignmentsCreated}</div>
+                    <div className="text-xs text-slate-500">Assignments Created</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{runDetail.stats.employeesProcessed}</div>
+                    <div className="text-xs text-slate-500">Employees Processed</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{runDetail.stats.weekoffsAllocated}</div>
+                    <div className="text-xs text-slate-500">Week-offs Allocated</div>
+                  </div>
+                  <div className={`rounded-lg p-2 ${runDetail.stats.conflictsFound > 0 ? 'bg-red-50' : 'bg-slate-50'}`}>
+                    <div className={`font-bold ${runDetail.stats.conflictsFound > 0 ? 'text-red-700' : 'text-slate-800'}`}>
+                      {runDetail.stats.conflictsFound}
+                    </div>
+                    <div className="text-xs text-slate-500">Conflicts Found</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Timing</p>
+                <p className="text-sm text-slate-700">
+                  Started {new Date(runDetail.startedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </p>
+                <p className="text-sm text-slate-700">
+                  {runDetail.completedAt
+                    ? `Completed ${new Date(runDetail.completedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} (${runDetail.duration}s)`
+                    : 'Still running'}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                  Audit Trail (this run's decisions)
+                </p>
+                {runDetail.decisions.length > 0 ? (
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {runDetail.decisions.map((d) => (
+                      <div key={d.id} className="text-sm border-l-2 border-slate-200 pl-3 py-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700">{d.changeType}</span>
+                          <span className="text-xs text-gray-400">
+                            {new Date(d.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500">{d.employee.name} ({d.employee.code}) · {d.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

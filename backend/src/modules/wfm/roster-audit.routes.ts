@@ -115,12 +115,134 @@ router.get(
 );
 
 /**
+ * GET /api/roster-audit/trails/:id
+ * Merge-plan Phase B bug #17: dedicated full-detail record for the Audit Trail
+ * table's row drill-down (Drill-Down Mandate) — never reuse the /trails list
+ * payload. Includes "related changes" (other decisions for the same employee
+ * within 7 days either side) as the mandated related-sub-records section.
+ */
+router.get(
+  '/trails/:id',
+  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
+  wrap(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         rda.id,
+         rda.roster_date AS date,
+         rda.decision_type AS changeType,
+         rda.rule_applied AS reason,
+         rda.override_reason AS overrideReason,
+         rda.created_at AS timestamp,
+         rda.employee_id AS employeeId,
+         e.employee_code AS employeeCode,
+         e.full_name AS employeeName,
+         p.process_name AS processName,
+         b.branch_name AS branchName,
+         sm.shift_name AS shiftName,
+         sm.start_time AS shiftStart,
+         sm.end_time AS shiftEnd,
+         actor.full_name AS changedByName,
+         actor.employee_code AS changedByCode,
+         rda.override_by AS changedById,
+         rda.run_id AS runId,
+         rgr.run_type AS runType,
+         rgr.status AS runStatus,
+         rgr.started_at AS runStartedAt,
+         rgr.completed_at AS runCompletedAt,
+         rgr.triggered_by AS triggeredById,
+         trigger_user.full_name AS triggeredByName
+       FROM roster_decision_audit rda
+       LEFT JOIN employees e ON rda.employee_id = e.id
+       LEFT JOIN process_master p ON e.process_id = p.id
+       LEFT JOIN branch_master b ON e.branch_id = b.id
+       LEFT JOIN wfm_shift_master sm ON rda.assigned_shift_template_id = sm.id
+       LEFT JOIN employees actor ON rda.override_by = actor.id
+       LEFT JOIN roster_generation_run rgr ON rda.run_id = rgr.id
+       LEFT JOIN employees trigger_user ON rgr.triggered_by = trigger_user.id
+       WHERE rda.id = ?`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      res.status(404).json({ error: 'Audit trail entry not found' });
+      return;
+    }
+
+    const r = rows[0];
+
+    const [relatedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         rda.id,
+         rda.roster_date AS date,
+         rda.decision_type AS changeType,
+         rda.override_reason AS overrideReason,
+         rda.rule_applied AS reason,
+         rda.created_at AS timestamp,
+         actor.full_name AS changedByName
+       FROM roster_decision_audit rda
+       LEFT JOIN employees actor ON rda.override_by = actor.id
+       WHERE rda.employee_id = ?
+         AND rda.id != ?
+         AND rda.roster_date BETWEEN DATE_SUB(?, INTERVAL 7 DAY) AND DATE_ADD(?, INTERVAL 7 DAY)
+       ORDER BY rda.created_at DESC
+       LIMIT 10`,
+      [r.employeeId, id, r.date, r.date]
+    );
+
+    res.json({
+      id: r.id,
+      date: r.date,
+      changeType: formatDecisionType(r.changeType),
+      changeTypeCode: r.changeType,
+      reason: r.overrideReason || r.reason || 'System generated',
+      ruleApplied: r.reason,
+      overrideReason: r.overrideReason,
+      timestamp: r.timestamp,
+      employee: {
+        id: r.employeeId,
+        code: r.employeeCode,
+        name: r.employeeName,
+      },
+      processName: r.processName,
+      branchName: r.branchName,
+      shift: r.shiftName ? { name: r.shiftName, startTime: r.shiftStart, endTime: r.shiftEnd } : null,
+      changedBy: r.changedByName || r.triggeredByName || 'System',
+      changedById: r.changedById || r.triggeredById,
+      changedByCode: r.changedByCode || null,
+      run: r.runId
+        ? {
+            id: r.runId,
+            runType: r.runType,
+            status: r.runStatus,
+            startedAt: r.runStartedAt,
+            completedAt: r.runCompletedAt,
+            triggeredBy: r.triggeredByName || 'System',
+          }
+        : null,
+      relatedChanges: relatedRows.map((rr: RowDataPacket) => ({
+        id: rr.id,
+        date: rr.date,
+        changeType: formatDecisionType(rr.changeType),
+        reason: rr.overrideReason || rr.reason || 'System generated',
+        timestamp: rr.timestamp,
+        changedBy: rr.changedByName || 'System',
+      })),
+    });
+  })
+);
+
+/**
  * GET /api/roster-audit/summary
  * Returns audit summary statistics
  */
 router.get(
   '/summary',
-  requireRole('hr', 'wfm', 'admin', 'super_admin'),
+  // Merge-plan Phase B bug #18: this endpoint lacked operations_manager while /trails (this
+  // same router, above) granted it — nothing suggested the narrower set was intentional, so
+  // aligned for consistency (2026-09-11).
+  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
     const { branchId, dateFrom, dateTo } = req.query;
     const period = dateFrom && dateTo
@@ -209,7 +331,8 @@ router.get(
  */
 router.get(
   '/generation-runs',
-  requireRole('hr', 'wfm', 'admin', 'super_admin'),
+  // Merge-plan Phase B bug #18: same alignment as /summary above.
+  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
 
@@ -261,6 +384,108 @@ router.get(
           ? Math.round((new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)
           : null,
         triggeredBy: r.triggeredByName || 'System',
+      })),
+    });
+  })
+);
+
+/**
+ * GET /api/roster-audit/generation-runs/:id
+ * Merge-plan Phase B bug #17: dedicated full-detail record for the Generation
+ * Runs row drill-down (Drill-Down Mandate) — never reuse the list payload.
+ * Includes the individual roster_decision_audit rows this run produced, as
+ * the mandated related-sub-records / audit-trail section.
+ */
+router.get(
+  '/generation-runs/:id',
+  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
+  wrap(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         rgr.id,
+         rgr.cycle_id AS cycleId,
+         rgr.process_id AS processId,
+         p.process_name AS processName,
+         rgr.branch_id AS branchId,
+         b.branch_name AS branchName,
+         rgr.run_type AS runType,
+         rgr.status,
+         rgr.employees_processed AS employeesProcessed,
+         rgr.assignments_created AS assignmentsCreated,
+         rgr.weekoffs_allocated AS weekoffsAllocated,
+         rgr.conflicts_found AS conflictsFound,
+         rgr.started_at AS startedAt,
+         rgr.completed_at AS completedAt,
+         rgr.triggered_by AS triggeredById,
+         e.full_name AS triggeredByName,
+         e.employee_code AS triggeredByCode
+       FROM roster_generation_run rgr
+       LEFT JOIN process_master p ON rgr.process_id = p.id
+       LEFT JOIN branch_master b ON rgr.branch_id = b.id
+       LEFT JOIN employees e ON rgr.triggered_by = e.id
+       WHERE rgr.id = ?`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      res.status(404).json({ error: 'Generation run not found' });
+      return;
+    }
+
+    const r = rows[0];
+
+    const [decisionRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         rda.id,
+         rda.roster_date AS date,
+         rda.decision_type AS changeType,
+         rda.override_reason AS overrideReason,
+         rda.rule_applied AS reason,
+         rda.created_at AS timestamp,
+         e.employee_code AS employeeCode,
+         e.full_name AS employeeName
+       FROM roster_decision_audit rda
+       LEFT JOIN employees e ON rda.employee_id = e.id
+       WHERE rda.run_id = ?
+       ORDER BY rda.created_at DESC
+       LIMIT 100`,
+      [id]
+    );
+
+    res.json({
+      id: r.id,
+      cycleId: r.cycleId,
+      processId: r.processId,
+      processName: r.processName,
+      branchId: r.branchId,
+      branchName: r.branchName,
+      runType: r.runType,
+      status: r.status,
+      stats: {
+        employeesProcessed: r.employeesProcessed,
+        assignmentsCreated: r.assignmentsCreated,
+        weekoffsAllocated: r.weekoffsAllocated,
+        conflictsFound: r.conflictsFound,
+      },
+      startedAt: r.startedAt,
+      completedAt: r.completedAt,
+      duration: r.completedAt && r.startedAt
+        ? Math.round((new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)
+        : null,
+      triggeredBy: {
+        id: r.triggeredById,
+        name: r.triggeredByName || 'System',
+        code: r.triggeredByCode || null,
+      },
+      decisions: decisionRows.map((d: RowDataPacket) => ({
+        id: d.id,
+        date: d.date,
+        changeType: formatDecisionType(d.changeType),
+        reason: d.overrideReason || d.reason || 'System generated',
+        timestamp: d.timestamp,
+        employee: { code: d.employeeCode, name: d.employeeName },
       })),
     });
   })

@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   ArrowDownRight,
@@ -101,6 +102,27 @@ interface BreakCompliance {
     avgExcessMinutes: number;
     occurrences: number;
   }>;
+}
+
+// Merge-plan Phase B bug #14: Break Policy Violators row detail (Drill-Down
+// Mandate). Reuses the existing dedicated GET /api/roster-analytics/employee-profile/:id
+// endpoint — a real per-employee detail record, never the list payload.
+interface EmployeeProfileDetail {
+  employee: {
+    id: string; employeeCode: string; fullName: string; designation: string;
+    processName: string; branchName: string; managerName: string | null;
+    dateOfJoining: string; aonDays: number;
+  };
+  currentPeriod: {
+    month: string; planned: number; present: number; adherencePct: number;
+    onTime: number; late: number; absent: number;
+  };
+  trend: Array<{ month: string; adherencePct: number; onTimePct: number; latePct: number; absentPct: number }>;
+  dayOfWeekPattern: Array<{ day: string; totalRostered: number; adherencePct: number; isWeakDay: boolean }>;
+  shiftPattern: Array<{ shiftName: string; totalRostered: number; adherencePct: number }>;
+  comparison: { teamAvg: number; branchAvg: number; employeePct: number; vsTeam: number; vsBranch: number };
+  riskSignals: { tier: string | null; score: number | null; signals: string[] };
+  recentInterventions: Array<{ id: string; date: string; action: string; outcome: string | null }>;
 }
 
 interface ShiftRecommendation {
@@ -342,6 +364,8 @@ function RecommendationCard({ rec }: { rec: ShiftRecommendation }) {
 export default function ShiftEffectivenessPanel() {
   const [branchFilter, setBranchFilter] = useState(ALL);
   const [processFilter, setProcessFilter] = useState(ALL);
+  // Merge-plan Phase B bug #14
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
   const { data: branchData } = useQuery({
     queryKey: ["shift-effectiveness", "branches"],
@@ -383,6 +407,13 @@ export default function ShiftEffectivenessPanel() {
     },
   });
 
+  // Merge-plan Phase B bug #14: dedicated per-employee detail fetch for the drawer.
+  const { data: employeeProfile, isLoading: employeeProfileLoading } = useQuery({
+    queryKey: ["shift-effectiveness", "employee-profile", selectedEmployeeId],
+    queryFn: () => hrmsApi.get<EmployeeProfileDetail>(`/api/roster-analytics/employee-profile/${selectedEmployeeId}`),
+    enabled: !!selectedEmployeeId,
+  });
+
   const shifts = shiftsData?.shifts ?? [];
   const breakCompliance = breakData ?? {
     overall: { compliancePct: 0, avgBreakMinutes: 0, budgetMinutes: 0, overBreakCount: 0, underBreakCount: 0 },
@@ -397,6 +428,7 @@ export default function ShiftEffectivenessPanel() {
   const avgQuality = shifts.length > 0 ? Math.round(shifts.reduce((s, sh) => s + sh.metrics.qualityAvg, 0) / shifts.length) : 0;
 
   return (
+    <>
       <div className="bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
         {/* Header with gradient (blue for analytics domain) */}
         <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 p-6 text-white shadow-lg shadow-blue-500/20">
@@ -576,7 +608,11 @@ export default function ShiftEffectivenessPanel() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {breakCompliance.topViolators.slice(0, 10).map((v) => (
-                            <tr key={v.employeeId} className="hover:bg-slate-50">
+                            <tr
+                              key={v.employeeId}
+                              className="hover:bg-slate-50 cursor-pointer"
+                              onClick={() => setSelectedEmployeeId(v.employeeId)}
+                            >
                               <td className="px-4 py-3">
                                 <div className="font-medium text-slate-800">{v.employeeName}</div>
                                 <div className="text-xs text-slate-500">{v.employeeCode}</div>
@@ -616,5 +652,140 @@ export default function ShiftEffectivenessPanel() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Merge-plan Phase B bug #14: Break Policy Violators drill-down (Drill-Down Mandate) */}
+      <Sheet open={!!selectedEmployeeId} onOpenChange={(open) => !open && setSelectedEmployeeId(null)}>
+        <SheetContent className="w-[400px] sm:w-[560px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>
+              {employeeProfile?.employee.fullName ?? "Employee Detail"}
+            </SheetTitle>
+          </SheetHeader>
+          {employeeProfileLoading ? (
+            <div className="py-12 text-center text-slate-500 animate-pulse">Loading employee detail...</div>
+          ) : employeeProfile ? (
+            <div className="space-y-6 mt-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Employee</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-slate-400">Code:</span> {employeeProfile.employee.employeeCode}</div>
+                  <div><span className="text-slate-400">Designation:</span> {employeeProfile.employee.designation || "—"}</div>
+                  <div><span className="text-slate-400">Process:</span> {employeeProfile.employee.processName || "—"}</div>
+                  <div><span className="text-slate-400">Branch:</span> {employeeProfile.employee.branchName || "—"}</div>
+                  <div><span className="text-slate-400">Manager:</span> {employeeProfile.employee.managerName || "—"}</div>
+                  <div><span className="text-slate-400">Tenure:</span> {employeeProfile.employee.aonDays} days</div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                  Current Period ({employeeProfile.currentPeriod.month})
+                </p>
+                <div className="grid grid-cols-4 gap-2 text-center text-sm">
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{employeeProfile.currentPeriod.adherencePct}%</div>
+                    <div className="text-xs text-slate-500">Adherence</div>
+                  </div>
+                  <div className="rounded-lg bg-emerald-50 p-2">
+                    <div className="font-bold text-emerald-700">{employeeProfile.currentPeriod.onTime}</div>
+                    <div className="text-xs text-slate-500">On Time</div>
+                  </div>
+                  <div className="rounded-lg bg-amber-50 p-2">
+                    <div className="font-bold text-amber-700">{employeeProfile.currentPeriod.late}</div>
+                    <div className="text-xs text-slate-500">Late</div>
+                  </div>
+                  <div className="rounded-lg bg-red-50 p-2">
+                    <div className="font-bold text-red-700">{employeeProfile.currentPeriod.absent}</div>
+                    <div className="text-xs text-slate-500">Absent</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Shift Pattern (last 3 months)</p>
+                {employeeProfile.shiftPattern.length > 0 ? (
+                  <div className="space-y-1">
+                    {employeeProfile.shiftPattern.map((s) => (
+                      <div key={s.shiftName} className="flex items-center justify-between text-sm py-1">
+                        <span className="text-slate-700">{s.shiftName}</span>
+                        <span className="text-slate-500">{s.totalRostered} days · {s.adherencePct}% adherence</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Day-of-Week Pattern</p>
+                {employeeProfile.dayOfWeekPattern.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-1">
+                    {employeeProfile.dayOfWeekPattern.map((d) => (
+                      <div key={d.day} className={`flex items-center justify-between text-xs px-2 py-1 rounded ${d.isWeakDay ? "bg-red-50 text-red-700" : "bg-slate-50 text-slate-600"}`}>
+                        <span>{d.day}</span>
+                        <span>{d.adherencePct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Team / Branch Comparison</p>
+                <div className="grid grid-cols-3 gap-2 text-center text-sm">
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{employeeProfile.comparison.employeePct}%</div>
+                    <div className="text-xs text-slate-500">Employee</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{employeeProfile.comparison.teamAvg}%</div>
+                    <div className="text-xs text-slate-500">Team Avg</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{employeeProfile.comparison.branchAvg}%</div>
+                    <div className="text-xs text-slate-500">Branch Avg</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Risk Signals</p>
+                {employeeProfile.riskSignals.signals.length > 0 ? (
+                  <div className="space-y-1">
+                    <Badge variant={employeeProfile.riskSignals.tier === "HIGH" ? "destructive" : "secondary"}>
+                      {employeeProfile.riskSignals.tier} risk
+                    </Badge>
+                    <ul className="text-sm text-slate-600 list-disc pl-5 mt-1">
+                      {employeeProfile.riskSignals.signals.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Recent Interventions</p>
+                {employeeProfile.recentInterventions.length > 0 ? (
+                  <div className="space-y-1">
+                    {employeeProfile.recentInterventions.map((i) => (
+                      <div key={i.id} className="text-sm text-slate-600 flex items-center justify-between">
+                        <span>{i.action}</span>
+                        <span className="text-xs text-slate-400">{i.outcome || "pending"}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
