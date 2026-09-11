@@ -74,8 +74,6 @@ const KNOWN_GAPS: Record<string, string> = {
     "NOT REACHABLE: WebPunchButton is never mounted and useWebPunchIn is never used. The schema was never shipped either — no web_punch_in/out column exists anywhere in mas_hrms. Build the feature properly or delete the client code; do not add a route to satisfy this line.",
   "POST /api/wfm/attendance/web-punch-out":
     "NOT REACHABLE: pairs with web-punch-in, same dead component and same missing schema.",
-  "POST /api/performance-feedback/quality/connect-sheet":
-    "NOT REACHABLE: QualityDataUpload is not used by any mounted component. Sheet-connect for quality feedback; unfinished scaffolding.",
 
   // ── Blocked on a decision, investigated in depth on 2026-07-31.
   "POST /api/performance-feedback/reports":
