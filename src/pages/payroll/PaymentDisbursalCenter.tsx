@@ -2414,7 +2414,12 @@ export default function PaymentDisbursalCenter() {
                       IMPS / Cheque / Cash / UPI / RTGS
                     </p>
                   </div>
+                  <label htmlFor="disbursal-csv-text" className="sr-only">
+                    Disbursal records CSV
+                  </label>
                   <textarea
+                    id="disbursal-csv-text"
+                    name="disbursal_csv_text"
                     className="w-full h-40 rounded-md border p-3 text-xs font-mono bg-background resize-y"
                     placeholder={
                       "employee_code,cheque_no,payment_mode,payment_date,bank_ref,notes\nMAS001,CHQ12345,NEFT,2026-07-13,,\nMAS002,,Cash,2026-07-13,,"
@@ -2446,10 +2451,12 @@ export default function PaymentDisbursalCenter() {
                   )}
                   <div className="grid grid-cols-2 gap-4 max-w-xl">
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label htmlFor="disbursal-employee-code" className="text-sm font-medium">
                         Employee Code *
                       </label>
                       <Input
+                        id="disbursal-employee-code"
+                        name="employee_code"
                         value={manualRow.employee_code}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -2461,10 +2468,12 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label htmlFor="disbursal-cheque-no" className="text-sm font-medium">
                         Cheque / Reference No
                       </label>
                       <Input
+                        id="disbursal-cheque-no"
+                        name="cheque_no"
                         value={manualRow.cheque_no}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -2476,7 +2485,7 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label id="disbursal-payment-mode-label" htmlFor="disbursal-payment-mode" className="text-sm font-medium">
                         Payment Mode
                       </label>
                       <Select
@@ -2484,8 +2493,9 @@ export default function PaymentDisbursalCenter() {
                         onValueChange={(v) =>
                           setManualRow((p) => ({ ...p, payment_mode: v }))
                         }
+                        name="payment_mode"
                       >
-                        <SelectTrigger>
+                        <SelectTrigger id="disbursal-payment-mode" aria-labelledby="disbursal-payment-mode-label">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -2498,10 +2508,12 @@ export default function PaymentDisbursalCenter() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label htmlFor="disbursal-payment-date" className="text-sm font-medium">
                         Payment Date
                       </label>
                       <Input
+                        id="disbursal-payment-date"
+                        name="payment_date"
                         type="date"
                         value={manualRow.payment_date}
                         onChange={(e) =>
@@ -2513,8 +2525,10 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">Bank Ref</label>
+                      <label htmlFor="disbursal-bank-ref" className="text-sm font-medium">Bank Ref</label>
                       <Input
+                        id="disbursal-bank-ref"
+                        name="bank_ref"
                         value={manualRow.bank_ref}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -2526,8 +2540,10 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">Notes</label>
+                      <label htmlFor="disbursal-notes" className="text-sm font-medium">Notes</label>
                       <Input
+                        id="disbursal-notes"
+                        name="notes"
                         value={manualRow.notes}
                         onChange={(e) =>
                           setManualRow((p) => ({
