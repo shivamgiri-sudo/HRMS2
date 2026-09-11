@@ -762,6 +762,51 @@ export async function updateAssignmentEffectiveDate(
 
 // ── Salary package actions ──────────────────────────────────────────────────
 
+/**
+ * When Payroll Head builds/assigns a NEW package from the catalog (writeComponentAssignment,
+ * via assignPackage/createAndAssignPackage), the real figures land in
+ * salary_component_assignments/employee_salary_assignment -- but ats_employment_offer, the
+ * ORIGINAL offer row every other screen (offer history, the Payroll Head Review queue's
+ * "Offered" column) still reads, was never updated to match. Confirmed live: AKASH
+ * (MAS63497), HARSH NILAY (MAS63496) and VANSH ARYAN (MAS63423) were all approved with a
+ * real package (₹25,000 / ₹25,000 / ₹20,000 per month) here, yet their offer row was still
+ * frozen at the ₹0 it started at before the zero-CTC submit guard existed -- so anything
+ * reading the offer table kept showing them as ₹0, contradicting their own approved payroll.
+ *
+ * approveOfferedPackage is NOT touched: that path copies FROM the offer INTO the assignment,
+ * so the offer is already the source of truth there and syncing back would be a no-op at best.
+ * Only the catalog/new-package path (writeComponentAssignment) can make the offer stale, so
+ * only it needs this. Non-fatal, same reasoning as syncSalaryStartDateEverywhere -- a failed
+ * best-effort display sync must never block the real payroll write it follows. professional_tax,
+ * gratuity, admin_charges and da have no equivalent on a salary_package_master row and are left
+ * untouched deliberately -- overwriting them with 0 would be worse than leaving them stale.
+ */
+async function syncOfferRecordFromPackage(
+  candidateId: string | null | undefined,
+  pkg: RowDataPacket,
+): Promise<void> {
+  if (!candidateId) return; // valid for a direct hire with no ATS offer
+  await db.execute(
+    `UPDATE ats_employment_offer SET
+        offered_ctc = ?, basic = ?, hra = ?, conveyance = ?, special_allowance = ?,
+        other_allowance = ?, bonus = ?, gross = ?,
+        pf_employee = ?, pf_employer = ?, esic_employee = ?, esic_employer = ?, net_in_hand = ?
+      WHERE candidate_id = ? AND id = (
+        SELECT id FROM (
+          SELECT id FROM ats_employment_offer
+           WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1
+        ) sub
+      )`,
+    [
+      pkg.ctc ?? 0, pkg.basic ?? 0, pkg.hra ?? 0, pkg.conveyance ?? 0, pkg.special_allowance ?? 0,
+      pkg.other_allowance ?? 0, pkg.bonus ?? 0, pkg.gross ?? 0,
+      pkg.epf_employee ?? 0, pkg.epf_employer ?? 0, pkg.esic_employee ?? 0, pkg.esic_employer ?? 0,
+      pkg.net_in_hand ?? 0,
+      candidateId, candidateId,
+    ]
+  ).catch(() => {}); // non-fatal
+}
+
 async function writeComponentAssignment(
   employeeId: string,
   pkg: RowDataPacket,
@@ -820,6 +865,10 @@ async function writeComponentAssignment(
   // See syncSalaryStartDateEverywhere() -- keeps the review screen and the Employee
   // page from going stale the moment Payroll Head assigns/changes a package here.
   await syncSalaryStartDateEverywhere(db, employeeId, candidateId, effectiveDate);
+
+  // See syncOfferRecordFromPackage() -- keeps the ORIGINAL offer row from going stale
+  // (e.g. still showing ₹0) the moment Payroll Head assigns a real catalog package here.
+  await syncOfferRecordFromPackage(candidateId, pkg);
 }
 
 export async function assignPackage(
