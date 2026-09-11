@@ -330,16 +330,14 @@ describe("application shell routing contracts", () => {
       // action, not a nav change; linking it first would only add a menu item nobody can open.
       "/finance/client-payments",
 
-      // (d3) Reachable (WFM_ROSTER: 8 roles, 64 users) and backed by live endpoints, but each
+      // (d3) Reachable (WFM_ROSTER: 8 roles, 64 users) and backed by live endpoints, but
       // raises an information-architecture question a contract test cannot answer:
-      //   roster-analytics-panel — RosterAnalyticsPanel, a DIFFERENT component from the
-      //     RosterAnalyticsDashboard already in the menu at /wfm/roster-analytics. Which is
-      //     canonical is an owner's call; linking both would put two "Roster Analytics" entries
-      //     side by side.
       //   mobile-attendance — a phone-oriented view of a desktop page that is already in the
       //     menu; plausibly meant to be opened on a device rather than listed in a sidebar.
+      // (roster-analytics-panel's own "two Roster Analytics pages, which is canonical" version
+      // of this question is resolved: it and 5 sibling pages were merged into one console at
+      // /wfm/roster-command-center — see RosterCommandCenter.tsx.)
       "/wfm/mobile-attendance",
-      "/wfm/roster-analytics-panel",
 
       // (d4) Ungated (ProtectedRoute only, no pageCode) and overlapping two entries already in
       // the menu — "Onboarding Bridge" and "Onboarding Requests". Whether this hub supersedes

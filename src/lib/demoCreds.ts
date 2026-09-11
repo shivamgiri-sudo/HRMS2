@@ -68,6 +68,13 @@ const ALL_PAGES = [
   // registered in page_catalog by migration 1693 but never added here, so it
   // was unreachable under any demo login despite being live for real users.
   "PROCESS_OPERATIONS",
+  // Same gap, one entry further still: the 8 per-tab codes for the merged
+  // /wfm/roster-command-center console (see backend/sql/1757_roster_command_center_
+  // console_page_codes.sql) are registered in page_catalog for real users, but without
+  // them here every tab of the merged console is unreachable under any demo login.
+  "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+  "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+  "WFM_ROSTER_INTERVENTIONS", "WFM_ROSTER_AUDIT_TRAIL",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);

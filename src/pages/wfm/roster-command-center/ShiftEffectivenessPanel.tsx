@@ -16,7 +16,6 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -340,7 +339,7 @@ function RecommendationCard({ rec }: { rec: ShiftRecommendation }) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function ShiftEffectivenessDashboard() {
+export default function ShiftEffectivenessPanel() {
   const [branchFilter, setBranchFilter] = useState(ALL);
   const [processFilter, setProcessFilter] = useState(ALL);
 
@@ -398,8 +397,7 @@ export default function ShiftEffectivenessDashboard() {
   const avgQuality = shifts.length > 0 ? Math.round(shifts.reduce((s, sh) => s + sh.metrics.qualityAvg, 0) / shifts.length) : 0;
 
   return (
-    <DashboardLayout>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 p-4 sm:p-6">
+      <div className="bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
         {/* Header with gradient (blue for analytics domain) */}
         <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 p-6 text-white shadow-lg shadow-blue-500/20">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -618,6 +616,5 @@ export default function ShiftEffectivenessDashboard() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }

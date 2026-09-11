@@ -242,7 +242,8 @@ const KNOWN_MISSING: Record<string, string> = {
   "/api/webhooks/:x":
     "SimpleConnectorWizard DISPLAYS this to the user as 'your webhook URL will be /api/webhooks/{key}'. No /api/webhooks is mounted anywhere, so any external system configured against it posts into nothing. Listed here rather than ignored because the URL is published to third parties.",
 
-  // ── RosterComplianceMonitor (/wfm/roster-compliance), audited 2026-08-28 ──────────────
+  // ── RosterComplianceMonitor, audited 2026-08-28 (now CompliancePanel.tsx, one tab of the
+  // merged /wfm/roster-command-center console — see RosterCommandCenter.tsx) ───────────────
   // A backend for this dashboard DOES exist — wfm-compliance-analytics.routes.ts, mounted at
   // /api/wfm/compliance, and its own doc comments say it was written for this page. It is not
   // a matter of correcting the prefix, which is why these are listed rather than repointed:
@@ -274,7 +275,8 @@ const KNOWN_MISSING: Record<string, string> = {
   // table. The rows render under their own honest labels rather than being forced into rule
   // buckets they do not belong to.
 
-  // ── RosterInterventionDashboard (/wfm/roster-interventions) ───────────────────────────
+  // ── RosterInterventionDashboard (now InterventionsPanel.tsx, one tab of the merged
+  // /wfm/roster-command-center console — see RosterCommandCenter.tsx) ───────────────────
   // Served in substance at /api/analytics/intervention-recommendations (/outcomes, /pending,
   // PATCH /:id) — the paths and the verb differ from what the page calls, and /outcomes
   // covers total/retained/exited/pending/retentionRate but not the byTier breakdown the page

@@ -619,6 +619,11 @@ export function uniquePageCodes(pageCodes: readonly string[]): string[] {
  */
 export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]>> = {
   admin: [
+    // Merged /wfm/roster-command-center console — all 8 tabs (backend/sql/1757_roster_
+    // command_center_console_page_codes.sql).
+    "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+    "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_INTERVENTIONS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_BRANCH_BUDGET",
     "FINANCE_GRN",
@@ -649,6 +654,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_RUNNING_BREAKDOWN",
   ],
   assistant_manager: [
+    // Merged /wfm/roster-command-center console — Trends & Publish tab.
+    "WFM_ROSTER_TRENDS",
     "MODULE_LAUNCHER",
     // Added 2026-08-22: see the manager entry below — same gap, same fix. Migration 1544.
     "TEAM_ATTENDANCE",
@@ -660,6 +667,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "TEAM_KPI_SCORECARD",
   ],
   branch_head: [
+    // Merged /wfm/roster-command-center console — Team Roster, Analytics, Compliance,
+    // Shift Effectiveness tabs.
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE",
+    "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "ATS_CANDIDATE_MASTER",
     "ATS_DASHBOARD",
@@ -777,6 +788,11 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_RUNNING_BREAKDOWN",
   ],
   hr: [
+    // Merged /wfm/roster-command-center console — all 8 tabs (backend/sql/1757_roster_
+    // command_center_console_page_codes.sql).
+    "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+    "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_INTERVENTIONS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "ATS_RECRUITER_PORTAL",
     "ATS_RECRUITER_QUEUE",
@@ -908,6 +924,12 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "ATS_BGV_REPORT",
   ],
   wfm: [
+    // Merged /wfm/roster-command-center console (backend/sql/1757_roster_command_center_
+    // console_page_codes.sql) — all tabs except Interventions (hr/admin/super_admin/
+    // manager only).
+    "WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS",
+    "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+    "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "KPI_DASHBOARD",
     "LEAVE_MANAGEMENT",
@@ -946,11 +968,16 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PROVISIONING_DASHBOARD",
   ],
   ceo: [
+    // Merged /wfm/roster-command-center console (backend/sql/1757_roster_command_center_
+    // console_page_codes.sql) — Analytics, Compliance, Shift Effectiveness tabs.
+    "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_PROCESS_PNL",
     "PAYROLL_SIGN_OFF",
   ],
   coo: [
+    // Merged /wfm/roster-command-center console — Analytics, Shift Effectiveness tabs.
+    "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_SHIFT_EFFECTIVENESS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_PROCESS_PNL",
   ],
@@ -963,6 +990,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
   ],
   manager: [
+    // Merged /wfm/roster-command-center console — Team Roster, Trends & Publish,
+    // Compliance, Interventions tabs.
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_TRENDS", "WFM_ROSTER_COMPLIANCE",
+    "WFM_ROSTER_INTERVENTIONS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "OPERATIONS_DASHBOARD",
     // Added 2026-08-22: the page (and its API's own requireRole list) was built
@@ -971,6 +1002,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "TEAM_ATTENDANCE",
   ],
   operations_manager: [
+    // Merged /wfm/roster-command-center console — Team Roster, Analytics, Compliance,
+    // Shift Effectiveness, Audit Trail tabs.
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE",
+    "WFM_ROSTER_SHIFT_EFFECTIVENESS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "WFM_ATTENDANCE_DASHBOARD",
   ],
@@ -982,6 +1017,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_EPF_COMPLIANCE",
   ],
   process_manager: [
+    // Merged /wfm/roster-command-center console — Team Roster, Trends & Publish tabs.
+    "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_TRENDS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.
     "TEAM_ATTENDANCE",
@@ -999,6 +1036,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
   ],
   team_leader: [
+    // Merged /wfm/roster-command-center console — Trends & Publish tab.
+    "WFM_ROSTER_TRENDS",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "MANAGEMENT_DASHBOARD",
     // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.

@@ -196,7 +196,7 @@ export default function MobileRosterDashboard() {
                   <SheetTitle>Quick Navigation</SheetTitle>
                 </SheetHeader>
                 <div className="mt-6 space-y-2">
-                  <Link to="/wfm/roster-command-center" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
+                  <Link to="/wfm/roster-command-center?tab=live" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
                     <BarChart3 className="w-5 h-5 text-indigo-600" />
                     <span>Command Center</span>
                   </Link>
@@ -204,7 +204,7 @@ export default function MobileRosterDashboard() {
                     <Calendar className="w-5 h-5 text-indigo-600" />
                     <span>Full Roster View</span>
                   </Link>
-                  <Link to="/wfm/roster-interventions" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
+                  <Link to="/wfm/roster-command-center?tab=interventions" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
                     <AlertTriangle className="w-5 h-5 text-amber-600" />
                     <span>At-Risk Employees</span>
                   </Link>
@@ -212,7 +212,7 @@ export default function MobileRosterDashboard() {
                     <Bell className="w-5 h-5 text-indigo-600" />
                     <span>Notifications</span>
                   </Link>
-                  <Link to="/wfm/roster-audit" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
+                  <Link to="/wfm/roster-command-center?tab=audit" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
                     <Settings className="w-5 h-5 text-slate-600" />
                     <span>Audit Trail</span>
                   </Link>
@@ -401,7 +401,7 @@ export default function MobileRosterDashboard() {
             <Calendar className="w-5 h-5" />
             <span className="text-[10px] mt-0.5">Schedule</span>
           </Link>
-          <Link to="/wfm/roster-analytics" className="flex flex-col items-center py-2 px-4 text-gray-400">
+          <Link to="/wfm/roster-command-center?tab=analytics" className="flex flex-col items-center py-2 px-4 text-gray-400">
             <TrendingUp className="w-5 h-5" />
             <span className="text-[10px] mt-0.5">Analytics</span>
           </Link>

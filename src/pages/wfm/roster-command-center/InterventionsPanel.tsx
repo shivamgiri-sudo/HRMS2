@@ -17,7 +17,6 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -395,7 +394,7 @@ function InterventionCard({
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function RosterInterventionDashboard() {
+export default function InterventionsPanel() {
   const [tierFilter, setTierFilter] = useState(ALL);
   const [ownerFilter, setOwnerFilter] = useState(ALL);
   const [outcomeFilter, setOutcomeFilter] = useState<string>("pending");
@@ -489,8 +488,8 @@ export default function RosterInterventionDashboard() {
   })();
 
   return (
-    <DashboardLayout>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-violet-50/30 to-purple-50/20 p-4 sm:p-6">
+    <>
+      <div className="bg-gradient-to-br from-slate-50 via-violet-50/30 to-purple-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
         {/* Header with gradient (violet for intervention/HR domain) */}
         <div className="mb-6 rounded-2xl bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 p-6 text-white shadow-lg shadow-violet-500/20">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -823,6 +822,6 @@ export default function RosterInterventionDashboard() {
           )}
         </SheetContent>
       </Sheet>
-    </DashboardLayout>
+    </>
   );
 }

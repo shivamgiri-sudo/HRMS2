@@ -60,6 +60,20 @@ const KNOWN_ROUTES = new Set(Object.keys(PAGE_CODE_BY_ROUTE));
  */
 const ROUTE_OVERRIDE_BY_PAGE_CODE: Record<string, string> = {
   WFM_ATTENDANCE_EXCEPTIONS: "/wfm/attendance-integrity?tab=exceptions",
+  // Same reasoning, one console further on: the merged /wfm/roster-command-center console
+  // (RosterCommandCenter.tsx) covers 8 page codes, one per tab — see
+  // page-catalog-route-drift.contract.test.ts's KNOWN_UNMAPPED_PAGE_CODES entry for these
+  // and pageRoutePageCodes.ts's comment on "/wfm/roster-command-center" for why neither
+  // gets a PAGE_CODE_BY_ROUTE entry. Without these overrides, all 8 launcher tiles would
+  // silently fall through to "/dashboard" instead of the console.
+  WFM_ROSTER_LIVE_MONITORING: "/wfm/roster-command-center?tab=live",
+  WFM_ROSTER_TEAM_ROSTER: "/wfm/roster-command-center?tab=team-roster",
+  WFM_ROSTER_ANALYTICS: "/wfm/roster-command-center?tab=analytics",
+  WFM_ROSTER_TRENDS: "/wfm/roster-command-center?tab=trends",
+  WFM_ROSTER_COMPLIANCE: "/wfm/roster-command-center?tab=compliance",
+  WFM_ROSTER_SHIFT_EFFECTIVENESS: "/wfm/roster-command-center?tab=shifts",
+  WFM_ROSTER_INTERVENTIONS: "/wfm/roster-command-center?tab=interventions",
+  WFM_ROSTER_AUDIT_TRAIL: "/wfm/roster-command-center?tab=audit",
 };
 
 /**

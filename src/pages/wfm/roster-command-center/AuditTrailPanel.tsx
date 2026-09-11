@@ -101,7 +101,7 @@ const toneColors = {
   slate: { iconBg: '#f1f4f8', value: '#0b1f44', border: '#e3e9f2' },
 };
 
-export default function RosterAuditTrail() {
+export default function AuditTrailPanel() {
   const [activeTab, setActiveTab] = useState('trails');
   const [dateFrom, setDateFrom] = useState(
     new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
