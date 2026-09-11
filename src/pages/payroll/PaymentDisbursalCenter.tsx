@@ -521,6 +521,10 @@ export default function PaymentDisbursalCenter() {
     pay_mod: string;
     account_masked: string;
     status: "exported" | "rejected" | "corrected_ready" | "confirmed";
+    // Server-derived grouping (bank-payment-readiness.routes.ts) — exported/corrected_ready
+    // both count as "still waiting to go out", confirmed is "the bank has it", rejected is
+    // "payroll has flagged why it can't go out". Trust this over re-deriving from status here.
+    bucket: "ready_for_disbursal" | "disbursed" | "rejected";
     rejection_reason: string | null;
     rejection_reason_label: string | null;
     rejection_note: string | null;
@@ -543,6 +547,19 @@ export default function PaymentDisbursalCenter() {
   const transferItems = transferItemsQ.data?.data ?? [];
   const rejectionReasons = transferItemsQ.data?.rejection_reasons ?? [];
   const correctedReadyItems = transferItems.filter((i) => i.status === "corrected_ready");
+
+  // The three buckets the user actually thinks in: generate the file -> everyone lands in
+  // "Ready for Disbursal"; upload the Transfer Number Update File -> matches move to
+  // "Disbursed" (their ECS/TRF number is recorded and the payslip unlocks); anyone whose code
+  // was NOT in that file stays in "Ready for Disbursal" exactly as before -- nothing moves them
+  // out except a real match. "Rejected" is its own section: items payroll has explicitly flagged
+  // with a failure reason (from Ready for Disbursal, via the existing reject action below).
+  const readyForDisbursalItems = transferItems.filter((i) => i.bucket === "ready_for_disbursal");
+  const disbursedItems = transferItems.filter((i) => i.bucket === "disbursed");
+  const rejectedItems = transferItems.filter((i) => i.bucket === "rejected");
+  const [openSection, setOpenSection] = useState<Record<"ready" | "disbursed" | "rejected", boolean>>({
+    ready: true, disbursed: true, rejected: true,
+  });
 
   async function downloadSalaryTransferFile(reexport: boolean, employeeIds?: string[]) {
     const setBusy = reexport ? setTransferReexporting : setTransferGenerating;
@@ -1873,52 +1890,33 @@ export default function PaymentDisbursalCenter() {
                   </div>
                 )}
 
-                {/* ── Salary Transfer items queue ────────────────────────── */}
-                {bankRunId && (
-                  <div className="rounded-md border p-4 space-y-3">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <h3 className="text-sm font-semibold">
-                        Salary Transfer items ({transferItemsQ.isLoading ? "…" : transferItems.length})
-                      </h3>
-                      <div className="flex items-center gap-2">
-                        {selectedItemIds.size > 0 && (
-                          <Button size="sm" variant="destructive" onClick={() => setRejectDialogOpen(true)}>
-                            Mark {selectedItemIds.size} rejected
-                          </Button>
-                        )}
-                        {correctedReadyItems.length > 0 && (
-                          <Button
-                            size="sm"
-                            disabled={transferReexporting}
-                            onClick={() => downloadSalaryTransferFile(true)}
-                            title="Generates a new file containing only corrected, re-verified employees"
-                          >
-                            {transferReexporting ? "Generating…" : `Re-export ${correctedReadyItems.length} corrected`}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
+                {/* ── Salary Transfer items, split into the 3 sections payroll actually
+                     works in: generate the file -> Ready for Disbursal; upload the Transfer
+                     Number Update File -> matches move to Disbursed automatically; anyone
+                     whose code was not in that file simply stays in Ready for Disbursal,
+                     unchanged -- select them there and add a failure reason, same reject
+                     action as always, just scoped to exactly the people still waiting. ── */}
+                {bankRunId && transferItems.length > 0 && (() => {
+                  const renderItemTable = (items: TransferItem[], opts: { selectable?: boolean; showMarkCorrected?: boolean; emptyText: string }) => (
                     <div className="rounded-md border overflow-auto">
                       <table className="w-full text-sm">
                         <thead className="bg-muted">
                           <tr>
-                            <th className="px-2 py-2 w-8"></th>
-                            {["Code", "Name", "Amount", "Pay Mod", "Account", "Batch", "Status", "Rejection reason", "ECS / TRF date"].map((h) => (
+                            {opts.selectable && <th className="px-2 py-2 w-8"></th>}
+                            {["Code", "Name", "Amount", "Pay Mod", "Account", "Batch", "Rejection reason", "ECS / TRF date"].map((h) => (
                               <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">{h}</th>
                             ))}
-                            <th className="px-3 py-2"></th>
+                            {opts.showMarkCorrected && <th className="px-3 py-2"></th>}
                           </tr>
                         </thead>
                         <tbody>
-                          {transferItemsQ.isLoading ? (
-                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
-                          ) : transferItems.length === 0 ? (
-                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">No transfer batches generated for this run yet.</td></tr>
+                          {items.length === 0 ? (
+                            <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-xs">{opts.emptyText}</td></tr>
                           ) : (
-                            transferItems.map((it) => (
+                            items.map((it) => (
                               <tr key={it.id} className="border-t">
-                                <td className="px-2 py-2">
-                                  {it.status === "exported" && (
+                                {opts.selectable && (
+                                  <td className="px-2 py-2">
                                     <Checkbox
                                       checked={selectedItemIds.has(it.id)}
                                       onCheckedChange={() =>
@@ -1929,53 +1927,153 @@ export default function PaymentDisbursalCenter() {
                                         })
                                       }
                                     />
-                                  )}
-                                </td>
+                                  </td>
+                                )}
                                 <td className="px-3 py-2 font-mono text-xs">{it.employee_code}</td>
                                 <td className="px-3 py-2 whitespace-nowrap">{it.employee_name ?? "—"}</td>
                                 <td className="px-3 py-2 tabular-nums">₹{Number(it.amount).toLocaleString("en-IN")}</td>
                                 <td className="px-3 py-2">{it.pay_mod}</td>
                                 <td className="px-3 py-2 font-mono text-xs">{it.account_masked}</td>
                                 <td className="px-3 py-2 text-xs">{it.batch_number}{it.attempt_kind === "reexport" ? " (re-export)" : ""}</td>
-                                <td className="px-3 py-2">
-                                  <Badge variant="outline" className={
-                                    it.status === "confirmed" ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                                    : it.status === "rejected" ? "bg-rose-100 text-rose-800 border-rose-200"
-                                    : it.status === "corrected_ready" ? "bg-sky-100 text-sky-800 border-sky-200"
-                                    : "bg-amber-100 text-amber-900 border-amber-200"
-                                  }>
-                                    {it.status.replace("_", " ")}
-                                  </Badge>
-                                </td>
                                 <td className="px-3 py-2 text-xs max-w-xs">
                                   {it.rejection_reason_label ?? "—"}
                                   {it.rejection_note && <div className="text-muted-foreground">{it.rejection_note}</div>}
                                 </td>
                                 <td className="px-3 py-2 text-xs">
                                   {it.ecs_number ? `${it.ecs_number} / ${it.transfer_date ?? "—"}` : "—"}
-                                  {it.payslip_unlocked_at && (
-                                    <div className="text-emerald-700">payslip unlocked</div>
-                                  )}
+                                  {it.payslip_unlocked_at && <div className="text-emerald-700">payslip unlocked</div>}
                                 </td>
-                                <td className="px-3 py-2">
-                                  {it.status === "rejected" && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      disabled={markCorrectedReadyMutation.isPending}
-                                      onClick={() => markCorrectedReadyMutation.mutate(it.id)}
-                                      title="Only after the bank-change request has been approved and penny-drop verified"
-                                    >
-                                      Mark corrected
-                                    </Button>
-                                  )}
-                                </td>
+                                {opts.showMarkCorrected && (
+                                  <td className="px-3 py-2">
+                                    {it.status === "rejected" && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={markCorrectedReadyMutation.isPending}
+                                        onClick={() => markCorrectedReadyMutation.mutate(it.id)}
+                                        title="Only after the bank-change request has been approved and penny-drop verified"
+                                      >
+                                        Mark corrected
+                                      </Button>
+                                    )}
+                                  </td>
+                                )}
                               </tr>
                             ))
                           )}
                         </tbody>
                       </table>
                     </div>
+                  );
+
+                  const readySelectedCount = readyForDisbursalItems.filter((i) => selectedItemIds.has(i.id)).length;
+                  const allReadySelected = readyForDisbursalItems.length > 0 && readySelectedCount === readyForDisbursalItems.length;
+
+                  return (
+                    <div className="space-y-3">
+                      {/* Ready for Disbursal */}
+                      <div className="rounded-md border p-4 space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="flex items-center gap-2 text-sm font-semibold"
+                            onClick={() => setOpenSection((s) => ({ ...s, ready: !s.ready }))}
+                          >
+                            <Badge className="bg-amber-500 hover:bg-amber-500">Ready for Disbursal</Badge>
+                            ({readyForDisbursalItems.length})
+                          </button>
+                          <div className="flex items-center gap-2">
+                            {readyForDisbursalItems.length > 0 && (
+                              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                                <Checkbox
+                                  checked={allReadySelected}
+                                  onCheckedChange={() =>
+                                    setSelectedItemIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (allReadySelected) readyForDisbursalItems.forEach((i) => next.delete(i.id));
+                                      else readyForDisbursalItems.forEach((i) => next.add(i.id));
+                                      return next;
+                                    })
+                                  }
+                                />
+                                Select all
+                              </label>
+                            )}
+                            {readySelectedCount > 0 && (
+                              <Button size="sm" variant="destructive" onClick={() => setRejectDialogOpen(true)}>
+                                Add failure reason for {readySelectedCount}
+                              </Button>
+                            )}
+                            {correctedReadyItems.length > 0 && (
+                              <Button
+                                size="sm"
+                                disabled={transferReexporting}
+                                onClick={() => downloadSalaryTransferFile(true)}
+                                title="Generates a new file containing only corrected, re-verified employees"
+                              >
+                                {transferReexporting ? "Generating…" : `Re-export ${correctedReadyItems.length} corrected`}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Generated but not yet confirmed by a Transfer Number Update File
+                          upload. Uploading a file that includes these employees' codes moves
+                          them to Disbursed automatically; anyone whose code is not in the file
+                          stays here — select them and add a failure reason once you know why.
+                        </p>
+                        {openSection.ready && renderItemTable(readyForDisbursalItems, {
+                          selectable: true,
+                          showMarkCorrected: true,
+                          emptyText: "Nothing waiting — every generated employee has either been confirmed or rejected.",
+                        })}
+                      </div>
+
+                      {/* Disbursed */}
+                      <div className="rounded-md border p-4 space-y-3">
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-sm font-semibold"
+                          onClick={() => setOpenSection((s) => ({ ...s, disbursed: !s.disbursed }))}
+                        >
+                          <Badge className="bg-emerald-600 hover:bg-emerald-600">Disbursed</Badge>
+                          ({disbursedItems.length})
+                        </button>
+                        <p className="text-xs text-muted-foreground">
+                          Matched by employee code against an uploaded Transfer Number Update
+                          File — ECS/TRF number recorded, payslip unlocked.
+                        </p>
+                        {openSection.disbursed && renderItemTable(disbursedItems, {
+                          emptyText: "Nothing confirmed yet for this run.",
+                        })}
+                      </div>
+
+                      {/* Rejected */}
+                      <div className="rounded-md border p-4 space-y-3">
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-sm font-semibold"
+                          onClick={() => setOpenSection((s) => ({ ...s, rejected: !s.rejected }))}
+                        >
+                          <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-200">Rejected</Badge>
+                          ({rejectedItems.length})
+                        </button>
+                        <p className="text-xs text-muted-foreground">
+                          Explicitly flagged with a failure reason. Once the bank-change request
+                          behind a reason is approved and penny-drop verified, mark it corrected
+                          to include it in the next re-export.
+                        </p>
+                        {openSection.rejected && renderItemTable(rejectedItems, {
+                          showMarkCorrected: true,
+                          emptyText: "No rejected items for this run.",
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {bankRunId && transferItems.length === 0 && !transferItemsQ.isLoading && (
+                  <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
+                    No transfer batches generated for this run yet.
                   </div>
                 )}
 

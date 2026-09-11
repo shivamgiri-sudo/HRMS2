@@ -1066,9 +1066,21 @@ bankPaymentReadinessRouter.get(
         ORDER BY i.created_at DESC`,
       [runId],
     );
+    // bucket: the plain-language grouping payroll actually thinks in ('Ready for Disbursal' /
+    // 'Disbursed' / 'Rejected'), derived server-side from the real status enum so the frontend
+    // never re-implements this mapping in two places. corrected_ready groups under
+    // ready_for_disbursal -- it is functionally waiting to be picked up by the next transfer
+    // number match, same as a fresh export.
+    const bucketOf = (status: string): "ready_for_disbursal" | "disbursed" | "rejected" =>
+      status === "confirmed" ? "disbursed" : status === "rejected" ? "rejected" : "ready_for_disbursal";
+
     return res.json({
       success: true,
-      data: (rows as any[]).map((r) => ({ ...r, rejection_reason_label: r.rejection_reason ? rejectionReasonLabel(r.rejection_reason) : null })),
+      data: (rows as any[]).map((r) => ({
+        ...r,
+        bucket: bucketOf(r.status),
+        rejection_reason_label: r.rejection_reason ? rejectionReasonLabel(r.rejection_reason) : null,
+      })),
       rejection_reasons: REJECTION_REASONS.map((r) => ({ value: r, label: rejectionReasonLabel(r) })),
     });
   }),
