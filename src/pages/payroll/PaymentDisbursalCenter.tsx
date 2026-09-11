@@ -348,6 +348,7 @@ export default function PaymentDisbursalCenter() {
     employee_code: string;
     employee_name: string;
     branch_name: string | null;
+    verification_status: "verified" | "manual_review";
     account_masked: string;
     ifsc_code: string | null;
     account_holder_name: string | null;
@@ -1479,30 +1480,33 @@ export default function PaymentDisbursalCenter() {
                 <div className="rounded-md border border-sky-300 bg-sky-50 p-4 text-sm mt-3">
                   <p className="font-semibold text-sky-900 flex items-center gap-2">
                     <HelpCircle className="h-4 w-4" /> These employees submitted bank details
-                    at onboarding, but the penny-drop check couldn't confirm them automatically
+                    at onboarding but never got a live bank record
                   </p>
                   <p className="text-sky-900 mt-1">
-                    Verification landed on "manual review" instead of "verified", so the
-                    account was never copied into the employee's live bank record — by design,
-                    a manual_review account needs a person to clear it. Approving here copies
-                    the exact account already captured at onboarding; it does not change or
-                    re-verify it.
+                    <strong>Manual review</strong> — penny-drop couldn't confirm the account
+                    automatically. Click a row to see the uploaded passbook/cheque proof and the
+                    exact details the candidate typed, and judge it yourself before approving.{" "}
+                    <strong>Penny drop verified</strong> — the bank already confirmed this
+                    account on a later attempt; it was simply never copied over. Click a row to
+                    see the full confirmed details — there is nothing to judge, only to approve.
+                    Either way, approving copies the account exactly as captured; it does not
+                    change or re-verify it.
                   </p>
                 </div>
                 <div className="rounded-md border overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted">
                       <tr>
-                        {["Code", "Name", "Branch", "Account", "IFSC", "Account holder (onboarding)", "Name match", "Verified at", ""].map((hd) => (
+                        {["Code", "Name", "Branch", "Verification", "Account", "IFSC", "Account holder (onboarding)", "Name match", "Verified at", ""].map((hd) => (
                           <th key={hd} className="px-3 py-2 text-left font-medium whitespace-nowrap">{hd}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {manualReviewQ.isLoading ? (
-                        <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">Loading…</td></tr>
+                        <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">Loading…</td></tr>
                       ) : (manualReviewQ.data?.data ?? []).length === 0 ? (
-                        <tr><td colSpan={9} className="px-3 py-10 text-center text-muted-foreground">No employees waiting on manual review right now.</td></tr>
+                        <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">No employees waiting on manual review right now.</td></tr>
                       ) : (
                         (manualReviewQ.data?.data ?? []).map((r) => (
                           <tr
@@ -1513,6 +1517,13 @@ export default function PaymentDisbursalCenter() {
                             <td className="px-3 py-2 font-mono text-xs">{r.employee_code}</td>
                             <td className="px-3 py-2">{r.employee_name}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.branch_name ?? "—"}</td>
+                            <td className="px-3 py-2">
+                              {r.verification_status === "verified" ? (
+                                <Badge className="bg-green-600 hover:bg-green-600">Penny drop verified</Badge>
+                              ) : (
+                                <Badge variant="secondary">Manual review</Badge>
+                              )}
+                            </td>
                             <td className="px-3 py-2 font-mono text-xs">{r.account_masked}</td>
                             <td className="px-3 py-2 font-mono text-xs">{r.ifsc_code ?? "—"}</td>
                             <td className="px-3 py-2">{r.account_holder_name ?? "—"}</td>
@@ -1537,6 +1548,115 @@ export default function PaymentDisbursalCenter() {
                   </table>
                 </div>
               </TabsContent>
+
+              {/* ── Manual review drawer: proof image (manual_review) or full confirmed
+                   details + verified tag (verified but stranded) — CLAUDE.md drill-down mandate ── */}
+              <Sheet
+                open={!!manualReviewDrawerRow}
+                onOpenChange={(open) => { if (!open) setManualReviewDrawerRow(null); }}
+              >
+                <SheetContent side="right" className="max-w-2xl w-full overflow-y-auto">
+                  {manualReviewDrawerRow && (
+                    <>
+                      <SheetHeader>
+                        <SheetTitle className="flex items-center gap-2 flex-wrap">
+                          {manualReviewDrawerRow.employee_name}
+                          <span className="font-mono text-xs text-muted-foreground">{manualReviewDrawerRow.employee_code}</span>
+                          {manualReviewDrawerRow.verification_status === "verified" ? (
+                            <Badge className="bg-green-600 hover:bg-green-600">Penny drop verified</Badge>
+                          ) : (
+                            <Badge variant="secondary">Manual review</Badge>
+                          )}
+                        </SheetTitle>
+                      </SheetHeader>
+
+                      <div className="mt-4 space-y-5 text-sm">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                            {manualReviewDrawerRow.verification_status === "verified"
+                              ? "Bank confirmed these details"
+                              : "As typed at onboarding"}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border p-3">
+                            <div><span className="text-muted-foreground">Branch</span><div>{manualReviewDrawerRow.branch_name ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Account (masked)</span><div className="font-mono">{manualReviewDrawerRow.account_masked}</div></div>
+                            <div><span className="text-muted-foreground">IFSC</span><div className="font-mono">{manualReviewDrawerRow.ifsc_code ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Bank name</span><div>{manualReviewDrawerRow.bank_name ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Branch name (bank)</span><div>{manualReviewDrawerRow.branch_name_onboarding ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Account type</span><div>{manualReviewDrawerRow.account_type ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Account holder</span><div>{manualReviewDrawerRow.account_holder_name ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Name on cheque</span><div>{manualReviewDrawerRow.name_on_cheque ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Name match score</span><div>{manualReviewDrawerRow.name_match_score == null ? "—" : `${Math.round(manualReviewDrawerRow.name_match_score)}%`}</div></div>
+                            <div><span className="text-muted-foreground">Verified at</span><div>{fmtDateTime(manualReviewDrawerRow.verified_at)}</div></div>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            The full account number is never shown outside the payment file export —
+                            this stays masked here by the same rule as every other screen, verified or not.
+                          </p>
+                        </div>
+
+                        {manualReviewDrawerRow.verification_status === "verified" ? (
+                          <div className="rounded-md border border-green-300 bg-green-50 p-3 text-green-900">
+                            <p className="font-semibold flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> Penny drop already confirmed this account</p>
+                            <p className="mt-1 text-xs">
+                              No document review needed — the bank itself matched this account to
+                              this candidate. Approving here only copies it into the employee's live
+                              bank record; it does not re-verify anything.
+                            </p>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                              Uploaded passbook / cancelled cheque
+                            </div>
+                            {!manualReviewDrawerRow.proof_document ? (
+                              <div className="rounded-md border border-dashed p-4 text-center text-muted-foreground text-xs">
+                                No passbook or cheque image was uploaded at onboarding (the field is
+                                optional). Review the typed details above on judgement alone, or ask
+                                the employee to submit one before approving.
+                              </div>
+                            ) : proofPreviewLoading ? (
+                              <div className="rounded-md border p-6 text-center text-muted-foreground text-xs flex items-center justify-center gap-2">
+                                <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+                              </div>
+                            ) : proofPreviewError ? (
+                              <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900 text-xs">{proofPreviewError}</div>
+                            ) : proofPreviewUrl ? (
+                              <div className="rounded-md border overflow-hidden">
+                                {proofContentType === "application/pdf" ? (
+                                  <iframe src={proofPreviewUrl} className="w-full h-96" title="Uploaded proof document" />
+                                ) : (
+                                  <img src={proofPreviewUrl} alt="Uploaded passbook or cheque" className="w-full max-h-96 object-contain bg-muted" />
+                                )}
+                                <div className="px-3 py-2 text-xs text-muted-foreground border-t bg-muted/50">
+                                  {manualReviewDrawerRow.proof_document.doc_type}
+                                  {manualReviewDrawerRow.proof_document.file_name ? ` — ${manualReviewDrawerRow.proof_document.file_name}` : ""}
+                                  {manualReviewDrawerRow.proof_document.uploaded_at ? ` · uploaded ${fmtDateTime(manualReviewDrawerRow.proof_document.uploaded_at)}` : ""}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+
+                        <Button
+                          className="w-full"
+                          disabled={approveManualReviewMutation.isPending}
+                          onClick={() => {
+                            const row = manualReviewDrawerRow;
+                            if (!row) return;
+                            if (!window.confirm(`Approve ${row.employee_code}'s onboarding bank account (${row.account_masked}) for payment?`)) return;
+                            approveManualReviewMutation.mutate(row.employee_id, {
+                              onSuccess: () => setManualReviewDrawerRow(null),
+                            });
+                          }}
+                        >
+                          Approve for payment
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </SheetContent>
+              </Sheet>
 
               {/* ── Payment file ───────────────────────────────────────────── */}
               <TabsContent value="export" className="space-y-4">
