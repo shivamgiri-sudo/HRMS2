@@ -65,7 +65,14 @@ export const portalController = {
   async requestOtp(req: Request, res: Response) {
     const parsed = requestOtpSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    await portalAuthService.requestOtp(parsed.data.email);
+    try {
+      await portalAuthService.requestOtp(parsed.data.email);
+    } catch (err) {
+      if ((err as { code?: string }).code === "DELIVERY_FAILED") {
+        return res.status(503).json({ error: "Unable to send OTP. Please try again or contact support." });
+      }
+      throw err;
+    }
     res.json({ ok: true });
   },
 

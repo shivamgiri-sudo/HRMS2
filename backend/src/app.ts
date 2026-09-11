@@ -176,6 +176,7 @@ import { authLaunchRouter } from "./modules/auth/auth-launch.routes.js";
 import passwordResetRouter from "./modules/auth/password-reset.routes.js";
 import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js";
 import { clientRouter } from "./modules/portal/client.routes.js";
+import portalAdminRouter from "./modules/portal/portal-admin.routes.js";
 import { autoRosterSyncedRouter } from "./modules/wfm/auto-roster-synced.routes.js";
 import { controlTowerRouter } from "./modules/control-tower/control-tower.routes.js";
 import { payrollComplianceRouter } from "./modules/payroll-compliance/payrollCompliance.routes.js";
@@ -493,6 +494,7 @@ app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi-studio", kpiStudioRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
+app.use("/api/portal/admin", portalAdminRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register; rate limited

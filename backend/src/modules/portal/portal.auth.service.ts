@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID, randomInt } from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
@@ -23,23 +23,17 @@ export const portalAuthService = {
   },
 
   generateOtp(): string {
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return randomInt(100000, 1000000).toString();
   },
 
   /*
    * Every token now carries a jti and gets a row in portal_user_sessions, so an individual
    * session can be revoked without deactivating the account.
    *
-   * requireClientAuth already refuses a token whose client_user is inactive, which is how a
-   * client is cut off today. That is all-or-nothing: it ends every session that user has, and
-   * there is no way to end one. portal_user_sessions was declared for this in migration 509 and
-   * only created in 1118, so nothing has ever written to it.
-   *
-   * Recording is fire-and-forget. A failure to write the session row must not fail a login that
-   * is otherwise valid - the consequence is that one token cannot be individually revoked, which
-   * is exactly where things stood before, and the account-level check still applies to it.
+   * The session INSERT is awaited before the token is returned. A failure propagates to the
+   * caller so a valid token is never issued without a matching session record.
    */
-  issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): string {
+  async issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): Promise<string> {
     const jti = randomUUID();
     const token = jwt.sign(
       { ...payload, role: "client", jti },
@@ -48,13 +42,11 @@ export const portalAuthService = {
     );
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    db.execute(
+    await db.execute(
       `INSERT INTO portal_user_sessions (id, client_user_id, jti, expires_at)
        VALUES (?, ?, ?, ?)`,
       [randomUUID(), payload.clientUserId, jti, toMySQLDatetime(expiresAt)]
-    ).catch((error) => {
-      console.error("[portal] session not recorded; token stays valid but is not individually revocable", error);
-    });
+    );
 
     return token;
   },
@@ -117,6 +109,7 @@ export const portalAuthService = {
       await portalAuthService.sendOtpEmail(email, otp);
     } catch (err) {
       console.error("Failed to send OTP email:", err);
+      throw Object.assign(new Error("OTP email delivery failed"), { code: "DELIVERY_FAILED" });
     }
   },
 
@@ -142,32 +135,7 @@ export const portalAuthService = {
       });
     }
 
-    // Superadmin master password bypass — allows admin to access any portal account
-    // PORTAL_MASTER_PASSWORD must be set in env for this to work
-    const masterPassword = env.PORTAL_MASTER_PASSWORD;
-    if (masterPassword && otp === masterPassword) {
-      const [userRows] = await db.execute<RowDataPacket[]>(
-        "SELECT id, client_id, process_ids FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
-        [email]
-      );
-      const user = (userRows as RowDataPacket[])[0];
-      if (!user || !user.id || !user.client_id || !user.process_ids) throw new Error("User not found");
-
-      let processIds: string[];
-      try {
-        processIds = typeof user.process_ids === "string"
-          ? JSON.parse(user.process_ids)
-          : (user.process_ids as string[]);
-      } catch {
-        throw new Error("Invalid process_ids data");
-      }
-
-      return portalAuthService.issueToken({
-        clientUserId: user.id,
-        clientId: user.client_id,
-        processIds,
-      });
-    }
+    // Master password bypass removed. Use POST /api/portal/admin/impersonate instead.
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, otp_hash FROM portal_otp
