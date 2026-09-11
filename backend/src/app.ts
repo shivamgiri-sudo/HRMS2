@@ -97,6 +97,7 @@ import { uatPipelineRouter } from "./modules/uat-pipeline/uat-pipeline.routes.js
 import { uatInternalRouter } from "./modules/uat-pipeline/uat-internal.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
 import { publicJoiningKitRouter, joiningKitRouter } from "./modules/employees/joiningKit.routes.js";
+import { nocCasePublicRouter } from "./modules/payroll/noc-case-public.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
 import { dscConfigRouter } from "./modules/letters/dscConfig.routes.js";
 import { notificationRecipientsRouter } from "./modules/it-provisioning/notification-recipients.routes.js";
@@ -538,6 +539,14 @@ app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 // token, so it must sit above the catch-all too. Mounted below it, every
 // "Review & Sign All" button in every kit email would answer 401.
 app.use("/api/public/joining-kit", publicJoiningKitRouter);
+// The NOC Certificate employee form is reached from a bearer-less token link
+// (email/WhatsApp/SMS), so it must sit above the "/api" clientRouter mount
+// below that applies requireAuth to every /api/* path -- same load-bearing
+// requirement the router's own file header documents. Its dependency
+// (noc-case.service.ts) is now actually committed to main (confirmed live
+// 2026-09-11), unlike the first mount attempt on 2026-09-10 which broke the
+// build because the module wasn't pushed yet.
+app.use("/api/public/noc", nocCasePublicRouter);
 // The company's public social profile links (website, LinkedIn, Instagram, X,
 // Facebook, YouTube) are rendered on the LOGIN page, which by definition has no
 // session, so this read has to sit above the "/api" clientRouter mount below

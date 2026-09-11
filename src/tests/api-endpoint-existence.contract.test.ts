@@ -346,10 +346,11 @@ const KNOWN_MISSING: Record<string, string> = {
   // sources,compute}.ts, not a modules/kpi-studio/ DIRECTORY, which is what the original
   // search looked for. The router simply was never mounted in app.ts, so every path 401'd
   // and looked absent. Mounted 2026-09-07 and exercised end to end; entries removed.
-
-  // NOC Certificate employee form: noc-case-public.routes.ts and its noc-case.service.ts
-  // dependency were pushed 2026-09-10 (commit b0464b3e) and mounted in app.ts above the
-  // "/api" clientRouter catch-all. No longer missing; entries removed.
+  //
+  // /api/public/noc/:x and /api/public/noc/:x/submit used to sit here too, described as
+  // "module built locally but never pushed" (2026-09-10). It was pushed the next day by its
+  // owning session, and this file's mount was completed 2026-09-11 -- same shape as the
+  // joining-kit/EPF public links, above the requireAuth catch-all. Entries removed.
 };
 
 /**
