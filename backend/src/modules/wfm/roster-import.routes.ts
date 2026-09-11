@@ -22,6 +22,15 @@ const upload = multer({
 
 const WFM_ROLES = ['wfm', 'admin', 'super_admin'];
 
+// Read-only viewing endpoints (view/table, adherence-trend, status-summary) are reachable from
+// /wfm/roster-view, which rbacPageMatrix.ts grants WFM_ROSTER page access to manager,
+// process_manager, team_leader and tl as well as wfm/admin/super_admin — but this file's shared
+// WFM_ROLES (upload/commit/branches, which SHOULD stay wfm/admin/super_admin-only) was also
+// guarding these pure-read routes, so every one of those page-granted roles hit a page they could
+// navigate to and immediately got a 403 "Access denied" banner the moment the table query fired.
+// Confirmed live 2026-09-11. Keep WFM_ROLES itself unchanged for the write endpoints below.
+const WFM_VIEW_ROLES = [...WFM_ROLES, 'manager', 'process_manager', 'team_leader', 'tl'];
+
 export const rosterImportRouter = Router();
 
 // Apply auth to all routes
@@ -298,7 +307,7 @@ rosterImportRouter.get(
 // The roster as a table: one row per employee, dates across, with the context needed to read it
 // (reporting manager, process, branch, cost centre) and filters for branch / process / cost centre.
 // Pass includeAdherence=true for color-coded adherence status per cell (GREEN/AMBER/RED/BROWN).
-rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res) => {
+rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
   try {
     const { getRosterView } = await import('./roster-view.service.js');
     const q = req.query as Record<string, string | undefined>;
@@ -326,7 +335,7 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res
 
 // ── GET /api/wfm/roster-imports/adherence-trend/:employeeId ───────────────
 // Historical adherence trend for a single employee over past N months.
-rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_ROLES), async (req, res) => {
+rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
   try {
     const { getEmployeeAdherenceTrend } = await import('./roster-view.service.js');
     const { employeeId } = req.params;
@@ -342,7 +351,7 @@ rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_ROLES)
 // ── GET /api/wfm/roster-imports/status-summary ────────────────────────────
 // "Has the roster actually been published, and has anyone acknowledged it" — for a branch/process/
 // date-range scope. See roster-view.service.ts::getRosterStatusSummary for why this exists.
-rosterImportRouter.get('/status-summary', requireRole(...WFM_ROLES), async (req, res) => {
+rosterImportRouter.get('/status-summary', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
   try {
     const { getRosterStatusSummary } = await import('./roster-view.service.js');
     const q = req.query as Record<string, string | undefined>;
