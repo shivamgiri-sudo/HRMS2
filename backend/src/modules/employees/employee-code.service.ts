@@ -18,8 +18,37 @@
 import type { PoolConnection } from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
 
-/** Employment types issued an off-roll style code. */
+/** Employment types issued an off-roll style code, matched exactly (kept for reference --
+ *  isOffRollType() below is what actually runs; this is retained as the exact-match core). */
 const OFF_ROLL_TYPES = new Set(['Trainee', 'OffRoll']);
+
+/**
+ * Whether an employment-type label should get an off-roll {n}C code.
+ *
+ * OFF_ROLL_TYPES above only matched the exact strings 'Trainee'/'OffRoll'. The real,
+ * dominant label for this designation across 13,833 existing employees is
+ * "MGMT. TRAINEE" (with the period and full wording) -- which is NOT in that set, so
+ * `OFF_ROLL_TYPES.has('MGMT. TRAINEE')` silently returned false and any new trainee hire
+ * converted through this generator got a MAS{n} code instead of the historically-correct
+ * {n}C code. Confirmed live 2026-09-09 (Vijal Ramsingh Bhati -> MAS63510, should have been
+ * {n}C like every one of the 13,833 other MGMT. TRAINEE employees). The bug was introduced
+ * 2026-07-29 when three separate code generators were consolidated into this one using only
+ * two example off-roll labels instead of checking the real production distribution, and sat
+ * undetected for six weeks because no MGMT. TRAINEE hire went through this live path in
+ * that window.
+ *
+ * Matched case/whitespace-insensitively, and by substring for "TRAINEE" specifically, so
+ * the next label variant (there is no single canonical spelling in this system's history --
+ * see employees.emp_type having ONROLL/MGMT. TRAINEE/FIELD/ON SITE all as free-form values)
+ * doesn't reopen the same hole.
+ */
+export function isOffRollType(empType: string | null | undefined): boolean {
+  if (OFF_ROLL_TYPES.has(String(empType))) return true;
+  const normalized = String(empType ?? '').trim().toUpperCase();
+  if (!normalized) return false;
+  if (normalized.includes('TRAINEE')) return true;
+  return normalized === 'OFFROLL' || normalized === 'OFF ROLL' || normalized === 'OFF-ROLL';
+}
 
 /**
  * Reserves and returns the next employee code.
@@ -29,7 +58,7 @@ const OFF_ROLL_TYPES = new Set(['Trainee', 'OffRoll']);
  * approvals can take the same number.
  */
 export async function generateEmployeeCode(conn: PoolConnection, empType: string): Promise<string> {
-  const isOffRoll = OFF_ROLL_TYPES.has(empType);
+  const isOffRoll = isOffRollType(empType);
 
   // One shared counter across every historical format, so on-roll and off-roll
   // codes never collide on the same number.
