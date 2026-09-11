@@ -18,7 +18,7 @@
  *   whole workforce suddenly became unpayable" rather than "we lost the verification source",
  *   and someone would go looking at bank records instead of at the database link.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -251,6 +252,16 @@ export default function PaymentDisbursalCenter() {
   const [draftNotes, setDraftNotes] = useState("");
   const [draftOwnerId, setDraftOwnerId] = useState<string>("");
 
+  // Selection state for the exceptions grid — code/name/branch identify the row, employee_id is
+  // the key. Cleared whenever the filter changes, because "select all matching filter" only ever
+  // means the filter that produced the current row list; carrying a selection across a filter
+  // change would silently select rows the user never saw.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkEditing, setBulkEditing] = useState(false);
+  const [bulkDraftStatus, setBulkDraftStatus] = useState("in_progress");
+  const [bulkDraftNotes, setBulkDraftNotes] = useState("");
+  const [bulkDraftOwnerId, setBulkDraftOwnerId] = useState<string>("");
+
   // ── Disbursal local state ──────────────────────────────────────────────────
   const [disbInnerTab, setDisbInnerTab] = useState("status");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
@@ -326,7 +337,7 @@ export default function PaymentDisbursalCenter() {
       hrmsApi.get<{ data: AssignableOwner[] }>(
         "/api/payroll/bank-readiness/assignable-owners"
       ),
-    enabled: !!editing,
+    enabled: !!editing || bulkEditing,
   });
   const assignableOwners = ownersQ.data?.data ?? [];
 
@@ -352,6 +363,51 @@ export default function PaymentDisbursalCenter() {
       setEditing(null);
     },
     onError: (e: any) => toast.error(e?.message ?? "Update failed"),
+  });
+
+  // Clear selection whenever the filter changes — a selection is only ever meant to describe
+  // rows the user is currently looking at.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [classFilter, search]);
+
+  /**
+   * Bulk assign / annotate. There is no bulk PATCH endpoint on the backend, so this issues one
+   * PATCH per selected employee (the same endpoint the single-row Assign dialog already uses)
+   * and reports how many succeeded vs failed rather than silently stopping on the first error —
+   * a partial failure here must not read as "nothing happened" when most of it did.
+   */
+  const bulkSaveMutation = useMutation({
+    mutationFn: async (vars: {
+      employeeIds: string[];
+      workflow_status: string;
+      notes: string;
+      owner_user_id: string;
+    }) => {
+      const results = await Promise.allSettled(
+        vars.employeeIds.map((employeeId) =>
+          hrmsApi.patch(`/api/payroll/bank-readiness/exceptions/${employeeId}`, {
+            workflow_status: vars.workflow_status,
+            notes: vars.notes || null,
+            owner_user_id: vars.owner_user_id || null,
+          }),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      return { succeeded: results.length - failed, failed, total: results.length };
+    },
+    onSuccess: (r) => {
+      if (r.failed === 0) {
+        toast.success(`Updated ${r.succeeded} employee(s)`);
+      } else {
+        toast.warning(`Updated ${r.succeeded} of ${r.total} — ${r.failed} failed`);
+      }
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-remediation"] });
+      setBulkEditing(false);
+      setSelectedIds(new Set());
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Bulk update failed"),
   });
 
   // ── Disbursal queries ──────────────────────────────────────────────────────
@@ -429,6 +485,39 @@ export default function PaymentDisbursalCenter() {
   const sourceDown = summary && !summary.verification_source.available;
   const asOf = useMemo(() => fmtDateTime(summary?.as_of), [summary?.as_of]);
   const selectedRun = runs.find((r) => r.id === selectedRunId);
+
+  // ── Selection handlers ────────────────────────────────────────────────────
+  const allVisibleSelected =
+    exceptionRows.length > 0 && exceptionRows.every((r) => selectedIds.has(r.employee_id));
+
+  function toggleRow(employeeId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(employeeId)) next.delete(employeeId);
+      else next.add(employeeId);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        for (const r of exceptionRows) next.delete(r.employee_id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const r of exceptionRows) next.add(r.employee_id);
+      return next;
+    });
+  }
+
+  function openBulkEditor() {
+    setBulkDraftStatus("in_progress");
+    setBulkDraftNotes("");
+    setBulkDraftOwnerId("");
+    setBulkEditing(true);
+  }
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   function openEditor(r: ExceptionRow) {
@@ -790,10 +879,51 @@ export default function PaymentDisbursalCenter() {
                   </span>
                 </div>
 
+                {/* ── Selection bar ─────────────────────────────────────────── */}
+                {selectedIds.size > 0 && (
+                  <div className="flex items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2">
+                    <span className="text-sm font-medium text-sky-900">
+                      {selectedIds.size} selected
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          for (const r of exceptionRows) next.add(r.employee_id);
+                          return next;
+                        })
+                      }
+                      disabled={allVisibleSelected}
+                      title="Select every row currently matching the filter above, not just this page"
+                    >
+                      Select all {exceptionsQ.data?.count ?? exceptionRows.length} matching filter
+                    </Button>
+                    <Button size="sm" onClick={openBulkEditor}>
+                      Bulk Assign
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSelectedIds(new Set())}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                )}
+
                 <div className="rounded-md border overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted">
                       <tr>
+                        <th className="px-3 py-2 w-8">
+                          <Checkbox
+                            checked={allVisibleSelected}
+                            onCheckedChange={toggleSelectAllVisible}
+                            aria-label="Select all rows on this view"
+                          />
+                        </th>
                         {[
                           "Code",
                           "Name",
@@ -822,7 +952,7 @@ export default function PaymentDisbursalCenter() {
                       {exceptionsQ.isLoading ? (
                         <tr>
                           <td
-                            colSpan={13}
+                            colSpan={14}
                             className="px-3 py-10 text-center text-muted-foreground"
                           >
                             <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
@@ -832,7 +962,7 @@ export default function PaymentDisbursalCenter() {
                       ) : exceptionRows.length === 0 ? (
                         <tr>
                           <td
-                            colSpan={13}
+                            colSpan={14}
                             className="px-3 py-10 text-center text-muted-foreground"
                           >
                             No exceptions in this view.
@@ -842,8 +972,15 @@ export default function PaymentDisbursalCenter() {
                         exceptionRows.map((r) => (
                           <tr
                             key={r.employee_id}
-                            className="border-t align-top"
+                            className={`border-t align-top ${selectedIds.has(r.employee_id) ? "bg-sky-50/60" : ""}`}
                           >
+                            <td className="px-3 py-2">
+                              <Checkbox
+                                checked={selectedIds.has(r.employee_id)}
+                                onCheckedChange={() => toggleRow(r.employee_id)}
+                                aria-label={`Select ${r.employee_code}`}
+                              />
+                            </td>
                             <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
                               {r.employee_code}
                             </td>
@@ -1599,6 +1736,86 @@ export default function PaymentDisbursalCenter() {
               }
             >
               {saveMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk assign / annotate dialog ────────────────────────────────────── */}
+      <Dialog open={bulkEditing} onOpenChange={(o) => !o && setBulkEditing(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bulk assign — {selectedIds.size} employee(s)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Sets the same owner, workflow status and note on every selected exception. A note
+              left blank here does not clear an existing note.
+            </p>
+            <div>
+              <label className="text-sm font-medium">Owner</label>
+              <Select value={bulkDraftOwnerId} onValueChange={setBulkDraftOwnerId}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ownersQ.isLoading && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      Loading…
+                    </div>
+                  )}
+                  {assignableOwners.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Workflow status</label>
+              <Select value={bulkDraftStatus} onValueChange={setBulkDraftStatus}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WORKFLOW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s.replace("_", " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Note</label>
+              <Textarea
+                className="mt-1"
+                rows={4}
+                value={bulkDraftNotes}
+                onChange={(e) => setBulkDraftNotes(e.target.value)}
+                placeholder="What is being done about these, and by whom."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setBulkEditing(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={bulkSaveMutation.isPending || selectedIds.size === 0}
+              onClick={() =>
+                bulkSaveMutation.mutate({
+                  employeeIds: [...selectedIds],
+                  workflow_status: bulkDraftStatus,
+                  notes: bulkDraftNotes,
+                  owner_user_id: bulkDraftOwnerId,
+                })
+              }
+            >
+              {bulkSaveMutation.isPending
+                ? "Saving…"
+                : `Apply to ${selectedIds.size}`}
             </Button>
           </DialogFooter>
         </DialogContent>

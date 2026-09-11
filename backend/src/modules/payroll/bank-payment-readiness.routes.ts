@@ -40,16 +40,35 @@ import {
   maskAccount,
   type BankReadinessClass,
 } from "./bank-payment-readiness.service.js";
+import {
+  buildValidatedBankAccountMisSummary,
+  buildValidatedBankAccountMisDetail,
+  MIS_BUCKETS,
+  MIS_BUCKET_LABELS,
+  MIS_DETAIL_COLUMNS,
+  type MisBucket,
+} from "./validated-bank-account-mis.service.js";
+import {
+  getDebitAccountConfig,
+  setDebitAccountConfig,
+} from "./payroll-debit-account-config.service.js";
 
 export const bankPaymentReadinessRouter = Router();
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-/** Read roles: everyone who has to clear an exception or answer for one. */
+/**
+ * Read roles: everyone who has to clear an exception or answer for one.
+ *
+ * payroll_hr added for the Validated Bank Account MIS. Branch Payroll HR is the role that actually
+ * collects a missing account from the employee, and the PAYROLL_BANK_READINESS page code that gates
+ * both the Payment Center and the MIS page already admits them. Omitting them here meant the one
+ * role expected to clear the exceptions could open the page and have every request 403.
+ */
 const READ_ROLES = [
   "super_admin", "admin", "payroll_head", "payroll", "payroll_admin", "payroll_branch",
-  "finance", "finance_head", "hr", "branch_head", "branch_admin",
+  "payroll_hr", "finance", "finance_head", "hr", "branch_head", "branch_admin",
 ];
 
 /** Same list the existing NEFT/bank-file endpoints gate on. */
@@ -656,6 +675,191 @@ bankPaymentReadinessRouter.get(
     res.setHeader("X-Readiness-As-Of", report.as_of);
     // BOM so Excel reads it as UTF-8, matching the existing bank-export.
     return res.send("﻿" + csv.join("\r\n"));
+  }),
+);
+
+// ─── Validated Bank Account MIS ──────────────────────────────────────────────
+//
+// The branch-wise status board and its drill-down, backed by validated-bank-account-mis.service.ts.
+//
+// READS mas_hrms ONLY — no db_bill, per the payroll owner's instruction. Verified here is the HRMS
+// bank verification flag, which is a weaker claim than the READY class the endpoints above compute
+// (that one proves a confirmed salary credit). The two can disagree about an individual on purpose;
+// the /mis/summary response carries a note saying so.
+//
+// Masked throughout: account numbers are XXXX+last4 on every row and there is no full-number path
+// here. /payment-file remains the only endpoint in this router that emits digits.
+
+/** GET /mis/summary — one row per branch, plus a totals row. */
+bankPaymentReadinessRouter.get(
+  "/mis/summary",
+  requireRole(...READ_ROLES),
+  h(async (req, res) => {
+    const branchId = String(req.query.branch_id ?? "").trim() || null;
+    const visible = await resolveVisibleBranchIds(req.authUser!.id);
+
+    const summary = await buildValidatedBankAccountMisSummary({
+      visibleBranchIds: visible,
+      branchId,
+    });
+
+    return res.json({
+      success: true,
+      as_of: summary.as_of,
+      scope: visible ? { restricted: true, branch_count: visible.size } : { restricted: false },
+      data: summary.rows,
+      totals: summary.totals,
+      // Says what Verified means on this screen, so it is not mistaken for the stronger claim the
+      // Bank Payment Readiness page makes. Sent from here rather than hardcoded in the UI so the
+      // definition has one home.
+      message:
+        "Verified reflects the bank account verification flag held in HRMS. " +
+        "Accounts that cannot be paid — invalid IFSC, unusable or duplicated account number — are " +
+        "reported under Rejected even when flagged verified.",
+    });
+  }),
+);
+
+/** GET /mis/detail — the employees behind one count, in the legacy column set. */
+bankPaymentReadinessRouter.get(
+  "/mis/detail",
+  requireRole(...READ_ROLES),
+  h(async (req, res) => {
+    const branchId = String(req.query.branch_id ?? "").trim() || null;
+    const search = String(req.query.q ?? "").trim() || null;
+    const rawBucket = String(req.query.bucket ?? "").trim().toLowerCase();
+
+    if (rawBucket && !(MIS_BUCKETS as readonly string[]).includes(rawBucket)) {
+      return res.status(400).json({
+        success: false,
+        message: `bucket must be one of ${MIS_BUCKETS.join(", ")}`,
+      });
+    }
+
+    const visible = await resolveVisibleBranchIds(req.authUser!.id);
+    const detail = await buildValidatedBankAccountMisDetail({
+      visibleBranchIds: visible,
+      branchId,
+      bucket: (rawBucket || null) as MisBucket | null,
+      search,
+    });
+
+    return res.json({
+      success: true,
+      as_of: detail.as_of,
+      bucket: rawBucket || null,
+      columns: MIS_DETAIL_COLUMNS,
+      data: detail.rows,
+      totalCount: detail.rows.length,
+    });
+  }),
+);
+
+/**
+ * GET /mis/export — the same rows as /mis/detail, as CSV.
+ *
+ * Server-side rather than built in the browser, so the file and the screen come from one query and
+ * one classification. Account numbers stay masked: this is a status report, not a payment
+ * instruction, so it is gated on READ_ROLES rather than on org-wide export scope.
+ */
+bankPaymentReadinessRouter.get(
+  "/mis/export",
+  requireRole(...READ_ROLES),
+  h(async (req, res) => {
+    const branchId = String(req.query.branch_id ?? "").trim() || null;
+    const rawBucket = String(req.query.bucket ?? "").trim().toLowerCase();
+
+    if (rawBucket && !(MIS_BUCKETS as readonly string[]).includes(rawBucket)) {
+      return res.status(400).json({
+        success: false,
+        message: `bucket must be one of ${MIS_BUCKETS.join(", ")}`,
+      });
+    }
+
+    const visible = await resolveVisibleBranchIds(req.authUser!.id);
+    const detail = await buildValidatedBankAccountMisDetail({
+      visibleBranchIds: visible,
+      branchId,
+      bucket: (rawBucket || null) as MisBucket | null,
+    });
+
+    // Quote every field and double any embedded quote. Cost centre values carry slashes and
+    // commas (e.g. "BSS/BO/AHMH-JD/560") and Remarks carries free text, so an unquoted join would
+    // shift columns.
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""').replace(/\r?\n/g, " ")}"`;
+    const lines = [
+      MIS_DETAIL_COLUMNS.map((c) => esc(c.label)).join(","),
+      ...detail.rows.map((r) => MIS_DETAIL_COLUMNS.map((c) => esc(r[c.key])).join(",")),
+    ];
+
+    const label = rawBucket ? MIS_BUCKET_LABELS[rawBucket as MisBucket].replace(/\s+/g, "") : "All";
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="ValidatedBankAccountMIS_${label}_${detail.as_of.slice(0, 10)}.csv"`,
+    );
+    res.setHeader("X-Report-Rows", String(detail.rows.length));
+    // BOM so Excel reads it as UTF-8, matching /payment-file and the existing bank-export.
+    return res.send("\ufeff" + lines.join("\r\n"));
+  }),
+);
+
+// ─── Debit account config ─────────────────────────────────────────────────────
+//
+// The company account bank-advice/neft-transfer-file debit from. Used to be a raw string
+// literal duplicated in payroll.executor.ts — see payroll-debit-account-config.service.ts.
+// Read is available to the same roles that can already see the exception queue; write is
+// restricted further, since an incorrect value here silently redirects every future
+// outbound payroll payment.
+
+const DEBIT_ACCOUNT_WRITE_ROLES = ["super_admin", "finance_head", "payroll_head"];
+
+/** GET /debit-account-config */
+bankPaymentReadinessRouter.get(
+  "/debit-account-config",
+  requireRole(...READ_ROLES),
+  h(async (_req, res) => {
+    return res.json({ success: true, data: await getDebitAccountConfig() });
+  }),
+);
+
+/** PATCH /debit-account-config */
+bankPaymentReadinessRouter.patch(
+  "/debit-account-config",
+  requireRole(...DEBIT_ACCOUNT_WRITE_ROLES),
+  h(async (req, res) => {
+    const { debit_account_number, bank_name } = req.body as {
+      debit_account_number?: string;
+      bank_name?: string | null;
+    };
+    const value = String(debit_account_number ?? "").trim();
+    if (!/^[0-9]{6,34}$/.test(value)) {
+      return res.status(400).json({
+        success: false,
+        message: "debit_account_number must be a 6-34 digit account number",
+      });
+    }
+    const before = await getDebitAccountConfig();
+    await setDebitAccountConfig({
+      debit_account_number: value,
+      bank_name: bank_name?.trim() || null,
+      updated_by: req.authUser!.id,
+    });
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "PAYROLL_DEBIT_ACCOUNT_CONFIG_UPDATED",
+      module_key: "payroll",
+      entity_type: "payroll_debit_account_config",
+      entity_id: "1",
+      change_summary: {
+        before: { debit_account_number: before.debit_account_number, bank_name: before.bank_name },
+        after: { debit_account_number: value, bank_name: bank_name?.trim() || null },
+      },
+      req: req as never,
+    });
+
+    return res.json({ success: true, message: "Debit account updated", data: await getDebitAccountConfig() });
   }),
 );
 
