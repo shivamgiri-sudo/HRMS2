@@ -547,7 +547,7 @@ function LatenessSection({ filters }: { filters: Filters }) {
 
 /* ── Root panel ────────────────────────────────────────────────────────────── */
 
-export default function RosterAnalyticsPanel() {
+export default function TrendsPanel() {
   const [filters, setFilters] = useState<Filters>({
     branchId: "",
     processId: "",

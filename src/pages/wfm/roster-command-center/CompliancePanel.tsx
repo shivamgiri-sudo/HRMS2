@@ -16,7 +16,6 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -490,7 +489,7 @@ function adaptViolation(v: ApiViolation): Violation {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function RosterComplianceMonitor() {
+export default function CompliancePanel() {
   const [branchFilter, setBranchFilter] = useState(ALL);
   const [ruleFilter, setRuleFilter] = useState(ALL);
   const [statusFilter, setStatusFilter] = useState<string>("OPEN");
@@ -568,8 +567,7 @@ export default function RosterComplianceMonitor() {
   const openViolations = violations.filter((v) => v.status === "OPEN").length;
 
   return (
-    <DashboardLayout>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-amber-50/30 to-orange-50/20 p-4 sm:p-6">
+      <div className="bg-gradient-to-br from-slate-50 via-amber-50/30 to-orange-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
         {/* Header with gradient (amber for compliance/warning domain) */}
         <div className="mb-6 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 p-6 text-white shadow-lg shadow-amber-500/20">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -812,6 +810,5 @@ export default function RosterComplianceMonitor() {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
   );
 }
