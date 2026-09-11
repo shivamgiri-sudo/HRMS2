@@ -38,7 +38,11 @@ async function getRecipient(userId: string, channel: TwoFactorChannel): Promise<
   return value;
 }
 
-export async function sendTwoFactorChallenge(userId: string, channel: TwoFactorChannel): Promise<void> {
+export async function sendTwoFactorChallenge(
+  userId: string,
+  channel: TwoFactorChannel,
+  preAuthChallengeId?: string | null,
+): Promise<void> {
   const recipient = await getRecipient(userId, channel);
   const code = otpCode();
   const otpHash = await bcrypt.hash(code, 10);
@@ -51,12 +55,36 @@ export async function sendTwoFactorChallenge(userId: string, channel: TwoFactorC
     [userId],
   );
 
-  await db.execute(
-    `INSERT INTO auth_two_factor_challenge
-       (id, user_id, channel, recipient_hash, otp_hash, expires_at, status)
-     VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), 'pending')`,
-    [userId, channel, recipientHash, otpHash],
-  );
+  // SEC-07: link this OTP challenge to the exact login attempt (pre_auth_challenge)
+  // that requested it, so exchangePreAuthToken can require an exact match instead
+  // of accepting any recently-verified 2FA for the user. `pre_auth_challenge_id`
+  // is added by migration 1614 — fall back to the unlinked insert if it hasn't
+  // been applied yet, so this doesn't break a deploy that runs ahead of the migration.
+  if (preAuthChallengeId) {
+    try {
+      await db.execute(
+        `INSERT INTO auth_two_factor_challenge
+           (id, user_id, pre_auth_challenge_id, channel, recipient_hash, otp_hash, expires_at, status)
+         VALUES (UUID(), ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), 'pending')`,
+        [userId, preAuthChallengeId, channel, recipientHash, otpHash],
+      );
+    } catch (err: any) {
+      if (err?.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      await db.execute(
+        `INSERT INTO auth_two_factor_challenge
+           (id, user_id, channel, recipient_hash, otp_hash, expires_at, status)
+         VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), 'pending')`,
+        [userId, channel, recipientHash, otpHash],
+      );
+    }
+  } else {
+    await db.execute(
+      `INSERT INTO auth_two_factor_challenge
+         (id, user_id, channel, recipient_hash, otp_hash, expires_at, status)
+       VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), 'pending')`,
+      [userId, channel, recipientHash, otpHash],
+    );
+  }
 
   if (channel === "email") {
     if (!emailService.isConfigured()) {
