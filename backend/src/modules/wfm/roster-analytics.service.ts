@@ -8,6 +8,7 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { isShiftDueYet } from './shift-due.util.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -155,18 +156,10 @@ function getDayName(dateStr: string): string {
   return days[new Date(dateStr).getDay()];
 }
 
-// Local (server wall-clock) date/time — deliberately NOT toISOString(), which reads a Date back
-// in UTC and would misclassify "today" for part of the day on a UTC-offset host. The production
-// box's own OS clock is IST, so these local getters give the right calendar day and minute.
-function todayLocalDateStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function currentMinutesOfDayLocal(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-}
+// Local (server wall-clock) date/time helpers moved to shift-due.util.ts (Phase C,
+// 2026-09-12) — deliberately NOT toISOString(), which reads a Date back in UTC and
+// would misclassify "today" for part of the day on a UTC-offset host. The production
+// box's own OS clock is IST, so those local getters give the right calendar day/minute.
 
 const GRACE_MINUTES = 5;
 const INCOMPLETE_THRESHOLD_PCT = 80;
@@ -281,14 +274,10 @@ export async function getWeeklyShrinkageIntelligence(
       // absence — so a branch with, say, a 19:00 shift showed 100% shrinkage all afternoon,
       // before a single person was even due in. Excluded entirely from today's tally until the
       // shift is actually due; a past date is unaffected since its shift has necessarily already
-      // started by the time it's queried. Found live 2026-09-11 on Roster Analytics.
-      const shiftStartMinForDue = shiftStart ? timeToMinutes(String(shiftStart)) : null;
-      const shiftNotYetDue =
-        !r.first_in &&
-        shiftStartMinForDue !== null &&
-        dateKey === todayLocalDateStr() &&
-        currentMinutesOfDayLocal() < shiftStartMinForDue + GRACE_MINUTES;
-      if (shiftNotYetDue) {
+      // started by the time it's queried. Found live 2026-09-11 on Roster Analytics. Guard
+      // extracted to shift-due.util.ts as part of Phase C (2026-09-12) so this exact check
+      // isn't duplicated a 4th time by the new Process Team Roster feature.
+      if (!r.first_in && !isShiftDueYet(shiftStart ? String(shiftStart) : null, dateKey, GRACE_MINUTES)) {
         continue;
       }
 

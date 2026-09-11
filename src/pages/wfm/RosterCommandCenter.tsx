@@ -2,8 +2,9 @@
 //
 // Roster Command Center console — merges 7 previously separate WFM roster dashboard
 // pages (Live Monitoring, Analytics, Trends & Publish, Compliance, Shift Effectiveness,
-// Interventions, Audit Trail) behind one tab bar with per-tab RBAC gating and a shared
-// global filter bar (Branch / Process / From-To date range).
+// Interventions, Audit Trail) plus one brand-new tab (Team Roster, Phase C) behind one
+// tab bar with per-tab RBAC gating and a shared global filter bar (Branch / Process /
+// From-To date range).
 //
 // Structural pattern copied directly from src/pages/wfm/AttendanceIntegrityConsole.tsx —
 // this repo's own established precedent for exactly this kind of merge. See that file's
@@ -27,11 +28,11 @@
 // their original standalone page files into ./roster-command-center/*Panel.tsx. Only the
 // active tab's panel chunk + dataset loads — switching tabs triggers the next chunk.
 //
-// Phase A ships this shell + verbatim panels + shared filter infrastructure only — the
-// known bugs in each panel (broken branch filter, dead process-filter capability, the
-// Compliance Violations/Overview domain mismatch, etc.) are Phase B, and the new
-// "Team Roster" color-coded panel is Phase C. See the approved merge plan for the full
-// bug list and phasing.
+// Phase A shipped this shell + verbatim panels + shared filter infrastructure. Phase B
+// fixed the 18 cataloged bugs in each panel (broken branch filter, dead process-filter
+// capability, the Compliance Violations/Overview domain mismatch, etc.). Phase C adds
+// the new "Team Roster" color-coded panel (2nd tab, right after Live Monitoring) — see
+// the approved merge plan for the full bug list and phasing.
 
 import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -47,6 +48,7 @@ import {
 import { RosterConsoleFilterBar } from "./roster-command-center/RosterConsoleFilterBar";
 
 const LiveMonitoringPanel = lazy(() => import("./roster-command-center/LiveMonitoringPanel"));
+const ProcessTeamRosterPanel = lazy(() => import("./roster-command-center/ProcessTeamRosterPanel"));
 const AnalyticsPanel = lazy(() => import("./roster-command-center/AnalyticsPanel"));
 const TrendsPanel = lazy(() => import("./roster-command-center/TrendsPanel"));
 const CompliancePanel = lazy(() => import("./roster-command-center/CompliancePanel"));
@@ -56,6 +58,7 @@ const AuditTrailPanel = lazy(() => import("./roster-command-center/AuditTrailPan
 
 type TabKey =
   | "live"
+  | "team-roster"
   | "analytics"
   | "trends"
   | "compliance"
@@ -73,6 +76,7 @@ type TabDef = {
 
 const TAB_DEFS: TabDef[] = [
   { key: "live", label: "Live Monitoring", pageCode: "WFM_ROSTER_LIVE_MONITORING", Component: LiveMonitoringPanel },
+  { key: "team-roster", label: "Team Roster", pageCode: "WFM_ROSTER_TEAM_ROSTER", Component: ProcessTeamRosterPanel },
   { key: "analytics", label: "Analytics", pageCode: "WFM_ROSTER_ANALYTICS", Component: AnalyticsPanel },
   { key: "trends", label: "Trends & Publish", pageCode: "WFM_ROSTER_TRENDS", Component: TrendsPanel },
   { key: "compliance", label: "Compliance", pageCode: "WFM_ROSTER_COMPLIANCE", Component: CompliancePanel },

@@ -14,6 +14,7 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { isShiftDueYet } from './shift-due.util.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -260,14 +261,14 @@ async function generateSingleManagerDigest(
     // afternoon. Marked GREY (the same "no verdict yet" bucket as week-off/leave/holiday) and
     // excluded from planned/present so it can't skew shrinkagePct. Only applies to today — a past
     // date's shift has necessarily already started by the time it's queried. Found live
-    // 2026-09-11 on Roster Command Center.
-    if (!r.first_in && shiftStart && date === todayDate()) {
-      const shiftStartMinutes = timeToMinutes(String(shiftStart));
-      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-      if (nowMinutes < shiftStartMinutes + GRACE_MINUTES) {
-        member.adherence = 'GREY';
-        continue;
-      }
+    // 2026-09-11 on Roster Command Center. Guard extracted to shift-due.util.ts as part of
+    // Phase C (2026-09-12) — this also fixes a latent bug this call site had: the old
+    // `date === todayDate()` comparison used todayDate()'s UTC-based toISOString(), which
+    // misclassifies "today" for the first ~5.5 hours of the IST day on this host; the shared
+    // util uses local Date getters instead (see shift-due.util.ts for the full explanation).
+    if (!r.first_in && !isShiftDueYet(shiftStart ? String(shiftStart) : null, date)) {
+      member.adherence = 'GREY';
+      continue;
     }
 
     planned++;
@@ -403,15 +404,13 @@ export async function generateBranchDashboard(
     const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY'].includes(type);
     if (isOff) continue;
 
-    // Same "shift hasn't started yet today" guard as generateManagerDailyDigest above — a row
-    // with no clock-in is only a real absence once its shift is actually due.
+    // Same "shift hasn't started yet today" guard as generateSingleManagerDigest above — a row
+    // with no clock-in is only a real absence once its shift is actually due. Extracted to
+    // shift-due.util.ts as part of Phase C (2026-09-12); see that file and the comment on the
+    // generateSingleManagerDigest call site above for the UTC-vs-local fix that came with it.
     const shiftStartForDue = r.template_start || r.shift_start_time;
-    if (!r.first_in && shiftStartForDue && date === todayDate()) {
-      const shiftStartMinutes = timeToMinutes(String(shiftStartForDue));
-      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-      if (nowMinutes < shiftStartMinutes + GRACE_MINUTES) {
-        continue;
-      }
+    if (!r.first_in && !isShiftDueYet(shiftStartForDue ? String(shiftStartForDue) : null, date)) {
+      continue;
     }
 
     planned++;

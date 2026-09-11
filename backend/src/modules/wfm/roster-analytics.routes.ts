@@ -12,6 +12,8 @@ import {
   getCostOfNonAdherence,
   getShrinkageForecast,
 } from './roster-analytics.service.js';
+import { getProcessTeamRosterView } from './process-team-roster.service.js';
+import { todayLocalDateStr } from './shift-due.util.js';
 
 const router = Router();
 
@@ -34,6 +36,11 @@ const realRoster = (alias: string) =>
   `AND ${alias}.assignment_type IS NULL AND ${alias}.shift_template_id IS NULL)`;
 
 const ANALYTICS_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'operations_manager', 'ceo', 'coo'];
+
+// Same role set as roster-intelligence.routes.ts's MANAGER_ROLES (not exported from
+// there, so mirrored here) — WFM Roster Console merge Phase C, matches the
+// WFM_ROSTER_TEAM_ROSTER page code's grant list in the console's SQL migration.
+const TEAM_ROSTER_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'manager', 'operations_manager', 'process_manager'];
 
 /**
  * GET /api/roster-analytics/shrinkage-intelligence/:branchId
@@ -1048,6 +1055,36 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('[roster-analytics] team-status-mobile error:', msg);
     res.status(500).json({ error: `Failed to get team status: ${msg}` });
+  }
+});
+
+/**
+ * GET /api/roster-analytics/process-roster?processId=<uuid>&date=YYYY-MM-DD
+ * WFM Roster Console merge Phase C: color-coded "who's on my team right now" view for
+ * a selected process — the new Team Roster feature. Date defaults to today; a future
+ * date is rejected since a roster for a day that hasn't happened yet would be all
+ * UPCOMING/meaningless (the frontend's date control is separately capped at today).
+ */
+router.get('/process-roster', requireRole(...TEAM_ROSTER_ROLES), async (req, res) => {
+  try {
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    if (!processId) {
+      res.status(400).json({ error: 'processId is required' });
+      return;
+    }
+    const today = todayLocalDateStr();
+    const date = req.query.date ? String(req.query.date) : today;
+    if (date > today) {
+      res.status(400).json({ error: 'date cannot be in the future' });
+      return;
+    }
+
+    const view = await getProcessTeamRosterView(processId, date);
+    res.json(view);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[roster-analytics] process-roster error:', msg);
+    res.status(500).json({ error: `Failed to get process team roster: ${msg}` });
   }
 });
 
