@@ -223,10 +223,10 @@ export const companyBankAccountService = {
    *  this service writes to (logSensitiveAction), so that is what a reader reads back. */
   async getAuditTrail(id: string, limit = 20) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT action_type, actor_user_id, actor_role, change_summary, created_at
+      `SELECT action_type, actor_user_id, actor_role, change_summary, reason, acted_at AS created_at
          FROM sensitive_action_log
         WHERE entity_type = 'company_bank_account' AND entity_id = ?
-        ORDER BY created_at DESC
+        ORDER BY acted_at DESC
         LIMIT ${Math.min(100, Math.max(1, Number(limit) || 20))}`,
       [id],
     );
