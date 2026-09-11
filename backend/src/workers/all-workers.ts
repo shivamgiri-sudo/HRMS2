@@ -17,6 +17,7 @@ import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from 
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
+import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
 import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sync.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
@@ -168,6 +169,14 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // appeared.
     name: "db-bill-finance-sync",
     start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
+  },
+  {
+    // Self-populates cost_centre_master.process_id for cost centres db-bill-finance-sync just
+    // brought in — see cost-centre-process-resolver.service.ts. Excludes NOIDA-DIALDESK/IDC by
+    // branch_id (user-confirmed out of scope for MAS Callnet's P&L, 2026-09-11) regardless of
+    // that branch's own (partly mislabelled) company_name.
+    name: "cost-centre-process-resolver",
+    start: () => { startCostCentreProcessResolverWorker(); return Promise.resolve(); },
   },
   {
     name: "db-bill-hr-sync",
@@ -484,6 +493,7 @@ function shutdown(): void {
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
   stopDbBillFinanceSyncWorker();
+  stopCostCentreProcessResolverWorker();
   stopDbBillHrSyncWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();

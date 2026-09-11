@@ -16,7 +16,14 @@ import { tableExists } from "../../shared/dbHelpers.js";
  * who is deployed rather than contracted capacity.
  *
  * Both are keyed by cost centre in the source, and cost centre -> process is derived through the
- * employees posted to it, NOT cost_centre_master.process_id, which is NULL on every live row.
+ * employees posted to it (PROCESS_BY_COST_CENTRE), falling back to cost_centre_master.process_id
+ * only when no employee is posted there at all -- pure client-billing cost centres with zero
+ * headcount are otherwise permanently invisible to every process-level P&L query below, no matter
+ * how much real invoice/GRN revenue they carry. cost_centre_master.process_id is populated by
+ * cost-centre-process-resolver.service.ts (name-matched against process_master, DialDesk/Ispark
+ * branches hard-excluded, ambiguous/generic matches refused) and stays NULL for anything it can't
+ * resolve with confidence, so this fallback only ever adds coverage, never overrides the
+ * employee-derived signal where one exists.
  */
 
 export interface ActualsByKey {
@@ -131,7 +138,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
     // time 30-46s+ (never observed to finish within several minutes on a second run) -> ~1.7s.
     `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
        SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
-              COALESCE(a.process_id, pc1.process_id) AS process_id,
+              COALESCE(a.process_id, pc1.process_id, ccm.process_id) AS process_id,
               a.pnl_cost_amount AS amount
          FROM grn_cost_allocation a
          JOIN grn_request g ON g.id = a.grn_request_id
@@ -143,7 +150,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
        UNION ALL
 
        SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
-              COALESCE(g.process_id, pc2.process_id) AS process_id,
+              COALESCE(g.process_id, pc2.process_id, ccm.process_id) AS process_id,
               g.pnl_cost_amount AS amount
          FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
@@ -202,7 +209,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
       // branch_source_id (db_bill's integer id) and a branch_name the sync leaves null, and
       // neither is a mas_hrms branch_master id, which is what every other P&L key is.
       `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-              pc.process_id AS process_id, SUM(l.amount) AS amount
+              COALESCE(pc.process_id, ccm.process_id) AS process_id, SUM(l.amount) AS amount
          FROM grn_entry_line_snapshot l
          JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
          LEFT JOIN cost_centre_master ccm
@@ -217,7 +224,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
                  WHERE gr.grn_number = g.grn_no
                    AND a.lifecycle_status = 'consumed'
               )
-        GROUP BY ccm.branch_id, ccm.id, pc.process_id`,
+        GROUP BY ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id)`,
       [periodCode]
     );
     accumulate(mirrored, actuals);
@@ -291,19 +298,19 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
      WITH invoice_actual AS (
        SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
               ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-              pc.process_id AS process_id, SUM(p.amount) AS invoice_amount
+              COALESCE(pc.process_id, ccm.process_id) AS process_id, SUM(p.amount) AS invoice_amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
-        GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, pc.process_id
+        GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id)
      ),
      provision_actual AS (
        SELECT ps.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
               ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-              pc.process_id AS process_id,
+              COALESCE(pc.process_id, ccm.process_id) AS process_id,
               SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
          FROM billing_provision_snapshot ps
          LEFT JOIN cost_centre_master ccm
@@ -311,7 +318,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
-        GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, pc.process_id
+        GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id)
      ),
      /*
       * BUG-4 fix: invoice_actual is grouped by (cost_centre_code, branch_id, cost_centre_id,
@@ -341,7 +348,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
           LEFT JOIN invoice_by_cc i
                  ON i.cost_centre_code = p.cost_centre_code
         UNION ALL
-        SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
+        SELECT ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id), -cn.total_amt
           FROM billing_credit_note_snapshot cn
           LEFT JOIN cost_centre_master ccm
                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
@@ -352,7 +359,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
       GROUP BY branch_id, cost_centre_id, process_id` : `
      SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
         SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-               pc.process_id AS process_id, p.amount AS amount
+               COALESCE(pc.process_id, ccm.process_id) AS process_id, p.amount AS amount
           FROM billing_invoice_particular_snapshot p
           LEFT JOIN cost_centre_master ccm
                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
@@ -360,7 +367,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
         UNION ALL
-        SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
+        SELECT ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id), -cn.total_amt
           FROM billing_credit_note_snapshot cn
           LEFT JOIN cost_centre_master ccm
                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
@@ -559,7 +566,7 @@ export async function getRewardPenaltyActuals(periodCode: string): Promise<Actua
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.branch_id AS branch_id,
             rp.cost_centre_id AS cost_centre_id,
-            pc.process_id AS process_id,
+            COALESCE(pc.process_id, ccm.process_id) AS process_id,
             SUM(CASE WHEN rp.entry_type = 'reward' THEN rp.amount_inr
                      ELSE -rp.amount_inr END) AS amount
        FROM cost_centre_reward_penalty rp
@@ -567,7 +574,7 @@ export async function getRewardPenaltyActuals(periodCode: string): Promise<Actua
        LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
       WHERE rp.period_code = ? AND rp.approval_status = 'approved'
         AND ${OWN_COMPANY_SQL}
-      GROUP BY ccm.branch_id, rp.cost_centre_id, pc.process_id`,
+      GROUP BY ccm.branch_id, rp.cost_centre_id, COALESCE(pc.process_id, ccm.process_id)`,
     [periodCode]
   );
   return accumulate(rows);
