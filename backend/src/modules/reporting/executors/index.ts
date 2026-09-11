@@ -160,6 +160,7 @@ import {
   teamPerformanceSummary,
   qualityAuditLog,
   fatalErrorRegister,
+  reginaldAbandonedCartSalesReport,
 } from "./operations.executor.js";
 
 // ─── WFM & Roster ────────────────────────────────────────────────────────────
@@ -356,6 +357,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "team-performance-summary":  teamPerformanceSummary,
   "quality-audit-log":         qualityAuditLog,
   "fatal-error-register":      fatalErrorRegister,
+  "reginald-abandoned-cart-sales-report": reginaldAbandonedCartSalesReport,
 
   // WFM & Roster
   "roster-published":          rosterPublished,

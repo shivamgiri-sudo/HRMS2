@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1153,
-  "columnCount": 17097,
+  "tableCount": 1155,
+  "columnCount": 17129,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14951,6 +14951,27 @@
       "created_at",
       "updated_at"
     ],
+    "reginald_abandoned_cart_sales_raw": [
+      "id",
+      "process_id",
+      "order_id",
+      "order_id_numeric",
+      "submitted_at",
+      "amount",
+      "lob",
+      "order_date",
+      "payment_type",
+      "agent_name",
+      "agent_name_norm",
+      "time_slot",
+      "emp_id",
+      "data_source",
+      "source_reference",
+      "upload_batch_id",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
     "reimbursement_claim": [
       "id",
       "employee_id",
@@ -18811,6 +18832,21 @@
       "is_default",
       "is_active",
       "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "wfm_notification_rule": [
+      "id",
+      "alert_type",
+      "alert_name",
+      "description",
+      "recipients_json",
+      "channels_json",
+      "frequency",
+      "enabled",
+      "threshold_pct",
+      "schedule_time",
+      "updated_by",
       "created_at",
       "updated_at"
     ],

@@ -3973,6 +3973,39 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     processScoped: true,
   },
 
+  {
+    // Real report from the real Reginald_Men_Abandoned_Cart_Dashboard_SOP_
+    // WITH_PATH.xlsx's own "Day-wise" tab shape -- pivoted from
+    // process_metric_actual (REGINALD_ABCD_*/REGINALD_REPT_* metrics, sql/
+    // 1752 raw data) into one row per date, matching the client's own
+    // desired dashboard layout rather than the raw long-format metric rows.
+    code: "reginald-abandoned-cart-sales-report",
+    name: "Reginald Abandoned Cart Sales (Day-wise)",
+    category: "Operations & Quality",
+    subcategory: "Sales",
+    description: "Daily Abandoned Cart (ABCD) and Repeat (REPT) sales count, revenue and AOV for Reginald, from the real Live Sales Google Form",
+    rowGrain: "One row per date",
+    primaryKey: ["report_date"],
+    columns: [
+      { key: "report_date", label: "Date", format: "date", width: 110 },
+      { key: "process_name", label: "Process", format: "text", width: 120 },
+      { key: "reginald_abcd_sales_count", label: "Abandoned Cart Sales", format: "number", width: 150, align: "right" },
+      { key: "reginald_abcd_revenue", label: "Abandoned Cart Revenue", format: "currency", width: 170, align: "right" },
+      { key: "reginald_abcd_aov", label: "Abandoned Cart AOV", format: "currency", width: 150, align: "right" },
+      { key: "reginald_rept_sales_count", label: "Repeat Sales", format: "number", width: 120, align: "right" },
+      { key: "reginald_rept_revenue", label: "Repeat Revenue", format: "currency", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ["super_admin", "admin", "operations", "quality", "process_manager"],
+    sourceTables: ["process_metric_actual", "reginald_abandoned_cart_sales_raw"],
+    processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // CATEGORY 10: ROSTER / WFM
   // ═══════════════════════════════════════════════════════════════════════════════
