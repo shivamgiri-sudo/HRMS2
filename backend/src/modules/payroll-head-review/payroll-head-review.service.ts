@@ -585,6 +585,13 @@ export async function updateSalaryStartDate(
     [newDate, latestRows[0].id]
   );
 
+  // Also keep employees.salary_start_date (what the Employee page shows) in step.
+  // See syncSalaryStartDateEverywhere() -- reused here for the employees.* half only,
+  // since ats_payroll_hr_validation is already updated above by id (this function's
+  // own, more specific lookup) rather than the shared helper's by-candidate lookup.
+  await db.execute(`UPDATE employees SET salary_start_date = ? WHERE id = ?`, [newDate, employeeId])
+    .catch(() => {}); // non-fatal, same reasoning as syncSalaryStartDateEverywhere()
+
   await writeHistory({
     employeeId,
     reviewId: review.id as string,
@@ -594,6 +601,54 @@ export async function updateSalaryStartDate(
   });
 
   return { salary_start_date: newDate };
+}
+
+/**
+ * There is exactly one salary start date, not three. Payroll HR picks it at offer
+ * stage; Payroll Head can change it (including backdating it -- an intentional,
+ * supported action, not something to guard against); Payroll HR can separately
+ * request a change that Payroll Head approves. Whichever of those happened last is
+ * "the" date, and every place that stores or displays it -- the payroll-driving
+ * assignment, the review screen's own record, and the employee's own record (what
+ * the Employee page shows) -- must reflect it, not a stale copy.
+ *
+ * Before this, only updateAssignmentEffectiveDate (the "change an already-live
+ * assignment" path) wrote back to ats_payroll_hr_validation at all, and NOTHING
+ * wrote to employees.salary_start_date after creation. writeComponentAssignment and
+ * approveOfferedPackage (the two most common "assign/approve the package" actions)
+ * wrote the real date into salary_component_assignments / employee_payroll_head_review
+ * / employee_salary_assignment, but never here -- so the review screen and the
+ * Employee page both kept showing the ORIGINAL date while actual payroll had already
+ * moved on. Confirmed live: 30 of 60 sampled employees already disagreed this way
+ * (e.g. ESTUTI ESTUTI: payroll moved to 2026-09-08 when Payroll Head assigned her
+ * package, but both other copies of the date stayed on the original 2026-09-11).
+ *
+ * Each UPDATE is independently non-fatal (existing precedent) -- a missing
+ * candidate_id is valid for a direct hire with no ATS offer, and a failed
+ * best-effort display sync must never block the real payroll write it follows.
+ */
+async function syncSalaryStartDateEverywhere(
+  executor: { execute: (typeof db)['execute'] },
+  employeeId: string,
+  candidateId: string | null | undefined,
+  newDate: string,
+): Promise<void> {
+  if (candidateId) {
+    await executor.execute(
+      `UPDATE ats_payroll_hr_validation SET salary_start_date = ?
+        WHERE candidate_id = ? AND id = (
+          SELECT id FROM (
+            SELECT id FROM ats_payroll_hr_validation
+             WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1
+          ) sub
+        )`,
+      [newDate, candidateId, candidateId]
+    ).catch(() => {}); // non-fatal
+  }
+  await executor.execute(
+    `UPDATE employees SET salary_start_date = ? WHERE id = ?`,
+    [newDate, employeeId]
+  ).catch(() => {}); // non-fatal -- same reasoning as above
 }
 
 export async function updateAssignmentEffectiveDate(
@@ -677,19 +732,9 @@ export async function updateAssignmentEffectiveDate(
     );
 
     // Keep ats_payroll_hr_validation.salary_start_date in sync when a candidate
-    // link exists. Non-fatal: a missing candidate link is valid for direct hires.
-    if (review.candidate_id) {
-      await connection.execute(
-        `UPDATE ats_payroll_hr_validation SET salary_start_date = ?
-          WHERE candidate_id = ? AND id = (
-            SELECT id FROM (
-              SELECT id FROM ats_payroll_hr_validation
-               WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1
-            ) sub
-          )`,
-        [newDate, review.candidate_id, review.candidate_id]
-      ).catch(() => {}); // non-fatal
-    }
+    // link exists, and employees.salary_start_date too. See
+    // syncSalaryStartDateEverywhere() above for why this matters.
+    await syncSalaryStartDateEverywhere(connection, employeeId, review.candidate_id as string | null, newDate);
 
     // Audit
     await connection.execute(
@@ -722,7 +767,8 @@ async function writeComponentAssignment(
   pkg: RowDataPacket,
   effectiveDate: string,
   actorUserId: string,
-  approvalReference: string
+  approvalReference: string,
+  candidateId: string | null
 ) {
   await db.execute(
     `INSERT INTO salary_component_assignments
@@ -770,6 +816,10 @@ async function writeComponentAssignment(
       LIMIT 1`,
     [Number(pkg.package_amount ?? (pkg.ctc ?? 0)) * 12, effectiveDate, employeeId]
   ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
+
+  // See syncSalaryStartDateEverywhere() -- keeps the review screen and the Employee
+  // page from going stale the moment Payroll Head assigns/changes a package here.
+  await syncSalaryStartDateEverywhere(db, employeeId, candidateId, effectiveDate);
 }
 
 export async function assignPackage(
@@ -782,7 +832,7 @@ export async function assignPackage(
   }
   const pkg = await getPackageById(packageId);
   if (!pkg) throw httpError("Salary package not found.", 404, "PACKAGE_NOT_FOUND");
-  await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id);
+  await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id, review.candidate_id as string | null);
   await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ASSIGNED", employeeId, { package_id: packageId, effective_date: effectiveDate });
   return { review: await getReviewRow(employeeId) };
 }
@@ -799,7 +849,7 @@ export async function createAndAssignPackage(
   // reusable catalog (salary_package_master), never as a one-off row, per the
   // explicit decision that package assignment stays catalog-only.
   const pkg = await createPackage(packageData, actorUserId);
-  await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id);
+  await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id, review.candidate_id as string | null);
   await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_CREATED_AND_ASSIGNED", employeeId, { package_id: (pkg as RowDataPacket).id, effective_date: effectiveDate });
   return { review: await getReviewRow(employeeId) };
 }
@@ -887,6 +937,10 @@ export async function approveOfferedPackage(employeeId: string, effectiveDate: s
       LIMIT 1`,
     [Number(offer.offered_ctc ?? 0) * 12, effectiveDate, employeeId]
   ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
+
+  // See syncSalaryStartDateEverywhere() -- keeps the review screen and the Employee
+  // page from going stale the moment Payroll Head one-click-approves the offered package.
+  await syncSalaryStartDateEverywhere(db, employeeId, review.candidate_id as string | null, effectiveDate);
 
   await audit(actorUserId, "PAYROLL_HEAD_OFFERED_PACKAGE_APPROVED", employeeId, {
     offer_id: offer.id,
