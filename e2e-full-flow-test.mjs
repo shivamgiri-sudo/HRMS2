@@ -10,9 +10,13 @@ import { chromium } from 'playwright';
 import https from 'https';
 import http from 'http';
 
-const BASE = 'https://mcnhrms.teammas.in';
+const BASE = process.env.E2E_BASE_URL || 'https://mcnhrms.teammas.in';
 const API  = `${BASE}/api`;
-const CREDS = { email: 'admin@mas.in', password: 'Admin@12345' };
+if (!process.env.E2E_ADMIN_EMAIL || !process.env.E2E_ADMIN_PASSWORD) {
+  console.error('Set E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD env vars before running this script.');
+  process.exit(1);
+}
+const CREDS = { email: process.env.E2E_ADMIN_EMAIL, password: process.env.E2E_ADMIN_PASSWORD };
 
 let TOKEN = '';
 let browser, page;
