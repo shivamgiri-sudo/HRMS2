@@ -1,20 +1,29 @@
 /**
- * Bank "manual review" gap — employees whose onboarding penny-drop landed on manual_review
- * (not verified), and who therefore never got an employee_bank_detail row from
- * employee-creation-orchestrator.service.ts's automatic copy (it only copies on
- * verification_status = 'verified', by design — see its own comment: "a manual_review
- * account is captured so onboarding can finish, and stays unusable for payment until a
- * human clears it").
+ * Bank "manual review" gap — employees whose onboarding penny-drop never resulted in an
+ * employee_bank_detail row, for one of two reasons:
  *
- * That human clearance step never had anywhere to happen. This module is that surface:
- * a small, explicit, audited approval action — never an automatic write. Approving here
+ *  - Their LATEST verification attempt is still 'manual_review': the automatic copy in
+ *    employee-creation-orchestrator.service.ts only fires on verification_status = 'verified',
+ *    by design (its own comment: "a manual_review account is captured so onboarding can
+ *    finish, and stays unusable for payment until a human clears it"). This human needs the
+ *    uploaded passbook/cheque proof to make that call — see proof_document below.
+ *
+ *  - Their LATEST attempt IS 'verified', but they still have no bank record. This happens when
+ *    an employee first landed on manual_review, was NOT auto-copied (that only ever ran once,
+ *    at offer-approval time), and only later retried and passed penny-drop — after the
+ *    orchestrator's one-shot copy had already run (or never ran, because the status at that
+ *    moment was manual_review). Real gap, found live 2026-09-11 per explicit user direction
+ *    ("if penny drop verified it should show the complete account details ... and a tag Penny
+ *    drop verified"): these stragglers are otherwise invisible anywhere in the product. For
+ *    them there is nothing to "review" — the bank already confirmed the account — so the
+ *    reviewer sees full account details and a verified badge instead of a proof image, and
+ *    approving is a formality, not a judgment call.
+ *
+ * That human clearance step (for the manual_review case) and that catch-up copy (for the
+ * verified-but-stranded case) never had anywhere to happen. This module is that surface: one
+ * explicit, audited approval action per employee — never an automatic write. Approving here
  * does exactly what the orchestrator's own verified-path insert does (same columns, same
- * encryption, same idempotency guard), just gated on a person deciding a manual_review
- * account is good enough, instead of the system deciding a verified one is.
- *
- * Scope, measured live 2026-09-11: 36 manual_review candidates total, 17 already converted
- * to employees, 16 (4 unique employees — ats_candidate carries duplicate rows per
- * candidate) still missing their employee_bank_detail row.
+ * encryption, same idempotency guard).
  */
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
@@ -29,6 +38,9 @@ export interface ManualReviewGapRow {
   employee_name: string;
   branch_name: string | null;
   candidate_id: string;
+  // The candidate's LATEST verification attempt status — drives the UI split: 'verified' shows
+  // full details + a "Penny drop verified" tag, 'manual_review' shows the proof image instead.
+  verification_status: "verified" | "manual_review";
   account_masked: string;
   ifsc_code: string | null;
   account_holder_name: string | null;
@@ -63,40 +75,46 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
     `SELECT e.id AS employee_id, e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             b.branch_name,
-            v.candidate_id, v.ifsc_code, v.input_account_holder_name AS account_holder_name,
+            v.candidate_id, v.verification_status, v.ifsc_code, v.input_account_holder_name AS account_holder_name,
             v.name_match_score, v.verified_at,
             c.bank_account_no,
             obd.bank_name AS ob_bank_name, obd.branch_name AS ob_branch_name,
             obd.account_type AS ob_account_type, obd.name_on_cheque AS ob_name_on_cheque
        FROM (
+         -- LATEST attempt per candidate, any status -- not restricted to manual_review. A
+         -- candidate whose latest attempt is now 'verified' still belongs here if nobody has
+         -- copied it to employee_bank_detail yet (see module header). Other statuses (pending,
+         -- failed, etc.) are excluded below since there is nothing actionable to show for them.
          SELECT v1.*
            FROM candidate_bank_verification v1
            JOIN (
              SELECT candidate_id, MAX(COALESCE(verified_at, created_at)) AS latest
                FROM candidate_bank_verification
-              WHERE verification_status = 'manual_review'
               GROUP BY candidate_id
            ) latest ON latest.candidate_id = v1.candidate_id
                    AND COALESCE(v1.verified_at, v1.created_at) = latest.latest
-          WHERE v1.verification_status = 'manual_review'
        ) v
        JOIN ats_candidate c ON c.id = v.candidate_id
        JOIN employees e ON e.employee_code = c.employee_code
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN candidate_onboarding_bank_detail obd ON obd.candidate_id = v.candidate_id
       WHERE e.active_status = 1
+        AND v.verification_status IN ('manual_review', 'verified')
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
         AND NOT EXISTS (
           SELECT 1 FROM employee_bank_detail ebd
            WHERE ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
         )
       GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name,
-               v.candidate_id, v.ifsc_code, v.input_account_holder_name, v.name_match_score,
-               v.verified_at, c.bank_account_no, obd.bank_name, obd.branch_name,
+               v.candidate_id, v.verification_status, v.ifsc_code, v.input_account_holder_name,
+               v.name_match_score, v.verified_at, c.bank_account_no, obd.bank_name, obd.branch_name,
                obd.account_type, obd.name_on_cheque
       ORDER BY v.verified_at DESC`,
   );
 
+  // Proof documents matter only for the manual_review case (a verified account needs no human
+  // eyeballing a photo), but the lookup is cheap and uniform either way — keeps the mapping
+  // below simple, and the frontend already only renders the image when status is manual_review.
   const candidateIds = (rows as any[]).map((r) => r.candidate_id).filter(Boolean);
   const proofByCandidate = await getProofDocumentsByCandidate(candidateIds);
 
@@ -106,6 +124,7 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
     employee_name: String(r.employee_name ?? "").trim(),
     branch_name: r.branch_name ?? null,
     candidate_id: r.candidate_id,
+    verification_status: r.verification_status,
     account_masked: maskAccount(r.bank_account_no),
     ifsc_code: r.ifsc_code ?? null,
     account_holder_name: r.account_holder_name ?? null,
@@ -176,7 +195,7 @@ export async function approveManualReviewBankDetail(params: {
        JOIN ats_candidate c ON c.id = v.candidate_id
        JOIN employees e ON e.employee_code = c.employee_code
       WHERE e.id = ?
-        AND v.verification_status = 'manual_review'
+        AND v.verification_status IN ('manual_review', 'verified')
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
       ORDER BY v.verified_at DESC, v.created_at DESC
       LIMIT 1`,
