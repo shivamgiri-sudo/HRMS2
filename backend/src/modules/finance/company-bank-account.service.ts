@@ -3,6 +3,51 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+
+// Same role set as BANK_ACCOUNT_WRITE_ROLES in company-bank-account.routes.ts, duplicated
+// (not imported) to avoid a service <-> routes import cycle — routes.ts already imports
+// companyBankAccountService from this file.
+const BALANCE_CHANGE_NOTIFY_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
+
+/**
+ * Bell notification when the opening balance changes — same non-blocking, best-effort
+ * pattern as grn-notify.ts's notifyGrnStage: a notification failure must never roll back
+ * or block the edit that triggered it. FYI only (the change has already happened, single-
+ * approval by design — see the class header comment above), fanned out to every OTHER
+ * finance_head/accounts_head/super_admin so the change is never visible to just the one
+ * person who made it.
+ */
+async function notifyOpeningBalanceChanged(
+  bankAccountId: string,
+  accountName: string,
+  oldValue: number,
+  newValue: number,
+  actorUserId: string,
+) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    const roleHolders = await Promise.all(
+      BALANCE_CHANGE_NOTIFY_ROLES.map((role) => resolveRoleHolderUserIds(role, null)),
+    );
+    const userIds = new Set(roleHolders.flat());
+    userIds.delete(actorUserId);
+    for (const userId of userIds) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "bank_account_balance_changed",
+        title: `Opening balance changed — ${accountName}`,
+        description: `₹${oldValue.toLocaleString("en-IN")} → ₹${newValue.toLocaleString("en-IN")}.`,
+        entity_type: "company_bank_account",
+        entity_id: bankAccountId,
+        action_url: "/finance/bank-accounts",
+        priority: "high",
+      });
+    }
+  } catch {
+    // Non-fatal — a notification failure must not block the edit itself.
+  }
+}
 
 /**
  * Company Bank Account master — the organisation's OWN paying/receiving accounts.
@@ -173,19 +218,6 @@ export const companyBankAccountService = {
     const existing = rows[0];
     if (!existing) throw new CompanyBankAccountError("Bank account not found", 404);
 
-    // Opening balance is the base the Bank Ledger, the Payment Voucher chain and the Tally
-    // export are all built on -- it does NOT go through this single-approval edit path.
-    // A change must go through requestOpeningBalanceChange/decideOpeningBalanceChange below,
-    // which require a second, different qualifying user to approve it (migration 1753).
-    if (
-      input.openingBalance !== undefined &&
-      Number(input.openingBalance) !== Number(existing.opening_balance ?? 0)
-    ) {
-      throw new CompanyBankAccountError(
-        "Opening balance cannot be edited directly. Use 'Request Balance Change' — it requires a second approver.",
-      );
-    }
-
     const merged: CompanyBankAccountInput = {
       bankId: input.bankId ?? existing.bank_id,
       accountName: input.accountName ?? existing.account_name,
@@ -193,16 +225,20 @@ export const companyBankAccountService = {
       ifscCode: input.ifscCode ?? existing.ifsc_code,
       branchId: input.branchId ?? existing.branch_id,
       tallyLedgerName: input.tallyLedgerName ?? existing.tally_ledger_name,
-      openingBalance: Number(existing.opening_balance ?? 0),
-      openingBalanceAsOf: existing.opening_balance_as_of,
+      openingBalance: input.openingBalance !== undefined ? Number(input.openingBalance) : Number(existing.opening_balance ?? 0),
+      openingBalanceAsOf: input.openingBalanceAsOf ?? existing.opening_balance_as_of,
     };
     const { ifscCode, accountNumber } = normaliseInput(merged);
+
+    const oldOpeningBalance = Number(existing.opening_balance ?? 0);
+    const newOpeningBalance = Number(merged.openingBalance ?? oldOpeningBalance);
+    const openingBalanceChanged = newOpeningBalance !== oldOpeningBalance;
 
     const setAccountNumber = accountNumber !== undefined;
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE company_bank_account
           SET bank_id = ?, account_name = ?, ifsc_code = ?, branch_id = ?,
-              tally_ledger_name = ?,
+              tally_ledger_name = ?, opening_balance = ?, opening_balance_as_of = ?,
               ${setAccountNumber ? "account_number_enc = ?, account_number_last4 = ?, account_number_key_version = 1," : ""}
               updated_by = ?, updated_at = NOW()
         WHERE id = ?`,
@@ -212,6 +248,8 @@ export const companyBankAccountService = {
         ifscCode,
         merged.branchId,
         merged.tallyLedgerName.trim(),
+        newOpeningBalance,
+        merged.openingBalanceAsOf ?? null,
         ...(setAccountNumber ? [encryptField(accountNumber as string), (accountNumber as string).slice(-4)] : []),
         actorUserId,
         id,
@@ -219,136 +257,27 @@ export const companyBankAccountService = {
     );
     if (result.affectedRows !== 1) throw new CompanyBankAccountError("Update did not affect a record");
 
+    // Opening balance is the base the Bank Ledger, the Payment Voucher chain and the Tally
+    // export are all built on, so a change to it gets its own audit action type carrying the
+    // explicit before/after value (not just "updated"), plus a bell notification to every
+    // other finance_head/accounts_head/super_admin — same non-blocking pattern grn-notify.ts
+    // uses for GRN stage alerts.
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: "COMPANY_BANK_ACCOUNT_UPDATED",
+      action_type: openingBalanceChanged ? "COMPANY_BANK_ACCOUNT_OPENING_BALANCE_CHANGED" : "COMPANY_BANK_ACCOUNT_UPDATED",
       module_key: "FINANCE",
       entity_type: "company_bank_account",
       entity_id: id,
-      change_summary: { account_name: merged.accountName, account_number_changed: setAccountNumber },
+      change_summary: openingBalanceChanged
+        ? { account_name: merged.accountName, old_opening_balance: oldOpeningBalance, new_opening_balance: newOpeningBalance }
+        : { account_name: merged.accountName, account_number_changed: setAccountNumber },
     }).catch(() => undefined);
+
+    if (openingBalanceChanged) {
+      await notifyOpeningBalanceChanged(id, merged.accountName, oldOpeningBalance, newOpeningBalance, actorUserId);
+    }
+
     return this.get(id);
-  },
-
-  /**
-   * Opening-balance maker-checker (migration 1753). Raises a pending request; the account's
-   * opening_balance does not change until a different qualifying user calls
-   * decideOpeningBalanceChange with 'approved'.
-   */
-  async requestOpeningBalanceChange(
-    bankAccountId: string,
-    requestedValue: number,
-    reason: string,
-    actorUserId: string,
-  ) {
-    if (!reason?.trim()) throw new CompanyBankAccountError("A reason is required to request a balance change");
-    const account = await this.get(bankAccountId);
-    if (!account) throw new CompanyBankAccountError("Bank account not found", 404);
-    if (Number(requestedValue) === Number(account.opening_balance)) {
-      throw new CompanyBankAccountError("Requested value is the same as the current opening balance");
-    }
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO company_bank_account_balance_change_request
-         (id, bank_account_id, current_value, requested_value, reason, status, requested_by)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-      [id, bankAccountId, account.opening_balance, Number(requestedValue), reason.trim(), actorUserId],
-    );
-    await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type: "COMPANY_BANK_ACCOUNT_BALANCE_CHANGE_REQUESTED",
-      module_key: "FINANCE",
-      entity_type: "company_bank_account",
-      entity_id: bankAccountId,
-      change_summary: { current_value: account.opening_balance, requested_value: Number(requestedValue), reason: reason.trim() },
-    }).catch(() => undefined);
-    return this.getBalanceChangeRequest(id);
-  },
-
-  async listBalanceChangeRequests(bankAccountId?: string, status?: "pending" | "approved" | "rejected") {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (bankAccountId) {
-      conditions.push("r.bank_account_id = ?");
-      params.push(bankAccountId);
-    }
-    if (status) {
-      conditions.push("r.status = ?");
-      params.push(status);
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.*, cba.account_name
-         FROM company_bank_account_balance_change_request r
-         JOIN company_bank_account cba ON cba.id = r.bank_account_id
-        ${where}
-        ORDER BY r.requested_at DESC`,
-      params,
-    );
-    return rows;
-  },
-
-  async getBalanceChangeRequest(requestId: string) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM company_bank_account_balance_change_request WHERE id = ? LIMIT 1`,
-      [requestId],
-    );
-    return rows[0] ?? null;
-  },
-
-  async decideOpeningBalanceChange(
-    requestId: string,
-    decision: "approved" | "rejected",
-    actorUserId: string,
-    remarks: string | undefined,
-  ) {
-    const request = await this.getBalanceChangeRequest(requestId);
-    if (!request) throw new CompanyBankAccountError("Balance change request not found", 404);
-    if (request.status !== "pending") {
-      throw new CompanyBankAccountError(`This request is already ${request.status}`, 400);
-    }
-    // Maker-checker: the approver must be someone other than whoever raised the request --
-    // same guard cost-centre-management.service.ts's approveL1/approveL2 use.
-    if (actorUserId && actorUserId === request.requested_by) {
-      throw new CompanyBankAccountError(
-        "Opening balance change approval must come from someone other than the person who requested it",
-        403,
-      );
-    }
-
-    await db.execute(
-      `UPDATE company_bank_account_balance_change_request
-          SET status = ?, decided_by = ?, decided_at = NOW(), decision_remarks = ?, updated_at = NOW()
-        WHERE id = ?`,
-      [decision, actorUserId, remarks?.trim() || null, requestId],
-    );
-
-    if (decision === "approved") {
-      const [result] = await db.execute<ResultSetHeader>(
-        `UPDATE company_bank_account SET opening_balance = ?, updated_by = ?, updated_at = NOW() WHERE id = ?`,
-        [Number(request.requested_value), actorUserId, request.bank_account_id],
-      );
-      if (result.affectedRows !== 1) throw new CompanyBankAccountError("Bank account not found", 404);
-    }
-
-    await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type:
-        decision === "approved"
-          ? "COMPANY_BANK_ACCOUNT_BALANCE_CHANGE_APPROVED"
-          : "COMPANY_BANK_ACCOUNT_BALANCE_CHANGE_REJECTED",
-      module_key: "FINANCE",
-      entity_type: "company_bank_account",
-      entity_id: request.bank_account_id,
-      change_summary: {
-        current_value: request.current_value,
-        requested_value: request.requested_value,
-        requested_by: request.requested_by,
-        remarks: remarks?.trim() || null,
-      },
-    }).catch(() => undefined);
-
-    return this.getBalanceChangeRequest(requestId);
   },
 
   /** Drill-down mandate's "Audit trail" section — sensitive_action_log is the only audit table
