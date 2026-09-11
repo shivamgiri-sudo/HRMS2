@@ -41,6 +41,13 @@ export interface ManualReviewGapRow {
  * Read-only, masked — the same mask every other bank-readiness screen uses.
  */
 export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
+  // ats_candidate carries more than one row per employee_code in practice (re-applications,
+  // duplicate imports), and candidate_bank_verification can hold more than one attempt per
+  // candidate — so "one row per employee" needs the LATEST verification explicitly picked,
+  // not a bare GROUP BY e.id (which mas_hrms's own sql_mode=only_full_group_by correctly
+  // refuses: every non-aggregated selected column has to be functionally dependent on the
+  // group key, and candidate_id/ifsc_code/etc. are not). Caught live, 2026-09-11 — this was
+  // a real 500 on first deploy, not a hypothetical.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -48,18 +55,30 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
             v.candidate_id, v.ifsc_code, v.input_account_holder_name AS account_holder_name,
             v.name_match_score, v.verified_at,
             c.bank_account_no
-       FROM candidate_bank_verification v
+       FROM (
+         SELECT v1.*
+           FROM candidate_bank_verification v1
+           JOIN (
+             SELECT candidate_id, MAX(COALESCE(verified_at, created_at)) AS latest
+               FROM candidate_bank_verification
+              WHERE verification_status = 'manual_review'
+              GROUP BY candidate_id
+           ) latest ON latest.candidate_id = v1.candidate_id
+                   AND COALESCE(v1.verified_at, v1.created_at) = latest.latest
+          WHERE v1.verification_status = 'manual_review'
+       ) v
        JOIN ats_candidate c ON c.id = v.candidate_id
        JOIN employees e ON e.employee_code = c.employee_code
        LEFT JOIN branch_master b ON b.id = e.branch_id
-      WHERE v.verification_status = 'manual_review'
-        AND e.active_status = 1
+      WHERE e.active_status = 1
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
         AND NOT EXISTS (
           SELECT 1 FROM employee_bank_detail ebd
            WHERE ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
         )
-      GROUP BY e.id
+      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name,
+               v.candidate_id, v.ifsc_code, v.input_account_holder_name, v.name_match_score,
+               v.verified_at, c.bank_account_no
       ORDER BY v.verified_at DESC`,
   );
 
