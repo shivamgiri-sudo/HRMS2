@@ -53,6 +53,17 @@ type AssignForm    = { employee_id: string; notes: string };
 type ReturnForm    = { condition: string };
 type ServiceForm   = { service_type: string; service_date: string; cost: string; performed_by: string; service_notes: string };
 
+const ASSET_TYPES: Record<string, string[]> = {
+  "Electronics": ["Laptop", "Desktop", "Monitor", "Mobile Phone", "Tablet", "Printer", "Scanner", "Camera", "Headset"],
+  "IT Equipment": ["Server", "Router", "Switch", "UPS", "Access Point", "Firewall", "NAS"],
+  "Furniture": ["Chair", "Desk", "Table", "Cupboard", "Cabinet", "Shelf", "Sofa"],
+  "Vehicle": ["Car", "Bike", "Scooter", "Van", "Bus"],
+  "Office Supply": ["Stationery Kit", "Whiteboard", "Projector", "Flipchart"],
+  "Other": ["Other"],
+};
+
+const ASSET_CATEGORIES = Object.keys(ASSET_TYPES);
+
 const EMPTY_ADD: AddAssetForm = {
   asset_code: "", asset_name: "", asset_category: "", asset_type: "", serial_number: "",
   purchase_date: "", purchase_cost: "", vendor: "", warranty_expiry: "", branch_id: "", notes: "",
@@ -517,13 +528,16 @@ export default function NativeAssetsManager() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Category">
-                  <select value={addForm.asset_category} onChange={(e) => setAddForm({ ...addForm, asset_category: e.target.value })} className={inputCls}>
+                  <select value={addForm.asset_category} onChange={(e) => setAddForm({ ...addForm, asset_category: e.target.value, asset_type: "" })} className={inputCls}>
                     <option value="">Select…</option>
-                    {["Electronics", "Furniture", "Vehicle", "IT Equipment", "Office Supply", "Other"].map((c) => <option key={c} value={c}>{c}</option>)}
+                    {ASSET_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </Field>
                 <Field label="Asset Type">
-                  <input value={addForm.asset_type} onChange={(e) => setAddForm({ ...addForm, asset_type: e.target.value })} placeholder="e.g. Laptop" className={inputCls} />
+                  <select value={addForm.asset_type} onChange={(e) => setAddForm({ ...addForm, asset_type: e.target.value })} className={inputCls} disabled={!addForm.asset_category}>
+                    <option value="">{addForm.asset_category ? "Select type…" : "Select category first"}</option>
+                    {(ASSET_TYPES[addForm.asset_category] ?? []).map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -584,13 +598,19 @@ export default function NativeAssetsManager() {
                   <input value={editForm.asset_name ?? ""} onChange={(e) => setEditForm({ ...editForm, asset_name: e.target.value })} className={inputCls} />
                 </Field>
                 <Field label="Category">
-                  <select value={editForm.asset_category ?? ""} onChange={(e) => setEditForm({ ...editForm, asset_category: e.target.value })} className={inputCls}>
+                  <select value={editForm.asset_category ?? ""} onChange={(e) => setEditForm({ ...editForm, asset_category: e.target.value, asset_type: "" })} className={inputCls}>
                     <option value="">Select…</option>
-                    {["Electronics", "Furniture", "Vehicle", "IT Equipment", "Office Supply", "Other"].map((c) => <option key={c} value={c}>{c}</option>)}
+                    {ASSET_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
+                <Field label="Asset Type">
+                  <select value={editForm.asset_type ?? ""} onChange={(e) => setEditForm({ ...editForm, asset_type: e.target.value })} className={inputCls} disabled={!editForm.asset_category}>
+                    <option value="">{editForm.asset_category ? "Select type…" : "Select category first"}</option>
+                    {(ASSET_TYPES[editForm.asset_category ?? ""] ?? []).map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </Field>
                 <Field label="Serial Number">
                   <input value={editForm.serial_number ?? ""} onChange={(e) => setEditForm({ ...editForm, serial_number: e.target.value })} className={inputCls} />
                 </Field>
