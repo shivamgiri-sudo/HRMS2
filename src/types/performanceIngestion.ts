@@ -1,4 +1,4 @@
-export type PerformanceSourceType = "mysql" | "mssql" | "excel" | "csv" | "google_sheet";
+export type PerformanceSourceType = "mysql" | "mssql" | "excel" | "csv";
 export type PerformanceAggregation = "sum" | "average" | "weighted_average" | "ratio" | "latest";
 
 export type PerformanceMetricBinding = {
