@@ -9,6 +9,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   createImportBatch,
   getImportBatch,
+  listImportBatches,
   getImportRows,
   commitImportBatch,
   updateImportRow,
@@ -121,6 +122,29 @@ rosterImportRouter.get(
     } catch (err: any) {
       console.error('[roster-import] GET branches error:', err);
       res.status(500).json({ error: 'Failed to load branches' });
+    }
+  }
+);
+
+// ── GET /api/wfm/roster-imports ───────────────────────────────────────────
+// List batches so any WFM-role user can find one to open/commit, even one they did not upload
+// themselves — previously there was no way to discover a batch's id at all (see listImportBatches
+// docblock). Defaults to open (non-terminal) batches; pass ?status=COMMITTED,FAILED for history.
+rosterImportRouter.get(
+  '/',
+  requireRole(...WFM_ROLES),
+  async (req, res) => {
+    try {
+      const statusParam = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const status = statusParam
+        ? statusParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+        : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
+      const batches = await listImportBatches({ status, limit });
+      res.json({ batches });
+    } catch (err: any) {
+      console.error('[roster-import] GET list error:', err);
+      res.status(500).json({ error: 'Failed to list import batches' });
     }
   }
 );

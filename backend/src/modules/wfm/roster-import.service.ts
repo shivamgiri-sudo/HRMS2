@@ -588,6 +588,72 @@ export async function getImportBatch(
   return { batch, summary };
 }
 
+// ── listImportBatches ────────────────────────────────────────────────────────
+
+export interface ImportBatchListItem {
+  id: number;
+  status: string;
+  file_name: string;
+  import_mode: string;
+  total_rows: number | null;
+  valid_rows: number | null;
+  warning_rows: number | null;
+  error_rows: number | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  date_range_start: string | null;
+  date_range_end: string | null;
+  created_by: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  committed_by: string | null;
+  committed_at: string | null;
+}
+
+/**
+ * List roster import batches so any WFM-role user can find one to open and commit — even a batch
+ * they did not upload themselves. There was previously no way to discover a batch's id at all
+ * except knowing it in advance (the frontend's "open by id" box), which meant a batch nobody
+ * remembered the id of was invisible to everyone, uploader and super_admin alike. Real gap: found
+ * live 2026-09-11 with 3 genuine pending batches (ids 51-53) sitting uncommitted with no way for
+ * any user to see them.
+ *
+ * Defaults to open (non-terminal) batches only: PARSING, PREVIEW, VALIDATING, READY. Pass
+ * `status` to see COMMITTED/FAILED/CANCELLED history instead.
+ */
+export async function listImportBatches(options: {
+  status?: string[];
+  limit?: number;
+}): Promise<ImportBatchListItem[]> {
+  const statuses =
+    options.status && options.status.length > 0
+      ? options.status
+      : ['PARSING', 'PREVIEW', 'VALIDATING', 'READY'];
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const placeholders = statuses.map(() => '?').join(',');
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT
+       b.id, b.status, b.file_name, b.import_mode,
+       b.total_rows, b.valid_rows, b.warning_rows, b.error_rows,
+       b.branch_id, br.branch_name,
+       b.process_id, p.process_name,
+       b.date_range_start, b.date_range_end,
+       b.created_by, u.email AS created_by_email,
+       b.created_at, b.committed_by, b.committed_at
+     FROM wfm_roster_import_batch b
+     LEFT JOIN branch_master br ON br.id = b.branch_id
+     LEFT JOIN process_master p ON p.id = b.process_id
+     LEFT JOIN auth_user u ON u.id = b.created_by
+     WHERE b.status IN (${placeholders})
+     ORDER BY b.created_at DESC
+     LIMIT ${limit}`,
+    statuses
+  );
+  return rows as unknown as ImportBatchListItem[];
+}
+
 // ── Commit types ─────────────────────────────────────────────────────────────
 
 export interface CommitResult {

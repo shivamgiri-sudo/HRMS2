@@ -73,6 +73,26 @@ interface ImportBatch {
   branch_id?: string | null;
 }
 
+interface PendingBatch {
+  id: number;
+  status: string;
+  file_name: string;
+  import_mode: "NEW" | "UPDATE";
+  total_rows: number | null;
+  valid_rows: number | null;
+  warning_rows: number | null;
+  error_rows: number | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  date_range_start: string | null;
+  date_range_end: string | null;
+  created_by: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
 interface ImportRow {
   id: number;
   row_number: number;
@@ -336,6 +356,16 @@ export default function RosterImportPage() {
     enabled: uploadScope === "branch",
   });
   const branches: Branch[] = branchData?.branches ?? [];
+
+  // Pending import batches — every open (uncommitted) batch, from any uploader. Only fetched
+  // while no batch is open, since once one is open this list isn't shown.
+  const { data: pendingData, isLoading: pendingLoading } = useQuery({
+    queryKey: ["roster-import-pending-batches"],
+    queryFn: () =>
+      hrmsApi.get<{ batches: PendingBatch[] }>("/api/wfm/roster-imports"),
+    enabled: !batchId,
+  });
+  const pendingBatches: PendingBatch[] = pendingData?.batches ?? [];
 
   // Current batch
   const { data: batchData, isLoading: batchLoading } = useQuery({
@@ -656,34 +686,92 @@ export default function RosterImportPage() {
           )}
         </div>
 
-        {/* Open an existing pending batch by ID — the interim escape hatch for a checker who
-            did not do the upload themselves (see batchId state above for why this exists). */}
+        {/* Pending imports — every open (uncommitted) batch from any uploader, so a checker who
+            did not do the upload themselves (or the uploader who lost track of the tab) can find
+            and open it. Previously there was no way to discover a batch's id at all except
+            knowing it in advance; found live 2026-09-11 with 3 real batches sitting invisible. */}
         {!batchId && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <span className="text-sm text-slate-600 whitespace-nowrap">Open a pending import by ID:</span>
-            <Input
-              value={openBatchInput}
-              onChange={(e) => setOpenBatchInput(e.target.value)}
-              placeholder="e.g. 51"
-              className="h-8 w-28"
-              inputMode="numeric"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!openBatchInput.trim()}
-              onClick={() => {
-                const parsed = parseInt(openBatchInput, 10);
-                if (Number.isFinite(parsed)) {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("batchId", String(parsed));
-                  window.history.replaceState(null, "", url.toString());
-                  setBatchId(parsed);
-                }
-              }}
-            >
-              Open
-            </Button>
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
+              <span className="text-sm font-semibold text-slate-700">Pending imports (not yet committed)</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2"
+                onClick={() => qc.invalidateQueries({ queryKey: ["roster-import-pending-batches"] })}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            {pendingLoading ? (
+              <div className="p-3 text-sm text-slate-400">Loading…</div>
+            ) : pendingBatches.length === 0 ? (
+              <div className="p-3 text-sm text-slate-400">No pending imports right now.</div>
+            ) : (
+              <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                {pendingBatches.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-slate-100 flex items-center justify-between gap-3"
+                    onClick={() => {
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("batchId", String(b.id));
+                      window.history.replaceState(null, "", url.toString());
+                      setBatchId(b.id);
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">
+                        {b.file_name} <span className="text-slate-400 font-normal">#{b.id}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {b.branch_name ?? b.process_name ?? "—"} · {b.date_range_start ?? "?"}–{b.date_range_end ?? "?"} · uploaded by{" "}
+                        {b.created_by_email ?? b.created_by ?? "unknown"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="text-xs">{b.status}</Badge>
+                      {(b.error_rows ?? 0) > 0 && (
+                        <Badge variant="destructive" className="text-xs">{b.error_rows} errors</Badge>
+                      )}
+                      {(b.warning_rows ?? 0) > 0 && (b.error_rows ?? 0) === 0 && (
+                        <Badge className="text-xs bg-amber-100 text-amber-700 hover:bg-amber-100">{b.warning_rows} warnings</Badge>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Fallback: open by id directly, in case a batch is somehow outside this list's
+                default status filter (e.g. a status this list doesn't default to showing). */}
+            <div className="flex items-center gap-2 px-3 py-2 border-t border-slate-200">
+              <span className="text-xs text-slate-500 whitespace-nowrap">Or open by ID:</span>
+              <Input
+                value={openBatchInput}
+                onChange={(e) => setOpenBatchInput(e.target.value)}
+                placeholder="e.g. 51"
+                className="h-7 w-24 text-xs"
+                inputMode="numeric"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                disabled={!openBatchInput.trim()}
+                onClick={() => {
+                  const parsed = parseInt(openBatchInput, 10);
+                  if (Number.isFinite(parsed)) {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("batchId", String(parsed));
+                    window.history.replaceState(null, "", url.toString());
+                    setBatchId(parsed);
+                  }
+                }}
+              >
+                Open
+              </Button>
+            </div>
           </div>
         )}
 
