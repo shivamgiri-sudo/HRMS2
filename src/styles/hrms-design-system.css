@@ -173,6 +173,12 @@
     --r-3xl:  24px;
     --r-pill: 9999px;
 
+    /* ── Guideline §4.3 radius aliases ─────────────────── */
+    --radius-card:   var(--r-lg);    /* 12px — cards, table containers */
+    --radius-drawer: var(--r-xl);    /* 16px — drawers, dialogs */
+    --radius-input:  var(--r-sm);    /* 6px  — inputs, buttons, badges */
+    --radius-hero:   var(--r-xl);    /* 16px — hero / large overview */
+
     /* ── Spacing (4pt grid) ──────────────────────────────── */
     --sp-1:   4px;
     --sp-2:   8px;
