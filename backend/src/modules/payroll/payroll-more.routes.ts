@@ -692,6 +692,45 @@ payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_adm
   return res.status(201).json({ success: true, data: rows[0] });
 }));
 
+payrollMoreRouter.get("/holiday-work/requests/:id", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT hwr.*,
+            lhm.holiday_name, lhm.holiday_type,
+            hwp.payout_type, hwp.extra_multiplier AS payout_rate_multiplier,
+            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS requested_by_name,
+            bm.branch_name,
+            pm.process_name
+       FROM holiday_work_request hwr
+       LEFT JOIN leave_holiday_master lhm ON lhm.id = hwr.holiday_id
+       LEFT JOIN holiday_work_policy_master hwp ON hwp.id = hwr.payout_policy_id
+       LEFT JOIN employees e ON e.id = hwr.requested_by
+       LEFT JOIN branch_master bm ON bm.id = hwr.branch_id
+       LEFT JOIN process_master pm ON pm.id = hwr.process_id
+      WHERE hwr.id = ?
+      LIMIT 1`,
+    [id]
+  );
+  if (!rows[0]) return res.status(404).json({ success: false, message: "Not found" });
+  const [designations] = await db.execute<RowDataPacket[]>(
+    `SELECT hwrd.designation_id, dm.designation_name
+       FROM holiday_work_request_designation hwrd
+       LEFT JOIN designation_master dm ON dm.id = hwrd.designation_id
+      WHERE hwrd.request_id = ?`,
+    [id]
+  );
+  const [approvalLog] = await db.execute<RowDataPacket[]>(
+    `SELECT hwal.*,
+            COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS approver_name
+       FROM holiday_work_approval_log hwal
+       LEFT JOIN employees e ON e.id = hwal.approver_id
+      WHERE hwal.request_id = ?
+      ORDER BY hwal.created_at ASC`,
+    [id]
+  );
+  return res.json({ success: true, data: { ...rows[0], designations, approvalLog } });
+}));
+
 payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { action, remarks } = req.body as { action: "approve" | "reject"; remarks?: string };

@@ -11,7 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ── shared constants ─────────────────────────────────────────────────────────
@@ -221,13 +221,21 @@ function ApprovalsTab() {
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<ApprovalRequest | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
+
+  const { data: detailEnv, isLoading: detailLoading } = useQuery({
+    queryKey: ["holiday-work-request-detail", selectedId],
+    queryFn: () => hrmsApi.get<any>(`/api/payroll/holiday-work/requests/${selectedId}`),
+    enabled: !!selectedId,
+    staleTime: 30_000,
+  });
+  const detail = (detailEnv as any)?.data ?? null;
 
   const fetchRequests = useCallback(() => {
     setLoading(true); setError(null);
@@ -243,13 +251,13 @@ function ApprovalsTab() {
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
   const submitAction = async (action: "approve" | "reject") => {
-    if (!selected) return;
+    if (!selectedId) return;
     setSubmitting(true); setActionError(null);
     try {
-      await hrmsApi.patch(`/api/payroll/holiday-work/requests/${selected.id}/approve`, { action, remarks });
+      await hrmsApi.patch(`/api/payroll/holiday-work/requests/${selectedId}/approve`, { action, remarks });
       setActionSuccess(action === "approve" ? "Request approved." : "Request rejected.");
       fetchRequests();
-      setTimeout(() => { setSelected(null); setRemarks(""); setActionError(null); setActionSuccess(null); setSubmitting(false); }, 1200);
+      setTimeout(() => { setSelectedId(null); setRemarks(""); setActionError(null); setActionSuccess(null); setSubmitting(false); }, 1200);
     } catch (e: any) { setActionError(e.message ?? "Action failed"); setSubmitting(false); }
   };
 
@@ -277,13 +285,17 @@ function ApprovalsTab() {
           <tbody>
             {loading && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>}
             {!loading && requests.map(req => (
-              <tr key={req.id} className="border-t hover:bg-muted/30">
+              <tr
+                key={req.id}
+                className="border-t hover:bg-muted/30 cursor-pointer"
+                onClick={() => { setSelectedId(String(req.id)); setRemarks(""); setActionError(null); setActionSuccess(null); }}
+              >
                 <td className="px-4 py-2 whitespace-nowrap"><div className="font-medium">{(req as any).holiday_name ?? "—"}</div><div className="text-xs text-muted-foreground">{req.holiday_date?.slice(0,10)}</div></td>
-                <td className="px-4 py-2 text-xs">{req.branch_id ?? "—"}</td>
-                <td className="px-4 py-2 text-xs">{req.process_id ?? "—"}</td>
+                <td className="px-4 py-2 text-xs">{(req as any).branch_name ?? req.branch_id ?? "—"}</td>
+                <td className="px-4 py-2 text-xs">{(req as any).process_name ?? req.process_id ?? "—"}</td>
                 <td className="px-4 py-2 text-xs">{req.requested_by_name ?? "—"}</td>
                 <td className="px-4 py-2"><span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_BADGE[req.status] ?? "bg-gray-100 text-gray-700"}`}>{STAGE_LABELS[req.status] ?? req.status?.replace(/_/g," ")}</span></td>
-                <td className="px-4 py-2"><Button size="sm" variant="outline" onClick={() => { setSelected(req); setRemarks(""); setActionError(null); setActionSuccess(null); }}>Review</Button></td>
+                <td className="px-4 py-2 text-xs text-muted-foreground">View →</td>
               </tr>
             ))}
             {!loading && requests.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">No requests found.</td></tr>}
@@ -291,35 +303,87 @@ function ApprovalsTab() {
         </table>
       </div>
 
-      <Dialog open={!!selected} onOpenChange={open => { if (!open) { setSelected(null); setRemarks(""); setActionError(null); setActionSuccess(null); } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Review Holiday Work Request</DialogTitle></DialogHeader>
-          {selected && (
-            <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-2 bg-muted/40 rounded-lg p-3">
-                <div><span className="font-medium">Holiday:</span> {(selected as any).holiday_name ?? "—"}</div>
-                <div><span className="font-medium">Date:</span> {selected.holiday_date?.slice(0,10)}</div>
-                <div><span className="font-medium">Branch:</span> {selected.branch_id ?? "All"}</div>
-                <div><span className="font-medium">Process:</span> {selected.process_id ?? "All"}</div>
-                <div><span className="font-medium">Requested by:</span> {selected.requested_by_name ?? "—"}</div>
-                <div><span className="font-medium">Status:</span> <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_BADGE[selected.status] ?? "bg-gray-100 text-gray-700"}`}>{STAGE_LABELS[selected.status] ?? selected.status?.replace(/_/g," ")}</span></div>
-                {selected.request_reason && <div className="col-span-2"><span className="font-medium">Reason:</span> {selected.request_reason}</div>}
-              </div>
-              <div>
-                <label className="block font-medium mb-1">Your Remarks</label>
-                <textarea className="w-full border rounded-lg px-3 py-2 text-sm resize-none bg-background" rows={3} placeholder="Enter remarks (optional)…" value={remarks} onChange={e => setRemarks(e.target.value)} />
-              </div>
-              {actionError && <div className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{actionError}</div>}
-              {actionSuccess && <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-1">{actionSuccess}</div>}
+      <Sheet open={!!selectedId} onOpenChange={open => { if (!open) { setSelectedId(null); setRemarks(""); setActionError(null); setActionSuccess(null); } }}>
+        <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto flex flex-col">
+          <SheetHeader className="border-b pb-3">
+            <div className="flex items-center justify-between">
+              <SheetTitle>Holiday Work Request</SheetTitle>
+              {detail && <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_BADGE[detail.status] ?? "bg-gray-100 text-gray-700"}`}>{STAGE_LABELS[detail.status] ?? detail.status?.replace(/_/g," ")}</span>}
+            </div>
+            {detail && <p className="text-xs text-muted-foreground">{detail.created_at ? new Date(detail.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}</p>}
+          </SheetHeader>
+
+          {detailLoading && <div className="flex-1 flex items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" /></div>}
+
+          {detail && (
+            <div className="flex-1 space-y-5 py-4 text-sm overflow-y-auto">
+              <section>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Holiday Details</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div><span className="text-muted-foreground">Holiday</span><p className="font-medium">{detail.holiday_name ?? "—"}</p></div>
+                  <div><span className="text-muted-foreground">Date</span><p className="font-medium">{detail.holiday_date?.slice(0,10) ?? "—"}</p></div>
+                  <div><span className="text-muted-foreground">Type</span><p className="font-medium">{detail.holiday_type ?? "—"}</p></div>
+                  <div><span className="text-muted-foreground">Month</span><p className="font-medium">{detail.request_month?.slice(0,7) ?? "—"}</p></div>
+                </div>
+              </section>
+
+              <section>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Scope</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div><span className="text-muted-foreground">Branch</span><p className="font-medium">{detail.branch_name ?? "All"}</p></div>
+                  <div><span className="text-muted-foreground">Process</span><p className="font-medium">{detail.process_name ?? "All"}</p></div>
+                  <div><span className="text-muted-foreground">Requested by</span><p className="font-medium">{detail.requested_by_name ?? "—"}</p></div>
+                  <div><span className="text-muted-foreground">Payout policy</span><p className="font-medium">{detail.payout_type ?? "—"}{detail.payout_rate_multiplier ? ` (×${detail.payout_rate_multiplier})` : ""}</p></div>
+                </div>
+                {detail.request_reason && <div className="mt-2"><span className="text-muted-foreground">Reason</span><p className="mt-0.5">{detail.request_reason}</p></div>}
+              </section>
+
+              <section>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Eligible Designations</p>
+                {detail.designations?.length ? (
+                  <div className="flex flex-wrap gap-1.5">{detail.designations.map((d: any) => <span key={d.designation_id} className="text-xs bg-slate-100 text-slate-700 rounded px-2 py-0.5">{d.designation_name ?? d.designation_id}</span>)}</div>
+                ) : <p className="text-muted-foreground text-xs">None — all designations eligible</p>}
+              </section>
+
+              <section>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Approval Log</p>
+                {detail.approvalLog?.length ? (
+                  <div className="space-y-2">
+                    {detail.approvalLog.map((entry: any, i: number) => (
+                      <div key={i} className="flex items-start gap-3 rounded-lg border bg-slate-50 px-3 py-2 text-xs">
+                        <span className={`mt-0.5 inline-block rounded-full px-1.5 py-0.5 font-medium ${entry.action === "approved" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{entry.action}</span>
+                        <div className="flex-1">
+                          <p className="font-medium">{entry.approver_name ?? entry.approver_role}</p>
+                          {entry.remarks && <p className="text-muted-foreground mt-0.5">{entry.remarks}</p>}
+                          <p className="text-muted-foreground">{entry.created_at ? new Date(entry.created_at).toLocaleDateString("en-GB") : ""}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="text-muted-foreground text-xs">None</p>}
+              </section>
+
+              {APPROVAL_ROLES.some(r => roleKeys.includes(r)) && detail.status === "submitted" && (
+                <section className="border-t pt-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Review Action</p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium mb-1">Remarks (optional)</label>
+                      <textarea className="w-full border rounded-lg px-3 py-2 text-sm resize-none bg-background" rows={3} placeholder="Enter remarks…" value={remarks} onChange={e => setRemarks(e.target.value)} />
+                    </div>
+                    {actionError && <div className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{actionError}</div>}
+                    {actionSuccess && <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-1">{actionSuccess}</div>}
+                    <div className="flex gap-2">
+                      <Button variant="destructive" size="sm" disabled={submitting} onClick={() => submitAction("reject")}>{submitting ? "…" : "Reject"}</Button>
+                      <Button size="sm" disabled={submitting} onClick={() => submitAction("approve")}>{submitting ? "…" : "Approve"}</Button>
+                    </div>
+                  </div>
+                </section>
+              )}
             </div>
           )}
-          <DialogFooter className="gap-2">
-            <Button variant="ghost" onClick={() => { setSelected(null); setRemarks(""); }} disabled={submitting}>Cancel</Button>
-            <Button variant="destructive" disabled={submitting} onClick={() => submitAction("reject")}>{submitting ? "…" : "Reject"}</Button>
-            <Button disabled={submitting} onClick={() => submitAction("approve")}>{submitting ? "…" : "Approve"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
