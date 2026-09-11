@@ -68,6 +68,21 @@ companyBankAccountRouter.get(
   }),
 );
 
+/** Opening-balance maker-checker (migration 1753). MUST be registered before the bare
+ *  "/:id" route below — Express matches routes in registration order, and "/:id" is a
+ *  single-segment wildcard that would otherwise swallow "/balance-change-requests" as if
+ *  it were an account id (the exact route-shadowing bug this codebase has hit before —
+ *  see exit-status router shadowing). */
+companyBankAccountRouter.get(
+  "/balance-change-requests",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const status = req.query.status ? String(req.query.status) as "pending" | "approved" | "rejected" : undefined;
+    const data = await companyBankAccountService.listBalanceChangeRequests(undefined, status);
+    res.json({ success: true, data });
+  }),
+);
+
 companyBankAccountRouter.get(
   "/:id",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
@@ -75,6 +90,72 @@ companyBankAccountRouter.get(
     const data = await companyBankAccountService.get(req.params.id);
     if (!data) return res.status(404).json({ success: false, error: "Bank account not found" });
     res.json({ success: true, data });
+  }),
+);
+
+companyBankAccountRouter.post(
+  "/:id/balance-change-requests",
+  requireWriteAccess,
+  requireRole(...BANK_ACCOUNT_WRITE_ROLES),
+  h(async (req, res) => {
+    try {
+      const data = await companyBankAccountService.requestOpeningBalanceChange(
+        req.params.id,
+        Number(req.body?.requestedValue),
+        String(req.body?.reason ?? ""),
+        actor(req).id,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to raise the balance change request");
+    }
+  }),
+);
+
+companyBankAccountRouter.get(
+  "/:id/balance-change-requests",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const data = await companyBankAccountService.listBalanceChangeRequests(req.params.id);
+    res.json({ success: true, data });
+  }),
+);
+
+companyBankAccountRouter.post(
+  "/balance-change-requests/:requestId/approve",
+  requireWriteAccess,
+  requireRole(...BANK_ACCOUNT_WRITE_ROLES),
+  h(async (req, res) => {
+    try {
+      const data = await companyBankAccountService.decideOpeningBalanceChange(
+        req.params.requestId,
+        "approved",
+        actor(req).id,
+        req.body?.remarks,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to approve the balance change request");
+    }
+  }),
+);
+
+companyBankAccountRouter.post(
+  "/balance-change-requests/:requestId/reject",
+  requireWriteAccess,
+  requireRole(...BANK_ACCOUNT_WRITE_ROLES),
+  h(async (req, res) => {
+    try {
+      const data = await companyBankAccountService.decideOpeningBalanceChange(
+        req.params.requestId,
+        "rejected",
+        actor(req).id,
+        req.body?.remarks,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to reject the balance change request");
+    }
   }),
 );
 

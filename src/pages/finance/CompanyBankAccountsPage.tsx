@@ -13,6 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -35,6 +36,20 @@ type BankAccount = {
   updated_at: string;
 };
 
+type BalanceChangeRequest = {
+  id: string;
+  bank_account_id: string;
+  current_value: number;
+  requested_value: number;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  requested_by: string;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_remarks: string | null;
+};
+
 function money(value: unknown) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value ?? 0));
 }
@@ -55,12 +70,6 @@ const emptyForm = {
   branchId: "",
   tallyLedgerName: "",
   openingBalance: "0",
-  /** The "as of" date this opening balance is true on — the real bank statement/passbook
-   *  figure for a date you're confident about, not the account's creation date. This is what
-   *  makes an opening balance entered today stand in for months of transaction history that
-   *  never made it into HRMS: everything from this date forward is tracked by the system's
-   *  own ledger, so nothing earlier needs to be reconstructed. */
-  openingBalanceAsOf: new Date().toISOString().slice(0, 10),
 };
 
 export default function CompanyBankAccountsPage() {
@@ -69,6 +78,10 @@ export default function CompanyBankAccountsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [balanceRequestOpen, setBalanceRequestOpen] = useState(false);
+  const [balanceRequestValue, setBalanceRequestValue] = useState("");
+  const [balanceRequestReason, setBalanceRequestReason] = useState("");
+  const [decisionRemarks, setDecisionRemarks] = useState<Record<string, string>>({});
 
   const accountsQuery = useQuery({
     queryKey: ["company-bank-accounts"],
@@ -110,13 +123,68 @@ export default function CompanyBankAccountsPage() {
       } catch (e) {
         auditError = e instanceof Error ? e.message : "Failed to load audit trail";
       }
-      return { account: account.data, audit, auditError };
+      let balanceRequests: BalanceChangeRequest[] = [];
+      let balanceRequestsError: string | null = null;
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: BalanceChangeRequest[] }>(
+          `/api/finance/bank-accounts/${detailId}/balance-change-requests`,
+        );
+        balanceRequests = res.data ?? [];
+      } catch (e) {
+        balanceRequestsError = e instanceof Error ? e.message : "Failed to load balance change requests";
+      }
+      return { account: account.data, audit, auditError, balanceRequests, balanceRequestsError };
     },
     enabled: !!detailId,
   });
 
+  const requestBalanceChangeMutation = useMutation({
+    mutationFn: async () => {
+      if (!detailId) throw new Error("No account selected");
+      return (await hrmsApi.post(`/api/finance/bank-accounts/${detailId}/balance-change-requests`, {
+        requestedValue: Number(balanceRequestValue || 0),
+        reason: balanceRequestReason.trim(),
+      })).data;
+    },
+    onSuccess: () => {
+      toast({ title: "Balance change requested — awaiting a second approver" });
+      queryClient.invalidateQueries({ queryKey: ["company-bank-account-detail", detailId] });
+      setBalanceRequestOpen(false);
+      setBalanceRequestValue("");
+      setBalanceRequestReason("");
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const decideBalanceChangeMutation = useMutation({
+    mutationFn: async ({ requestId, decision }: { requestId: string; decision: "approve" | "reject" }) =>
+      (await hrmsApi.post(`/api/finance/bank-accounts/balance-change-requests/${requestId}/${decision}`, {
+        remarks: decisionRemarks[requestId] ?? "",
+      })).data,
+    onSuccess: (_data, vars) => {
+      toast({ title: vars.decision === "approve" ? "Balance change approved" : "Balance change rejected" });
+      queryClient.invalidateQueries({ queryKey: ["company-bank-account-detail", detailId] });
+      queryClient.invalidateQueries({ queryKey: ["company-bank-accounts"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const saveMutation = useMutation({
     mutationFn: async () => {
+      if (form.id) {
+        // Opening balance is intentionally excluded here — it cannot be changed via this
+        // edit form. See the "Request Balance Change" flow in the drawer, which requires
+        // a second, different approver before the value actually moves.
+        const payload = {
+          bankId: form.bankId,
+          accountName: form.accountName.trim(),
+          accountNumber: form.accountNumber?.trim() || undefined,
+          ifscCode: form.ifscCode.trim(),
+          branchId: form.branchId,
+          tallyLedgerName: form.tallyLedgerName.trim(),
+        };
+        return (await hrmsApi.put(`/api/finance/bank-accounts/${form.id}`, payload)).data;
+      }
       const payload = {
         bankId: form.bankId,
         accountName: form.accountName.trim(),
@@ -125,11 +193,7 @@ export default function CompanyBankAccountsPage() {
         branchId: form.branchId,
         tallyLedgerName: form.tallyLedgerName.trim(),
         openingBalance: Number(form.openingBalance || 0),
-        openingBalanceAsOf: form.openingBalanceAsOf || undefined,
       };
-      if (form.id) {
-        return (await hrmsApi.put(`/api/finance/bank-accounts/${form.id}`, payload)).data;
-      }
       return (await hrmsApi.post("/api/finance/bank-accounts", payload)).data;
     },
     onSuccess: () => {
@@ -270,25 +334,14 @@ export default function CompanyBankAccountsPage() {
               <Label>Tally Ledger Name</Label>
               <Input value={form.tallyLedgerName} onChange={(e) => setForm((f) => ({ ...f, tallyLedgerName: e.target.value }))} placeholder="Exact ledger name as it exists in Tally" />
             </div>
-            {!!form.id && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Changing Opening Balance here only takes effect if this account has never had a
-                Payment Voucher released against it. Once any payment has gone through, the
-                running balance in Bank Ledger continues from that payment, not from this field —
-                editing it will not correct an in-use account.
-              </div>
-            )}
             <div>
-              <Label>Opening Balance</Label>
-              <Input type="number" value={form.openingBalance} onChange={(e) => setForm((f) => ({ ...f, openingBalance: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Opening Balance As Of</Label>
-              <Input type="date" value={form.openingBalanceAsOf} onChange={(e) => setForm((f) => ({ ...f, openingBalanceAsOf: e.target.value }))} />
-              <p className="mt-1 text-xs text-slate-400">
-                The real bank statement figure on this date. Every payment made through HRMS after
-                this date is tracked automatically — earlier months don't need to be entered.
-              </p>
+              <Label>Opening Balance {form.id && <span className="text-xs text-slate-400">(locked — use 'Request Balance Change' in the account drawer)</span>}</Label>
+              <Input
+                type="number"
+                value={form.openingBalance}
+                disabled={!!form.id}
+                onChange={(e) => setForm((f) => ({ ...f, openingBalance: e.target.value }))}
+              />
             </div>
           </div>
           <DialogFooter>
@@ -299,6 +352,43 @@ export default function CompanyBankAccountsPage() {
               onClick={() => saveMutation.mutate()}
             >
               {form.id ? "Save Changes" : "Create Account"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Opening balance change request — maker-checker, requires a second approver */}
+      <Dialog open={balanceRequestOpen} onOpenChange={setBalanceRequestOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Request Opening Balance Change</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <p className="text-sm text-slate-500">
+              Current balance: <span className="font-semibold text-gray-800">{money(detailQuery.data?.account?.opening_balance)}</span>.
+              This does not change the balance — it raises a request that a different Finance Head/Accounts Head/Super Admin must approve.
+            </p>
+            <div>
+              <Label>New Opening Balance</Label>
+              <Input type="number" value={balanceRequestValue} onChange={(e) => setBalanceRequestValue(e.target.value)} />
+            </div>
+            <div>
+              <Label>Reason (required)</Label>
+              <Textarea
+                value={balanceRequestReason}
+                onChange={(e) => setBalanceRequestReason(e.target.value)}
+                placeholder="Why is this changing — e.g. correcting a migration error, reconciled against bank statement dated ..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="cursor-pointer" onClick={() => setBalanceRequestOpen(false)}>Cancel</Button>
+            <Button
+              className="cursor-pointer bg-amber-600 hover:bg-amber-700"
+              disabled={requestBalanceChangeMutation.isPending || !balanceRequestReason.trim()}
+              onClick={() => requestBalanceChangeMutation.mutate()}
+            >
+              Submit Request
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -330,12 +420,6 @@ export default function CompanyBankAccountsPage() {
                     <dt className="text-slate-500">IFSC</dt><dd className="font-mono text-gray-800">{detailQuery.data.account.ifsc_code}</dd>
                     <dt className="text-slate-500">Tally Ledger</dt><dd className="font-semibold text-gray-800">{detailQuery.data.account.tally_ledger_name}</dd>
                     <dt className="text-slate-500">Opening Balance</dt><dd className="font-semibold text-gray-800">{money(detailQuery.data.account.opening_balance)}</dd>
-                    <dt className="text-slate-500">As Of</dt>
-                    <dd className="text-gray-600">
-                      {detailQuery.data.account.opening_balance_as_of
-                        ? new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(detailQuery.data.account.opening_balance_as_of))
-                        : <span className="text-amber-600">Not set</span>}
-                    </dd>
                     <dt className="text-slate-500">Created</dt><dd className="text-gray-600">{dateTime(detailQuery.data.account.created_at)}</dd>
                     <dt className="text-slate-500">Updated</dt><dd className="text-gray-600">{dateTime(detailQuery.data.account.updated_at)}</dd>
                   </dl>
@@ -353,17 +437,23 @@ export default function CompanyBankAccountsPage() {
                           id: a.id, bankId: a.bank_id, accountName: a.account_name, accountNumber: "",
                           ifscCode: a.ifsc_code, branchId: a.branch_id, tallyLedgerName: a.tally_ledger_name,
                           openingBalance: String(a.opening_balance),
-                          // Falls back to today rather than "" — editing an account that already
-                          // has transactions can't actually move the running balance (see the
-                          // date field's own note below), so there's no live number to preserve
-                          // here; a blank date field would just read as a bug.
-                          openingBalanceAsOf: a.opening_balance_as_of ?? new Date().toISOString().slice(0, 10),
                         });
                         setDetailId(null);
                         setFormOpen(true);
                       }}
                     >
                       Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="cursor-pointer border-amber-200 text-amber-700 hover:bg-amber-50"
+                      onClick={() => {
+                        setBalanceRequestValue(String(detailQuery.data!.account.opening_balance));
+                        setBalanceRequestReason("");
+                        setBalanceRequestOpen(true);
+                      }}
+                    >
+                      Request Balance Change
                     </Button>
                     {detailQuery.data.account.active_status ? (
                       <Button
@@ -383,6 +473,80 @@ export default function CompanyBankAccountsPage() {
                       </Button>
                     )}
                   </div>
+                </section>
+
+                <section>
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Opening Balance Change Requests
+                  </h3>
+                  {detailQuery.data.balanceRequestsError ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Failed to load: {detailQuery.data.balanceRequestsError}
+                    </p>
+                  ) : detailQuery.data.balanceRequests.length === 0 ? (
+                    <p className="text-sm text-slate-400">None</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {detailQuery.data.balanceRequests.map((r) => (
+                        <li key={r.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-gray-800">
+                              {money(r.current_value)} → {money(r.requested_value)}
+                            </span>
+                            {r.status === "pending" && (
+                              <Badge className="border-amber-200 bg-amber-50 text-amber-700">Pending</Badge>
+                            )}
+                            {r.status === "approved" && (
+                              <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Approved</Badge>
+                            )}
+                            {r.status === "rejected" && (
+                              <Badge className="border-rose-200 bg-rose-50 text-rose-700">Rejected</Badge>
+                            )}
+                          </div>
+                          <p className="mt-1 text-slate-600">Reason: {r.reason}</p>
+                          <p className="mt-1 text-slate-400">Requested {dateTime(r.requested_at)}</p>
+                          {r.decided_at && (
+                            <p className="mt-1 text-slate-400">
+                              {r.status === "approved" ? "Approved" : "Rejected"} {dateTime(r.decided_at)}
+                              {r.decision_remarks ? ` — ${r.decision_remarks}` : ""}
+                            </p>
+                          )}
+                          {r.status === "pending" && (
+                            <div className="mt-2 space-y-1.5">
+                              <Textarea
+                                className="h-14 text-xs"
+                                placeholder="Approval/rejection remarks (optional)"
+                                value={decisionRemarks[r.id] ?? ""}
+                                onChange={(e) => setDecisionRemarks((d) => ({ ...d, [r.id]: e.target.value }))}
+                              />
+                              <div className="flex gap-1.5">
+                                <Button
+                                  size="sm"
+                                  className="cursor-pointer bg-emerald-600 hover:bg-emerald-700"
+                                  disabled={decideBalanceChangeMutation.isPending}
+                                  onClick={() => decideBalanceChangeMutation.mutate({ requestId: r.id, decision: "approve" })}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="cursor-pointer border-rose-200 text-rose-700 hover:bg-rose-50"
+                                  disabled={decideBalanceChangeMutation.isPending}
+                                  onClick={() => decideBalanceChangeMutation.mutate({ requestId: r.id, decision: "reject" })}
+                                >
+                                  Reject
+                                </Button>
+                              </div>
+                              <p className="text-[11px] text-slate-400">
+                                Must be approved by someone other than whoever requested it.
+                              </p>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </section>
 
                 <section>
