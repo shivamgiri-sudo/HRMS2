@@ -360,6 +360,28 @@ async function requestBlob(path: string): Promise<Blob> {
 }
 
 /**
+ * POST + binary response. Exists for downloads whose selection is too large for a GET query
+ * string — e.g. hundreds of employee_ids for a bank-file export blew past the URL length limit
+ * (a real 414 caught live, 2026-09-11: 797 ids in a query string). A GET+blob download stays the
+ * default everywhere else; only use this where the payload genuinely cannot fit a URL.
+ */
+async function requestPostBlob(path: string, body: unknown): Promise<Blob> {
+  const headers = getAuthHeader();
+  const normalizedPath = normalizeRequestPath(path);
+  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+
+/**
  * The envelope essentially every HRMS endpoint returns.
  *
  * Used as the DEFAULT type argument below. Without a default, `T` collapsed to `unknown`, so the
@@ -394,4 +416,5 @@ export const hrmsApi = {
   getRaw: (path: string) => requestRaw("GET", path),
   postForm: <T>(path: string, body: FormData) => requestForm<T>(path, body),
   getBlob: (path: string) => requestBlob(path),
+  postBlob: (path: string, body?: unknown) => requestPostBlob(path, body),
 };

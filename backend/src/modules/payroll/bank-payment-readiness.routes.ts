@@ -938,33 +938,60 @@ bankPaymentReadinessRouter.get(
   }),
 );
 
-/** GET /salary-transfer/export?run_id=&employee_ids=CSV — generate + download a new batch. */
-bankPaymentReadinessRouter.get(
-  "/salary-transfer/export",
-  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
-  h(async (req, res) => {
-    const runId = String(req.query.run_id ?? "").trim();
+/**
+ * run_id/employee_ids from either a GET query string or a POST JSON body.
+ *
+ * A GET with a long employee_ids CSV is what this replaced part of — real 414 caught live,
+ * 2026-09-11: 797 employee ids in a query string exceeds the URL length limit. GET stays
+ * supported (small selections, and matches the existing /payment-file anchor-tag download
+ * convention), but the frontend now uses POST once a selection is large.
+ */
+function readExportParams(req: any): { runId: string; employeeIds: string[] | null } {
+  const runId = String(req.query.run_id ?? req.body?.run_id ?? "").trim();
+  const rawIds = req.query.employee_ids ?? req.body?.employee_ids;
+  let employeeIds: string[] | null = null;
+  if (Array.isArray(rawIds)) {
+    employeeIds = rawIds.map((s) => String(s).trim()).filter(Boolean);
+  } else if (typeof rawIds === "string" && rawIds.trim()) {
+    employeeIds = rawIds.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return { runId, employeeIds: employeeIds && employeeIds.length ? employeeIds : null };
+}
+
+/**
+ * GET|POST /salary-transfer/export and /salary-transfer/reexport — generate + download a batch.
+ *
+ * GET remains supported for small selections (and matches the /payment-file anchor-tag download
+ * convention); POST exists because a GET query string has a hard length limit a large real
+ * selection can exceed (see readExportParams above). Shared handler so the two transports and
+ * the export/re-export pair don't drift from each other.
+ */
+function handleSalaryTransferExport(reexport: boolean) {
+  return h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId, employeeIds } = readExportParams(req);
     if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     if (!(await hasExportScope(req.authUser!.id))) {
       return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
-    const employeeIds = String(req.query.employee_ids ?? "").trim()
-      ? String(req.query.employee_ids).split(",").map((s) => s.trim()).filter(Boolean)
-      : null;
 
     let result;
     try {
-      result = await generateSalaryTransferBatch({ runId, userId: req.authUser!.id, employeeIds });
+      result = await generateSalaryTransferBatch({ runId, userId: req.authUser!.id, employeeIds, reexport });
     } catch (err: any) {
       if (err?.code === "NO_ELIGIBLE_ROWS") {
-        return res.status(409).json({ success: false, message: "No eligible employees to export for this run." });
+        return res.status(409).json({
+          success: false,
+          message: reexport
+            ? "No corrected employees are ready for re-export."
+            : "No eligible employees to export for this run.",
+        });
       }
       throw err;
     }
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
-      action_type: "SALARY_TRANSFER_FILE_GENERATED",
+      action_type: reexport ? "SALARY_TRANSFER_FILE_REEXPORTED" : "SALARY_TRANSFER_FILE_GENERATED",
       module_key: "payroll",
       entity_type: "salary_transfer_batch",
       entity_id: result.batch_id,
@@ -979,54 +1006,29 @@ bankPaymentReadinessRouter.get(
     res.setHeader("X-Batch-Number", result.batch_number);
     res.setHeader("X-Row-Count", String(result.row_count));
     return res.send(result.buffer);
-  }),
+  });
+}
+
+bankPaymentReadinessRouter.get(
+  "/salary-transfer/export",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  handleSalaryTransferExport(false),
+);
+bankPaymentReadinessRouter.post(
+  "/salary-transfer/export",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  handleSalaryTransferExport(false),
 );
 
-/**
- * GET /salary-transfer/reexport?run_id=&employee_ids=CSV — same as /export, corrected_ready
- * population only. GET rather than POST to match the existing anchor-tag download convention
- * this codebase already uses for /payment-file and /salary-transfer/export, even though it
- * does create a new batch — the same side-effecting-GET pattern those two already establish.
- */
 bankPaymentReadinessRouter.get(
   "/salary-transfer/reexport",
   requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
-  h(async (req, res) => {
-    const runId = String(req.query.run_id ?? "").trim();
-    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
-    if (!(await hasExportScope(req.authUser!.id))) {
-      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
-    }
-    const employeeIds = String(req.query.employee_ids ?? "").trim()
-      ? String(req.query.employee_ids).split(",").map((s) => s.trim()).filter(Boolean)
-      : null;
-
-    let result;
-    try {
-      result = await generateSalaryTransferBatch({ runId, userId: req.authUser!.id, employeeIds, reexport: true });
-    } catch (err: any) {
-      if (err?.code === "NO_ELIGIBLE_ROWS") {
-        return res.status(409).json({ success: false, message: "No corrected employees are ready for re-export." });
-      }
-      throw err;
-    }
-
-    void logSensitiveAction({
-      actor_user_id: req.authUser!.id,
-      action_type: "SALARY_TRANSFER_FILE_REEXPORTED",
-      module_key: "payroll",
-      entity_type: "salary_transfer_batch",
-      entity_id: result.batch_id,
-      change_summary: { run_id: runId, row_count: result.row_count, total_amount: result.total_amount },
-      req: req as never,
-    });
-
-    res.setHeader("Content-Type", "application/vnd.ms-excel");
-    res.setHeader("Content-Disposition", `attachment; filename="${result.file_name}"`);
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    return res.send(result.buffer);
-  }),
+  handleSalaryTransferExport(true),
+);
+bankPaymentReadinessRouter.post(
+  "/salary-transfer/reexport",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  handleSalaryTransferExport(true),
 );
 
 /** GET /salary-transfer/items?run_id= — the workflow queue: exported / rejected / corrected_ready / confirmed. */
