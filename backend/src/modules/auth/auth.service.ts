@@ -352,6 +352,45 @@ export const authService = {
 
       const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
 
+      // SEC-06: a temporary-password account used to skip 2FA AND receive a
+      // normal, full-scope access token — it could call any API before ever
+      // changing the password. It now gets a short-lived, narrowly-scoped
+      // token that requireAuth accepts ONLY on POST /api/auth/change-password
+      // (see authMiddleware.ts's 'password_change' scope check), no refresh
+      // token, and no device session. MFA still runs on the *next* login,
+      // after the password has actually been changed.
+      if (mustChangePassword) {
+        const passwordChangeToken = jwt.sign(
+          { sub: user.id, email: user.email, scope: 'password_change' },
+          JWT_SECRET,
+          { expiresIn: PRE_AUTH_EXPIRES_IN }
+        );
+
+        if (req) {
+          writeSecurityEvent({
+            event_type: 'PASSWORD_VERIFIED',
+            severity: 'info',
+            actor_user_id: user.id,
+            title: `Password verified, forced password change required: ${user.email}`,
+            ip_address: req.ip ?? null,
+          });
+        }
+
+        return {
+          accessToken: passwordChangeToken,
+          refreshToken: null,
+          user: {
+            id: user.id,
+            email: user.email,
+            isBlocked: user.is_blocked === 1,
+            mustChangePassword: true,
+            isReadOnly: Boolean((user as any).is_read_only),
+            twoFactorRequired: false,
+            twoFactorVerified: false,
+          },
+        };
+      }
+
       // Fetch both org_settings in one query to avoid two sequential round-trips
       const [orgSettingRows] = await db.execute<OrgSettingRow[]>(
         `SELECT setting_key, setting_value FROM org_settings
@@ -362,7 +401,7 @@ export const authService = {
 
       // Check global 2FA toggle BEFORE creating any tokens
       const tfaEnabled = orgMap['two_factor_enabled'] !== 'false';
-      const twoFactorRequired = tfaEnabled && !mustChangePassword;
+      const twoFactorRequired = tfaEnabled;
 
       // SECURITY FIX: If 2FA is required, do NOT create refresh token yet.
       // Create a pre_auth_challenge instead. The refresh token is only created
@@ -745,39 +784,50 @@ export const authService = {
       throw Object.assign(new Error('Token is not a pre-auth token'), { statusCode: 400 });
     }
 
-    // Verify the pre_auth_challenge hasn't been consumed yet (single-use)
+    // SEC-07: atomically claim the pre_auth_challenge as the single-use guard, the
+    // same pattern already used by resetPassword() above. The old code did a plain
+    // SELECT-then-UPDATE — two concurrent exchanges could both pass the SELECT's
+    // "not consumed" check before either UPDATE landed, and both would go on to
+    // mint a session from one proof. `WHERE consumed_at IS NULL` in the UPDATE
+    // itself is the only check that can't race: exactly one caller can move the
+    // row from unconsumed, and only that caller proceeds.
     if (payload.challengeId) {
-      const [challengeRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, consumed_at FROM pre_auth_challenge
-         WHERE id = ? AND user_id = ? AND expires_at > NOW()`,
+      const [claim] = await db.execute<ResultSetHeader>(
+        `UPDATE pre_auth_challenge SET consumed_at = NOW()
+          WHERE id = ? AND user_id = ? AND expires_at > NOW() AND consumed_at IS NULL`,
         [payload.challengeId, payload.sub]
       );
-      if (!challengeRows.length) {
-        throw Object.assign(new Error('Pre-auth challenge not found or expired'), { statusCode: 401 });
-      }
-      if (challengeRows[0].consumed_at) {
-        throw Object.assign(new Error('Pre-auth challenge already consumed'), { statusCode: 401 });
+      if (claim.affectedRows !== 1) {
+        throw Object.assign(new Error('Pre-auth challenge not found, expired, or already consumed'), { statusCode: 401 });
       }
     }
 
-    // Confirm 2FA challenge is in verified state for this user
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM auth_two_factor_challenge
-        WHERE user_id = ? AND status = 'verified'
-          AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
-        ORDER BY verified_at DESC LIMIT 1`,
-      [payload.sub]
-    );
+    // Confirm 2FA is verified — bound to this exact login attempt's challengeId
+    // where that link exists (migration 1614), so a verification completed for a
+    // different concurrent login attempt by the same user cannot satisfy this one.
+    // Falls back to the old user-wide lookup only if the column isn't there yet.
+    let rows: RowDataPacket[];
+    try {
+      [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM auth_two_factor_challenge
+          WHERE user_id = ? AND status = 'verified'
+            AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+            AND (? IS NULL OR pre_auth_challenge_id = ?)
+          ORDER BY verified_at DESC LIMIT 1`,
+        [payload.sub, payload.challengeId ?? null, payload.challengeId ?? null]
+      );
+    } catch (err: any) {
+      if (err?.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM auth_two_factor_challenge
+          WHERE user_id = ? AND status = 'verified'
+            AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+          ORDER BY verified_at DESC LIMIT 1`,
+        [payload.sub]
+      );
+    }
     if (!rows.length) {
       throw Object.assign(new Error('2FA not verified or verification expired'), { statusCode: 401 });
-    }
-
-    // Mark pre_auth_challenge as consumed (single-use)
-    if (payload.challengeId) {
-      await db.execute(
-        'UPDATE pre_auth_challenge SET consumed_at = NOW() WHERE id = ?',
-        [payload.challengeId]
-      );
     }
 
     // Get user details and password_changed_at for token family
@@ -1015,6 +1065,29 @@ export const authService = {
     return { token, deliverTo: resolvedEmail };
   },
 
+  // SEC-05: every password mutation must invalidate everything issued before it —
+  // otherwise a stolen refresh token or device session outlives the reset that was
+  // supposed to kill it. `refreshAccess()` already has a comparison guard keyed on
+  // `password_changed_at`, but none of the three password-change paths ever wrote
+  // that column, so the guard could never fire. This closes that gap in one place.
+  async invalidateSessionsAfterPasswordChange(userId: string): Promise<void> {
+    await db.execute(
+      'UPDATE auth_user SET password_changed_at = NOW(), session_version = COALESCE(session_version, 0) + 1 WHERE id = ?',
+      [userId]
+    );
+    await db.execute('UPDATE auth_refresh_token SET revoked = 1 WHERE user_id = ? AND revoked = 0', [userId]);
+    try {
+      await db.execute(
+        `UPDATE user_device_sessions SET revoked_at = NOW()
+         WHERE user_id = ? AND revoked_at IS NULL`,
+        [userId]
+      );
+    } catch (error) {
+      // Non-blocking: device-session table may not carry this row shape everywhere.
+      console.error('[auth] Failed to revoke device sessions after password change:', error);
+    }
+  },
+
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     // Consume the token FIRST, and let the UPDATE be the check.
@@ -1042,6 +1115,7 @@ export const authService = {
     if (!rows[0]) throw Object.assign(new Error('Invalid or expired reset token'), { statusCode: 400 });
     const hash = await bcrypt.hash(newPassword, 10);
     await db.execute('UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?', [hash, rows[0].user_id]);
+    await this.invalidateSessionsAfterPasswordChange(rows[0].user_id);
     writeSecurityEvent({
       event_type: 'PASSWORD_RESET',
       severity: 'info',
@@ -1063,6 +1137,7 @@ export const authService = {
       'UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?',
       [hash, userId]
     );
+    await this.invalidateSessionsAfterPasswordChange(userId);
     writeSecurityEvent({
       event_type: 'PASSWORD_RESET',
       severity: 'info',
@@ -1212,5 +1287,6 @@ export const authService = {
     // Hash new password and update
     const newHash = await bcrypt.hash(newPassword, 12);
     await db.execute('UPDATE auth_user SET password_hash = ?, updated_at = NOW() WHERE id = ?', [newHash, userId]);
+    await this.invalidateSessionsAfterPasswordChange(userId);
   },
 };
