@@ -53,9 +53,18 @@ export const SALARY_TRANSFER_HEADER = [
   "Add details 1", "Add details 2", "Add details 3", "Add details 4", "Add details 5", "Remarks",
 ] as const;
 
+/**
+ * The first three values/labels are the exact wording already in real, established use — seen
+ * live in the branch payroll team's own working sheet (screenshot, 2026-09-11): "Incorrect IFSC
+ * Code", "Incorrect Bank Account Number", "System Generated Transfer Date Crossed". Kept as the
+ * literal strings rather than reworded, so this taxonomy matches what payroll staff already
+ * recognise. The remaining values extend that real list to cover the rest of the spec's
+ * rejection categories, which the working sheet doesn't (yet) enumerate.
+ */
 export const REJECTION_REASONS = [
-  "invalid_account_number",
-  "incorrect_ifsc",
+  "incorrect_ifsc_code",
+  "incorrect_bank_account_number",
+  "system_generated_transfer_date_crossed",
   "account_closed",
   "account_frozen_or_dormant",
   "beneficiary_name_mismatch",
@@ -68,8 +77,9 @@ export const REJECTION_REASONS = [
 export type RejectionReason = (typeof REJECTION_REASONS)[number];
 
 const REJECTION_REASON_LABELS: Record<RejectionReason, string> = {
-  invalid_account_number: "Invalid account number",
-  incorrect_ifsc: "Incorrect IFSC",
+  incorrect_ifsc_code: "Incorrect IFSC Code",
+  incorrect_bank_account_number: "Incorrect Bank Account Number",
+  system_generated_transfer_date_crossed: "System Generated Transfer Date Crossed",
   account_closed: "Account closed",
   account_frozen_or_dormant: "Account frozen or dormant",
   beneficiary_name_mismatch: "Beneficiary/name mismatch",
@@ -108,6 +118,23 @@ export interface TransferRow {
   bank_name: string | null;
   mobile: string | null;
   email: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  cost_centre_id: string | null;
+  cost_centre_name: string | null;
+  active_status: number;
+}
+
+export interface EligibleFilters {
+  branchId?: string | null;
+  processId?: string | null;
+  costCentreId?: string | null;
+  /** 'active' | 'inactive' | 'both'. Default 'active' — an inactive employee only ever appears
+   *  in this population at all because salary_prep_line already has a payable line for them
+   *  (a full-and-final settlement), so 'inactive'/'both' never invents eligibility, only reveals it. */
+  status?: "active" | "inactive" | "both";
 }
 
 /**
@@ -131,10 +158,15 @@ export async function getEligibleTransferRows(runId: string): Promise<TransferRo
     `SELECT spl.employee_id, spl.employee_code, spl.net_salary,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             e.mobile, COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+            e.active_status, e.branch_id, e.process_id, e.cost_centre_id,
+            b.branch_name, p.process_name, cc.cost_centre_name,
             ebd.account_number_enc, CAST(ebd.account_number AS CHAR) AS account_number_legacy,
             ebd.ifsc_code, ebd.bank_name
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN process_master p ON p.id = e.process_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
        LEFT JOIN employee_bank_detail ebd
               ON ebd.employee_id = spl.employee_id AND ebd.is_primary = 1 AND ebd.active_status = 1
       WHERE spl.run_id = ? AND COALESCE(spl.net_salary, 0) > 0`,
@@ -160,9 +192,31 @@ export async function getEligibleTransferRows(runId: string): Promise<TransferRo
       bank_name: line.bank_name ?? null,
       mobile: line.mobile ?? null,
       email: line.email ?? null,
+      branch_id: line.branch_id ?? null,
+      branch_name: line.branch_name ?? null,
+      process_id: line.process_id ?? null,
+      process_name: line.process_name ?? null,
+      cost_centre_id: line.cost_centre_id ?? null,
+      cost_centre_name: line.cost_centre_name ?? null,
+      active_status: Number(line.active_status ?? 0),
     });
   }
   return rows;
+}
+
+/** getEligibleTransferRows, narrowed by the selection filters — branch/process/cost-centre/status. */
+export async function getFilteredEligibleTransferRows(runId: string, filters: EligibleFilters): Promise<TransferRow[]> {
+  const rows = await getEligibleTransferRows(runId);
+  const status = filters.status ?? "active";
+  return rows.filter((r) => {
+    if (filters.branchId && r.branch_id !== filters.branchId) return false;
+    if (filters.processId && r.process_id !== filters.processId) return false;
+    if (filters.costCentreId && r.cost_centre_id !== filters.costCentreId) return false;
+    if (status === "active" && r.active_status !== 1) return false;
+    if (status === "inactive" && r.active_status === 1) return false;
+    // status === "both": no filter
+    return true;
+  });
 }
 
 /** Builds the 21-column AOA (array-of-arrays) matching the reference file's row shape. */

@@ -56,6 +56,7 @@ import {
 } from "./payroll-debit-account-config.service.js";
 import {
   generateSalaryTransferBatch,
+  getFilteredEligibleTransferRows,
   rejectTransferItems,
   markItemCorrectedReady,
   rejectionReasonLabel,
@@ -885,6 +886,57 @@ bankPaymentReadinessRouter.patch(
 // account numbers in the generated file exactly as that one does.
 
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+/**
+ * GET /salary-transfer/eligible?run_id=&branch_id=&process_id=&cost_centre_id=&status=
+ *
+ * The employee-selection grid: everyone eligible for a NEW export from this run (READY, not
+ * already open), narrowed by branch/process/cost-centre and active/inactive/both. Read-only —
+ * generation still happens through /export with an explicit employee_ids list built from
+ * whatever the caller selected here.
+ */
+bankPaymentReadinessRouter.get(
+  "/salary-transfer/eligible",
+  requireRole(...PAYROLL_EXPORT_ROLES, "super_admin", "admin"),
+  h(async (req, res) => {
+    const runId = String(req.query.run_id ?? "").trim();
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
+    if (!(await hasExportScope(req.authUser!.id))) {
+      return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+    const status = String(req.query.status ?? "active").trim().toLowerCase();
+    if (!["active", "inactive", "both"].includes(status)) {
+      return res.status(400).json({ success: false, message: "status must be active, inactive or both" });
+    }
+    const rows = await getFilteredEligibleTransferRows(runId, {
+      branchId: String(req.query.branch_id ?? "").trim() || null,
+      processId: String(req.query.process_id ?? "").trim() || null,
+      costCentreId: String(req.query.cost_centre_id ?? "").trim() || null,
+      status: status as "active" | "inactive" | "both",
+    });
+    return res.json({
+      success: true,
+      count: rows.length,
+      total_amount: rows.reduce((s, r) => s + r.amount, 0),
+      data: rows.map((r) => ({
+        employee_id: r.employee_id,
+        employee_code: r.employee_code,
+        employee_name: r.employee_name,
+        amount: r.amount,
+        account_masked: r.account_masked,
+        ifsc: r.ifsc,
+        bank_name: r.bank_name,
+        branch_id: r.branch_id,
+        branch_name: r.branch_name,
+        process_id: r.process_id,
+        process_name: r.process_name,
+        cost_centre_id: r.cost_centre_id,
+        cost_centre_name: r.cost_centre_name,
+        employee_status: r.active_status === 1 ? "active" : "inactive",
+      })),
+    });
+  }),
+);
 
 /** GET /salary-transfer/export?run_id=&employee_ids=CSV — generate + download a new batch. */
 bankPaymentReadinessRouter.get(
