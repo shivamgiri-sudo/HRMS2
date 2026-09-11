@@ -222,6 +222,23 @@ async function generateSingleManagerDigest(
       continue;
     }
 
+    // A shift scheduled for TODAY that hasn't started yet (current time still before shift start
+    // + grace) has no measurable outcome — not present, but not genuinely absent either. Without
+    // this check, every employee on a later shift read as an "unplanned absence" the moment the
+    // day's row existed, so a team whose shift started at 19:00 showed 100% shrinkage all
+    // afternoon. Marked GREY (the same "no verdict yet" bucket as week-off/leave/holiday) and
+    // excluded from planned/present so it can't skew shrinkagePct. Only applies to today — a past
+    // date's shift has necessarily already started by the time it's queried. Found live
+    // 2026-09-11 on Roster Command Center.
+    if (!r.first_in && shiftStart && date === todayDate()) {
+      const shiftStartMinutes = timeToMinutes(String(shiftStart));
+      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+      if (nowMinutes < shiftStartMinutes + GRACE_MINUTES) {
+        member.adherence = 'GREY';
+        continue;
+      }
+    }
+
     planned++;
 
     // Calculate expected shift duration
@@ -347,6 +364,17 @@ export async function generateBranchDashboard(
     const type = String(r.assignment_type ?? '').toUpperCase();
     const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY'].includes(type);
     if (isOff) continue;
+
+    // Same "shift hasn't started yet today" guard as generateManagerDailyDigest above — a row
+    // with no clock-in is only a real absence once its shift is actually due.
+    const shiftStartForDue = r.template_start || r.shift_start_time;
+    if (!r.first_in && shiftStartForDue && date === todayDate()) {
+      const shiftStartMinutes = timeToMinutes(String(shiftStartForDue));
+      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+      if (nowMinutes < shiftStartMinutes + GRACE_MINUTES) {
+        continue;
+      }
+    }
 
     planned++;
     const processId = r.process_id ? String(r.process_id) : 'unknown';
