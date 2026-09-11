@@ -1,5 +1,4 @@
 // backend/src/modules/ats/salary.calculator.ts
-import { getPtFromSlab } from '../payroll/payrollCalculate.service.js';
 
 export interface SalaryComponents {
   offered_ctc: number;
@@ -62,7 +61,6 @@ export async function calculateSalary(
   const adminChargesAnnual = pfEligible ? estimatedBasic * 0.01 : 0;
 
   const gross = annualCtc - pfEmployerAnnual - esicEmployerAnnual - adminChargesAnnual;
-  const monthlyGross = gross / 12;
 
   // Recompute all derived values on the actual gross
   const basic = gross * (basicPct / 100);
@@ -84,20 +82,14 @@ export async function calculateSalary(
   const pfEmployee = pfEligible ? basic * 0.12 : 0;
   const esicEmployee = esicApplies ? gross * 0.0075 : 0;
 
-  // Professional Tax is a state subject -- not every state levies it, and the
-  // amount varies by state and by gross slab. Resolve it from the same
-  // pt_slab_master the live payroll engine reads (getPtFromSlab), instead of
-  // a flat ₹200 assumed for every state. An unconfigured/unknown state falls
-  // back to 0 rather than guessing a number that may not apply there.
-  let monthlyProfessionalTax = 0;
-  if (stateCode) {
-    try {
-      monthlyProfessionalTax = await getPtFromSlab(stateCode, monthlyGross);
-    } catch (e) {
-      console.warn(`[calculateSalary] PT lookup failed for state "${stateCode}":`, (e as Error).message);
-    }
-  }
-  const professionalTax = monthlyProfessionalTax * 12;
+  // Professional Tax removal (2026-09-11): PT has been explicitly approved
+  // for full removal from payroll company-wide, all states, go-forward only
+  // (stakeholder-confirmed, not a guess). This offer/appointment-letter
+  // calculator no longer looks up or deducts PT. The professional_tax field
+  // is kept at 0 (not deleted) because callers still persist it into
+  // ats_employment_offer / offer letters that expect the key to exist.
+  const professionalTax = 0;
+  void stateCode; // stateCode stays a parameter for backward compatibility with callers; no longer used
 
   // Employer side (returned for display/records). Recomputed on the actual
   // final basic, not the rough pre-gross estimate used only to derive gross
@@ -111,6 +103,8 @@ export async function calculateSalary(
   const adminCharges = pfEligible ? basic * 0.01 : 0;
   const bonus = basic * 0.0833;
 
+  // professionalTax is always 0 now (PT removed 2026-09-11) but kept in the
+  // expression so a future re-introduction only needs to change professionalTax above.
   const netInHand = gross - pfEmployee - esicEmployee - professionalTax;
 
   const m = (v: number) => Math.round((v / 12) * 100) / 100;

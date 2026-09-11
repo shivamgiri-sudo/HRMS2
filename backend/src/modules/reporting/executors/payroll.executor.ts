@@ -29,6 +29,7 @@ import {
   HALF_DAY_STATUS,
 } from "../../../shared/attendanceStatus.js";
 import { resolveAccountNumber } from "../../../shared/fieldEncryption.js";
+import { getDebitAccountNumber } from "../../payroll/payroll-debit-account-config.service.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -232,6 +233,10 @@ export const PAYROLL_REGISTER_BODY = `
            COALESCE(spl.gross_salary,0) AS gross_salary,
            COALESCE(spl.pf_employee,0) AS pf_employee,
            COALESCE(spl.esic_employee,0) AS esic_employee,
+           -- PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+           -- company-wide, all states): salary_prep_line.professional_tax is no longer
+           -- computed on new runs, so this column reads 0 for any run processed after
+           -- the removal. Column kept for historical runs already carrying a value.
            COALESCE(spl.professional_tax,0) AS professional_tax,
            COALESCE(spl.tds,0) AS tds,
            COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
@@ -445,6 +450,11 @@ export async function bankAdvice(
     params.push(options.cursor);
   }
 
+  // Config-driven, not hardcoded — see payroll-debit-account-config.service.ts. Escaped and
+  // interpolated directly (rather than a `?` placeholder) so it cannot shift the positional
+  // params below, which are ordered to match the WHERE clause's own placeholders.
+  const debitAcNoLiteral = db.escape(await getDebitAccountNumber());
+
   const base = `
     SELECT spl.id AS _cursor,
            e.employee_code,
@@ -480,7 +490,7 @@ export async function bankAdvice(
             * three-letter month; upper-cased so it matches the bank's sample exactly rather than
             * "15-Jun-2026".
             */
-           '033005005852' AS debit_ac_no,
+           ${debitAcNoLiteral} AS debit_ac_no,
            ${bankField.includes("MASKED") ? "'***MASKED***' AS beneficiary_ac_no" : "e.bank_account_number AS beneficiary_ac_no"},
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS beneficiary_name,
            COALESCE(spl.net_salary,0) AS amt,
@@ -1009,6 +1019,10 @@ export async function neftTransferFile(
   )`);
   clauses.push("UPPER(TRIM(COALESCE(ebd.ifsc_code, e.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'");
 
+  // Config-driven, not hardcoded — see payroll-debit-account-config.service.ts and the same
+  // note on bankAdvice above.
+  const debitAcNoLiteral = db.escape(await getDebitAccountNumber());
+
   const base = `
     SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1028,7 +1042,7 @@ export async function neftTransferFile(
             * is the company's own and constant per row. Date is DD-MMM-YYYY upper-cased to match
             * the sample exactly (15-JUN-2026, not 15-Jun-2026).
             */
-           '033005005852' AS debit_ac_no,
+           ${debitAcNoLiteral} AS debit_ac_no,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS beneficiary_name,
            MAX(COALESCE(spl.net_salary,0)) AS amt,
            CASE WHEN UPPER(LEFT(COALESCE(ebd.ifsc_code, e.ifsc_code, ''),4)) = 'ICIC' THEN 'Y' ELSE 'N' END AS pay_mod,
@@ -1176,6 +1190,8 @@ export async function salarySheetExport(
       COALESCE(spl.tds_amount, spl.tds, 0) AS income_tax,
       COALESCE(spl.advance_recovery, 0) AS adv_paid,
       COALESCE(spl.loan_emi, 0) AS loan_ded,
+      -- PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+      -- company-wide, all states); reads 0 for every run processed after removal.
       COALESCE(spl.professional_tax, 0) AS pro_tax_deduction,
       COALESCE(spl.lwp_deduction, 0) AS leave_deduction,
       COALESCE(spl.other_deductions, 0) AS other_deduction,

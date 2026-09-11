@@ -20,7 +20,7 @@ import {
 import {
   AlertTriangle, BadgePercent, BookOpen, Building2, Calendar,
   CheckCircle, CheckCircle2, ChevronDown, ChevronRight, Clock,
-  Edit2, FileText, History, Info, Landmark, Loader, Plus,
+  Edit2, FileText, History, Info, Loader, Plus,
   RefreshCcw, RefreshCw, Save, Shield, ShieldCheck, TrendingUp,
   X, Banknote, Settings2, FileCheck2,
 } from "lucide-react";
@@ -31,7 +31,7 @@ import {
 interface FilingRecord {
   id: string;
   filing_month: string;
-  filing_type: "EPF" | "ESIC" | "PT" | "TDS_24Q" | "LWF";
+  filing_type: "EPF" | "ESIC" | "TDS_24Q" | "LWF";
   state_code: string | null;
   due_date: string;
   amount_due: number | null;
@@ -63,28 +63,6 @@ interface AuditEntry {
   reason: string | null;
 }
 
-interface PtSlab {
-  id: string;
-  state_code: string;
-  state_name: string | null;
-  income_from: number;
-  income_to: number | null;
-  pt_amount: number;
-  frequency: string;
-  effective_from: string;
-  is_active: number;
-}
-
-interface PtSlabForm {
-  state_code: string;
-  state_name: string;
-  income_from: string;
-  income_to: string;
-  pt_amount: string;
-  frequency: string;
-  effective_from: string;
-}
-
 interface MinWageRow {
   id: string;
   state?: string;
@@ -104,7 +82,6 @@ interface MinWageRow {
 const TYPE_LABELS: Record<string, string> = {
   EPF: "EPF / PF",
   ESIC: "ESIC",
-  PT: "Professional Tax",
   TDS_24Q: "TDS (Form 24Q)",
   LWF: "Labour Welfare Fund",
 };
@@ -120,12 +97,11 @@ interface TypeVisual { iconEl: React.ReactNode; iconBg: string; }
 const TYPE_VISUAL: Record<string, TypeVisual> = {
   EPF: { iconEl: <ShieldCheck className="w-4 h-4 text-blue-600" />, iconBg: "bg-blue-50" },
   ESIC: { iconEl: <Building2 className="w-4 h-4 text-violet-600" />, iconBg: "bg-violet-50" },
-  PT: { iconEl: <Landmark className="w-4 h-4 text-amber-600" />, iconBg: "bg-amber-50" },
   TDS_24Q: { iconEl: <TrendingUp className="w-4 h-4 text-indigo-600" />, iconBg: "bg-indigo-50" },
   LWF: { iconEl: <Banknote className="w-4 h-4 text-teal-600" />, iconBg: "bg-teal-50" },
 };
 
-const TYPE_ORDER = ["EPF", "ESIC", "PT", "TDS_24Q", "LWF"] as const;
+const TYPE_ORDER = ["EPF", "ESIC", "TDS_24Q", "LWF"] as const;
 
 function daysFromToday(dateStr: string): number {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -869,26 +845,7 @@ function ConfigTab() {
   const [historyKey, setHistoryKey] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ pf: true, esic: true, tds: true, gratuity: true, lwp: true, minwages: true });
 
-  const [ptStateCode, setPtStateCode] = useState("MH");
-  const [ptSlabs, setPtSlabs] = useState<PtSlab[]>([]);
-  const [ptLoading, setPtLoading] = useState(false);
-  const [ptFormOpen, setPtFormOpen] = useState(false);
-  const [ptEditId, setPtEditId] = useState<string | null>(null);
-  const [ptForm, setPtForm] = useState<PtSlabForm>({ state_code: "MH", state_name: "Maharashtra", income_from: "", income_to: "", pt_amount: "", frequency: "monthly", effective_from: new Date().toISOString().slice(0, 10) });
-
   const showToast = useCallback((message: string, type: "success" | "error") => setToast({ message, type }), []);
-
-  const loadPtSlabs = useCallback(async (sc: string) => {
-    setPtLoading(true);
-    try {
-      const r = await apiGet<{ data?: PtSlab[]; success?: boolean } | PtSlab[]>(`/api/payroll/pt-slabs?state_code=${sc}`);
-      const slabs = Array.isArray(r) ? r : ((r as { data?: PtSlab[] }).data ?? []);
-      setPtSlabs(slabs);
-    } catch { showToast("Failed to load PT slabs", "error"); }
-    finally { setPtLoading(false); }
-  }, [showToast]);
-
-  useEffect(() => { void loadPtSlabs(ptStateCode); }, [ptStateCode, loadPtSlabs]);
 
   const toggleSection = (key: string) => setOpenSections((p) => ({ ...p, [key]: !p[key] }));
 
@@ -1064,104 +1021,6 @@ function ConfigTab() {
               {openSections.minwages && <MinimumWagesSection isSuperAdmin={isSuperAdmin} onToast={showToast} />}
             </div>
 
-            {/* PT Slabs Section */}
-            <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
-              <div className="border-b p-5 flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-2xl bg-slate-100 p-2.5 text-slate-700"><BadgePercent className="h-5 w-5" /></div>
-                  <div><h2 className="text-base font-black text-slate-950">Professional Tax Slabs</h2><p className="text-sm text-slate-500 mt-0.5">State-wise PT slab configuration used in payroll deduction</p></div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <select className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm bg-white" value={ptStateCode} onChange={(e) => setPtStateCode(e.target.value)}>
-                    {["MH", "KA", "TN", "AP", "TS", "WB", "GJ", "MP", "UP", "HR", "RJ", "DL", "PB", "BR", "OR"].map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  {isSuperAdmin && (
-                    <button className="flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-700" onClick={() => { setPtEditId(null); setPtForm((p) => ({ ...p, state_code: ptStateCode })); setPtFormOpen(true); }}>
-                      <Plus className="h-4 w-4" /> Add Slab
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr>{["State", "Income From", "Income To", "PT Amount", "Frequency", "Effective From", "Active", "Actions"].map((h) => <th key={h} className="px-5 py-3.5 font-semibold">{h}</th>)}</tr></thead>
-                  <tbody>
-                    {ptLoading ? (
-                      <tr><td colSpan={8} className="px-5 py-8 text-center text-slate-400">Loading slabs…</td></tr>
-                    ) : ptSlabs.length === 0 ? (
-                      <tr><td colSpan={8} className="px-5 py-8 text-center text-slate-400">No PT slabs configured for {ptStateCode}</td></tr>
-                    ) : ptSlabs.map((slab) => (
-                      <tr key={slab.id} className="border-t">
-                        <td className="px-5 py-3 font-mono text-xs">{slab.state_code}</td>
-                        <td className="px-5 py-3">₹{Number(slab.income_from).toLocaleString("en-IN")}</td>
-                        <td className="px-5 py-3">{slab.income_to != null ? `₹${Number(slab.income_to).toLocaleString("en-IN")}` : "No limit"}</td>
-                        <td className="px-5 py-3 font-semibold">₹{slab.pt_amount}</td>
-                        <td className="px-5 py-3 capitalize">{slab.frequency}</td>
-                        <td className="px-5 py-3">{slab.effective_from?.slice(0, 10)}</td>
-                        <td className="px-5 py-3">
-                          {isSuperAdmin ? (
-                            <button className={`text-xs px-2.5 py-0.5 rounded-full border font-medium ${slab.is_active ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"}`} onClick={async () => { try { await apiPatch(`/api/payroll/pt-slabs/${slab.id}`, { is_active: slab.is_active ? 0 : 1 }); void loadPtSlabs(ptStateCode); } catch { showToast("Toggle failed", "error"); } }}>
-                              {slab.is_active ? "Active" : "Inactive"}
-                            </button>
-                          ) : (
-                            <span className={`text-xs px-2.5 py-0.5 rounded-full border font-medium ${slab.is_active ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-50 text-slate-500 border-slate-200"}`}>{slab.is_active ? "Active" : "Inactive"}</span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3">
-                          {isSuperAdmin && (
-                            <button className="text-xs px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium flex items-center gap-1" onClick={() => { setPtEditId(slab.id); setPtForm({ state_code: slab.state_code, state_name: slab.state_name ?? "", income_from: String(slab.income_from), income_to: slab.income_to != null ? String(slab.income_to) : "", pt_amount: String(slab.pt_amount), frequency: slab.frequency ?? "monthly", effective_from: slab.effective_from?.slice(0, 10) ?? "" }); setPtFormOpen(true); }}>
-                              <Edit2 className="h-3 w-3" /> Edit
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* PT Slab Dialog */}
-            {ptFormOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                <div className="bg-white rounded-3xl border shadow-xl p-6 w-full max-w-md space-y-4 mx-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-black text-slate-950">{ptEditId ? "Edit PT Slab" : "Add PT Slab"}</h4>
-                    <button className="text-slate-400 hover:text-slate-700" onClick={() => { setPtFormOpen(false); setPtEditId(null); }}><X className="h-5 w-5" /></button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {([{ label: "State Code", key: "state_code" as keyof PtSlabForm, placeholder: "MH" }, { label: "State Name", key: "state_name" as keyof PtSlabForm, placeholder: "Maharashtra" }, { label: "Income From (₹)", key: "income_from" as keyof PtSlabForm, placeholder: "0" }, { label: "Income To (₹, blank = no limit)", key: "income_to" as keyof PtSlabForm, placeholder: "Leave blank for highest slab" }, { label: "PT Amount (₹)", key: "pt_amount" as keyof PtSlabForm, placeholder: "200" }, { label: "Effective From", key: "effective_from" as keyof PtSlabForm, placeholder: "YYYY-MM-DD" }] as { label: string; key: keyof PtSlabForm; placeholder: string }[]).map(({ label, key, placeholder }) => (
-                      <div key={key} className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-600">{label}</label>
-                        <input className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-300" value={ptForm[key]} placeholder={placeholder} onChange={(e) => setPtForm((p) => ({ ...p, [key]: e.target.value }))} />
-                      </div>
-                    ))}
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-slate-600">Frequency</label>
-                      <select className="w-full rounded-xl border border-slate-200 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-300" value={ptForm.frequency} onChange={(e) => setPtForm((p) => ({ ...p, frequency: e.target.value }))}>
-                        <option value="monthly">Monthly</option><option value="semi-annual">Semi-Annual</option><option value="annual">Annual</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <button className="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 font-medium" onClick={() => { setPtFormOpen(false); setPtEditId(null); }}>Cancel</button>
-                    <button className="px-4 py-2 rounded-xl bg-slate-900 text-sm text-white font-semibold hover:bg-slate-700 flex items-center gap-1.5" onClick={async () => {
-                      try {
-                        const payload = { state_code: ptForm.state_code.trim(), state_name: ptForm.state_name.trim() || undefined, income_from: Number(ptForm.income_from), income_to: ptForm.income_to ? Number(ptForm.income_to) : null, pt_amount: Number(ptForm.pt_amount), frequency: ptForm.frequency, effective_from: ptForm.effective_from };
-                        if (ptEditId) { await apiPatch(`/api/payroll/pt-slabs/${ptEditId}`, payload); } else { await apiPost(`/api/payroll/pt-slabs`, payload); }
-                        showToast(ptEditId ? "Slab updated" : "Slab created", "success");
-                        void loadPtSlabs(ptStateCode);
-                        setPtFormOpen(false); setPtEditId(null);
-                        setPtForm({ state_code: ptStateCode, state_name: "", income_from: "", income_to: "", pt_amount: "", frequency: "monthly", effective_from: new Date().toISOString().slice(0, 10) });
-                      } catch { showToast("Save failed", "error"); }
-                    }}>
-                      <Save className="h-4 w-4" /> Save
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* Raw Config Table */}
             <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
               <div className="border-b p-5 flex items-center justify-between">
@@ -1215,7 +1074,7 @@ export default function StatutoryCenter() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold tracking-tight leading-tight">Statutory Compliance Center</h1>
-                <p className="text-violet-200 text-sm mt-0.5">EPF · ESIC · Prof. Tax · TDS · LWF — unified compliance control</p>
+                <p className="text-violet-200 text-sm mt-0.5">EPF · ESIC · TDS · LWF — unified compliance control</p>
               </div>
             </div>
 

@@ -105,7 +105,6 @@ export interface RunningSalary {
   projected_net: number;
   pf_employee: number;
   esic_employee: number;
-  professional_tax: number;
   esic_applicable?: boolean;
   gross_monthly?: number;
   /**
@@ -169,7 +168,6 @@ export interface PayslipDetail extends PayslipSummary {
   special_allowance: number;
   pf_employee: number;
   esic_employee: number;
-  professional_tax: number;
   tds: number;
   lwp_deduction: number;
   advance_recovery: number;

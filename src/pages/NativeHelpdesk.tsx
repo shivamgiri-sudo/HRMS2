@@ -100,7 +100,6 @@ const SUBCATEGORIES_BY_CATEGORY: Record<string, { value: string; label: string }
     { value: "payroll_pf_transfer_query",           label: "Statutory Deductions — PF Transfer Query" },
     { value: "payroll_uan_activation_issue",        label: "Statutory Deductions — UAN Activation Issue" },
     { value: "payroll_esic_deduction_query",        label: "Statutory Deductions — ESIC Deduction Query" },
-    { value: "payroll_professional_tax_query",      label: "Statutory Deductions — Professional Tax Query" },
     { value: "payroll_travel_reimb_pending",        label: "Reimbursements — Travel Reimbursement Pending" },
     { value: "payroll_medical_reimb_pending",       label: "Reimbursements — Medical Reimbursement Pending" },
     { value: "payroll_reimb_rejected",              label: "Reimbursements — Reimbursement Rejected" },

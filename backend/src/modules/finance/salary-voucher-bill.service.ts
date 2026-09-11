@@ -115,6 +115,11 @@ export const billSalaryVoucherService = {
         pf_employer: r.EPFCompany,
         esic_employee: r.ESIC,
         esic_employer: r.ESICCompany,
+        // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+        // company-wide, all states). db_bill's ProTaxDeduction (legacy Excel upload,
+        // IDC only) is still mapped through here unchanged for historical accuracy,
+        // but buildVouchersFromLines() no longer emits a "Professional Tax" voucher
+        // line item at all, so this value reaches no output regardless of its content.
         professional_tax: r.ProTaxDeduction,
         tds: r.IncomeTax,
         loan_emi: r.LoanDed,

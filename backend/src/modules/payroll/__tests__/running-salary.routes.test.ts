@@ -48,7 +48,11 @@ const LIVE_ESTIMATE = {
   projected_net: 23315,
   pf_employee: 1800,
   esic_employee: 0,
-  professional_tax: 200,
+  // Professional Tax removal (2026-09-11, stakeholder-confirmed, company-wide,
+  // all states, go-forward only): was 200 in this fixture; PT is no longer
+  // computed anywhere in the running-salary engine, so this pins the field at 0
+  // like every other live figure now does.
+  professional_tax: 0,
   esic_applicable: false,
   gross_monthly: 25132,
 };
@@ -121,7 +125,8 @@ describe("running-summary routes", () => {
     withFinalizedRun({
       gross_salary: 25132, total_deductions: 2000, net_salary: 23132,
       basic: 10000, hra: 5000, special_allowance: 10132,
-      pf_employee: 1800, esic_employee: 0, professional_tax: 200, tds: 0,
+      // professional_tax: 0 -- PT removed 2026-09-11 (see LIVE_ESTIMATE comment above).
+      pf_employee: 1800, esic_employee: 0, professional_tax: 0, tds: 0,
       final_payable_days: 31, paid_working_days: 26,
       eligible_weekoff_days: 4, eligible_holiday_days: 1,
       active_calendar_days: 31, lwp_days: 0, present_days: 26,

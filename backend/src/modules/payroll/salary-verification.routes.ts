@@ -247,6 +247,9 @@ salaryVerificationRouter.get(
                 ot_hours: 0,
                 gross_salary: est.earned_salary_till_date,
                 incentive_total: 0,
+                // est.professional_tax is always 0 — PT removed 2026-09-11 per user
+                // decision (see running-salary.service.ts). Kept in the sum for shape
+                // stability; it contributes nothing.
                 total_deductions: est.pf_employee + est.esic_employee + est.professional_tax,
                 net_salary: est.earned_net_till_date,
                 is_estimate: true,
@@ -411,6 +414,10 @@ salaryVerificationRouter.get(
             { code: "LWP",    name: `LWP Deduction (${line.lwp_days} days)`, amount: Number(line.lwp_deduction ?? 0) },
             { code: "PF_EMP", name: "PF — Employee (12%)",                    amount: Number(line.pf_employee ?? 0) },
             { code: "ESIC",   name: "ESIC (0.75%)",                           amount: Number(line.esic_employee ?? 0) },
+            // PT removed 2026-09-11 per user decision — line.professional_tax is always 0
+            // for runs calculated after the removal, so this entry drops out via the
+            // amount > 0 filter below on its own; kept here for older/historical runs
+            // that still carry a real stored value.
             { code: "PT",     name: "Professional Tax",                        amount: Number(line.professional_tax ?? 0) },
             { code: "TDS",    name: "TDS",                                     amount: Number(line.tds ?? 0) },
             { code: "LOAN",   name: "Loan EMI",                                amount: Number(line.loan_emi ?? 0) },

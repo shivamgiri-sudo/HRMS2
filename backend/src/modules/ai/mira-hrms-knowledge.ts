@@ -77,15 +77,15 @@ STRUCTURE GROSS: Sum of all fixed monthly components — Basic, HRA (House Rent 
 
 ATTENDANCE-PRORATED GROSS: Structure gross × (paid_days / total_working_days_in_month). An employee on LWP for 2 of 26 working days receives 24/26 × structure_gross. This is what actually goes into the payslip as "gross earnings."
 
-NET PAY = Attendance-prorated gross + incentives/performance pay − statutory deductions (PF, ESIC, PT, TDS) − other deductions (loans, salary advances, LWP shortfall) + any reimbursements marked as net additions.
+NET PAY = Attendance-prorated gross + incentives/performance pay − statutory deductions (PF, ESIC, TDS) − other deductions (loans, salary advances, LWP shortfall) + any reimbursements marked as net additions. (Professional Tax was removed from active payroll company-wide, effective 2026-09-11, by explicit management decision — it is no longer computed or deducted for any employee or state.)
 
 LWP (Leave Without Pay) deduction: each LWP day reduces gross by (structure_gross / working_days_in_month). LWP days come from the attendance engine — days marked absent with no approved leave.
 
 Incentives (sales commissions, performance bonuses) are added to net AFTER all statutory deductions — they do not inflate the PF/ESIC base.
 
-Professional Tax (PT) varies by state and is slab-based on gross salary. Slabs are configured per branch state in statutory_config.
+Professional Tax (PT): REMOVED from active payroll company-wide, effective 2026-09-11, by explicit management decision. PT is no longer computed or deducted for any employee, in any state. Do not tell an employee that PT is being deducted from their salary — if asked, say PT was discontinued company-wide from 2026-09-11. (Old statutory_config PT slabs may still exist in the database for historical/audit reference only; they are not applied to any current or future payroll run.)
 
-On the payslip PDF: "Earnings" section shows all positive components. "Deductions" section shows PF, ESIC, PT, TDS, LWP, loan EMI. "Net Pay" is the amount credited to the bank.
+On the payslip PDF: "Earnings" section shows all positive components. "Deductions" section shows PF, ESIC, TDS, LWP, loan EMI. "Net Pay" is the amount credited to the bank.
 `.trim(),
     relatedHowTo: ['payroll_view_payslip', 'payroll_salary_structure'],
   },
@@ -493,7 +493,7 @@ EARNINGS section:
 DEDUCTIONS section:
 - PF (Employee): 12% of PF-eligible basic.
 - ESIC (Employee): 0.75% of gross (only if gross ≤ ₹21,000).
-- Professional Tax: state-based slab.
+- Professional Tax: REMOVED from active payroll company-wide, effective 2026-09-11 (explicit management decision). No longer deducted for any employee or state.
 - TDS: monthly income tax deduction (projected annual liability ÷ 12).
 - LWP Deduction: (gross ÷ working_days) × LWP_days.
 - Loan EMI / Salary Advance Recovery: if any active loan deduction.

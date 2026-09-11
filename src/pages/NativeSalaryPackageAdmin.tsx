@@ -11,7 +11,7 @@ import {
   Loader2, Plus, Pencil, ToggleLeft, ToggleRight, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
   Calculator, AlertTriangle,
 } from 'lucide-react';
-import { calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
+import { calcFromCtc, calcFromInHand, type PkgCalcOptions } from '@/lib/salaryCalculator';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Band { id: string; band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number; }
@@ -21,7 +21,7 @@ interface Package {
   package_amount: number; basic: number; hra: number; lta: number; conveyance: number; gross: number;
   epf_employee: number; esic_employee: number; net_in_hand: number; epf_employer: number;
   esic_employer: number; admin_charges: number; ctc: number; bonus: number; pli: number;
-  professional_tax: number; special_allowance: number; other_allowance: number;
+  special_allowance: number; other_allowance: number;
   portfolio: number; medical: number; active_status: number;
 }
 
@@ -32,9 +32,9 @@ const SEL = "flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 t
  *  from the earnings components the user typed in Manual mode. */
 function recalcManualDerived(
   pkg: Partial<Package>,
-  opts: { includePf: boolean; includeEsic: boolean; state?: string },
+  opts: { includePf: boolean; includeEsic: boolean },
 ): Partial<Package> {
-  const { includePf, includeEsic, state } = opts;
+  const { includePf, includeEsic } = opts;
   const basic            = Number(pkg.basic            ?? 0);
   const hra              = Number(pkg.hra              ?? 0);
   const lta              = Number(pkg.lta              ?? 0);
@@ -51,8 +51,7 @@ function recalcManualDerived(
 
   const epf_employee    = includePf    ? Math.round(basic * 0.12)        : 0;
   const esic_employee   = esicApplies  ? Math.round(gross * 0.0075)      : 0;
-  const professional_tax = Math.round(getProfessionalTax(gross, state));
-  const net_in_hand     = gross - epf_employee - esic_employee - professional_tax;
+  const net_in_hand     = gross - epf_employee - esic_employee;
 
   const epf_employer    = includePf    ? Math.round(basic * 0.12)        : 0;
   const esic_employer   = esicApplies  ? Math.round(gross * 0.0325)      : 0;
@@ -61,7 +60,7 @@ function recalcManualDerived(
 
   return {
     ...pkg,
-    gross, epf_employee, esic_employee, professional_tax, net_in_hand,
+    gross, epf_employee, esic_employee, net_in_hand,
     epf_employer, esic_employer, admin_charges, ctc, package_amount: ctc,
   };
 }
@@ -102,17 +101,6 @@ export default function NativeSalaryPackageAdmin() {
   // Distinct branches from cost centres
   const branches = [...new Set(costCentres.map(c => c.branch_name))].sort();
 
-  // Branch → state mapping for Professional Tax (loaded once)
-  const [branchStates, setBranchStates] = useState<Record<string, string>>({});
-  useEffect(() => {
-    hrmsApi.get<any>('/api/payroll-masters/branch-states')
-      .then((r: any) => {
-        const map: Record<string, string> = {};
-        for (const row of (r?.data ?? [])) if (row.branch_name && row.state) map[row.branch_name] = row.state;
-        setBranchStates(map);
-      }).catch(() => {});
-  }, []);
-
   // ── Load ───────────────────────────────────────────────────────────────────
   const loadBands = useCallback(async () => {
     const r = await hrmsApi.get<any>('/api/payroll-masters/bands');
@@ -145,10 +133,8 @@ export default function NativeSalaryPackageAdmin() {
   // Auto-calculate whenever driver input or toggles change (only when dialog is open)
   useEffect(() => {
     if (!editPkg || calcMode === 'manual') return;
-    const selectedBranch = editPkg?.branch_name ?? pkgBranch;
     const opts: PkgCalcOptions = {
       includePf, includeEsic, basicPct, hraPct,
-      state: selectedBranch ? branchStates[selectedBranch] : undefined,
     };
     if (calcMode === 'ctc') {
       const v = parseFloat(ctcInput);
@@ -416,7 +402,7 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                     </select>
                   </div>
                   <div className="flex items-end">
-                    <Button size="sm" onClick={() => { setCtcInput(''); setInHandInput(''); setCalcMode('ctc'); setEditPkg({ branch_name: pkgBranch || '', band_code: pkgBand || '', cost_centre_code: pkgCC || '', package_amount: 0, basic: 0, hra: 0, lta: 0, conveyance: 0, gross: 0, epf_employee: 0, esic_employee: 0, net_in_hand: 0, epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0, bonus: 0, pli: 0, professional_tax: 0, special_allowance: 0, other_allowance: 0, portfolio: 0, medical: 0 }); }} className="gap-1.5 w-full">
+                    <Button size="sm" onClick={() => { setCtcInput(''); setInHandInput(''); setCalcMode('ctc'); setEditPkg({ branch_name: pkgBranch || '', band_code: pkgBand || '', cost_centre_code: pkgCC || '', package_amount: 0, basic: 0, hra: 0, lta: 0, conveyance: 0, gross: 0, epf_employee: 0, esic_employee: 0, net_in_hand: 0, epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0, bonus: 0, pli: 0, special_allowance: 0, other_allowance: 0, portfolio: 0, medical: 0 }); }} className="gap-1.5 w-full">
                       <Plus className="h-3.5 w-3.5" /> New Package
                     </Button>
                   </div>
@@ -555,13 +541,9 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                                 value={(editPkg as any)[field] ?? 0}
                                 onChange={e => {
                                   if (calcMode === 'manual') {
-                                    const branch = editPkg?.branch_name ?? pkgBranch;
                                     setEditPkg(p => {
                                       const updated = { ...p!, [field]: Number(e.target.value) };
-                                      return recalcManualDerived(updated, {
-                                        includePf, includeEsic,
-                                        state: branch ? branchStates[branch] : undefined,
-                                      });
+                                      return recalcManualDerived(updated, { includePf, includeEsic });
                                     });
                                   } else {
                                     setEditPkg(p => ({ ...p!, [field]: Number(e.target.value) }));
@@ -583,13 +565,6 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                         {([
                           ['epf_employee', 'PF (Employee 12%)', true],
                           ['esic_employee', 'ESIC (Employee 0.75%)', true],
-                          ['professional_tax', (() => {
-                            const st = branchStates[editPkg?.branch_name ?? ''];
-                            if (!st) return 'Prof. Tax (state unknown)';
-                            const fn = PT_BY_STATE[st];
-                            if (!fn) return `Prof. Tax (${st} — not configured)`;
-                            return fn(0) === 0 && fn(50000) === 0 ? `Prof. Tax — N/A (${st})` : `Prof. Tax — ${st}`;
-                          })(), true],
                         ] as [string, string, boolean][]).map(([field, label, computed]) => (
                           <div key={field} className="flex items-center gap-2">
                             <Label className="text-xs w-36 shrink-0">{label}</Label>

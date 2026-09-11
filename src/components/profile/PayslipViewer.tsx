@@ -110,7 +110,6 @@ interface PayslipRecord {
   special_allowance?: number | string;
   pf_employee?: number | string;
   esic_employee?: number | string;
-  professional_tax?: number | string;
   tds?: number | string;
   lwp_deduction?: number | string;
   advance_recovery?: number | string;
@@ -298,12 +297,11 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       // Deductions must come from the SAME period as the earnings beside them.
       // `payrollRecords[0]` is the most recent payslip — in an open month that is
       // *last* month — so pairing it with the current unprorated CTC showed this
-      // month's gross against last month's PF/ESIC/PT/TDS. That mismatch is a main
+      // month's gross against last month's PF/ESIC/TDS. That mismatch is a main
       // reason this figure disagreed with the Payroll page and the running summary.
       const latest = payrollRecords?.find((r) => r.run_month?.startsWith(currentMonthKey));
       const pf = Number(latest?.pf_employee ?? runningSalary?.pf_employee ?? 0);
       const esic = Number(latest?.esic_employee ?? runningSalary?.esic_employee ?? 0);
-      const pt = Number(latest?.professional_tax ?? runningSalary?.professional_tax ?? 0);
       return {
         basic_salary: employeeData.monthly_basic,
         hra: employeeData.monthly_hra ?? null,
@@ -311,13 +309,12 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         medical_allowance: null,
         other_allowances: employeeData.monthly_special ?? null,
         tax_deduction: latest?.tds != null ? Number(latest.tds) : null,
-        other_deductions: (pf + esic + pt) > 0 ? (pf + esic + pt) : null,
+        other_deductions: (pf + esic) > 0 ? (pf + esic) : null,
       };
     }
     if (payrollRecords && payrollRecords.length > 0) {
       const pf = Number(payrollRecords[0].pf_employee ?? 0);
       const esic = Number(payrollRecords[0].esic_employee ?? 0);
-      const pt = Number(payrollRecords[0].professional_tax ?? 0);
       return {
         basic_salary: Number(payrollRecords[0].basic ?? 0),
         hra: payrollRecords[0].hra != null ? Number(payrollRecords[0].hra) : null,
@@ -325,7 +322,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         medical_allowance: null,
         other_allowances: payrollRecords[0].special_allowance != null ? Number(payrollRecords[0].special_allowance) : null,
         tax_deduction: payrollRecords[0].tds != null ? Number(payrollRecords[0].tds) : null,
-        other_deductions: (pf + esic + pt) > 0 ? (pf + esic + pt) : null,
+        other_deductions: (pf + esic) > 0 ? (pf + esic) : null,
       };
     }
     return null;
@@ -429,7 +426,6 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     // Deductions — component array with flat-field fallback (legacy records use flat fields directly)
     const pf = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(record.pf_employee ?? 0);
     const esic = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(record.esic_employee ?? 0);
-    const pt = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(record.professional_tax ?? 0);
     const tds = getDeduction('TDS') || Number(record.tds ?? record.income_tax ?? 0);
     const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? record.leave_deduction ?? 0);
     const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI') || Number(record.loan_deduction ?? 0);
@@ -440,14 +436,14 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     // and keep the residual only as a floor so a template gap never understates
     // what was withheld.
     const SLOTTED_DEDUCTIONS = new Set([
-      "PF_EMPLOYEE", "PF_EMP", "ESIC_EMPLOYEE", "ESIC_EMP", "PROFESSIONAL_TAX",
-      "PT", "TDS", "LWP_DEDUCTION", "LWP", "LOAN", "LOAN_RECOVERY", "LOAN_EMI",
+      "PF_EMPLOYEE", "PF_EMP", "ESIC_EMPLOYEE", "ESIC_EMP",
+      "TDS", "LWP_DEDUCTION", "LWP", "LOAN", "LOAN_RECOVERY", "LOAN_EMI",
       "ADVANCE", "ADVANCE_RECOVERY", "ADV",
     ]);
     const unslottedDeductions = (record.deductions || [])
       .filter((d) => !SLOTTED_DEDUCTIONS.has(d.component_code.toUpperCase()))
       .reduce((t, d) => t + Number(d.amount || 0), 0);
-    const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
+    const knownDeductions = pf + esic + tds + lwpDed + loan + adDed;
     const otherDed = Math.max(unslottedDeductions, effectiveDeductions(record) - knownDeductions, 0);
 
     await downloadMasCallnetPayslip({
@@ -468,7 +464,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       lwpDays: Number(record.lwp_days ?? 0),
       totalDaysInMonth: Number(record.working_days ?? 30),
       basic, hra, bonus, conv, pa, ma, sa, oa: otherEarnings, arrear, incentive,
-      pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
+      pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
       grossSalary: Number(record.gross_salary ?? 0),
@@ -511,7 +507,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     : Number(latestRecord?.gross_salary ?? 0) + latestIncentive;
   const displayDeductions = useRunningEstimate
     ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0)
-      + Number(runningSalary.professional_tax ?? 0) + Number(runningSalary.tds ?? 0)
+      + Number(runningSalary.tds ?? 0)
     : (latestRecord ? effectiveDeductions(latestRecord) : 0);
   const displayNet = useRunningEstimate
     ? Number(runningSalary.earned_net_till_date ?? 0)
@@ -1006,9 +1002,6 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                           )}
                                           {Number(record.esic_employee ?? 0) > 0 && (
                                             <tr className="border-b"><td className="py-1 text-muted-foreground">ESIC</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.esic_employee))}`)}</td></tr>
-                                          )}
-                                          {Number(record.professional_tax ?? 0) > 0 && (
-                                            <tr className="border-b"><td className="py-1 text-muted-foreground">Professional Tax</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.professional_tax))}`)}</td></tr>
                                           )}
                                           {Number(record.tds ?? 0) > 0 && (
                                             <tr><td className="py-1 text-muted-foreground">TDS</td><td className="py-1 text-right font-mono text-red-600">{renderSensitive(`-${formatCurrency(Number(record.tds))}`)}</td></tr>

@@ -84,20 +84,15 @@ export function calculateTds(_annualTaxableIncome: number, _statutoryConfig: Rec
   );
 }
 
-export async function getPtFromSlab(stateCode: string, monthlyIncome: number): Promise<number> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT pt_amount FROM pt_slab_master
-      WHERE state_code = ?
-        AND is_active = 1
-        AND income_from <= ?
-        AND (income_to IS NULL OR income_to >= ?)
-      ORDER BY income_from DESC
-      LIMIT 1`,
-    [stateCode, monthlyIncome, monthlyIncome]
-  );
-  const row = (rows as Array<{ pt_amount: number }>)[0];
-  if (!row) throw new Error(`Professional Tax slab missing for state ${stateCode} and income ${monthlyIncome}`);
-  return Number(row.pt_amount);
+/**
+ * PT removed 2026-09-11 per user decision — full company-wide removal. This
+ * previously queried pt_slab_master and threw when no slab matched. Note this
+ * whole file's calculatePayrollRun is already an unreachable, throwing stub
+ * (see below) — nothing live calls this function today — but it is neutralised
+ * here too, defensively, so it cannot reintroduce PT if ever wired up again.
+ */
+export async function getPtFromSlab(_stateCode: string, _monthlyIncome: number): Promise<number> {
+  return 0;
 }
 
 export interface CalculateResult {

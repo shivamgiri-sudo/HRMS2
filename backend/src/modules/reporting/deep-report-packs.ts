@@ -294,7 +294,10 @@ export const DEEP_REPORT_PACKS: DeepReportPack[] = [
     code: "statutory-tax",
     name: "Statutory, Tax & Labour Compliance",
     shortName: "Statutory",
-    description: "PF, ESIC, PT, TDS, declarations, Form 16, gratuity, filings, opt-outs and statutory identity readiness.",
+    // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+    // company-wide, all states). pt-register/pt-monthly-register below are kept
+    // wired for historical/audit access only — see their executors.
+    description: "PF, ESIC, TDS, declarations, Form 16, gratuity, filings, opt-outs and statutory identity readiness (PT discontinued company-wide 2026-09-11; historical PT registers remain for audit).",
     businessOwner: "Payroll / Finance / HR",
     viewRoles: PAYROLL,
     exportRoles: ["super_admin", "admin", "payroll", "payroll_head", "finance"],
@@ -312,7 +315,7 @@ export const DEEP_REPORT_PACKS: DeepReportPack[] = [
     complianceControls: ["Eligibility rules", "Contribution basis", "Filing due dates", "Identity verification", "Approval and payment evidence"],
     sensitiveDomains: ["UAN", "ESIC", "PAN", "tax declaration", "salary"],
     perspectives: [
-      p("overview", "Statutory readiness", "PF, ESIC, PT and tax readiness.", ["pf-monthly-summary", "esic-monthly-summary", "pt-monthly-register"]),
+      p("overview", "Statutory readiness", "PF, ESIC and tax readiness (PT discontinued 2026-09-11; pt-monthly-register kept for historical audit).", ["pf-monthly-summary", "esic-monthly-summary", "pt-monthly-register"]),
       p("trend", "Contribution trend", "Contribution and liability movement.", ["pf-contribution-register", "esic-contribution-register", "gratuity-liability-register"]),
       p("register", "Statutory registers", "Employee-level statutory computation.", ["pf-esic-salary-register", "pf-contribution-register", "esic-contribution-register", "pt-register"]),
       p("exceptions", "Statutory exceptions", "Missing identity, opt-out and declaration issues.", ["pf-esi-optout-register", "uan-status-report", "esic-status-report", "pan-verification-status"]),

@@ -555,41 +555,19 @@ export const payrollService = {
         );
       }
 
-      // No run closes while a payable employee was silently left out of it.
+      // Professional Tax removed 2026-09-11 (stakeholder-confirmed, company-wide,
+      // all states, go-forward only). This gate (owner ruling 2026-08-16, decision
+      // 9) used to block LOCK/DISBURSE while an employee's branch had no state,
+      // because that employee's Professional Tax was unresolvable and the
+      // calculator excluded them from the run rather than invent a figure —
+      // producing a quiet omission the run must not close over.
       //
-      // Owner ruling 2026-08-16 (decision 9). The calculator no longer aborts the whole run
-      // when one employee's Professional Tax cannot be resolved — it blocks that employee,
-      // invents no PT, and carries on for everyone else. That is the right behaviour, but on
-      // its own it converts a loud failure into a quiet omission: the blocked employee has no
-      // salary_prep_line, so nothing downstream can tell they are missing rather than simply
-      // not owed anything.
-      //
-      // So the run itself stays open while any such employee exists. Detected the same way the
-      // calculator does — PT is levied per state, and an employee whose branch carries no state
-      // (or who has no branch at all) has no resolvable rate. Verified live 2026-08-16: exactly
-      // three, MAS63079, MAS63080 and MAS63084, all with no branch. This is not a code fix —
-      // HR must supply the real branches, because a wrong one produces a wrong statutory
-      // deduction that looks entirely correct on the payslip.
-      const [ptBlocked] = await db.execute<RowDataPacket[]>(
-        `SELECT e.employee_code
-           FROM employees e
-           LEFT JOIN branch_master b ON b.id = e.branch_id
-          WHERE e.active_status = 1
-            AND NULLIF(TRIM(b.state), '') IS NULL
-          ORDER BY e.employee_code
-          LIMIT 25`,
-      );
-      if (ptBlocked.length > 0) {
-        const codes = ptBlocked.map((r) => String((r as { employee_code: unknown }).employee_code)).join(", ");
-        throw Object.assign(
-          new Error(
-            `Cannot ${input.status} this run: ${ptBlocked.length} active employee(s) have no resolvable ` +
-            `Professional Tax state and were excluded from calculation — ${codes}. ` +
-            `Assign their branch and recalculate, so nobody is silently omitted from payroll.`,
-          ),
-          { statusCode: 409, code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" },
-        );
-      }
+      // resolveProfessionalTax() now unconditionally resolves 0 for every
+      // employee (see payrollCalculate.service.ts), so nobody is excluded from a
+      // run for this reason any more — pt_blocked_employees is permanently
+      // empty. Keeping this query would block real runs over a branch-state gap
+      // that no longer has any statutory consequence, citing a Professional Tax
+      // reason that is no longer true. Removed rather than left to misfire.
 
       if (!runRecord.finance_approved_at) {
         if (!breakGlassReason) {
@@ -974,6 +952,11 @@ export const payrollService = {
     const gratuityPct = (p.gratuityPct ?? 0) / 100;
     const gratuity = r2(basic * gratuityPct);
 
+    // PT removed 2026-09-11 per user decision — full company-wide removal. This function
+    // stays a generic calculator taking p.professionalTax as an explicit input rather than
+    // hardcoding 0 here, because every real caller (payrollCalculate.service.ts x2,
+    // running-salary.service.ts, holiday-work-auto.service.ts) now resolves it to 0 at the
+    // source. Kept parameterised so nothing here needs to change if that ever changes.
     const totalDed = r2(pfEmp + esicEmp + p.professionalTax + p.tds);
     const net = r2(gross - totalDed);
     const ctcMonthly = r2(gross + pfEmr + esicEmr + gratuity);

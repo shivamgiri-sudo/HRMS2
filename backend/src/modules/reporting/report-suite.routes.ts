@@ -43,7 +43,7 @@ const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
  * carries the catalog's exact labels ("SR#", "LEAVE TYPE", "LEAVE REQUST DATE")
  * instead of the generic builder's uppercased row keys.
  */
-export const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly"]);
+export const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly", "employee-master"]);
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -501,7 +501,9 @@ function getReportMeta(code: string) {
         { key: "gross_salary", label: "Gross Salary", format: "currency", align: "right" },
         { key: "pf_employee", label: "PF (Employee)", format: "currency", align: "right" },
         { key: "esic_employee", label: "ESIC (Employee)", format: "currency", align: "right" },
-        { key: "professional_tax", label: "PT", format: "currency", align: "right" },
+        // PT column removed 2026-09-11: Professional Tax discontinued company-wide
+        // by explicit stakeholder decision. Clean, low-risk removal — the
+        // underlying query still selects professional_tax elsewhere untouched.
         { key: "tds", label: "TDS", format: "currency", align: "right" },
         { key: "lwp_deduction", label: "LWP Deduction", format: "currency", align: "right" },
         { key: "total_deductions", label: "Total Deductions", format: "currency", align: "right" },
@@ -675,6 +677,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     spl.gross_salary AS gross_earnings,
                     COALESCE(spl.pf_employee, 0) AS pf,
                     COALESCE(spl.esic_employee, 0) AS esi,
+                    -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+                    -- decision, company-wide, all states); reads 0 on every run
+                    -- processed after the removal.
                     COALESCE(spl.professional_tax, 0) AS professional_tax,
                     COALESCE(spl.tds_amount, 0) AS tds,
                     COALESCE(spl.advance_recovery, 0) AS loan_deduction,
@@ -1339,6 +1344,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     spr.total_employees,
                     SUM(spl.pf_employee) + SUM(spl.pf_employer) AS total_pf,
                     SUM(spl.esic_employee) + SUM(spl.esic_employer) AS total_esic,
+                    -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+                    -- decision, company-wide, all states) — no longer a filing
+                    -- obligation, so this column reads 0 for runs after the removal.
                     SUM(spl.professional_tax) AS total_pt
                FROM salary_prep_run spr
                LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
@@ -2143,6 +2151,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "pt-slab-master": {
+      // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+      // company-wide, all states). Left wired for historical/audit lookup of the
+      // slab configuration that was in force while PT was still deducted; no new
+      // slabs are being configured or applied to any run going forward.
       const state = String(req.query.state ?? "");
       if (state) { clauses.push("psc.state_code = ?"); params.push(state); }
       sql = `SELECT psc.state_code, psc.state_name,

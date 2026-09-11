@@ -391,8 +391,6 @@ export default function PaymentDisbursalCenter() {
   const DISBURSE_ERROR_MESSAGES: Record<string, string> = {
     PAYROLL_CLOSE_NOT_AUTHORISED:
       "Disbursing a run is reserved for Finance or Payroll heads.",
-    PAYROLL_BLOCKED_PT_STATE_UNKNOWN:
-      "This run has employees with no resolvable Professional Tax state — assign their branch and recalculate first.",
     PAYROLL_SELF_APPROVAL:
       "You prepared this run, so it must be approved by someone else first.",
   };

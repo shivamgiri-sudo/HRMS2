@@ -11,18 +11,11 @@ function fmt(n: number) {
 
 const PF_PCT = 0.12;
 const ESI_PCT = 0.0325;
-const PT_FLAT = 200;
 
 export function StatutorySummaryTable({ runMonth }: { runMonth?: string }) {
   const { data: ceoData } = useQuery<any>({
     queryKey: ["ceo-metrics-stat"],
     queryFn: () => hrmsApi.get("/api/management/ceo-metrics"),
-    staleTime: 1000 * 60 * 5,
-  });
-
-  const { data: runsData } = useQuery<any>({
-    queryKey: ["payroll-runs"],
-    queryFn: () => hrmsApi.get("/api/payroll/runs"),
     staleTime: 1000 * 60 * 5,
   });
 
@@ -34,8 +27,6 @@ export function StatutorySummaryTable({ runMonth }: { runMonth?: string }) {
 
   const gross = ceoData?.data?.payroll_liability?.total_gross ?? 0;
   const month = ceoData?.data?.payroll_liability?.run_month ?? runMonth ?? "Latest";
-  const runs: any[] = Array.isArray(runsData?.data) ? runsData.data : [];
-  const latestRun = runs[0] ?? {};
   const compliance: any[] = Array.isArray(compData?.data) ? compData.data : [];
   const missingPan = compliance.filter((e) => !e.pan_verified).length;
 
@@ -49,12 +40,6 @@ export function StatutorySummaryTable({ runMonth }: { runMonth?: string }) {
     {
       label: "Employees' State Insurance (ESI)",
       amount: gross * ESI_PCT,
-      status: "Paid",
-      statusColor: "bg-emerald-100 text-emerald-700",
-    },
-    {
-      label: "Professional Tax (PT)",
-      amount: PT_FLAT * (latestRun.total_employees ?? 0),
       status: "Paid",
       statusColor: "bg-emerald-100 text-emerald-700",
     },

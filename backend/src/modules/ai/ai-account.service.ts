@@ -836,7 +836,11 @@ ${body}`, startedAt, coachInsights,
       `• Gross earnings: ${money(row.gross_salary)}\n• Total deductions: ${money(row.total_deductions)}\n` +
       `• Net take-home: ${money(row.net_salary)}\n• Basic: ${money(row.basic)}\n• HRA: ${money(row.hra)}\n` +
       `• Special allowance: ${money(row.special_allowance)}\n• PF: ${money(row.pf_employee)}\n• ESIC: ${money(row.esic_employee)}\n` +
-      `• Professional tax: ${money(row.professional_tax)}\n• TDS: ${money(row.tds)}\n` +
+      // Professional tax line removed 2026-09-11: PT discontinued from active payroll
+      // company-wide by explicit stakeholder decision. row.professional_tax is now
+      // always 0 for any current run, so showing it as a line item would only confuse
+      // employees into thinking PT is still being deducted.
+      `• TDS: ${money(row.tds)}\n` +
       `• LWP deduction: ${money(row.lwp_deduction)}\n• Advance recovery: ${money(row.advance_recovery)}\n` +
       `• Present / working days: ${n(row.present_days)} / ${n(row.working_days)}`,
       startedAt, [{ key: 'net-pay', label: 'Net take-home', value: n(row.net_salary), severity: 'low' }], [action('Open payslips', '/payroll/payslips')]);

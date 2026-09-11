@@ -167,6 +167,8 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "short_collection", label: "Short Collection",    format: "currency", align: "right" },
       { key: "asset_rec",        label: "Asset Recovery",      format: "currency", align: "right" },
       { key: "insurance",        label: "Insurance",           format: "currency", align: "right" },
+      // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+      // company-wide, all states); this column reads 0 on runs after removal.
       { key: "pt",               label: "Prof Tax",            format: "currency", align: "right" },
       { key: "lwp_deduction",    label: "Leave Ded",           format: "currency", align: "right" },
       { key: "other_deductions", label: "Other Ded",           format: "currency", align: "right" },
@@ -276,6 +278,8 @@ const REPORTS: Record<string, ReportDef> = {
           0                                                                          AS short_collection,
           COALESCE(MAX(CASE WHEN c.component_code='ASSET_REC'     THEN c.amount END),0) AS asset_rec,
           COALESCE(MAX(CASE WHEN c.component_code='INS'           THEN c.amount END),0) AS insurance,
+          -- PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+          -- company-wide, all states); both sources here read 0 on runs after removal.
           COALESCE(spl.professional_tax, MAX(CASE WHEN c.component_code='PT'  THEN c.amount END), 0) AS pt,
           COALESCE(spl.lwp_deduction,    MAX(CASE WHEN c.component_code='LWP' THEN c.amount END), 0) AS lwp_deduction,
           COALESCE(spl.other_deductions, MAX(CASE WHEN c.component_code='OTHER_DED' THEN c.amount END), 0) AS other_deductions,
@@ -1410,6 +1414,10 @@ const REPORTS: Record<string, ReportDef> = {
   },
 
   // ── Professional Tax Register ─────────────────────────────────────────────
+  // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+  // company-wide, all states). Kept, not deleted, for historical audit of runs
+  // that already carried a professional_tax amount; HAVING pt_amount > 0 below
+  // means this report returns zero rows for every run processed after removal.
   "professional-tax": {
     label: "Professional Tax Register",
     sumCols: ["pt_amount"],

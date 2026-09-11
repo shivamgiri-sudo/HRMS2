@@ -72,7 +72,6 @@ export interface PayrollRecord {
   specialAllowance?: number;
   pfEmployee?: number;
   esicEmployee?: number;
-  professionalTax?: number;
   tdsAmount?: number;
   lwpDeduction?: number;
   advanceRecovery?: number;
@@ -235,17 +234,16 @@ export function PayrollTable({
 
       const pf    = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(full?.pf_employee ?? record.pfEmployee ?? 0);
       const esic  = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(full?.esic_employee ?? record.esicEmployee ?? 0);
-      const pt    = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(full?.professional_tax ?? record.professionalTax ?? 0);
       const tds   = getDeduction('TDS') || Number(full?.tds ?? record.tdsAmount ?? 0);
       const loan  = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI');
       const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || getDeduction('ADV') || Number(full?.advance_recovery ?? record.advanceRecovery ?? 0);
       const SLOTTED_D = new Set(['PF_EMPLOYEE', 'PF_EMP', 'ESIC_EMPLOYEE', 'ESIC_EMP',
-        'PROFESSIONAL_TAX', 'PT', 'TDS', 'LOAN', 'LOAN_RECOVERY', 'LOAN_EMI',
+        'TDS', 'LOAN', 'LOAN_RECOVERY', 'LOAN_EMI',
         'ADVANCE', 'ADVANCE_RECOVERY', 'ADV']);
       const unslottedDeductions = (deductions as any[])
         .filter((d) => !SLOTTED_D.has(String(d.component_code ?? '').toUpperCase()))
         .reduce((t, d) => t + Number(d.amount || 0), 0);
-      const knownDeductions = pf + esic + pt + tds + loan + adDed;
+      const knownDeductions = pf + esic + tds + loan + adDed;
       const otherDed = Math.max(unslottedDeductions, Number(full?.total_deductions ?? record.totalDeductions ?? 0) - knownDeductions, 0);
 
       const netSalary = Number(full?.net_salary ?? full?.net_pay ?? record.netSalary ?? 0);
@@ -268,7 +266,7 @@ export function PayrollTable({
         lwpDays: Number(full?.lwp_days ?? record.lwpDays ?? 0),
         totalDaysInMonth: Number(full?.working_days ?? record.workingDays ?? 30),
         basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
-        pf, esic, pt, tds, lwpDeduction: Number(full?.lwp_deduction ?? 0), loan, adDed, otherDed,
+        pf, esic, tds, lwpDeduction: Number(full?.lwp_deduction ?? 0), loan, adDed, otherDed,
         // full?.employer_costs (component_type='employer_cost') carries EPF admin
         // charges as a component distinct from pf_employer — the flat field this
         // was built from never included it, so it never reached this PDF. The

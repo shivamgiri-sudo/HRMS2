@@ -135,7 +135,6 @@ interface SalaryPreview {
   pf_employer: number;
   esic_employee: number;
   esic_employer: number;
-  professional_tax: number;
   net_in_hand: number;
   admin_charges?: number;
 }
@@ -1044,7 +1043,6 @@ export default function NativeHROnboardingRequests() {
       pf_employer: Number(pkg.epf_employer ?? pkg.pf_employer ?? 0),
       esic_employee: Number(pkg.esic_employee ?? 0),
       esic_employer: Number(pkg.esic_employer ?? 0),
-      professional_tax: Number(pkg.professional_tax ?? 0),
       net_in_hand: Number(pkg.net_in_hand ?? 0),
       admin_charges: Number(pkg.admin_charges ?? 0),
     });
@@ -2632,7 +2630,6 @@ export default function NativeHROnboardingRequests() {
                           ['PF (Emplr)', salaryPreview.pf_employer],
                           ['ESIC (Emp)', salaryPreview.esic_employee],
                           ['ESIC (Emplr)', salaryPreview.esic_employer],
-                          ['Prof. Tax', salaryPreview.professional_tax],
                           ['Admin Chrg', salaryPreview.admin_charges],
                         ] as [string, number | undefined][]).map(([label, value]) => (
                           <div key={label} className="rounded-lg bg-white p-3 text-center shadow-sm">

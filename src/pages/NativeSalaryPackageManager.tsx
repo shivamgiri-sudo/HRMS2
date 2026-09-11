@@ -26,7 +26,6 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import {
   calcFromCtc,
   calcFromInHand,
-  PT_BY_STATE,
   type PkgCalcOptions,
 } from "@/lib/salaryCalculator";
 import { Button } from "@/components/ui/button";
@@ -197,7 +196,6 @@ interface AdminPackage {
   ctc: number;
   bonus: number;
   pli: number;
-  professional_tax: number;
   special_allowance: number;
   other_allowance: number;
   portfolio: number;
@@ -892,20 +890,6 @@ export default function NativeSalaryPackageManager() {
 
   const branches = [...new Set(costCentres.map((c) => c.branch_name))].sort();
 
-  const [branchStates, setBranchStates] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    hrmsApi
-      .get<any>("/api/payroll-masters/branch-states")
-      .then((r: any) => {
-        const map: Record<string, string> = {};
-        for (const row of r?.data ?? [])
-          if (row.branch_name && row.state) map[row.branch_name] = row.state;
-        setBranchStates(map);
-      })
-      .catch(() => {});
-  }, []);
-
   // ═══ Queries: NativeSalaryPackages ══════════════════════════════════════════
   const {
     data: allPackages,
@@ -1064,13 +1048,11 @@ export default function NativeSalaryPackageManager() {
   // Auto-calculate whenever driver input or toggles change
   useEffect(() => {
     if (!editPkg) return;
-    const selectedBranch = editPkg?.branch_name ?? pkgBranch;
     const opts: PkgCalcOptions = {
       includePf,
       includeEsic,
       basicPct,
       hraPct,
-      state: selectedBranch ? branchStates[selectedBranch] : undefined,
     };
     if (calcMode === "ctc") {
       const v = parseFloat(ctcInput);
@@ -2022,7 +2004,6 @@ export default function NativeSalaryPackageManager() {
                                   ctc: 0,
                                   bonus: 0,
                                   pli: 0,
-                                  professional_tax: 0,
                                   special_allowance: 0,
                                   other_allowance: 0,
                                   portfolio: 0,
@@ -2332,24 +2313,6 @@ export default function NativeSalaryPackageManager() {
                                     [
                                       "esic_employee",
                                       "ESIC (Employee 0.75%)",
-                                      true,
-                                    ],
-                                    [
-                                      "professional_tax",
-                                      (() => {
-                                        const st =
-                                          branchStates[
-                                            editPkg?.branch_name ?? ""
-                                          ];
-                                        if (!st)
-                                          return "Prof. Tax (state unknown)";
-                                        const fn = PT_BY_STATE[st];
-                                        if (!fn)
-                                          return `Prof. Tax (${st} — not configured)`;
-                                        return fn(0) === 0 && fn(50000) === 0
-                                          ? `Prof. Tax — N/A (${st})`
-                                          : `Prof. Tax — ${st}`;
-                                      })(),
                                       true,
                                     ],
                                   ] as [string, string, boolean][]

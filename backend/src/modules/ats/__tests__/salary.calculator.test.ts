@@ -1,8 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
-
-vi.mock('../../payroll/payrollCalculate.service.js', () => ({
-  getPtFromSlab: vi.fn().mockResolvedValue(200),
-}));
+import { describe, it, expect } from 'vitest';
 
 import { calculateSalary } from '../salary.calculator';
 
@@ -53,11 +49,14 @@ describe('calculateSalary', () => {
     expect(optedOut.net_in_hand).toBeGreaterThan(deducted.net_in_hand);
   });
 
-  it('resolves Professional Tax by state instead of a flat ₹200', async () => {
+  // Professional Tax removal (2026-09-11): PT was explicitly approved for full
+  // removal from payroll company-wide, all states, go-forward only
+  // (stakeholder-confirmed). calculateSalary no longer resolves PT by state --
+  // it always returns 0, regardless of stateCode, which stays only as an
+  // accepted-but-unused parameter for caller compatibility.
+  it('no longer applies Professional Tax for any state (removed 2026-09-11)', async () => {
     const r = await calculateSalary(720000, 40, 40, false, undefined, true, true, 'Delhi');
-    // getPtFromSlab is mocked to 200/month regardless of state in this test file;
-    // the point under test is that calculateSalary actually calls it (await path)
-    // rather than hardcoding 2400/year itself.
-    expect(r.professional_tax).toBeCloseTo(200, 0);
+    expect(r.professional_tax).toBe(0);
+    expect(r.net_in_hand).toBeCloseTo(r.gross - r.pf_employee - r.esic_employee, 1);
   });
 });

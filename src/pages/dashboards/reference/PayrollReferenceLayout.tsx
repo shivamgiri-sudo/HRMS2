@@ -122,7 +122,6 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
   const pf = statutoryValue("pf");
   const esi = statutoryValue("esi");
   const tds = statutoryValue("tds");
-  const pt = statutoryValue("professional");
 
   if (!selectedRunId) {
     return (
@@ -269,7 +268,6 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
           <div className="divide-y divide-[#edf1f6]">
             <ReferenceListRow title="Provident Fund (PF)" value={formatCurrency(pf)} tone="green" />
             <ReferenceListRow title="Employees' State Insurance (ESI)" value={formatCurrency(esi)} tone="green" />
-            <ReferenceListRow title="Professional Tax (PT)" value={formatCurrency(pt)} tone="green" />
             <ReferenceListRow title="TDS (Tax Deducted at Source)" value={formatCurrency(tds)} tone="amber" />
           </div>
         </ReferencePanel>

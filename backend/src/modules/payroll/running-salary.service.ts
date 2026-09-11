@@ -134,11 +134,12 @@ export async function computeRunningSalary(
   const esicEmrPct     = statConfig["esic_employer_pct"] ?? 3.25;
   const esicWageLimit  = statConfig["esic_wage_limit"]   ?? 21000;
   const pfWageLimit    = statConfig["pf_wage_limit"]     ?? 15000;
-  // No fallback to 200. PT is a state levy with no org-wide default — the same
-  // policy the locked payroll run enforces. An employee with no branch state
-  // gets 0 here (no deduction shown in running salary) rather than a number
-  // nobody approved. statutory_config has never held this key in production.
-  const defaultPt      = statConfig["professional_tax"]  ?? 0;
+  // PT removed 2026-09-11 per user decision — full company-wide removal, all
+  // states, go-forward only. Previously this fell back to statConfig's
+  // professional_tax key (never actually set in production) when the branch had
+  // no state; now it is hardcoded 0 so a leftover config row cannot revive a PT
+  // deduction here, matching payrollCalculate.service.ts's buildStatutoryRow.
+  const defaultPt      = 0;
 
   // Check PF / ESI opt-outs
   const [overrideRows] = await db.execute<RowDataPacket[]>(
@@ -299,8 +300,10 @@ export async function computeRunningSalary(
     loanEmiEarned = Number((loanRows[0] as any)?.loan_emi ?? 0);
   } catch { /* employee_loans may not exist */ }
 
-  // PT slab is based on structure gross only (same as payroll engine — incentives are
-  // non-statutory earnings excluded from PT base).
+  // PT removed 2026-09-11 per user decision — getPtFromSlab now always resolves to 0
+  // (see payrollCalculate.service.ts), so ptEarned is always 0 regardless of state_code.
+  // Left as a live call rather than inlining 0 so this file keeps matching the payroll
+  // engine's resolution path exactly, whatever that path resolves to.
   const ptEarned = emp.state_code
     ? await getPtFromSlab(emp.state_code, earnedStructureSalary)
     : defaultPt;
@@ -377,7 +380,7 @@ export async function computeRunningSalary(
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
   const projectedStructureSalary = (monthlyGross / daysInMonth) * projectedPayableDays;
 
-  // PT on structure gross only — incentive excluded from PT base.
+  // PT removed 2026-09-11 per user decision — always 0, same as ptEarned above.
   const ptProjected = emp.state_code
     ? await getPtFromSlab(emp.state_code, projectedStructureSalary)
     : defaultPt;

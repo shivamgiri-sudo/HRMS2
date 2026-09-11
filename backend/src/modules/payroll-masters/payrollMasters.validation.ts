@@ -46,6 +46,10 @@ export const CreatePackageSchema = z.object({
   gross:             moneyField,
   epf_employee:      moneyField,
   esic_employee:     moneyField,
+  // PT removed 2026-09-11 per user decision — still accepted on the wire so old
+  // clients don't get a validation error, but payrollMasters.service.ts's
+  // amtColumn() forces this to 0 on every create/update regardless of what is
+  // submitted here.
   professional_tax:  moneyField,
   net_in_hand:       moneyField,
   epf_employer:      moneyField,
