@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatIST,formatISTTime } from "@/lib/utils";
@@ -114,7 +115,7 @@ export default function NativeControlTower() {
 
         
 
-        {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+        {error && <ErrorState title="Couldn't load control tower" description={error} onRetry={() => void loadAll()} />}
 
         <div className="grid gap-4 md:grid-cols-5">
           <div className={`rounded-2xl border p-5 shadow-sm ${commandScore >= 85 ? "bg-emerald-50" : commandScore >= 65 ? "bg-amber-50" : "bg-red-50"}`}><p className="text-xs font-semibold uppercase text-slate-500">Command Score</p><p className="mt-2 text-3xl font-bold">{commandScore}%</p></div>

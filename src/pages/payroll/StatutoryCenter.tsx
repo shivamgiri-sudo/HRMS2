@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -896,7 +897,7 @@ function ConfigTab() {
           </button>
         </div>
 
-        {error && <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800"><AlertTriangle className="h-4 w-4 flex-shrink-0" /> {error}</div>}
+        {error && <ErrorState title="Couldn't load statutory data" description={error} onRetry={() => void load()} />}
 
         {loading && <div className="flex items-center gap-3 py-12 justify-center text-slate-400"><Loader className="h-5 w-5 animate-spin" /> Loading configuration...</div>}
 

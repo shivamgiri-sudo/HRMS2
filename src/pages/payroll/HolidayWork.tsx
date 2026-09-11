@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -152,7 +153,7 @@ function SubmitTab() {
           <Textarea placeholder="Describe the business need for holiday work…" value={form.request_reason} onChange={e => sel("request_reason", e.target.value)} rows={3} />
         </div>
 
-        {submitError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{submitError}</p>}
+        {submitError && <ErrorState title="Submission failed" description={submitError} className="mt-1" />}
         {submitSuccess && <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">Request submitted successfully.</p>}
 
         <Button disabled={submit.isPending || !form.holiday_id || !form.policy_id} onClick={() => submit.mutate()}>
@@ -266,7 +267,7 @@ function ApprovalsTab() {
         <Button size="sm" variant="outline" onClick={fetchRequests}>Refresh</Button>
       </div>
 
-      {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+      {error && <ErrorState title="Couldn't load requests" description={error} onRetry={fetchRequests} />}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="w-full text-sm">

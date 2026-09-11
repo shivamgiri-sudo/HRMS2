@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Heart, Search, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { KudosCard } from "@/components/engagement/KudosCard";
 import type { ApiResponse, Kudos, KudosTemplate } from "@/components/engagement/types";
 import { Button } from "@/components/ui/button";
@@ -140,7 +141,7 @@ export default function NativeKudos() {
           <h1 className="text-3xl font-bold text-slate-900">Kudos Wall</h1>
           <p className="mt-1 text-slate-500">Make good work visible with a quick note of appreciation.</p>
         </div>
-        {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {error && <ErrorState title="Couldn't load kudos" description={error} onRetry={() => void load()} />}
 
         <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
           <Card className="h-fit">
