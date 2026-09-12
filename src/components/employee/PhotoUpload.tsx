@@ -13,7 +13,8 @@ import { useRef, useState, useCallback } from "react";
 import { Camera, Loader2, Trash2, Upload, Check, X } from "lucide-react";
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -268,7 +269,7 @@ export function PhotoUpload({
       {/* Avatar + overlay trigger */}
       <div className="group relative cursor-pointer" onClick={() => inputRef.current?.click()}>
         <Avatar className={cn(sizeMap[size], "ring-2 ring-offset-2 ring-slate-200")}>
-          <AvatarImage src={displayUrl} alt={displayName ?? "Employee photo"} />
+          <AuthedAvatarImage src={displayUrl} alt={displayName ?? "Employee photo"} />
           <AvatarFallback className="font-bold text-white" style={{ background: "#1B6AB5" }}>
             {getInitials(displayName)}
           </AvatarFallback>

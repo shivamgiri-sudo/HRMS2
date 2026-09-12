@@ -1,6 +1,8 @@
 import { Router } from "express";
+import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { signPhotoAccessToken } from "../files/photo-access-token.js";
 
 export const employeeVerifyRouter = Router();
 
@@ -25,10 +27,23 @@ function normalizeMonthYear(value: string) {
   return text;
 }
 
+/**
+ * The employee-photos endpoint requires a Bearer session token (SEC-04/SEC-08)
+ * that an anonymous verify-page visitor never has, so a plain link to it 401s.
+ * Mint a short-lived token scoped to exactly this one filename instead — lets
+ * an anonymous visitor view this one photo for a few minutes without
+ * widening the endpoint's actual authentication requirement.
+ * (Used to rewrite to a legacy /uploads/employee-photos/ static path, which
+ * was removed in SEC-08 and now 403s — this replaces that dead rewrite.)
+ */
 function normalizePublicPhotoUrl(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return null;
   const trimmed = value.trim();
-  return trimmed.replace(/^\/api\/files\/employee-photos\//, "/uploads/employee-photos/");
+  const match = trimmed.match(/^\/api\/files\/employee-photos\/(.+)$/);
+  if (!match) return trimmed;
+  const filename = path.basename(match[1]);
+  const token = signPhotoAccessToken(filename);
+  return `/api/files/employee-photos/${filename}?t=${token}`;
 }
 
 /**

@@ -1,4 +1,6 @@
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 
 export function EmployeeCell({
   name,
@@ -18,7 +20,7 @@ export function EmployeeCell({
   return (
     <div className="flex min-w-0 items-center gap-3">
       <Avatar className="h-10 w-10 shrink-0">
-        <AvatarImage src={avatar} />
+        <AuthedAvatarImage src={normalizeMediaUrl(avatar)} />
         <AvatarFallback className="bg-[var(--brand-50)] text-xs font-semibold text-[var(--brand-700)]">
           {initials}
         </AvatarFallback>

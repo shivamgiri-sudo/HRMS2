@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Loader2, User, Users, ArrowUp, AlertTriangle, Building2, Network, Briefcase } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { AuthedImage } from "@/components/ui/AuthedImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 
 interface NodeDetailData {
   employee: Record<string, any>;
@@ -79,8 +81,8 @@ export function OrgNodeDetailsDrawer({
             <div className="flex items-start gap-4 p-4 bg-gradient-to-br from-slate-50 to-white border border-slate-200 rounded-xl">
               <div className="flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-[#1B3A5C] to-[#2a5a7a] text-white font-bold text-lg flex-shrink-0">
                 {data.employee.photo_url ? (
-                  <img
-                    src={data.employee.photo_url}
+                  <AuthedImage
+                    src={normalizeMediaUrl(data.employee.photo_url) ?? ""}
                     alt={data.employee.full_name || data.employee.first_name}
                     className="w-full h-full rounded-full object-cover"
                   />

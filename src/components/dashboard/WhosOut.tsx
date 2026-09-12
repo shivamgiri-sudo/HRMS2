@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Badge } from "@/components/ui/badge";
 import { UserX } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -70,7 +72,7 @@ export function WhosOut() {
                 className="flex items-center gap-3 rounded-lg bg-muted/50 p-2"
               >
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={leave.employee_avatar} />
+                  <AuthedAvatarImage src={normalizeMediaUrl(leave.employee_avatar)} />
                   <AvatarFallback className="text-xs">
                     {leave.employee_name
                       .split(" ")

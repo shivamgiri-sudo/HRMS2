@@ -1,5 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, X, Calendar, Clock, UserCheck, RotateCcw } from "lucide-react";
@@ -77,7 +79,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
             <Avatar className="h-11 w-11 rounded-lg">
-              <AvatarImage src={request.employee.avatar} className="rounded-lg" />
+              <AuthedAvatarImage src={normalizeMediaUrl(request.employee.avatar)} className="rounded-lg" />
               <AvatarFallback className="rounded-lg bg-white/10 text-xs font-bold text-slate-200">
                 {request.employee.name.split(" ").map((n) => n[0]).join("")}
               </AvatarFallback>

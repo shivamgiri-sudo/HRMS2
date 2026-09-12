@@ -7,7 +7,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AmountCell, MobileRecordCard, StatusBadgeV2 } from "@/components/enterprise";
@@ -425,7 +427,7 @@ export function PayrollTable({
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-9 w-9">
-                      <AvatarImage src={record.employee.avatar} />
+                      <AuthedAvatarImage src={normalizeMediaUrl(record.employee.avatar)} />
                       <AvatarFallback>
                         {record.employee.name.split(" ").map((n) => n[0]).join("")}
                       </AvatarFallback>
