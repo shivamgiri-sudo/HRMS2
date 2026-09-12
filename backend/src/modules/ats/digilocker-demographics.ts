@@ -44,6 +44,24 @@ const str = (v: unknown): string | null => {
   return s ? s : null;
 };
 
+/**
+ * True when a value looks like a masked/tokenized replacement rather than the
+ * real field DigiLocker normally returns.
+ *
+ * Seen in production (Deepak Gupta, CND-MTTRXJRC, 2026-09-11): a second
+ * DIGILOCKER_STATUS call for the same transaction, seconds after the first,
+ * got back "noBqoCQGhVW-_ex-QSexAUnmgYkoFCgksXilA4Zfq7YfrkirpiRo9A" for `name`
+ * where the first call had returned "Deepak Gupta" — same shape for dob,
+ * id_number and the address line. Real values here are always plain readable
+ * text; an underscore, or one long run with no whitespace, is not something a
+ * name/dob/id/address line ever legitimately contains.
+ */
+function looksTokenized(value: string): boolean {
+  if (value.includes("_")) return true;
+  if (value.length > 24 && !/\s/.test(value)) return true;
+  return false;
+}
+
 /** The provider sends 15-03-2005; every column here stores yyyy-mm-dd. */
 function toIsoDate(value: unknown): string | null {
   const raw = str(value);
@@ -72,8 +90,9 @@ function toLast4(value: unknown): string | null {
 function toAddress(node: unknown): DigilockerAddress | null {
   if (!node || typeof node !== "object") return null;
   const a = node as Record<string, unknown>;
+  const line = str(a.address);
   const address: DigilockerAddress = {
-    line: str(a.address),
+    line: line && looksTokenized(line) ? null : line,
     locality: str(a.locality_or_post_office),
     district: str(a.district_or_city),
     state: str(a.state),
@@ -179,8 +198,18 @@ export function extractDigilockerDemographics(payload: unknown): DigilockerDemog
 
   if (!doc) return empty;
 
+  // If the identity document's own name is tokenized, nothing else in this
+  // response can be trusted either — a provider that masks the name on a
+  // given call masks the rest of the document the same way (see
+  // syncDigilockerStatus's doc comment for the real incident this covers).
+  // Fall back to empty rather than let a partial, poisoned document dribble
+  // through toIsoDate/toLast4, whose own format checks won't catch every
+  // shape of scrambled text.
+  const name = str(doc.name);
+  if (name && looksTokenized(name)) return empty;
+
   return {
-    fullName: str(doc.name),
+    fullName: name,
     dateOfBirth: toIsoDate(doc.dob),
     gender: toGender(doc.gender),
     aadhaarLast4: toLast4(doc.id_number),
