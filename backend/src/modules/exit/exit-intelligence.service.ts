@@ -34,8 +34,25 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
     ? Math.max(0, Math.floor((Date.now() - new Date(rec.date_of_joining).getTime()) / (1000 * 60 * 60 * 24 * 30.4375)))
     : 0;
 
+  // pip_record, not pip_action_plan — that table does not exist in mas_hrms (the only PIP
+  // tables are pip_record and pip_checkpoint). scalar() swallows the resulting
+  // ER_NO_SUCH_TABLE and returns its fallback, so pendingDisciplinary was ALWAYS 0 and the
+  // regrettable-exit test below effectively had no disciplinary term at all: someone being
+  // terminated while on an open PIP could still be scored a regrettable exit purely on
+  // performance and attendance.
+  //
+  // The predicate is NOT a straight port of `NOT IN ('closed','cancelled')`. pip_record.status
+  // is ENUM('active','completed','extended','terminated') (sql/023_career_pip.sql) — neither
+  // 'closed' nor 'cancelled' is a member, so that condition would have matched every row
+  // including finished PIPs, counting a PIP someone completed two years ago as open
+  // discipline. 'active' and 'extended' are the two non-terminal states, so this expresses
+  // the original intent ("a PIP that has not finished") correctly against the real enum.
+  //
+  // Deliberately broader than the `status = 'active'` shorthand used by
+  // predictive-attrition.service.ts and employee-360.service.ts: an extended PIP is still an
+  // open one, and here the consequence is whether an exit is flagged regrettable.
   const pendingDisciplinary = await scalar(
-    `SELECT COUNT(*) AS cnt FROM pip_action_plan WHERE employee_id = ? AND status NOT IN ('closed','cancelled')`,
+    `SELECT COUNT(*) AS cnt FROM pip_record WHERE employee_id = ? AND status IN ('active','extended')`,
     [rec.employee_id]
   );
 

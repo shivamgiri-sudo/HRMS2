@@ -744,7 +744,14 @@ export default function NativeFullFinal() {
       showMessage("F&F recorded as paid.", "success");
       setFfCalc(res.data ?? { ...ffCalc, status: "paid" });
       setPaymentReference("");
-    } catch (err: unknown) { showMessage((err as Error).message || "Failed to record payment.", "error"); }
+    } catch (err: unknown) {
+      // markFfPaid now refuses (409) when the employee's NOC is not cleared — owner ruling
+      // 2026-09-12 (Q7): "a leaver without a signed NOC must not appear in the bank file", the
+      // same rule the F&F Transfer batch (payroll/PaymentDisbursalCenter.tsx) enforces before a
+      // settlement can even be exported. The backend message already names the real reason and
+      // points at where to fix it, so it is shown as-is rather than replaced with a generic one.
+      showMessage((err as Error).message || "Failed to record payment.", "error");
+    }
     finally { setMarkingPaid(false); }
   };
 

@@ -794,7 +794,9 @@
     "1753_payroll_debit_account_config.sql",
     "1754_salary_transfer_batch.sql",
     "1756_bank_exception_auto_assign_event.sql",
-    "1758_grn_accounts_head_approval_stage.sql"
+    "1758_grn_accounts_head_approval_stage.sql",
+    "1760_exit_absconding_since.sql",
+    "1762_fnf_transfer_batch.sql"
   ],
   "approvedDeletions": [
     {

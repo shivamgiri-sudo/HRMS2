@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
+import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
 import { notifyFullFinalReady } from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
 // ff-compute.service.ts, which imports ffService from this file.
@@ -489,6 +490,22 @@ export const ffService = {
       throw ffError(
         403,
         "Payment must be recorded by someone other than the person who approved this settlement"
+      );
+    }
+
+    // NOC — the SAME rule fnf-transfer.service.ts enforces before a settlement can even enter
+    // a bank-transfer batch (owner ruling 2026-09-12, Q7: "a leaver without a signed NOC must
+    // not appear in the bank file"). Enforced HERE too, not only at that eligibility stage,
+    // because this function has a SECOND caller that never goes through eligibility filtering
+    // at all: NativeFullFinal.tsx's "Mark Paid" button posts straight to this endpoint with a
+    // hand-typed reference — no bank file, no batch, no NOC check anywhere on that path. Without
+    // this, the NOC gate was real for one door into markFfPaid and decorative for the other.
+    const noc = await nocReleaseStatusForEmployee(rec.employee_id);
+    if (noc.blocked) {
+      throw ffError(
+        409,
+        `Cannot mark this F&F paid: ${noc.reason ?? "NOC clearance is not complete"}. ` +
+        "Complete the NOC in Payroll › NOC Management, or have a Payroll Head override it there."
       );
     }
 
