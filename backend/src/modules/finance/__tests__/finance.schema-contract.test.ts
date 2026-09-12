@@ -188,16 +188,24 @@ describe("finance database and API contract", () => {
   it("uses installment dispatch APIs instead of overwriting aggregate UTR fields", () => {
     const routes = read("src/modules/finance/vendor-payment.routes.ts");
     const ledgerService = read("src/modules/finance/vendor-payment-ledger.service.ts");
-    const page = read("../src/pages/finance/VendorPaymentDispatchPage.tsx");
+    // The dispatch/transactions calls live in the sheet, not the page that opens it — moved
+    // there when the dispatch UI was extracted into its own component (PaymentDispatchSheet.tsx
+    // now owns the mutation; the page just renders the sheet and passes it a payment). This
+    // assertion pointed at the page for long enough that a later test ("calls vendor-payment
+    // endpoints on the mounted path…", right below) had to be added to actually cover the sheet —
+    // its own comment says as much ("the earlier contract test only covered
+    // VendorPaymentDispatchPage") — but this one was never repointed, so it had been silently
+    // checking a file with none of these strings in it.
+    const sheet = read("../src/components/finance/vendor/PaymentDispatchSheet.tsx");
     expect(routes).toContain('"/vendor-payments/:id/dispatch"');
     expect(routes).toContain('"/vendor-payments/:id/transactions"');
     expect(routes).toContain("Aggregate payment updates are retired");
     expect(ledgerService).toContain("VENDOR_PAYMENT_INSTALLMENT_DISPATCHED");
     expect(ledgerService).toContain("paymentAmount");
-    expect(page).toContain("/dispatch");
-    expect(page).toContain("/transactions");
-    expect(page).not.toContain("/update-payment");
-    expect(page).not.toContain("/bulk-update");
+    expect(sheet).toContain("/dispatch");
+    expect(sheet).toContain("/transactions");
+    expect(sheet).not.toContain("/update-payment");
+    expect(sheet).not.toContain("/bulk-update");
   });
 
   it("calls vendor-payment endpoints on the mounted path with the keys the service reads", () => {

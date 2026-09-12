@@ -647,7 +647,10 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
   });
 
   it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
-    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // 3-stage chain (owner ruling, 2026-09-12): Finance Head's own precondition is now
+    // accounts_head_approved, not branch_head_approved — that earlier status is Accounts Head's
+    // stage to clear first.
+    setupReviewMocks({ status: "accounts_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     // releaseAllocations: allocationRow.lifecycle_status is 'pending' (not 'reserved'), so it
     // skips budgetConsumptionService.release and only issues the grn_cost_allocation UPDATE.
     mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]); // grn_cost_allocation UPDATE
@@ -714,7 +717,9 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
   });
 
   it("finance_head approve: STATE_CHANGED/409 when affectedRows is 0", async () => {
-    setupLegacyMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // 3-stage chain (owner ruling, 2026-09-12): Finance Head's own precondition is now
+    // accounts_head_approved, not branch_head_approved.
+    setupLegacyMocks({ status: "accounts_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     // budgetConsumptionService.consume is module-mocked (see top of file), so the next call
     // reviewGrn's finance_head-approve branch makes is the guarded UPDATE itself.
     mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
@@ -725,7 +730,7 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
   });
 
   it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
-    setupLegacyMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    setupLegacyMocks({ status: "accounts_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     // budgetConsumptionService.release is module-mocked — next call is the guarded UPDATE.
     mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnService } = await import("../grn.service.js");

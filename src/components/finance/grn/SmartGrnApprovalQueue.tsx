@@ -59,6 +59,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useGrnSummary } from "@/hooks/useGrnSummary";
 import { useHasRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { deriveGstType, gstStateLabel } from "@/lib/indian-states";
 
 type GrnRow = {
   id: string;
@@ -245,6 +246,20 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const parent: Record<string, any> | undefined = workspace?.grn ?? target ?? undefined;
   const blockers = (workspace?.validations ?? []).filter(
     (item) => Number(item.is_blocking) === 1 && item.validation_status === "failed"
+  );
+
+  // Vendor State vs Billing State decides CGST+SGST vs IGST (deriveGstType — the same rule the
+  // raise form itself applies). Surfaced here so an approver sees a mismatch BEFORE approving —
+  // recorded gst_type is the invoice component split actually saved, expectedGstType is what the
+  // two state codes on the same row say it should be. Silent whenever either state is missing
+  // (a legacy or unbudgeted GRN may never have recorded one) or gst_type is "none" (non-GST spend).
+  const expectedGstType = deriveGstType(parent?.vendor_state_code, parent?.billing_state_code);
+  const recordedGstType = String(parent?.gst_type ?? "none");
+  const gstStateMismatch = Boolean(
+    parent
+    && expectedGstType !== "none"
+    && recordedGstType !== "none"
+    && recordedGstType !== expectedGstType
   );
 
   const canReview = useMemo(() => {
@@ -869,6 +884,13 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         ["Financial year", parent?.financial_year ?? "—"],
                         ["PO / Contract", parent?.purchase_reference ?? "—"],
                         ["GSTIN", parent?.vendor_gstin ?? "—"],
+                        // Vendor State / Billing State — an approver needs both to sanity-check the
+                        // GST split on the invoice (CGST+SGST for same state, IGST for different
+                        // states; deriveGstType is the same rule the raise form itself applies). Not
+                        // shown before this: only the GSTIN was visible, which does not by itself say
+                        // whether the recorded gst_type on THIS GRN actually matches.
+                        ["Vendor State", gstStateLabel(parent?.vendor_state_code)],
+                        ["Billing State", gstStateLabel(parent?.billing_state_code)],
                       ] as [string, string | null | undefined][]).map(([label, val]) => (
                         <GrnKv key={label} label={label}>
                           {/* Remarks/Rejection reason are free text and can run long — truncate+title
@@ -883,6 +905,23 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         </GrnKv>
                       ))}
                     </GrnKvList>
+                  )}
+
+                  {gstStateMismatch && (
+                    <div className="border-t border-grn-line-soft px-4 py-3">
+                      <GrnAlert tone="warn">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            Vendor State ({gstStateLabel(parent?.vendor_state_code)}) and Billing
+                            State ({gstStateLabel(parent?.billing_state_code)}) say this should be{" "}
+                            {expectedGstType === "igst" ? "IGST" : "CGST + SGST"}, but the invoice
+                            was saved as {recordedGstType === "igst" ? "IGST" : "CGST + SGST"}.
+                            Check with the raiser before approving.
+                          </span>
+                        </div>
+                      </GrnAlert>
+                    </div>
                   )}
 
                   {parent?.description && (

@@ -96,7 +96,12 @@ export const imprestService = {
         conditions.push(filter.sql);
         params.push(...filter.params);
       }
-    } else if (filters.branchId) {
+    }
+    // Was `else if` — a no-op for any caller whose scope resolves to "all" (super_admin,
+    // finance_head, …), which is exactly who a UI branch filter is for: a branch_admin's own
+    // scope already narrows them to one branch, so the filter mattered least there. Now applies
+    // independently of the scope check above, so it narrows further rather than being ignored.
+    if (filters.branchId) {
       conditions.push("m.branch_id = ?");
       params.push(filters.branchId);
     }
@@ -396,7 +401,10 @@ export const imprestService = {
         conditions.push(filter.sql);
         params.push(...filter.params);
       }
-    } else if (filters.branchId) {
+    }
+    // Was `else if` — see listManagers' identical fix just above in this file: a no-op for any
+    // caller whose scope resolves to "all", which is exactly who a UI branch filter is for.
+    if (filters.branchId) {
       conditions.push("a.branch_id = ?");
       params.push(filters.branchId);
     }

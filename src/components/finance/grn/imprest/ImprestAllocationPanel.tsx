@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, RefreshCw, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -103,10 +103,30 @@ export function ImprestAllocationPanel() {
   const [showForm, setShowForm] = useState(false);
   const [rejecting, setRejecting] = useState<{ id: string; reason: string } | null>(null);
   const canOverridePeriod = useHasRole("finance_head", "super_admin");
+  // ?branchId was already accepted by both /managers and /allocations but silently ignored for
+  // any org-wide role (super_admin, finance_head, …): their branchScope resolves to "all", and
+  // the service only checked filters.branchId inside an `else` branch that scope had already
+  // taken. Fixed server-side (imprest.service.ts); this is the filter control that now works.
+  const [branchId, setBranchId] = useState("");
+
+  const branchesQuery = useQuery({
+    queryKey: ["imprest-branches"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>("/api/org/branches?limit=500");
+      return (res?.data ?? res?.rows ?? []) as Array<{ id: string; branch_name?: string; name?: string }>;
+    },
+    staleTime: 5 * 60_000,
+  });
+  const branches = branchesQuery.data ?? [];
 
   const managersQuery = useQuery({
-    queryKey: ["imprest-managers"],
-    queryFn: async () => unwrap<Manager>(await hrmsApi.get<any>("/api/finance/imprest/managers")),
+    queryKey: ["imprest-managers", branchId],
+    queryFn: async () =>
+      unwrap<Manager>(
+        await hrmsApi.get<any>(
+          `/api/finance/imprest/managers${branchId ? `?branchId=${branchId}` : ""}`,
+        ),
+      ),
   });
 
   // Same shared query key the Payment Voucher forms use — one cache for the company's account
@@ -119,9 +139,13 @@ export function ImprestAllocationPanel() {
   const bankAccounts = bankAccountsQuery.data ?? [];
 
   const allocationsQuery = useQuery({
-    queryKey: ["imprest-allocations"],
+    queryKey: ["imprest-allocations", branchId],
     queryFn: async () =>
-      unwrap<Allocation>(await hrmsApi.get<any>("/api/finance/imprest/allocations")),
+      unwrap<Allocation>(
+        await hrmsApi.get<any>(
+          `/api/finance/imprest/allocations${branchId ? `?branchId=${branchId}` : ""}`,
+        ),
+      ),
   });
 
   const managers = managersQuery.data ?? [];
@@ -130,6 +154,16 @@ export function ImprestAllocationPanel() {
     () => managers.find((m) => m.id === draft.imprestManagerId) ?? null,
     [managers, draft.imprestManagerId],
   );
+
+  // Narrowing the Branch filter can drop the manager already picked in the still-open form out
+  // of the list — clear it rather than silently submitting a selection the picker no longer shows.
+  useEffect(() => {
+    setDraft((d) =>
+      d.imprestManagerId && !managers.some((m) => m.id === d.imprestManagerId)
+        ? { ...d, imprestManagerId: "" }
+        : d,
+    );
+  }, [managers]);
 
   // The float the allocation is about to credit. Server-derived, from the ledger.
   const balanceQuery = useQuery({
@@ -208,6 +242,24 @@ export function ImprestAllocationPanel() {
 
   return (
     <div className="space-y-4">
+      <GrnCard>
+        <GrnFieldRow
+          label="Branch"
+          hint="Narrows the manager picker below and the Allocations list to one branch."
+        >
+          <GrnSelect
+            className="w-[240px]"
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+          >
+            <option value="">All branches I can see</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.branch_name ?? b.name ?? b.id}</option>
+            ))}
+          </GrnSelect>
+        </GrnFieldRow>
+      </GrnCard>
+
       <GrnCard>
         <GrnCardHeader
           title="Raise an allocation"
