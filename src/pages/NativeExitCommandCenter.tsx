@@ -20,6 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { AIInsightPanel } from "@/components/ai";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 
@@ -77,6 +78,25 @@ type FullFinalCalc = {
 };
 
 const statusFlow = ["submitted", "manager_review", "accepted", "notice_serving", "exited"];
+
+// NOC clearance only makes sense once the resignation is actually accepted and moving —
+// same window the "Generate clearance" checklist action already uses.
+const NOC_ELIGIBLE_STATUSES = ["accepted", "notice_serving", "exited", "exit_confirmed"];
+
+// Mirrors noc-case.routes.ts's ROLE_EVIDENCE exactly, but checked most-senior-first (not
+// the order that table declares them): the escalation matrix notifies everyone ABOVE the
+// initiator's tier, so classifying an admin/HR viewer as a plain "agent" (the loosest match,
+// since "admin" sits in every evidence list) would over-notify. Falls back to "agent" only
+// for someone with no other matching evidence — e.g. a bare "employee" role, which "agent"
+// uniquely covers.
+const NOC_INITIATOR_EVIDENCE: Array<{ role: "agent" | "tl" | "manager" | "hr" | "it" | "admin_mis"; roleKeys: string[] }> = [
+  { role: "hr",        roleKeys: ["hr", "branch_hr", "payroll_hr", "payroll_head", "admin", "super_admin"] },
+  { role: "admin_mis", roleKeys: ["branch_admin", "admin", "super_admin"] },
+  { role: "manager",   roleKeys: ["process_manager", "manager", "branch_head", "admin", "super_admin"] },
+  { role: "it",        roleKeys: ["branch_it", "it", "it_head", "admin", "super_admin"] },
+  { role: "tl",        roleKeys: ["tl", "team_leader", "admin", "super_admin"] },
+  { role: "agent",     roleKeys: ["employee", "tl", "team_leader", "hr", "admin", "super_admin"] },
+];
 const CHART_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"];
 const REASON_COLORS: Record<string, string> = {
   better_opportunity: "#3B82F6",
@@ -761,11 +781,12 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Overview Tab
 // ─────────────────────────────────────────────────────────────────────────────
-function OverviewTab({ data, loading, onStatusChange, onGenerateClearance }: {
+function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onStartNocClearance }: {
   data: CenterData | null;
   loading: boolean;
   onStatusChange: (id: string, status: string) => Promise<void>;
   onGenerateClearance: (id: string) => Promise<void>;
+  onStartNocClearance: (exitRequestId: string, employeeId: string) => Promise<void>;
 }) {
   const [status, setStatus] = useState("all");
   const [message, setMessage] = useState("");
@@ -790,6 +811,15 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance }: {
       setMessage("Clearance tasks generated");
     } catch (err: any) {
       setMessage(err?.message || "Unable to generate clearance");
+    }
+  };
+
+  const startNocClearance = async (exitRequestId: string, employeeId: string) => {
+    try {
+      await onStartNocClearance(exitRequestId, employeeId);
+      setMessage("NOC clearance started — see NOC Clearance Chain under Payroll");
+    } catch (err: any) {
+      setMessage(err?.message || "Unable to start NOC clearance");
     }
   };
 
@@ -904,6 +934,14 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance }: {
                             className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
                           >
                             <ShieldCheck className="h-3 w-3" /> Generate clearance
+                          </button>
+                        )}
+                        {NOC_ELIGIBLE_STATUSES.includes(r.status) && (
+                          <button
+                            onClick={() => startNocClearance(r.id, r.employee_id)}
+                            className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                          >
+                            <ShieldCheck className="h-3 w-3" /> Start NOC clearance
                           </button>
                         )}
                       </div>
@@ -1131,6 +1169,7 @@ type EmpResult = {
 export default function NativeExitCommandCenter() {
   const [data, setData] = useState<CenterData | null>(null);
   const [loading, setLoading] = useState(false);
+  const { hasAnyRole } = useWorkforceAccess();
 
   // ── Create exit request ──────────────────────────────────────────────────
   const [showCreate, setShowCreate] = useState(false);
@@ -1212,6 +1251,14 @@ export default function NativeExitCommandCenter() {
     await load();
   };
 
+  // Opens (or, harmlessly, re-fetches) the NOC clearance case for one exit. openCase() on
+  // the backend is idempotent — a case that already exists for this employee is returned
+  // as-is rather than duplicated — so this button is always safe to click again.
+  const handleStartNocClearance = async (exitRequestId: string, employeeId: string) => {
+    const initiatorRole = NOC_INITIATOR_EVIDENCE.find((e) => hasAnyRole(...e.roleKeys))?.role ?? "hr";
+    await hrmsApi.post("/api/payroll/noc-cases", { employeeId, initiatorRole, exitRequestId });
+  };
+
   return (
     <DashboardLayout>
       <main className="space-y-6 p-6 lg:p-8">
@@ -1282,6 +1329,7 @@ export default function NativeExitCommandCenter() {
               loading={loading}
               onStatusChange={handleStatusChange}
               onGenerateClearance={handleGenerateClearance}
+              onStartNocClearance={handleStartNocClearance}
             />
           </TabsContent>
 
