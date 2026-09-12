@@ -369,7 +369,7 @@ export async function generateSalaryTransferBatch(params: {
   const dateLabel = formatTransferDate(now);
 
   let rows: TransferRow[];
-  let correctedItemByEmployee = new Map<string, string>();
+  const correctedItemByEmployee = new Map<string, string>();
   if (params.reexport) {
     // Re-export population: only employees with a corrected_ready item for this run.
     const [readyItems] = await db.execute<RowDataPacket[]>(
