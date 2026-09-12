@@ -326,9 +326,25 @@ export async function createEmployeeFromCandidate(
          -- fallback until someone manually re-typed what the candidate already gave.
          p.emergency_contact_name,
          p.emergency_contact_relation,
-         p.emergency_contact_mobile
+         p.emergency_contact_mobile,
+         -- Present/permanent address, structured (line1/line2/city/state/pincode) —
+         -- captured on the onboarding form and, until now, never read here at all (the
+         -- single-blob current_address/permanent_address above went into employees'
+         -- flat address1/permanent_address1 columns, which the Employee Master report
+         -- never reads; this structured version is what the report's employee_address
+         -- join actually needs — see the INSERT below).
+         p.present_address_line1, p.present_address_line2, p.present_city,
+         p.present_state, p.present_pincode,
+         p.permanent_address_line1, p.permanent_address_line2, p.permanent_city,
+         p.permanent_state, p.permanent_pincode,
+         -- FamilyForm — captured into candidate_onboarding_family and never read here
+         -- either, so employees.annual_income/count_of_dependents (added specifically
+         -- to mirror this form, see 1073_employee_profile_parity.sql) stayed NULL for
+         -- every employee created through this path.
+         fam.annual_income, fam.count_of_dependents
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_family fam ON fam.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
       [candidateId]
     );
@@ -417,8 +433,11 @@ export async function createEmployeeFromCandidate(
           candidate_id,
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
+          -- FamilyForm — see the fam join above. Mirrors the candidate journey exactly as
+          -- 1073_employee_profile_parity.sql intended when it added these two columns.
+          annual_income, count_of_dependents,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
@@ -456,6 +475,8 @@ export async function createEmployeeFromCandidate(
         salaryStartDate,
         offer.emp_type,
         offer.reporting_manager_id ?? null,
+        candRow?.annual_income ?? null,
+        candRow?.count_of_dependents ?? null,
       ]
     );
 
@@ -470,6 +491,48 @@ export async function createEmployeeFromCandidate(
          ON DUPLICATE KEY UPDATE
            relationship_type = COALESCE(NULLIF(relationship_type,''), VALUES(relationship_type))`,
         [employeeId, String(candRow.relation).trim()]
+      );
+    }
+
+    // Structured present/permanent address -> employee_address. This is the table the
+    // Employee Master report actually joins on (address_type='current'/'permanent'); the
+    // flat address1/permanent_address1 written into `employees` above is a different,
+    // already-existing column the report never reads, kept as-is for the other callers
+    // that do (profile display, ESI docs, DPDP export, etc.) — this is additive, not a
+    // replacement. Only written when the onboarding form actually captured at least one
+    // structured field, so this never creates an empty row for no reason.
+    const hasPresentAddress = [candRow?.present_address_line1, candRow?.present_city,
+      candRow?.present_state, candRow?.present_pincode].some((v) => v && String(v).trim() !== "");
+    if (hasPresentAddress) {
+      await conn.execute(
+        `INSERT INTO employee_address
+           (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
+         VALUES (UUID(), ?, 'current', ?, ?, ?, ?, ?, 'India')
+         ON DUPLICATE KEY UPDATE
+           address_line1 = COALESCE(NULLIF(address_line1,''), VALUES(address_line1)),
+           address_line2 = COALESCE(NULLIF(address_line2,''), VALUES(address_line2)),
+           city          = COALESCE(NULLIF(city,''), VALUES(city)),
+           state         = COALESCE(NULLIF(state,''), VALUES(state)),
+           pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
+        [employeeId, candRow?.present_address_line1 ?? null, candRow?.present_address_line2 ?? null,
+         candRow?.present_city ?? null, candRow?.present_state ?? null, candRow?.present_pincode ?? null]
+      );
+    }
+    const hasPermanentAddress = [candRow?.permanent_address_line1, candRow?.permanent_city,
+      candRow?.permanent_state, candRow?.permanent_pincode].some((v) => v && String(v).trim() !== "");
+    if (hasPermanentAddress) {
+      await conn.execute(
+        `INSERT INTO employee_address
+           (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
+         VALUES (UUID(), ?, 'permanent', ?, ?, ?, ?, ?, 'India')
+         ON DUPLICATE KEY UPDATE
+           address_line1 = COALESCE(NULLIF(address_line1,''), VALUES(address_line1)),
+           address_line2 = COALESCE(NULLIF(address_line2,''), VALUES(address_line2)),
+           city          = COALESCE(NULLIF(city,''), VALUES(city)),
+           state         = COALESCE(NULLIF(state,''), VALUES(state)),
+           pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
+        [employeeId, candRow?.permanent_address_line1 ?? null, candRow?.permanent_address_line2 ?? null,
+         candRow?.permanent_city ?? null, candRow?.permanent_state ?? null, candRow?.permanent_pincode ?? null]
       );
     }
 
