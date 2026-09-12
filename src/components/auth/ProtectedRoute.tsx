@@ -75,8 +75,20 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
     return <Navigate to="/auth" replace state={{ from: location }} />;
   }
 
-  if (mustChangePasswordFromApi && location.pathname !== "/change-password") {
-    return <Navigate to="/change-password" replace />;
+  const onChangePasswordRoute = location.pathname === "/change-password";
+
+  if (mustChangePasswordFromApi) {
+    if (!onChangePasswordRoute) {
+      return <Navigate to="/change-password" replace />;
+    }
+    // Pre-existing gap, not introduced by the redirect above: role/access queries 403
+    // MUST_CHANGE_PASSWORD for this account on *every* endpoint, including once already on
+    // this page, so the generic error branch below would still swallow it and nobody with
+    // this scope could ever reach the actual change-password form. This account's whole
+    // purpose on this route is to submit /api/auth/change-password, which the same
+    // middleware explicitly allows for this scope — the page never needed role/access data
+    // to function, so skip that branch and render it directly.
+    return <>{children}</>;
   }
 
   if (roleError || isAccessError) {
