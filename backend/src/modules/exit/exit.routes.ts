@@ -49,6 +49,13 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
 
+  // Who is raising this, recorded from the caller's own roles rather than from the body.
+  // A non-privileged caller can only ever raise their own exit (enforced immediately below),
+  // so 'employee' is a fact for them. A privileged caller is acting on someone else's record.
+  (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = !isPrivileged
+    ? "employee"
+    : (await hasRole(userId, "admin", "hr")) ? "hr" : "manager";
+
   if (!isPrivileged) {
     const emp = await getEmployeeForUser(userId);
     if (!emp) {
@@ -341,8 +348,15 @@ exitRouter.get(
          LEFT JOIN employees e ON e.id = er.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN process_master p ON p.id = e.process_id
-         LEFT JOIN departments d ON d.id = e.department_id
-         LEFT JOIN designations des ON des.id = e.designation_id
+         -- department_master / designation_master. Same defect, same cause as the
+         -- notice-period query in manpower-risk.routes.ts: the tables named
+         -- "departments" and "designations" do not exist in mas_hrms and never have,
+         -- so this whole statement raised ER_NO_SUCH_TABLE and GET /:id/full returned
+         -- 500. That is the only endpoint NoticePeriodDrawer.tsx calls, so the
+         -- drill-down drawer never rendered for any exit. The SELECT list already used
+         -- the _master column names (dept_name / designation_name).
+         LEFT JOIN department_master d ON d.id = e.department_id
+         LEFT JOIN designation_master des ON des.id = e.designation_id
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE er.id = ?
         LIMIT 1`,

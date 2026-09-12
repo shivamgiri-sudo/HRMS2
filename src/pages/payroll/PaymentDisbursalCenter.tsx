@@ -64,6 +64,7 @@ import { toast } from "sonner";
 import { FilterMultiSelect } from "@/components/finance/pnl/FilterMultiSelect";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { FnfTransferTab } from "./FnfTransferTab";
 
 // ── Bank Readiness types ───────────────────────────────────────────────────────
 
@@ -1173,6 +1174,7 @@ export default function PaymentDisbursalCenter() {
                 <TabsTrigger value="remediation">HR / Manager list</TabsTrigger>
                 <TabsTrigger value="manual-review">Manual Review</TabsTrigger>
                 <TabsTrigger value="export">Salary Transfer file</TabsTrigger>
+                <TabsTrigger value="fnf-export">F&amp;F Transfer</TabsTrigger>
               </TabsList>
 
               {/* ── Exceptions ────────────────────────────────────────────── */}
@@ -2151,6 +2153,11 @@ export default function PaymentDisbursalCenter() {
                     )}
                   </div>
                 )}
+              </TabsContent>
+
+              {/* ── F&F Transfer — Full & Final settlement's own bank-transfer batch ──── */}
+              <TabsContent value="fnf-export" className="space-y-4 mt-3">
+                <FnfTransferTab />
               </TabsContent>
             </Tabs>
           </TabsContent>

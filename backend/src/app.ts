@@ -31,6 +31,7 @@ import { esiRegDocsRouter } from "./modules/payroll/esi-reg-docs.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
 import { payrollCcAttendanceRouter } from "./modules/payroll/payroll-cc-attendance.routes.js";
 import { bankPaymentReadinessRouter } from "./modules/payroll/bank-payment-readiness.routes.js";
+import { fnfTransferRouter } from "./modules/payroll/fnf-transfer.routes.js";
 import { bankPennyDropVerifyRouter } from "./modules/payroll/bank-penny-drop-verify.routes.js";
 import { payrollProcessReadinessRouter } from "./modules/payroll/payroll-process-readiness.routes.js";
 import { payrollReadinessCategoriesRouter } from "./modules/payroll/payroll-readiness-categories.routes.js";
@@ -425,6 +426,9 @@ app.use("/api/payroll", listEndpointLimiter, esiRegDocsRouter);
 app.use("/api/payroll/branch-readiness", listEndpointLimiter, payrollBranchReadinessRouter);
 app.use("/api/payroll/cc-attendance", listEndpointLimiter, payrollCcAttendanceRouter);
 app.use("/api/payroll/bank-readiness", listEndpointLimiter, bankPaymentReadinessRouter);
+// Full & Final settlement disbursement — owner ruling 2026-09-12: its own bank-transfer batch,
+// separate from monthly salary, same bank-file machinery and approvals. See fnf-transfer.routes.ts.
+app.use("/api/payroll/fnf-transfer", listEndpointLimiter, fnfTransferRouter);
 app.use("/api/payroll/bank-penny-drop", bankPennyDropVerifyRouter);
 app.use("/api/payroll/process-readiness", listEndpointLimiter, payrollProcessReadinessRouter);
 app.use("/api/payroll/readiness-categories", listEndpointLimiter, payrollReadinessCategoriesRouter);

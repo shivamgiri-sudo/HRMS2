@@ -46,6 +46,9 @@ import { db } from "../../db/mysql.js";
 import { buildBankReadinessReport, maskAccount, IFSC_RE } from "./bank-payment-readiness.service.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import { getDebitAccountNumber } from "./payroll-debit-account-config.service.js";
+// nocBlockedEmployeesForRuns already checks the kill switch (isNocReleaseGateEnabled) itself and
+// returns [] when the gate is off, so this file needs no separate flag check.
+import { nocBlockedEmployeesForRuns } from "./noc-release-gate.service.js";
 
 // ─── The exact 21-column header, in order ────────────────────────────────────
 export const SALARY_TRANSFER_HEADER = [
@@ -96,8 +99,14 @@ function payMod(ifsc: string | null): "I" | "N" {
   return /^ICIC/.test(String(ifsc ?? "").trim().toUpperCase()) ? "I" : "N";
 }
 
-/** DD-MMM-YYYY, upper-cased — matches the reference file's Date column exactly. */
-function formatTransferDate(d: Date): string {
+/**
+ * DD-MMM-YYYY, upper-cased — matches the reference file's Date column exactly.
+ *
+ * Exported: the bank file's date format is a property of the BANK, not of which batch type
+ * (salary vs F&F) is being paid, so fnf-transfer.service.ts reuses this rather than defining
+ * its own and risking the two silently drifting apart.
+ */
+export function formatTransferDate(d: Date): string {
   const dd = String(d.getDate()).padStart(2, "0");
   const mmm = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
   return `${dd}-${mmm}-${d.getFullYear()}`;
@@ -144,17 +153,43 @@ export interface EligibleFilters {
  * classification) AND not already holding an "open" transfer item (exported-awaiting-result
  * or confirmed) for this run. The open_flag generated column on salary_transfer_batch_item
  * enforces the second half at the database level too — this is the read-side mirror of it.
+ *
+ * NOC GATE (owner ruling 2026-09-12): "A leaver without a signed NOC must not appear in the
+ * bank file." noc-release-gate.service.ts existed with exactly that rule already written —
+ * kill switch, override path, and a reporting query (nocBlockedEmployeesForRuns) — but its own
+ * header records that nothing in this pipeline ever called it: an inactive employee with a
+ * clean bank account and a positive salary_prep_line went straight into the export with no
+ * NOC check at all. This is that wiring.
+ *
+ * Deliberately shipped with isNocReleaseGateEnabled() defaulting ON, matching the flag's own
+ * documented default ("An unset flag means the gate applies"). No behaviour is silently new,
+ * though: nobody is excluded who is not ALREADY reported by nocBlockedEmployeesForRuns on the
+ * bank-payment-readiness screen — see bank-payment-readiness.routes.ts's NOC withheld panel,
+ * wired well before this file was. This closes the gap between "we tell you who is withheld"
+ * and "we then actually withhold them."
+ *
+ * excludedByNoc is returned alongside the eligible rows rather than silently dropped, for the
+ * same reason nocBlockedEmployeesForRuns's own doc comment gives: a payable employee silently
+ * absent from a bank file is the exact failure mode this whole gate exists to prevent, and a
+ * second silent exclusion here would reintroduce it one layer up.
  */
-export async function getEligibleTransferRows(runId: string): Promise<TransferRow[]> {
+export async function getEligibleTransferRowsWithNocExclusions(
+  runId: string,
+): Promise<{ rows: TransferRow[]; excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> }> {
   const report = await buildBankReadinessReport(runId);
   const readyIds = new Set(report.rows.filter((r) => r.payable).map((r) => r.employee_id));
-  if (readyIds.size === 0) return [];
+  if (readyIds.size === 0) return { rows: [], excludedByNoc: [] };
 
   const [openRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM salary_transfer_batch_item WHERE run_id = ? AND status IN ('exported','confirmed')`,
     [runId],
   );
   const alreadyOpen = new Set((openRows as any[]).map((r) => r.employee_id));
+
+  // nocBlockedEmployeesForRuns already returns [] when the kill switch is off, so callers here
+  // need no separate flag check — same contract that function documents for its own callers.
+  const nocBlocked = await nocBlockedEmployeesForRuns([runId]);
+  const nocBlockedIds = new Set(nocBlocked.map((b) => b.employee_id));
 
   const [lineRows] = await db.execute<RowDataPacket[]>(
     `SELECT spl.employee_id, spl.employee_code, spl.net_salary,
@@ -176,8 +211,20 @@ export async function getEligibleTransferRows(runId: string): Promise<TransferRo
   );
 
   const rows: TransferRow[] = [];
+  const excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> = [];
   for (const line of lineRows as any[]) {
     if (!readyIds.has(line.employee_id) || alreadyOpen.has(line.employee_id)) continue;
+    if (nocBlockedIds.has(line.employee_id)) {
+      const blocked = nocBlocked.find((b) => b.employee_id === line.employee_id);
+      excludedByNoc.push({
+        employee_id: line.employee_id,
+        employee_code: line.employee_code ?? null,
+        reason: blocked?.case_status
+          ? `NOC clearance is ${String(blocked.case_status).replace(/_/g, " ")}`
+          : "NOC clearance has not been raised",
+      });
+      continue;
+    }
     const account = resolveAccountNumber({
       account_number_enc: line.account_number_enc,
       account_number: line.account_number_legacy,
@@ -203,12 +250,36 @@ export async function getEligibleTransferRows(runId: string): Promise<TransferRo
       active_status: Number(line.active_status ?? 0),
     });
   }
-  return rows;
+  return { rows, excludedByNoc };
+}
+
+/**
+ * Back-compat wrapper — the NOC exclusions are silently dropped here. Existing callers
+ * (generateSalaryTransferBatch's non-corrective paths, and anywhere else that only ever wanted
+ * the row list) keep exactly their previous signature and behaviour; only
+ * bank-payment-readiness.routes.ts's listing endpoint needs the excluded reasons surfaced, and
+ * it calls getFilteredEligibleTransferRowsWithNocExclusions directly instead.
+ */
+export async function getEligibleTransferRows(runId: string): Promise<TransferRow[]> {
+  return (await getEligibleTransferRowsWithNocExclusions(runId)).rows;
 }
 
 /** getEligibleTransferRows, narrowed by the selection filters — branch/process/cost-centre/status. */
 export async function getFilteredEligibleTransferRows(runId: string, filters: EligibleFilters): Promise<TransferRow[]> {
   const rows = await getEligibleTransferRows(runId);
+  return applyEligibleFilters(rows, filters);
+}
+
+/** Same filter, plus the NOC-excluded list so the UI can show WHY someone did not appear. */
+export async function getFilteredEligibleTransferRowsWithNocExclusions(
+  runId: string,
+  filters: EligibleFilters,
+): Promise<{ rows: TransferRow[]; excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> }> {
+  const { rows, excludedByNoc } = await getEligibleTransferRowsWithNocExclusions(runId);
+  return { rows: applyEligibleFilters(rows, filters), excludedByNoc };
+}
+
+function applyEligibleFilters(rows: TransferRow[], filters: EligibleFilters): TransferRow[] {
   const status = filters.status ?? "active";
   return rows.filter((r) => {
     if (filters.branchId && r.branch_id !== filters.branchId) return false;
@@ -221,8 +292,20 @@ export async function getFilteredEligibleTransferRows(runId: string, filters: El
   });
 }
 
-/** Builds the 21-column AOA (array-of-arrays) matching the reference file's row shape. */
-function buildAoa(rows: TransferRow[], debitAccount: string, dateLabel: string): unknown[][] {
+/**
+ * Builds the 21-column AOA (array-of-arrays) matching the reference file's row shape.
+ *
+ * Exported and generalized over any row shape carrying the same five payable fields (account
+ * number, name, amount, IFSC, employee code): the 21-column format, whole-rupee rounding and
+ * text-cell coercion are properties of the BANK's file spec, not of salary specifically.
+ * fnf-transfer.service.ts's settlement rows reuse this directly rather than re-deriving the
+ * same layout and risking the two formats silently diverging.
+ */
+export function buildAoa(
+  rows: Array<Pick<TransferRow, "account_number" | "employee_name" | "amount" | "ifsc" | "employee_code">>,
+  debitAccount: string,
+  dateLabel: string,
+): unknown[][] {
   const aoa: unknown[][] = [[...SALARY_TRANSFER_HEADER]];
   for (const r of rows) {
     aoa.push([
@@ -529,8 +612,15 @@ export async function commitTransferNumberImport(params: {
   return { confirmed, payslips_unlocked: confirmed, skipped: params.preview.length - confirmed };
 }
 
-/** "7-May-26" style dates from the reference CSV → MySQL DATE. Falls back to null, never throws — an unparsable date must not abort the whole import. */
-function parseTrfDate(v: string): string | null {
+/**
+ * "7-May-26" style dates from the reference CSV → MySQL DATE. Falls back to null, never
+ * throws — an unparsable date must not abort the whole import.
+ *
+ * Exported: the bank's Transfer Number Update File date format is identical for a salary run
+ * and an F&F settlement — it is the SAME bank sending back the SAME CSV shape either way — so
+ * fnf-transfer.service.ts's import path reuses this exact parser.
+ */
+export function parseTrfDate(v: string): string | null {
   const s = String(v ?? "").trim();
   const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
   if (!m) return null;

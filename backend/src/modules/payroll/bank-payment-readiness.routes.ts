@@ -60,7 +60,7 @@ import {
 } from "./bank-manual-review.service.js";
 import {
   generateSalaryTransferBatch,
-  getFilteredEligibleTransferRows,
+  getFilteredEligibleTransferRowsWithNocExclusions,
   rejectTransferItems,
   markItemCorrectedReady,
   rejectionReasonLabel,
@@ -923,7 +923,7 @@ bankPaymentReadinessRouter.get(
     if (!["active", "inactive", "both"].includes(status)) {
       return res.status(400).json({ success: false, message: "status must be active, inactive or both" });
     }
-    const rows = await getFilteredEligibleTransferRows(runId, {
+    const { rows, excludedByNoc } = await getFilteredEligibleTransferRowsWithNocExclusions(runId, {
       branchId: String(req.query.branch_id ?? "").trim() || null,
       processId: String(req.query.process_id ?? "").trim() || null,
       costCentreId: String(req.query.cost_centre_id ?? "").trim() || null,
@@ -949,6 +949,11 @@ bankPaymentReadinessRouter.get(
         cost_centre_name: r.cost_centre_name,
         employee_status: r.active_status === 1 ? "active" : "inactive",
       })),
+      // Owner ruling 2026-09-12: a leaver without a signed NOC must not appear in the bank
+      // file. Reported here rather than silently dropped — the whole point of
+      // nocBlockedEmployeesForRuns (noc-release-gate.service.ts) is that a payable employee
+      // absent from the file is visible, not assumed. Empty when the kill switch is off.
+      excluded_by_noc: excludedByNoc,
     });
   }),
 );

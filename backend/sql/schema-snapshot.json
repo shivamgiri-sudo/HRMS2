@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1155,
-  "columnCount": 17132,
+  "tableCount": 1158,
+  "columnCount": 17174,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -8358,7 +8358,8 @@
       "admin_actioned_at",
       "exit_confirmed_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "absconding_since"
     ],
     "exit_retention_action": [
       "id",
@@ -19444,6 +19445,53 @@
     "zz_vpt_due_date_backup_20260827": [
       "id",
       "due_date"
+    ],
+    "fnf_transfer_batch": [
+      "id",
+      "batch_number",
+      "attempt_kind",
+      "row_count",
+      "total_amount",
+      "debit_account_masked",
+      "file_name",
+      "file_sha256",
+      "filters_snapshot",
+      "created_by",
+      "created_at"
+    ],
+    "fnf_transfer_batch_item": [
+      "id",
+      "batch_id",
+      "full_final_calculation_id",
+      "exit_request_id",
+      "employee_id",
+      "employee_code",
+      "amount",
+      "pay_mod",
+      "account_masked",
+      "status",
+      "rejection_reason",
+      "rejection_note",
+      "rejected_at",
+      "rejected_by",
+      "corrected_from_item_id",
+      "ecs_number",
+      "transfer_date",
+      "confirmed_at",
+      "confirmed_by",
+      "created_at",
+      "updated_at",
+      "open_flag"
+    ],
+    "fnf_transfer_import": [
+      "id",
+      "file_name",
+      "file_sha256",
+      "row_count",
+      "matched_count",
+      "unmatched_count",
+      "uploaded_by",
+      "uploaded_at"
     ]
   }
 }
