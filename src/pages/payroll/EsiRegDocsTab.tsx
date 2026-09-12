@@ -65,7 +65,7 @@ function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: numbe
   const missing = onPage - allReady;
 
   const tiles = [
-    { label: "ESI Eligible", value: total, icon: Users, tone: "blue" as const },
+    { label: "Pending ESI Registration", value: total, icon: Users, tone: "blue" as const },
     { label: `All Docs Ready (of ${onPage} shown)`, value: allReady, icon: CheckCircle2, tone: "green" as const },
     { label: `Docs Missing (of ${onPage} shown)`, value: missing, icon: AlertTriangle, tone: "amber" as const },
   ];
@@ -154,7 +154,7 @@ function EmployeeTable({
             {employees.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-400 text-sm">
-                  No ESI-eligible employees found.
+                  No ESI-eligible employees pending registration.
                 </td>
               </tr>
             )}
@@ -458,7 +458,7 @@ export default function EsiRegDocsTab() {
 
       {data && (
         <p className="text-xs text-slate-400 text-right">
-          {data.total} ESI-eligible employee{data.total !== 1 ? "s" : ""}
+          {data.total} employee{data.total !== 1 ? "s" : ""} pending ESI registration
         </p>
       )}
 

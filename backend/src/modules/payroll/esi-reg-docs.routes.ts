@@ -151,9 +151,29 @@ esiRegDocsRouter.get(
     // REGISTRATION queue made mostly of people who left is not a long list, it
     // is the wrong list — and the bulk download would have built document packs
     // for them.
+    //
+    // The population itself was inverted (found 2026-09-12): this is meant to be
+    // "ESI-eligible employees who are NOT YET registered", i.e. who still need
+    // registration. The condition instead read `esic_number IS NOT NULL OR
+    // esi_eligible = 1`, which is "already has a number OR is flagged eligible" —
+    // an OR that ADMITS anyone with a number, rather than a check that EXCLUDES
+    // them. That is the opposite population: it mixed people who already have an
+    // ESIC number in with people who don't, so "not registered" was never
+    // isolated from "already registered" on this screen.
+    //
+    // Fixed to AND NOT registered: eligible per the HRMS-native flag (never a
+    // wage-threshold guess — same doctrine as statutory-applicability.service.ts,
+    // eligibility is a fact to be told, not inferred) AND no ESIC number on file
+    // yet, checked against BOTH places a number can live. `employees.esic_number`
+    // is the field this route reads for display, but a number can also be
+    // recorded on `employee_statutory_info.esi_number` (see COALESCE usage in
+    // reporting/executors/employee.executor.ts line 628) without ever being
+    // backfilled onto `employees`. Checking only `esic_number` would have shown
+    // some already-registered employees as "not registered" too.
     const whereParts: string[] = [
       `e.active_status = 1`,
-      `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
+      `esi.esi_eligible = 1`,
+      `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
@@ -614,10 +634,13 @@ esiRegDocsRouter.get(
     const branchId = req.query.branch_id as string | undefined;
 
     // Same scope as the list above, deliberately — an export that disagrees with
-    // the screen it was exported from is worse than no export.
+    // the screen it was exported from is worse than no export. See the fix note
+    // on the list query above: this must select eligible-but-not-yet-registered
+    // employees, not the inverted "already has a number OR eligible" population.
     const whereParts = [
       `e.active_status = 1`,
-      `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
+      `esi.esi_eligible = 1`,
+      `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
