@@ -155,6 +155,31 @@ jobs:
         working-directory: backend
         run: npm run build
 
+      # The deploy job below used to rebuild both of these from scratch on a completely
+      # different machine (self-hosted, not this ubuntu-latest runner) — the same commit,
+      # the same npm ci, the same tsc/vite build, twice, back to back. Measured on a real
+      # run (2026-09-12): Build backend 180.8s + Build frontend 76.9s + their installs
+      # ~96.5s = ~355s of the deploy job's ~397s total was rebuilding work this job had
+      # already done. Uploading what was just built here and downloading it in `deploy`
+      # (same workflow run, `needs: ci-gate`, so this is guaranteed to be the artifact for
+      # the exact commit `deploy` verifies against) turns that into a single build.
+      #
+      # retention-days: 1 — these are a hand-off between two jobs in the same run, live
+      # for minutes, and are never referenced again once `deploy` downloads them.
+      - name: Upload backend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: backend/dist
+          retention-days: 1
+
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+          retention-days: 1
+
   # ── 2. Deploy (self-hosted runner on 192.168.11.225) ─────────────────────────
   # The self-hosted runner runs INSIDE the LAN and has direct access to
   # /var/www/HRMS2 and pm2.  It connects outbound to GitHub — no inbound port
@@ -190,39 +215,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install frontend deps
-        run: npm ci
-
-      # backend/package.json pulls in canvas@^3 (used by ats/face-match.service.ts).
-      # It falls back to a node-gyp source build on this runner, which fails with
-      # "gyp ERR! configure error" because cairo/pango/jpeg/gif headers are absent.
-      # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
-      # the change that introduced it.
-      - name: Install native build deps for canvas
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The self-hosted runner user has no passwordless sudo: this exact command
-          # failed with "sudo: a password is required", which is not something a
-          # non-interactive job can answer. The packages only matter if canvas has to
-          # fall back to a node-gyp source build, and this host has been building it
-          # for every deploy already, so they are present.
-          #
-          # Attempted when sudo is available, skipped when it is not. Nothing is
-          # hidden by skipping: if the headers really are missing, the npm ci below
-          # fails on the gyp configure error, which is the same signal this step was
-          # added to prevent - just one step later.
-          if sudo -n true 2>/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
-          else
-            echo "Passwordless sudo unavailable on this runner - relying on the host's existing cairo/pango headers."
-          fi
-
-      - name: Install backend deps
-        working-directory: backend
-        run: npm ci
-
       - name: Verify commit
         shell: bash
         run: |
@@ -230,12 +222,25 @@ jobs:
           echo "Deploying commit: ${{ github.sha }}"
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
 
-      - name: Build backend
-        working-directory: backend
-        run: npm run build
+      # Replaces this job's own "Install frontend/backend deps" + canvas native-deps +
+      # "Build backend"/"Build frontend" steps. Those installed and rebuilt the exact same
+      # commit that `ci-gate` had just built two steps ago on a different machine — see
+      # the upload-artifact comment in ci-gate above for the measured cost. `ci-gate`
+      # already ran `npm ci` (so `npm audit`-equivalent dependency resolution already
+      # happened) and the typecheck/test gates this job depends on via `needs: ci-gate`;
+      # this job's own node_modules were never used for anything except producing the
+      # build this now downloads instead.
+      - name: Download backend build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist
+          path: backend/dist
 
-      - name: Build frontend
-        run: npm run build
+      - name: Download frontend build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
 
       - name: Validate backend artifact
         shell: bash
