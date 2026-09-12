@@ -51,6 +51,7 @@ import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker
 // why a single-file registration silently never runs in one of the two worker
 // topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
 import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
+import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startAtsDailyReportScheduler, stopAtsDailyReportScheduler } from "../modules/ats/ats-daily-report.cron.js";
@@ -263,6 +264,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startManagerDailyBriefScheduler(); return Promise.resolve(); },
   },
   {
+    // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly
+    // "true" — see intervention-recommendation.cron.ts's header.
+    name: "intervention-recommendation-generation",
+    start: () => { startInterventionRecommendationScheduler(); return Promise.resolve(); },
+  },
+  {
     name: "dashboard-snapshot",
     start: () => { startDashboardSnapshotScheduler(); return Promise.resolve(); },
   },
@@ -467,6 +474,7 @@ function shutdown(): void {
   stopPerformanceScorecardSnapshotScheduler();
   stopAttendanceReconciliationWorker();
   stopManagerDailyBriefScheduler();
+  stopInterventionRecommendationScheduler();
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();

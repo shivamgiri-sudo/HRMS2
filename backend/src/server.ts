@@ -29,6 +29,10 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // registration silently never runs in the WORKERS_PROCESS=external topology).
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
+// Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly "true" —
+// see intervention-recommendation.cron.ts's header for why this engine existed
+// but never ran before this scheduler was added.
+import { startInterventionRecommendationScheduler } from "./modules/analytics/intervention-recommendation.cron.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
@@ -210,6 +214,8 @@ function startServer() {
         // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
         // header for the dependency-timing evidence behind its default run time.
         startManagerDailyBriefScheduler();
+        // No-op unless INTERVENTION_RECOMMENDATIONS_ENABLED=true.
+        startInterventionRecommendationScheduler();
         // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
         // populates integration_biometric_daily, and so the source every non-Operations
         // employee's payroll attendance is built from.
