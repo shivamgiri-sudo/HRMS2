@@ -40,6 +40,7 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 // here first would have silently stopped all five, exactly as happened to
 // ats-reminders when it lived in one file only.
 import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
+import { startEmployeeMasterSnapshotScheduler, stopEmployeeMasterSnapshotScheduler } from "../cron/employee-master-snapshot.cron.js";
 import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
 import {
   startPerformanceScorecardSnapshotScheduler,
@@ -286,6 +287,16 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { initBusinessActionSyncJobs(); return Promise.resolve(); },
   },
   {
+    // Registered in server.ts too, same convention as every other scheduler in this
+    // file — server.ts's copy only runs when WORKERS_PROCESS is not "external", so
+    // without this entry the cron silently never fires in the external-workers
+    // topology production actually runs (confirmed live: the snapshot table sat at
+    // its 2026-09-11 15:58 backfill timestamp, 800+ minutes stale, the morning after
+    // this scheduler was first deployed).
+    name: "employee-master-snapshot",
+    start: () => { startEmployeeMasterSnapshotScheduler(); return Promise.resolve(); },
+  },
+  {
     name: "lms-sync",
     start: startLmsSyncWorker,
   },
@@ -470,6 +481,7 @@ function shutdown(): void {
   // Newly moved here from server.ts. privacy-retention and ats-reminders export
   // no stop function, so they are not listed — their timers die with the process.
   stopBusinessActionSyncJobs();
+  stopEmployeeMasterSnapshotScheduler();
   stopDashboardSnapshotScheduler();
   stopPerformanceScorecardSnapshotScheduler();
   stopAttendanceReconciliationWorker();
