@@ -148,8 +148,49 @@ async function updateProviderLog(params: {
 /**
  * Reconcile the candidate's most recent DigiLocker session against Luckpay and,
  * on success, download and store the KYC documents.
+ *
+ * Serialized per candidate via a MySQL named lock. Real production case
+ * (Deepak Gupta, CND-MTTRXJRC, 2026-09-11): two callers triggered this within
+ * ~2 seconds of each other for the same transaction. Luckpay/Digitap returned
+ * clean PII on the first DIGILOCKER_STATUS call and tokenized/masked PII
+ * (name, dob, aadhaar id_number, address line all scrambled) on the second —
+ * apparently the provider only returns full PII once per transaction. Nothing
+ * here recognised the second response as suspect, so its garbled name landed
+ * unconditionally in ats_candidate.full_name (see digilocker-demographics.ts,
+ * which has no blanks-only guard on that column the way it does on the
+ * onboarding-profile columns). A lock stops a second concurrent call from
+ * ever reaching the provider for the same candidate while the first is still
+ * in flight; extractDigilockerDemographics() below is the second layer of
+ * defence in case the provider ever returns garbage on a lone, unduplicated
+ * call.
+ *
+ * GET_LOCK/RELEASE_LOCK are per-CONNECTION (MySQL session-scoped), not
+ * global — see createSalaryAssignment/createRun in payroll.service.ts for the
+ * same pattern — so this must hold one connection checked out of the pool for
+ * the whole call rather than using `db.execute`, which draws a fresh
+ * connection per call and would silently defeat the lock.
  */
 export async function syncDigilockerStatus(candidateId: string): Promise<SyncOutcome> {
+  const lockKey = `digilocker_sync:${candidateId}`;
+  const lockConn = await db.getConnection();
+  let acquired = false;
+  try {
+    const [lockRows] = await lockConn.execute<RowDataPacket[]>(`SELECT GET_LOCK(?, 5) AS acquired`, [lockKey]);
+    acquired = Number(lockRows[0]?.acquired) === 1;
+    if (!acquired) {
+      return { state: "pending", message: "A DigiLocker status check is already in progress for this candidate." };
+    }
+    return await syncDigilockerStatusLocked(candidateId);
+  } finally {
+    // Best-effort release — a held lock past this connection's release back
+    // to the pool still self-clears when the underlying MySQL session ends,
+    // so a failed RELEASE here is not a leak.
+    if (acquired) await lockConn.execute(`SELECT RELEASE_LOCK(?)`, [lockKey]).catch(() => {});
+    lockConn.release();
+  }
+}
+
+async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT client_transaction_id, provider_reference_id, status
        FROM ats_provider_transaction_log

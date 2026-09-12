@@ -112,3 +112,45 @@ describe("it never fails a candidate's onboarding", () => {
     expect(r.dateOfBirth).toBeNull();
   });
 });
+
+describe("a tokenized/masked response is discarded, not partially trusted", () => {
+  // Real production capture (Deepak Gupta, CND-MTTRXJRC, candidate_id
+  // 16914743-c353-46c7-b373-6ca823b05bde, 2026-09-11 08:30:43): a second
+  // DIGILOCKER_STATUS call for the same transaction, 2 seconds after a clean
+  // one, came back with name/dob/id_number/address all replaced by
+  // provider-side masked tokens instead of the real values.
+  const TOKENIZED_RESPONSE = {
+    data: {
+      documentList: [
+        {
+          dob: "7QN3Hr7vaY8hGWxB18uDF_XXwPYQ5Hlx4nEntpHffd2xpIN9Uuc",
+          name: "noBqoCQGhVW-_ex-QSexAUnmgYkoFCgksXilA4Zfq7YfrkirpiRo9A",
+          gender: "M",
+          id_number: "9xJ2KtIZi-vKd1FVX8KUJkvSd3pKUcuwcPKhdrr9bVjFxCRSwozy0A",
+          document_type: "AADHAAR",
+        },
+      ],
+      current_address_details: {
+        state: "Delhi",
+        address: "K84ts_cafkc1oSEdKRP4BTAu-0w8SUHfnOc9OCX91b2CfEyWJ7HsK7ltbCHZuEQd1iVaWKKa2CRmmR1m",
+        pincode: "110008",
+        district_or_city: "Central Delhi",
+        locality_or_post_office: "Baba Farid Puri",
+      },
+    },
+  };
+
+  it("returns empty demographics rather than writing a scrambled name", () => {
+    const r = extractDigilockerDemographics(TOKENIZED_RESPONSE);
+    expect(r.fullName).toBeNull();
+    expect(r.dateOfBirth).toBeNull();
+    expect(r.currentAddress).toBeNull();
+  });
+
+  it("still reads a real name that happens to be long, since it has whitespace", () => {
+    const r = extractDigilockerDemographics({
+      data: { documentList: [{ name: "Venkata Naga Sai Ramakrishna Prasad", document_type: "AADHAAR" }] },
+    });
+    expect(r.fullName).toBe("Venkata Naga Sai Ramakrishna Prasad");
+  });
+});
