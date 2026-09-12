@@ -1078,7 +1078,7 @@ export default function PaymentDisbursalCenter() {
                       This is a system fault, not a fault on these employees'
                       records.
                     </strong>{" "}
-                    Payment file generation is refused until it returns.
+                    Salary transfer file generation is refused until it returns.
                   </p>
                   {summary?.verification_source.error && (
                     <p className="text-rose-700 mt-1 font-mono text-xs">
@@ -1172,7 +1172,7 @@ export default function PaymentDisbursalCenter() {
                 <TabsTrigger value="exceptions">Exceptions</TabsTrigger>
                 <TabsTrigger value="remediation">HR / Manager list</TabsTrigger>
                 <TabsTrigger value="manual-review">Manual Review</TabsTrigger>
-                <TabsTrigger value="export">Payment file</TabsTrigger>
+                <TabsTrigger value="export">Salary Transfer file</TabsTrigger>
               </TabsList>
 
               {/* ── Exceptions ────────────────────────────────────────────── */}

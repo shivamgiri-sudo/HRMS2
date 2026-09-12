@@ -178,9 +178,13 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "uan",              label: "UAN",                 format: "text" },
       { key: "epf_no",           label: "EPF No",              format: "text" },
       { key: "esic_no",          label: "ESIC No",             format: "text" },
+      // cheque_no/cheque_date/print_date are legacy column names inherited from db_bill's
+      // physical-cheque era; this company pays by bank transfer now, so they carry the
+      // Salary Transfer File's ECS number, its transfer date, and the date that number was
+      // recorded (see the query below) rather than any actual cheque.
       { key: "cheque_no",        label: "Cheque No",           format: "text" },
-      { key: "cheque_date",      label: "Cheque Date",         format: "text" },
-      { key: "print_date",       label: "Print Date",          format: "text" },
+      { key: "cheque_date",      label: "Cheque Date",         format: "date" },
+      { key: "print_date",       label: "Print Date",          format: "date" },
       { key: "left_status",      label: "Left Status",         format: "text" },
       { key: "tax_total_gross",  label: "Tax Total Gross",     format: "currency", align: "right" },
       { key: "tax_section10",    label: "Tax Section 10",      format: "currency", align: "right" },
@@ -300,7 +304,14 @@ const REPORTS: Record<string, ReportDef> = {
           COALESCE(e.uan_number, '')                                                 AS uan,
           COALESCE(e.epf_number, '')                                                 AS epf_no,
           COALESCE(e.esic_number, '')                                                AS esic_no,
-          NULL AS cheque_no, NULL AS cheque_date, NULL AS print_date,
+          -- Sourced from the Salary Transfer File workflow (bank-payment-readiness), not a real
+          -- cheque: ecs_number is the bank's transfer/ECS reference, transfer_date is the payment
+          -- date from that file, confirmed_at is when the transfer number was recorded (i.e. the
+          -- file's upload/commit moment). MAX() picks the confirmed row when duplicates exist for
+          -- this employee+run; exported/rejected rows carry no ecs_number so they never win.
+          MAX(sti.ecs_number)                                  AS cheque_no,
+          DATE_FORMAT(MAX(sti.transfer_date), '%Y-%m-%d')      AS cheque_date,
+          DATE_FORMAT(MAX(sti.confirmed_at), '%Y-%m-%d')       AS print_date,
           IF(e.active_status = 1, '', 'LEFT')                                        AS left_status,
           NULL AS tax_total_gross, NULL AS tax_section10, NULL AS tax_balance,
           NULL AS tax_under_hd, NULL AS deduction_under24, NULL AS tax_gross_total,
@@ -320,6 +331,8 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN designation_master dm ON dm.id = e.designation_id
         LEFT JOIN department_master dpm ON dpm.id = e.department_id
         LEFT JOIN salary_prep_line_component c ON c.line_id = spl.id
+        LEFT JOIN salary_transfer_batch_item sti
+               ON sti.run_id = spr.id AND sti.employee_code = spl.employee_code
         ${processJoin("pm", "e")}
         WHERE 1=1 ${bw} ${mw} ${ew} ${nw} ${pw}
         GROUP BY spl.id, spl.employee_code, e.full_name, bm.branch_name,
