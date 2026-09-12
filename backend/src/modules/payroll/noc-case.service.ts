@@ -82,6 +82,7 @@ export interface NocSignatoryRow {
   role_key: string;
   fallback_role_key: string | null;
   requires_asset_clearance: number;
+  is_mandatory: number;
   status: SignatoryStatus;
   acted_by_user_id: string | null;
   acted_by_name: string | null;
@@ -506,9 +507,9 @@ export async function openCase(params: {
     await conn.execute(
       `INSERT INTO noc_signatory
          (id, noc_case_id, display_no, tier, stage_key, stage_label, role_key,
-          fallback_role_key, requires_asset_clearance, status)
+          fallback_role_key, requires_asset_clearance, is_mandatory, status)
        SELECT UUID(), ?, t.display_no, t.tier, t.stage_key, t.stage_label, t.role_key,
-              t.fallback_role_key, t.requires_asset_clearance, 'pending'
+              t.fallback_role_key, t.requires_asset_clearance, t.is_mandatory, 'pending'
          FROM noc_signatory_template t
         WHERE t.active_status = 1`,
       [caseId],
@@ -997,7 +998,11 @@ export async function actOnSignatory(params: {
     } else {
       const after = signatories.map((s) =>
         s.id === target.id ? { ...s, status: params.decision as SignatoryStatus } : s);
-      const allCleared = after.every((s) => s.status === "accepted" || s.status === "acknowledged");
+      // Accounts and Finance are real, trackable signatory stages, but not mandatory for the
+      // case to reach 'completed' (1764_noc_signatory_not_mandatory.sql, per the business owner
+      // 2026-09-12) — a non-mandatory stage still pending does not hold the case open.
+      const allCleared = after.every((s) =>
+        Number(s.is_mandatory) === 0 || s.status === "accepted" || s.status === "acknowledged");
 
       if (allCleared) {
         await conn.execute(
