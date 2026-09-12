@@ -2,11 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   IndianRupee,
   RefreshCw,
   Save,
   Search,
+  Sparkles,
   SplitSquareHorizontal,
+  UserSearch,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -89,6 +93,42 @@ type Exceptions = {
   costCentresWithStaff: number;
   costCentresWithRate: number;
   unbalancedAllocations: Array<{ employeeId: string; total: number }>;
+  unresolvableEmployees: Array<{
+    employeeId: string; employeeCode: string | null; fullName: string | null; branchName: string | null;
+    missingProcess: boolean; missingDesignation: boolean; missingCostCentre: boolean;
+  }>;
+  noCostCentreEmployees: Array<{ employeeId: string; employeeCode: string | null; fullName: string | null; branchName: string | null }>;
+  costCentresWithoutRate: Array<{
+    costCentreId: string; costCentreCode: string | null; costCentreName: string | null;
+    staffCount: number; likelyInternalOverhead: boolean;
+  }>;
+  costCentresNeedingRealRate: number;
+};
+
+type EmployeeLookupResult = {
+  employeeId: string;
+  employeeCode: string | null;
+  fullName: string | null;
+  activeStatus: boolean;
+  processId: string | null;
+  processName: string | null;
+  clientName: string | null;
+  designationId: string | null;
+  designationName: string | null;
+  costCentreId: string | null;
+  costCentreName: string | null;
+  billability: { isBillable: boolean; source: string; ruleId: string | null };
+  seatRate: { seatRateMonthly: number; source: string; ruleId: string | null } | null;
+  allocation: { rows: Array<{ costCentreId: string; costCentreName?: string | null; allocationPct: number }>; percentTotal: number; balanced: boolean } | null;
+};
+
+const BILLABILITY_SOURCE_LABEL: Record<string, string> = {
+  employee_rule: "Explicit rule for this employee",
+  process_designation: "Rule for this process + role",
+  process: "Rule for this process",
+  designation: "Rule for this role",
+  default_bucket: "Default (matches P&L classification, no rule saved)",
+  unresolved: "Unresolved — no process or role to reach a rule",
 };
 
 /**
@@ -111,6 +151,7 @@ export default function BillabilitySeatCostPage() {
   const [candidates, setCandidates] = useState<SplitCandidate[]>([]);
   const [exceptions, setExceptions] = useState<Exceptions | null>(null);
   const [search, setSearch] = useState("");
+  const [applyingDefaults, setApplyingDefaults] = useState(false);
 
   async function loadAll() {
     setLoading(true);
@@ -135,6 +176,36 @@ export default function BillabilitySeatCostPage() {
   }
 
   useEffect(() => { void loadAll(); }, []);
+
+  const defaultRowCount = useMemo(() => matrix.filter((r) => r.isBillable === null).length, [matrix]);
+
+  /**
+   * "Default" is not a blank — it's the answer the P&L already computes (agent role = billable),
+   * just never saved as an explicit rule. This persists that existing answer in bulk, for every
+   * cell still unresolved, so the exceptions list stops growing with rows nobody actually
+   * disagrees about. Cells where staff disagree on their P&L bucket are left alone.
+   */
+  async function applyDefaults() {
+    setApplyingDefaults(true);
+    try {
+      const res = await hrmsApi.post<{ applied: number; skipped: Array<{ processName: string | null; designationName: string | null; reason: string }> }>(
+        "/api/finance/billability/matrix/apply-defaults", {}
+      );
+      const { applied, skipped } = res as any;
+      if (applied > 0) {
+        toast.success(`Saved the existing default for ${applied} cell(s).${skipped?.length ? ` ${skipped.length} left for manual review.` : ""}`);
+      } else if (skipped?.length) {
+        toast.warning(`Nothing could be auto-filled — all ${skipped.length} remaining cell(s) need manual review.`);
+      } else {
+        toast.success("Nothing left to fill in.");
+      }
+      void loadAll();
+    } catch (e: any) {
+      toast.error(e?.message ?? "Could not apply defaults.");
+    } finally {
+      setApplyingDefaults(false);
+    }
+  }
 
   const filteredMatrix = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -178,6 +249,7 @@ export default function BillabilitySeatCostPage() {
             <TabsTrigger value="matrix"><Users className="mr-2 h-4 w-4" />Who is billable</TabsTrigger>
             <TabsTrigger value="rates"><IndianRupee className="mr-2 h-4 w-4" />Seat rates</TabsTrigger>
             <TabsTrigger value="splits"><SplitSquareHorizontal className="mr-2 h-4 w-4" />Support cost splits</TabsTrigger>
+            <TabsTrigger value="lookup"><UserSearch className="mr-2 h-4 w-4" />Employee lookup</TabsTrigger>
           </TabsList>
 
           <TabsContent value="matrix" className="mt-4">
@@ -190,14 +262,28 @@ export default function BillabilitySeatCostPage() {
                   front-line agents billable, team leaders, quality auditors and managers not. Set a
                   rule only where this client pays differently.
                 </p>
-                <div className="relative mt-2 max-w-sm">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    className="pl-8"
-                    placeholder="Filter by process, client or role…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <div className="relative max-w-sm flex-1 min-w-[220px]">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      className="pl-8"
+                      placeholder="Filter by process, client or role…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                  {defaultRowCount > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void applyDefaults()}
+                      disabled={applyingDefaults}
+                      title="Saves the already-computed default (agent role = billable) as an explicit rule for every cell still showing Default. Cells where staff disagree are skipped for manual review."
+                    >
+                      <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                      {applyingDefaults ? "Filling in…" : `Fill in the obvious ones (${defaultRowCount})`}
+                    </Button>
+                  )}
                 </div>
               </CardHeader>
               <CardContent>
@@ -265,6 +351,10 @@ export default function BillabilitySeatCostPage() {
               onSaved={() => void loadAll()}
             />
           </TabsContent>
+
+          <TabsContent value="lookup" className="mt-4">
+            <EmployeeLookupTab />
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
@@ -277,22 +367,46 @@ export default function BillabilitySeatCostPage() {
  * A configuration screen that shows only what IS set lets an unconfigured hole read as
  * completeness. These counts are the difference between "we know" and "we assumed".
  */
+/** One expandable line in the exception banner — the count plus, on click, who/what it names. */
+function GapDisclosure({ label, count, children }: { label: React.ReactNode; count: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  if (count === 0) return null;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-start gap-1 text-left hover:underline"
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5 mt-0.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 mt-0.5 shrink-0" />}
+        <span>{label}</span>
+      </button>
+      {open && <div className="mt-1.5 ml-5">{children}</div>}
+    </li>
+  );
+}
+
 function ExceptionBanner({ exceptions, loading }: { exceptions: Exceptions | null; loading: boolean }) {
   if (loading || !exceptions) return null;
   const { unresolvableByMatrix, activeEmployees, noCostCentre,
-          costCentresWithStaff, costCentresWithRate, unbalancedAllocations } = exceptions;
+          costCentresWithStaff, costCentresWithRate, unbalancedAllocations,
+          unresolvableEmployees, noCostCentreEmployees, costCentresWithoutRate,
+          costCentresNeedingRealRate } = exceptions;
   const pct = activeEmployees ? Math.round((unresolvableByMatrix / activeEmployees) * 100) : 0;
   const clean = unresolvableByMatrix === 0 && unbalancedAllocations.length === 0
-    && costCentresWithRate >= costCentresWithStaff;
+    && costCentresNeedingRealRate === 0;
 
   if (clean) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
         <CheckCircle2 className="h-4 w-4" />
-        Every active employee can be resolved, every staffed cost centre has a rate, and all splits balance.
+        Every active employee can be resolved, every staffed cost centre that needs a rate has one, and all splits balance.
       </div>
     );
   }
+
+  const overheadCostCentres = costCentresWithoutRate.filter((c) => c.likelyInternalOverhead);
+  const realRateGaps = costCentresWithoutRate.filter((c) => !c.likelyInternalOverhead);
 
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
@@ -300,23 +414,82 @@ function ExceptionBanner({ exceptions, loading }: { exceptions: Exceptions | nul
         <AlertTriangle className="h-4 w-4" />
         What this configuration cannot answer yet
       </div>
-      <ul className="mt-1.5 space-y-1 pl-6 text-[13px]">
-        {unresolvableByMatrix > 0 && (
-          <li>
+      <ul className="mt-1.5 space-y-2 pl-1 text-[13px]">
+        <GapDisclosure
+          label={<>
             <strong>{unresolvableByMatrix} of {activeEmployees} active employees ({pct}%)</strong> have
             no process or no designation, so no rule can reach them. They are treated as not
-            billable and excluded from seat revenue — never guessed.
-          </li>
+            billable and excluded from seat revenue — never guessed. Click to see who.
+          </>}
+          count={unresolvableByMatrix}
+        >
+          <ul className="space-y-0.5 max-h-48 overflow-y-auto">
+            {unresolvableEmployees.map((e) => (
+              <li key={e.employeeId} className="text-xs">
+                <span className="font-medium">{e.fullName ?? "(no name)"}</span>{" "}
+                <span className="text-muted-foreground">
+                  {e.employeeCode ?? ""}{e.branchName ? ` · ${e.branchName}` : ""} — missing{" "}
+                  {[e.missingProcess && "process", e.missingDesignation && "designation"].filter(Boolean).join(" & ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </GapDisclosure>
+
+        <GapDisclosure
+          label={<>{noCostCentre} active employees have no cost centre, so their cost cannot be attributed. Click to see who.</>}
+          count={noCostCentre}
+        >
+          <ul className="space-y-0.5 max-h-48 overflow-y-auto">
+            {noCostCentreEmployees.map((e) => (
+              <li key={e.employeeId} className="text-xs">
+                <span className="font-medium">{e.fullName ?? "(no name)"}</span>{" "}
+                <span className="text-muted-foreground">{e.employeeCode ?? ""}{e.branchName ? ` · ${e.branchName}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </GapDisclosure>
+
+        {costCentresNeedingRealRate > 0 && (
+          <GapDisclosure
+            label={<>
+              <strong>{costCentresNeedingRealRate}</strong> cost centre(s) with staff have no seat rate and
+              are not obviously internal overhead. Their billable employees earn no revenue until Finance
+              sets a real rate from the contract. Click to see which.
+            </>}
+            count={costCentresNeedingRealRate}
+          >
+            <ul className="space-y-0.5">
+              {realRateGaps.map((c) => (
+                <li key={c.costCentreId} className="text-xs">
+                  <span className="font-medium">{c.costCentreName ?? c.costCentreCode}</span>{" "}
+                  <span className="text-muted-foreground">{c.staffCount} staff — {c.costCentreCode}</span>
+                </li>
+              ))}
+            </ul>
+          </GapDisclosure>
         )}
-        {noCostCentre > 0 && (
-          <li>{noCostCentre} active employees have no cost centre, so their cost cannot be attributed.</li>
+
+        {overheadCostCentres.length > 0 && (
+          <GapDisclosure
+            label={<>
+              {overheadCostCentres.length} more cost centre(s) also have no seat rate, but look like
+              internal overhead (Management/Finance/IT-style, no "BSS/" delivery code) — likely never
+              billable to a client. Not counted as a real gap above; click to confirm.
+            </>}
+            count={overheadCostCentres.length}
+          >
+            <ul className="space-y-0.5">
+              {overheadCostCentres.map((c) => (
+                <li key={c.costCentreId} className="text-xs">
+                  <span className="font-medium">{c.costCentreName ?? c.costCentreCode}</span>{" "}
+                  <span className="text-muted-foreground">{c.staffCount} staff — {c.costCentreCode}</span>
+                </li>
+              ))}
+            </ul>
+          </GapDisclosure>
         )}
-        {costCentresWithRate < costCentresWithStaff && (
-          <li>
-            {costCentresWithStaff - costCentresWithRate} of {costCentresWithStaff} cost centres
-            with staff have no seat rate. Their billable employees earn no revenue until one is set.
-          </li>
-        )}
+
         {unbalancedAllocations.length > 0 && (
           <li>
             {unbalancedAllocations.length} employee split(s) do not total 100%. The remainder is
@@ -559,9 +732,18 @@ function SplitsTab({ candidates, costCentres, loading, onSaved }: {
   const [rows, setRows] = useState<Array<{ costCentreId: string; allocationPct: string }>>([]);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
 
   const total = rows.reduce((sum, r) => sum + (Number(r.allocationPct) || 0), 0);
   const balanced = Math.abs(total - 100) <= 0.01;
+
+  const filteredCandidates = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return candidates;
+    return candidates.filter((c) =>
+      [c.full_name, c.employee_code, c.designation_name, c.dept_name, c.branch_name, c.cost_centre_name]
+        .some((v) => (v ?? "").toLowerCase().includes(q)));
+  }, [candidates, search]);
 
   function pick(candidate: SplitCandidate) {
     setSelected(candidate);
@@ -600,11 +782,22 @@ function SplitsTab({ candidates, costCentres, loading, onSaved }: {
             People the P&amp;L cannot tie to a single client-facing cost centre. Anyone left without
             a split stays 100% on their own cost centre, or pools to the branch driver if they have none.
           </p>
+          <div className="relative mt-2">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8 h-9"
+              placeholder="Search by name, code or cost centre…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </CardHeader>
         <CardContent className="max-h-[520px] overflow-y-auto p-0">
-          {loading ? <Skeleton className="m-4 h-40" /> : (
+          {loading ? <Skeleton className="m-4 h-40" /> : filteredCandidates.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No one matches that search.</p>
+          ) : (
             <ul className="divide-y">
-              {candidates.map((c) => (
+              {filteredCandidates.map((c) => (
                 <li key={c.employee_id}>
                   <button
                     type="button"
@@ -702,5 +895,102 @@ function SplitsTab({ candidates, costCentres, loading, onSaved }: {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Employee lookup — find any one employee, anywhere, and see the FULL billability answer for
+ * them: whether they're billable and why (which rule, or the default), what seat rate applies,
+ * and any cost-centre split on file. Answers the question none of the other tabs can: "is THIS
+ * specific person resolved, and if not, what exactly is missing" — including employees who show
+ * up nowhere else on this page because they have no process/designation/cost centre at all.
+ */
+function EmployeeLookupTab() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<EmployeeLookupResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      setSearched(false);
+      return;
+    }
+    setSearching(true);
+    const handle = setTimeout(() => {
+      hrmsApi.get<{ data: EmployeeLookupResult[] }>(`/api/finance/billability/employee-lookup?q=${encodeURIComponent(q)}`)
+        .then((res) => setResults(res.data ?? []))
+        .catch(() => toast.error("Could not search employees."))
+        .finally(() => { setSearching(false); setSearched(true); });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Look up an employee</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Search by name or employee code to see exactly how this page's rules resolve for one
+          person — the same answer the P&amp;L engines use, not a re-derived guess.
+        </p>
+        <div className="relative mt-2 max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            className="pl-8"
+            placeholder="Employee name or code…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </CardHeader>
+      <CardContent>
+        {searching ? <Skeleton className="h-24 w-full" /> : query.trim().length < 2 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Type at least 2 characters to search.</p>
+        ) : searched && results.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">No employee matches "{query.trim()}".</p>
+        ) : (
+          <div className="space-y-3">
+            {results.map((r) => (
+              <div key={r.employeeId} className="rounded-md border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-medium text-sm">{r.fullName ?? "(no name)"}</span>{" "}
+                    <span className="text-xs text-muted-foreground">{r.employeeCode}</span>
+                    {!r.activeStatus && <Badge variant="outline" className="ml-2">Inactive</Badge>}
+                  </div>
+                  <Badge className={r.billability.isBillable ? "bg-emerald-600 hover:bg-emerald-600" : "bg-slate-500 hover:bg-slate-500"}>
+                    {r.billability.isBillable ? "Billable" : "Not billable"}
+                  </Badge>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                  <div><span className="text-muted-foreground">Process</span><br />{r.processName ?? <span className="text-amber-700">missing</span>}</div>
+                  <div><span className="text-muted-foreground">Role</span><br />{r.designationName ?? <span className="text-amber-700">missing</span>}</div>
+                  <div><span className="text-muted-foreground">Cost centre</span><br />{r.costCentreName ?? <span className="text-amber-700">missing</span>}</div>
+                  <div><span className="text-muted-foreground">Client</span><br />{r.clientName ?? "—"}</div>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {BILLABILITY_SOURCE_LABEL[r.billability.source] ?? r.billability.source}
+                  {r.billability.isBillable && (
+                    r.seatRate && r.seatRate.seatRateMonthly > 0
+                      ? <> — seat rate ₹{inr(r.seatRate.seatRateMonthly)}/mo ({r.seatRate.source === "not_seat_billed" ? "not seat-billed" : r.seatRate.source.replace(/_/g, " ")})</>
+                      : <> — <span className="text-amber-700">no seat rate resolves for this employee yet, so they earn no seat revenue</span></>
+                  )}
+                </p>
+                {r.allocation && (
+                  <div className="mt-2 text-xs">
+                    <span className="text-muted-foreground">Cost split on file:</span>{" "}
+                    {r.allocation.rows.map((a) => `${a.costCentreName ?? a.costCentreId} ${a.allocationPct}%`).join(", ")}
+                    {!r.allocation.balanced && <span className="ml-1 text-amber-700">(does not total 100%)</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
