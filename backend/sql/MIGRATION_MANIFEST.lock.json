@@ -792,7 +792,9 @@
     "1748_lp_tables_fix_dedup_key.sql",
     "1752_reginald_abandoned_cart_sales_raw.sql",
     "1753_payroll_debit_account_config.sql",
-    "1754_salary_transfer_batch.sql"
+    "1754_salary_transfer_batch.sql",
+    "1756_bank_exception_auto_assign_event.sql",
+    "1758_grn_accounts_head_approval_stage.sql"
   ],
   "approvedDeletions": [
     {
@@ -939,6 +941,7 @@
     "1652_rename_duplicate_employees_to_db_bill_codes.sql",
     "1652_update_duplicate_employee_data.sql",
     "1653_insert_hrms_employees_to_dbbill.sql",
+    "1757_roster_command_center_console_page_codes.sql",
     "175_clean_department_master.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
