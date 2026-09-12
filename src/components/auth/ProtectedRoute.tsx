@@ -6,7 +6,7 @@ import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { Loader2, ShieldX, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getHrmsApiErrorStatus } from "@/lib/hrmsApi";
+import { getHrmsApiErrorStatus, getHrmsApiErrorCode } from "@/lib/hrmsApi";
 import {
   canAccessDashboard,
   type DashboardCode,
@@ -43,6 +43,17 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   const authFailure =
     getHrmsApiErrorStatus(roleError) === 401 ||
     getHrmsApiErrorStatus(accessError) === 401;
+  // A 403 with this code means the account's token is restricted to the password-change
+  // flow (SEC-06, authMiddleware.ts) — every endpoint except /api/auth/change-password
+  // rejects it, including the role/access-scope queries above. Before this check existed,
+  // that 403 fell straight into the generic "Unable to load page" card below instead of
+  // redirecting to /change-password, because AuthContext's own `mustChangePassword` (set
+  // at login) can be stale for an account flagged for a forced change after its last
+  // login — the account never sees a way out short of a support ticket. Checked the same
+  // way authFailure is: from the query errors directly, not from cached login-time state.
+  const mustChangePasswordFromApi =
+    getHrmsApiErrorCode(roleError) === "MUST_CHANGE_PASSWORD" ||
+    getHrmsApiErrorCode(accessError) === "MUST_CHANGE_PASSWORD";
   const hasTriggeredSignOutRef = useRef(false);
 
   useEffect(() => {
@@ -62,6 +73,10 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
 
   if (authFailure) {
     return <Navigate to="/auth" replace state={{ from: location }} />;
+  }
+
+  if (mustChangePasswordFromApi && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
   }
 
   if (roleError || isAccessError) {
