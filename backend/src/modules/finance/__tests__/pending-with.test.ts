@@ -65,6 +65,22 @@ describe("resolvePendingWith — the cases that could mislead", () => {
     expect(p.isPending).toBe(false);
   });
 
+  it("puts a Branch-Head-approved GRN with Accounts Head, not Finance Head", () => {
+    // Owner ruling (2026-09-12): GRN inserted a real Accounts Head approval stage between
+    // Branch Head and Finance Head. Same status string as the top-up/budget test above, but a
+    // different workflow, hence a different next stage — this is the one place the two chains
+    // now genuinely diverge rather than sharing a ternary.
+    const p = resolvePendingWith("branch_head_approved", "grn");
+    expect(p.role).toBe("accounts_head");
+    expect(p.isPending).toBe(true);
+  });
+
+  it("moves an Accounts-Head-approved GRN on to Finance Head", () => {
+    const p = resolvePendingWith("accounts_head_approved", "grn");
+    expect(p.role).toBe("finance_head");
+    expect(p.isPending).toBe(true);
+  });
+
   it("says Unknown for an unrecognised status rather than guessing", () => {
     // Silently rendering "Completed" for a status nobody anticipated is how a stuck request
     // stops being chased.
@@ -104,5 +120,51 @@ describe("it must not become a substitute for the authorisation check", () => {
         workflow: "grn",
       }),
     ).toThrow(/requires the branch_head role/i);
+  });
+});
+
+describe("resolveFinanceStageRole — GRN's 3-stage chain (owner ruling, 2026-09-12)", () => {
+  it("routes a Branch-Head-approved GRN to Accounts Head, not Finance Head", () => {
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "accounts_head",
+        userRoles: ["accounts_head"],
+        currentStatus: "branch_head_approved",
+        workflow: "grn",
+      }),
+    ).toBe("accounts_head");
+  });
+
+  it("refuses Finance Head at the Accounts Head stage", () => {
+    expect(() =>
+      resolveFinanceStageRole({
+        primaryRole: "finance_head",
+        userRoles: ["finance_head"],
+        currentStatus: "branch_head_approved",
+        workflow: "grn",
+      }),
+    ).toThrow(/requires the accounts_head role/i);
+  });
+
+  it("routes an Accounts-Head-approved GRN to Finance Head", () => {
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "finance_head",
+        userRoles: ["finance_head"],
+        currentStatus: "accounts_head_approved",
+        workflow: "grn",
+      }),
+    ).toBe("finance_head");
+  });
+
+  it("keeps the same Branch-Head-approved status routed to Finance Head for BUDGET, unaffected by the GRN change", () => {
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "finance_head",
+        userRoles: ["finance_head"],
+        currentStatus: "branch_head_approved",
+        workflow: "budget",
+      }),
+    ).toBe("finance_head");
   });
 });

@@ -148,13 +148,12 @@ describe("reviewGrn writes the approval history", () => {
 /**
  * A review role list may only contain roles the stage resolver can actually return.
  *
- * accounts_head sat in GRN_REVIEW_ROLES and could never complete a review:
- * resolveFinanceStageRole(workflow: "grn") maps submitted -> branch_head and
- * branch_head_approved -> finance_head and returns nothing else. The role passed the gate and
- * then met "The current grn stage requires the finance_head role" — a 400 where a 403 was the
- * truth, and a grant that advertised an authority the workflow does not have.
- *
- * It is not a shut-out: accounts_head owns the PAYMENT step that follows approval.
+ * Updated 2026-09-12 (owner ruling): the chain grew from two stages to three — Branch Head ->
+ * Accounts Head -> Finance Head — specifically so accounts_head DOES own a mid-chain review
+ * stage now, not only the downstream payment step. The history here (2026-08-21: accounts_head
+ * sat in GRN_REVIEW_ROLES with no matching resolver stage, a 400-instead-of-403 bug) is why this
+ * suite still asserts the two lists stay in lockstep with the resolver — that discipline did not
+ * change, only which roles it applies to.
  */
 describe("GRN review roles match the stages that exist", () => {
   // This file lives beside the sources it reads, so resolve from __dirname rather than cwd.
@@ -164,23 +163,19 @@ describe("GRN review roles match the stages that exist", () => {
   const resolver = srcFile("finance-workflow-role.ts");
   const payments = srcFile("vendor-payment.routes.ts");
 
-  it("the GRN chain really is two stages", () => {
-    // If a third stage is ever added, this test should fail and be reconsidered — not the
-    // role list quietly widened to match a stage that does not exist.
-    //
-    // Updated 2026-08-21: the budget header workflow's Accounts Head stage was removed (owner
-    // decision), so resolveFinanceStageRole's budget and grn branches collapsed into ONE shared
-    // 2-stage ternary — there is no longer a separate "grn branch" to slice out.
+  it("the GRN chain really is three stages", () => {
+    // If a fourth stage is ever added, or this drops back to two, this test should fail and be
+    // reconsidered — not the role list quietly drifting out of step with the resolver.
     const expectedRoleBlock = resolver.slice(
       resolver.indexOf("const expectedRole ="),
       resolver.indexOf(";", resolver.indexOf("const expectedRole =")) + 1
     );
     expect(expectedRoleBlock).toContain('"branch_head"');
+    expect(expectedRoleBlock).toContain('"accounts_head"');
     expect(expectedRoleBlock).toContain('"finance_head"');
-    expect(expectedRoleBlock).not.toContain('"accounts_head"');
   });
 
-  it("neither review role list grants a stage the resolver cannot return", () => {
+  it("both review role lists grant exactly the three stages the resolver can return", () => {
     for (const [name, source, decl] of [
       ["legacy", routes, "const GRN_REVIEW_ROLES: RoleKey[] = ["],
       ["smart", smart, "const SMART_REVIEW_ROLES = ["],
@@ -190,14 +185,14 @@ describe("GRN review roles match the stages that exist", () => {
       // contents and make every assertion below vacuous.
       const open = source.indexOf("[", source.indexOf(decl) + decl.length - 1);
       const list = source.slice(open, source.indexOf("]", open));
-      expect(list, `${name} review roles must not include accounts_head`).not.toContain("accounts_head");
+      expect(list, `${name} review roles must include accounts_head`).toContain("accounts_head");
       expect(list).toContain("branch_head");
       expect(list).toContain("finance_head");
     }
   });
 
   it("accounts_head keeps the payment authority that is actually theirs", () => {
-    // Removing them from review must not be mistaken for removing them from GRN entirely.
+    // The new mid-chain review stage is IN ADDITION to this, not instead of it.
     expect(payments).toContain('const PAYMENT_WRITE_ROLES = ["accounts_head", "super_admin"]');
   });
 });

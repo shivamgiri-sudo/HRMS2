@@ -57,6 +57,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useGrnSummary } from "@/hooks/useGrnSummary";
+import { useHasRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 type GrnRow = {
@@ -103,14 +104,16 @@ type Capabilities = {
   canCreate: boolean;
   canReviewBranchStage: boolean;
   canReviewFinanceStage: boolean;
-  canReviewAccountsStage: boolean;
 };
 
+// GRN approval chain is 3 stages (owner ruling, 2026-09-12): Branch Head -> Accounts Head ->
+// Finance Head. "branch_head_approved" now waits on Accounts Head, not Finance Head.
 const STATUS_TABS = [
   ["_all", "All"],
   ["draft", "Draft"],
   ["submitted", "Branch Head Queue"],
-  ["branch_head_approved", "Finance Head Queue"],
+  ["branch_head_approved", "Accounts Head Queue"],
+  ["accounts_head_approved", "Finance Head Queue"],
   ["pending_accounts_payment", "Accounts Payment"],
   ["partially_paid", "Partially Paid"],
   ["paid", "Paid"],
@@ -154,21 +157,30 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     },
   });
   const capabilities = capabilitiesQuery.data;
+  // The shared /pnl/budgets/capabilities endpoint deliberately does NOT expose an Accounts Head
+  // review flag any more — that stage was removed from the BUDGET workflow (owner decision,
+  // 2026-08-21; see budget-coverage.routes.ts and its contract test asserting the field is
+  // gone). GRN's own Accounts Head stage (owner ruling, 2026-09-12) is unrelated to that budget
+  // decision, so it is resolved independently, straight from the user's roles — this was the
+  // actual bug behind "Accounts Head can't approve any GRN": this component used to read
+  // `capabilities.canReviewAccountsStage`, a field the backend had already stopped sending,
+  // which made it permanently `undefined` and every check below it permanently false.
+  const canReviewAccountsStage = useHasRole("accounts_head", "super_admin");
 
   useEffect(() => {
     if (!capabilities || didSetInitialTab.current) return;
     didSetInitialTab.current = true;
-    if (capabilities.canReviewAccountsStage && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
-      setStatus("finance_head_approved");
-    } else if (capabilities.canReviewFinanceStage && !capabilities.canReviewBranchStage) {
+    if (canReviewAccountsStage && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
       setStatus("branch_head_approved");
+    } else if (capabilities.canReviewFinanceStage && !capabilities.canReviewBranchStage) {
+      setStatus("accounts_head_approved");
     } else if (capabilities.canCreate && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
       // Pure raiser (branch_admin who cannot review) — show all their own GRNs by default
       setStatus("_all");
       setMyGrnsOnly(true);
     }
     // branch stage reviewers stay on "submitted" — the default is already correct
-  }, [capabilities]);
+  }, [capabilities, canReviewAccountsStage]);
 
   const branchesQuery = useQuery({
     queryKey: ["grn-branches-list"],
@@ -238,9 +250,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const canReview = useMemo(() => {
     if (!target || !capabilities) return false;
     if (target.status === "submitted") return capabilities.canReviewBranchStage;
-    if (target.status === "branch_head_approved") return capabilities.canReviewFinanceStage;
+    if (target.status === "branch_head_approved") return canReviewAccountsStage;
+    if (target.status === "accounts_head_approved") return capabilities.canReviewFinanceStage;
     return false;
-  }, [capabilities, target]);
+  }, [capabilities, canReviewAccountsStage, target]);
 
   const submitMutation = useMutation({
     mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
@@ -706,7 +719,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       </GrnButton>
                       {/* Inline quick-approve / quick-reject — mirrors the imprest queue pattern */}
                       {((row.status === "submitted" && capabilities?.canReviewBranchStage) ||
-                        (row.status === "branch_head_approved" && capabilities?.canReviewFinanceStage)) && (
+                        (row.status === "branch_head_approved" && canReviewAccountsStage) ||
+                        (row.status === "accounts_head_approved" && capabilities?.canReviewFinanceStage)) && (
                         <>
                           <GrnIconButton
                             title="Approve"

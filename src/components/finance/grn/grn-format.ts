@@ -36,6 +36,9 @@ const TONE_BY_STATUS: Record<string, StampTone> = {
   consumption_reversed: "info",
   submitted: "warn",
   branch_head_approved: "warn",
+  // Accounts Head approval stage, inserted between Branch Head and Finance Head (owner ruling,
+  // 2026-09-12) — same "still pending someone" tone as the other two pre-Finance-Head statuses.
+  accounts_head_approved: "warn",
 };
 
 /** A GRN's lifecycle status → stamp colour. Anything unrecognised stays neutral rather than
@@ -81,7 +84,8 @@ export function dateTimeLabel(value: unknown): string | null {
  *
  * Owner ruling: `grn_number` is assigned at FINAL approval, not at submission — a rejected GRN
  * therefore never gets one. Every screen that identifies a GRN by its number needs SOMETHING to
- * show for the two stages (submitted, branch_head_approved) that come before that, which is what
+ * show for the stages (submitted, branch_head_approved, accounts_head_approved) that come before
+ * that, which is what
  * this is: derived from the GRN's own id (already a unique UUID, no new backend field or
  * sequence needed), stable for the life of the record, and visually unmistakable for a real
  * number — no `/`, no financial-year, no monthly sequence, because it is not one.

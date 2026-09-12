@@ -117,7 +117,9 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
+      {/* Matches PaymentDispatchSheet's width — the two drawers are siblings on the same page
+          and must not visibly jump size when a user hands off from one to the other. */}
+      <SheetContent side="right" className="flex w-full max-w-none flex-col gap-0 p-0 sm:w-[50vw] sm:max-w-none">
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-sm font-semibold">{detailQuery.data?.voucher_number ?? "Payment Voucher"}</SheetTitle>
         </SheetHeader>

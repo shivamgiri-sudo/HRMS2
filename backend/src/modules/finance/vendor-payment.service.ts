@@ -320,7 +320,7 @@ export const vendorPaymentService = {
          LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
          ${LATEST_VOUCHER_JOIN}
          ${where}
-        ORDER BY vpt.due_date ASC, vpt.created_at ASC
+        ORDER BY vpt.due_date DESC, vpt.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
       params
     );

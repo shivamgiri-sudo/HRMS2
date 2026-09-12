@@ -243,7 +243,10 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-[480px] flex-col gap-0 p-0">
+      {/* Fixed at 50% of the viewport width rather than a px value or the Sheet default
+          (sm:w-3/4 sm:max-w-sm) — this panel's three tabs (Dispatch/Hold/Installments) and the
+          Details grid need more room than a narrow drawer gives them on a normal monitor. */}
+      <SheetContent side="right" className="flex w-full max-w-none flex-col gap-0 p-0 sm:w-[50vw] sm:max-w-none">
         <input
           ref={proofInputRef}
           type="file"

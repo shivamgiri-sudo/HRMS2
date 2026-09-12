@@ -22,15 +22,25 @@ export function resolveFinanceStageRole(input: {
   workflow: "budget" | "grn";
 }): FinanceStageRole {
   const roles = normalizedRoles(input.primaryRole, input.userRoles ?? []);
-  // Both workflows are the same 2-stage shape today: the Accounts Head stage was removed from
-  // the budget header workflow (owner decision, 2026-08-21) — REVIEW_STAGES in
-  // branch-budget.service.ts no longer has a 'finance_head_approved' resting stage, Finance Head
-  // approval goes straight to 'active'. Kept as one shared ternary rather than two identical ones.
+  // The two workflows diverged on purpose and no longer share one shape.
+  //
+  // BUDGET is 2-stage: the Accounts Head stage was removed from the budget header workflow
+  // (owner decision, 2026-08-21) — REVIEW_STAGES in branch-budget.service.ts no longer has a
+  // 'finance_head_approved' resting stage, Finance Head approval goes straight to 'active'.
+  //
+  // GRN is 3-stage (owner ruling, 2026-09-12): Branch/Dept Head -> Accounts Head/Team ->
+  // Finance Head/CFO. Accounts Head previously owned only the downstream PAYMENT step
+  // (pending_accounts_payment, gated in vendor-payment.routes.ts) — see 1758_grn_accounts_head_
+  // approval_stage.sql for why that changed to a genuine mid-chain approval gate instead. That
+  // payment authority is untouched; this is an additional stage in front of it, not a
+  // replacement for it.
   const expectedRole = input.currentStatus === "submitted"
     ? "branch_head"
     : input.currentStatus === "branch_head_approved"
-      ? "finance_head"
-      : null;
+      ? (input.workflow === "grn" ? "accounts_head" : "finance_head")
+      : (input.workflow === "grn" && input.currentStatus === "accounts_head_approved")
+        ? "finance_head"
+        : null;
 
   /*
    * Both refusals carry a status. Without one, errorHandler.ts treats them as unexpected 500s
@@ -91,9 +101,10 @@ export type PendingWith = {
  */
 export function resolvePendingWith(
   currentStatus: string,
-  // Unused now that budget and top-up both resolve 'finance_head_approved' the same way
-  // (terminal/legacy, not a pending stage) — kept in the signature so every existing call site
-  // that passes workflow does not need to change, and in case the workflows diverge again later.
+  // No longer a dead parameter: it stayed unused while budget and top-up both resolved
+  // 'finance_head_approved' the same way (terminal/legacy, not a pending stage), but GRN's
+  // 3-stage chain (owner ruling, 2026-09-12) reads 'branch_head_approved' differently from the
+  // other two workflows — see the branch below — so this now genuinely disambiguates.
   _workflow: "budget" | "grn" | "topup" = "topup",
 ): PendingWith {
   const status = String(currentStatus ?? "").toLowerCase();
@@ -108,6 +119,15 @@ export function resolvePendingWith(
     return { role: "branch_head", label: STAGE_LABELS.branch_head, isPending: true };
   }
   if (status === "branch_head_approved") {
+    // GRN inserted a real Accounts Head gate here (owner ruling, 2026-09-12); budget/top-up
+    // never reach this branch with accounts_head owed, since neither workflow has that status
+    // as a resting stage after Branch Head any more (budget) or ever (top-up) — see
+    // resolveFinanceStageRole's per-workflow split just above this function's twin.
+    return _workflow === "grn"
+      ? { role: "accounts_head", label: STAGE_LABELS.accounts_head, isPending: true }
+      : { role: "finance_head", label: STAGE_LABELS.finance_head, isPending: true };
+  }
+  if (status === "accounts_head_approved") {
     return { role: "finance_head", label: STAGE_LABELS.finance_head, isPending: true };
   }
   // Declared on both the budget status enum and the top-up status enum, though neither service
