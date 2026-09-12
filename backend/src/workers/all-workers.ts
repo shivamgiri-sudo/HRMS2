@@ -294,7 +294,7 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // its 2026-09-11 15:58 backfill timestamp, 800+ minutes stale, the morning after
     // this scheduler was first deployed).
     name: "employee-master-snapshot",
-    start: () => { startEmployeeMasterSnapshotScheduler(); return Promise.resolve(); },
+    start: () => startEmployeeMasterSnapshotScheduler(),
   },
   {
     name: "lms-sync",
