@@ -1148,7 +1148,13 @@ bankPaymentReadinessRouter.patch(
   }),
 );
 
-/** POST /salary-transfer/import/preview — multipart file upload, CSV only. Never writes. */
+/**
+ * POST /salary-transfer/import/preview — multipart file upload, CSV only. Never writes.
+ *
+ * run_id is required: matching is scoped to the run currently open on screen, not to whichever
+ * batch item for that employee happens to be newest across every run (see previewTransferNumberImport
+ * for the real incident this fixes).
+ */
 bankPaymentReadinessRouter.post(
   "/salary-transfer/import/preview",
   requireRole(...MANAGE_ROLES),
@@ -1156,6 +1162,8 @@ bankPaymentReadinessRouter.post(
   h(async (req: any, res) => {
     const file = req.file as { buffer: Buffer; originalname: string } | undefined;
     if (!file) return res.status(400).json({ success: false, message: "file is required" });
+    const runId = String(req.body?.run_id ?? "").trim();
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     const text = file.buffer.toString("utf8");
     let rows;
     try {
@@ -1166,7 +1174,7 @@ bankPaymentReadinessRouter.post(
     if (rows.length === 0) {
       return res.status(400).json({ success: false, message: "No data rows found" });
     }
-    const preview = await previewTransferNumberImport(rows);
+    const preview = await previewTransferNumberImport(rows, runId);
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
     const summary = {
       total: preview.length,

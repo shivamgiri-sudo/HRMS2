@@ -437,16 +437,26 @@ export function parseTransferNumberCsv(text: string): TransferImportRow[] {
   });
 }
 
-/** Preview only — never writes. Matches on employee_code against the latest open ('exported') item. */
-export async function previewTransferNumberImport(rows: TransferImportRow[]): Promise<TransferImportPreviewRow[]> {
+/**
+ * Preview only — never writes. Matches on employee_code against the latest open ('exported')
+ * item FOR THIS RUN. Scoped by run_id: an employee can have a separate salary_transfer_batch_item
+ * per payroll run (re-exports across runs are legitimate — corrections, cancelled/regenerated
+ * runs), and matching the globally-newest row regardless of run silently confirmed the wrong
+ * run's item — the run being viewed stayed stuck in 'exported' forever while a different run
+ * quietly picked up the transfer number. Real case, 2026-09-12: 8 employees exported for June,
+ * July AND a cancelled August run each got their own item; an unscoped match confirmed only the
+ * June row, so July's "Ready for Disbursal" list never cleared and July's "Disbursed" list never
+ * showed them.
+ */
+export async function previewTransferNumberImport(rows: TransferImportRow[], runId: string): Promise<TransferImportPreviewRow[]> {
   const codes = [...new Set(rows.map((r) => r.emp_code).filter(Boolean))];
   if (codes.length === 0) return rows.map((r) => ({ ...r, outcome: "invalid", detail: "blank EmpCode", item_id: null }));
 
   const placeholders = codes.map(() => "?").join(",");
   const [itemRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code, status FROM salary_transfer_batch_item WHERE employee_code IN (${placeholders})
+    `SELECT id, employee_code, status FROM salary_transfer_batch_item WHERE run_id = ? AND employee_code IN (${placeholders})
       ORDER BY created_at DESC`,
-    codes,
+    [runId, ...codes],
   );
   const byCode = new Map<string, any>();
   for (const r of itemRows as any[]) {

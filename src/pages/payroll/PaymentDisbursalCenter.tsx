@@ -705,6 +705,10 @@ export default function PaymentDisbursalCenter() {
     try {
       const fd = new FormData();
       fd.append("file", file);
+      // Scopes the match to the run currently open on screen — without this the backend matched
+      // employee codes against whichever batch item was newest across every run, silently
+      // confirming a different run than the one being worked on (real incident, 2026-09-12).
+      fd.append("run_id", bankRunId);
       const res = await hrmsApi.postForm<{
         success: boolean;
         file_name: string;
