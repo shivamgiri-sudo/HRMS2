@@ -21,13 +21,21 @@ import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
  * Non-fatal by design — a notification failure must never roll back or block the GRN
  * transition that triggered it.
  */
+const STAGE_LABEL: Record<"branch_head" | "accounts_head" | "finance_head", string> = {
+  branch_head: "Branch Head",
+  accounts_head: "Accounts Head",
+  finance_head: "Finance Head",
+};
+
 export async function notifyGrnStage(
   grnId: string,
   grnNumber: string | null,
   branchId: string | null,
   vendorName: string | null,
   amount: number | null,
-  role: "branch_head" | "finance_head",
+  // Accounts Head added as a genuine mid-chain stage (owner ruling, 2026-09-12) — see
+  // finance-workflow-role.ts's resolveFinanceStageRole for the full 3-stage chain this mirrors.
+  role: "branch_head" | "accounts_head" | "finance_head",
 ) {
   try {
     const { inboxService } = await import("../inbox/inbox.service.js");
@@ -38,7 +46,7 @@ export async function notifyGrnStage(
         user_id: userId,
         type: "grn_approval_pending",
         title: `[ACTION REQUIRED] GRN ${grnNumber ?? ""}${vendorName ? ` — ${vendorName}` : ""}`,
-        description: `Awaiting your ${role === "branch_head" ? "Branch Head" : "Finance Head"} review${amountLabel ? ` (${amountLabel})` : ""}.`,
+        description: `Awaiting your ${STAGE_LABEL[role]} review${amountLabel ? ` (${amountLabel})` : ""}.`,
         entity_type: "grn_request",
         entity_id: grnId,
         action_url: "/finance/grn",

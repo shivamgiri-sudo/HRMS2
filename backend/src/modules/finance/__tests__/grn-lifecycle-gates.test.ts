@@ -39,7 +39,7 @@ const { stateRef, sideEffects } = vi.hoisted(() => ({
     released: [] as Array<{ lineId: string; amount: number }>,
     auditActions: [] as string[],
     approvalEvents: [] as Array<{ action: string; fromStatus: string; toStatus: string; actorRole: string }>,
-    notifiedStages: [] as Array<"branch_head" | "finance_head">,
+    notifiedStages: [] as Array<"branch_head" | "accounts_head" | "finance_head">,
     resolvedNotifications: 0,
   },
 }));
@@ -127,7 +127,7 @@ vi.mock("../grn-number-monthly.service.js", () => ({
 vi.mock("../grn-notify.js", () => ({
   notifyGrnStage: vi.fn(async (
     _grnId: string, _grnNumber: string | null, _branchId: string | null,
-    _vendorName: string | null, _amount: number | null, role: "branch_head" | "finance_head",
+    _vendorName: string | null, _amount: number | null, role: "branch_head" | "accounts_head" | "finance_head",
   ) => {
     sideEffects.notifiedStages.push(role);
   }),
@@ -416,19 +416,31 @@ describe("Review stage guards", () => {
     ).rejects.toThrow(/only review submitted GRNs/i);
   });
 
-  it("a Finance Head can only review a Branch-Head-approved GRN", async () => {
+  it("an Accounts Head can only review a Branch-Head-approved GRN", async () => {
     stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head")
+      grnSmartService.review("grn-1", "approved", "ok", "u-ah", "accounts_head")
     ).rejects.toThrow(/only review Branch Head-approved/i);
+  });
+
+  it("a Finance Head can only review an Accounts-Head-approved GRN", async () => {
+    // 3-stage chain (owner ruling, 2026-09-12): a GRN that only cleared Branch Head is not yet
+    // Finance Head's to review — it is Accounts Head's.
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head")
+    ).rejects.toThrow(/only review Accounts-Head-approved/i);
   });
 
   it("no other role may review at all", async () => {
     stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-x", "accounts_head")
+      grnSmartService.review("grn-1", "approved", "ok", "u-x", "hr_admin")
     ).rejects.toThrow(/not permitted to review/i);
   });
 
@@ -453,9 +465,36 @@ describe("What each approval stage actually does to the money", () => {
     expect(sideEffects.payablesCreatedFor).toHaveLength(0);
   });
 
-  it("Finance Head approval of a VENDOR GRN consumes and creates the payable", async () => {
+  it("Accounts Head approval moves the stage on WITHOUT touching budget — Branch Head's reservation stands", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-ah", "accounts_head");
+    expect(result.newStatus).toBe("accounts_head_approved");
+    expect(sideEffects.reserved).toHaveLength(0);
+    expect(sideEffects.consumed).toHaveLength(0);
+    expect(sideEffects.released).toHaveLength(0);
+  });
+
+  it("an Accounts Head REJECTION releases the reservation Branch Head made — nothing was consumed yet", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+      allocations: [reservedAllocation()],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    const result = await grnSmartService.review("grn-1", "rejected", "not approved", "u-ah", "accounts_head");
+    expect(result.newStatus).toBe("rejected");
+    expect(sideEffects.released).toEqual([{ lineId: "line-A", amount: 1000 }]);
+    expect(sideEffects.consumed).toHaveLength(0);
+  });
+
+  it("Finance Head approval of a VENDOR GRN consumes and creates the payable", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
+      }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
@@ -468,8 +507,8 @@ describe("What each approval stage actually does to the money", () => {
   it("Finance Head approval of an IMPREST GRN debits the float and raises no payable", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest", status: "branch_head_approved",
-        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [{ id: "mgr-1" }],
     });
@@ -487,8 +526,8 @@ describe("What each approval stage actually does to the money", () => {
     // imprest approval the moment it deployed. The skip has to be visible, not silent.
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest", status: "branch_head_approved",
-        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [],
     });
@@ -502,8 +541,8 @@ describe("What each approval stage actually does to the money", () => {
   it("a float that cannot cover the voucher fails the approval rather than going negative", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest", status: "branch_head_approved",
-        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [{ id: "mgr-1" }],
       floatShort: true,
@@ -517,7 +556,10 @@ describe("What each approval stage actually does to the money", () => {
 
   it("a Finance Head REJECTION releases the reservation", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+      grn: baseGrn({
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
+      }),
       allocations: [reservedAllocation()],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
@@ -549,7 +591,10 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
 
   it("Finance Head approval DOES allocate one, on a VENDOR GRN", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+      grn: baseGrn({
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
+      }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
@@ -560,8 +605,8 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
   it("Finance Head approval DOES allocate one, on an IMPREST GRN too — both types share one final stage", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        grn_type: "imprest", status: "branch_head_approved",
-        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+        grn_type: "imprest", status: "accounts_head_approved",
+        submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
       }),
       imprestManagers: [{ id: "mgr-1" }],
     });
@@ -573,7 +618,10 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
 
   it("a Finance Head REJECTION never allocates one — the deliberate, approved consequence", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+      grn: baseGrn({
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
+      }),
       allocations: [reservedAllocation()],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
@@ -593,7 +641,8 @@ describe("GRN numbering happens at Finance Head approval, not before — Owner r
   it("an existing number (a legacy migrated row, or a retried approval) is kept, never reissued", async () => {
     stateRef.current = makeState({
       grn: baseGrn({
-        status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh",
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
         grn_number: "GRN/BR1/2026-27/0001",
       }),
     });
@@ -717,6 +766,16 @@ describe("Cancel and reopen", () => {
     expect(sideEffects.released).toEqual([{ lineId: "line-A", amount: 1000 }]);
   });
 
+  it("cancelling from accounts_head_approved also releases the reservation — Finance Head has not consumed it yet", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "accounts_head_approved" }),
+      allocations: [reservedAllocation()],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await grnSmartService.cancel("grn-1", "u1", "branch_admin");
+    expect(sideEffects.released).toEqual([{ lineId: "line-A", amount: 1000 }]);
+  });
+
   it("a cancel does not release a row that was never reserved, even from an approved status", async () => {
     // The status says a reservation should exist; the row says it does not. Releasing on the
     // strength of the status alone would hand back budget that was never taken.
@@ -733,7 +792,7 @@ describe("Cancel and reopen", () => {
     expect(sideEffects.released).toHaveLength(0);
   });
 
-  for (const status of ["draft", "submitted", "branch_head_approved", "paid", "cancelled"]) {
+  for (const status of ["draft", "submitted", "branch_head_approved", "accounts_head_approved", "paid", "cancelled"]) {
     it(`cannot reopen from ${status}`, async () => {
       stateRef.current = makeState({ grn: baseGrn({ status, created_by: "u1" }) });
       const { grnSmartService } = await import("../grn-smart.service.js");
@@ -795,10 +854,20 @@ describe("Bell notification fires on the path allocation-aware GRNs actually tak
     expect(sideEffects.notifiedStages).toEqual(["branch_head"]);
   });
 
-  it("a Branch Head approval closes its own alert and opens the finance_head stage", async () => {
+  it("a Branch Head approval closes its own alert and opens the accounts_head stage", async () => {
     stateRef.current = makeState({ grn: baseGrn({ status: "submitted", submitted_by: "u-raiser" }) });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await grnSmartService.review("grn-1", "approved", "ok", "u-bh", "branch_head");
+    expect(sideEffects.resolvedNotifications).toBe(1);
+    expect(sideEffects.notifiedStages).toEqual(["accounts_head"]);
+  });
+
+  it("an Accounts Head approval closes its own alert and opens the finance_head stage", async () => {
+    stateRef.current = makeState({
+      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await grnSmartService.review("grn-1", "approved", "ok", "u-ah", "accounts_head");
     expect(sideEffects.resolvedNotifications).toBe(1);
     expect(sideEffects.notifiedStages).toEqual(["finance_head"]);
   });
@@ -813,7 +882,10 @@ describe("Bell notification fires on the path allocation-aware GRNs actually tak
 
   it("a Finance Head's own decision (approve or reject) closes its alert and raises nothing new — Finance Head is the final stage", async () => {
     stateRef.current = makeState({
-      grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-bh" }),
+      grn: baseGrn({
+        status: "accounts_head_approved", submitted_by: "u-raiser",
+        branch_head_reviewed_by: "u-bh", accounts_head_reviewed_by: "u-ah",
+      }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");

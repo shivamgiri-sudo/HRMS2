@@ -50,6 +50,8 @@ type GrnHistoryRow = {
   submitted_at?: string | null;
   branch_head_reviewed_at?: string | null;
   branch_head_reviewed_by_name?: string | null;
+  accounts_head_reviewed_at?: string | null;
+  accounts_head_reviewed_by_name?: string | null;
   finance_head_reviewed_at?: string | null;
   finance_head_reviewed_by_name?: string | null;
   rejection_reason?: string | null;
@@ -68,7 +70,9 @@ const STATUS_TABS = [
   ["_all", "All"],
   ["draft", "Draft"],
   ["submitted", "Branch Head Queue"],
-  ["branch_head_approved", "Finance Head Queue"],
+  // 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head.
+  ["branch_head_approved", "Accounts Head Queue"],
+  ["accounts_head_approved", "Finance Head Queue"],
   ["returned_to_raiser", "Returned to You"],
   ["returned_to_branch_head", "Returned to BH"],
   ["pending_accounts_payment", "Accounts Payment"],
@@ -282,6 +286,7 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
               <GrnTh sticky={false}>Status</GrnTh>
               <GrnTh sticky={false}>Raised</GrnTh>
               <GrnTh sticky={false}>Branch Head</GrnTh>
+              <GrnTh sticky={false}>Accounts Head</GrnTh>
               <GrnTh sticky={false}>Finance Head</GrnTh>
               {(onEdit || rows.some(canDelete)) && <GrnTh sticky={false} />}
             </tr>
@@ -346,9 +351,16 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
                 </GrnTd>
                 <GrnTd>
                   <StageCell
+                    name={row.accounts_head_reviewed_by_name}
+                    at={row.accounts_head_reviewed_at}
+                    reachable={Boolean(row.branch_head_reviewed_at) && row.status !== "rejected"}
+                  />
+                </GrnTd>
+                <GrnTd>
+                  <StageCell
                     name={row.finance_head_reviewed_by_name}
                     at={row.finance_head_reviewed_at}
-                    reachable={Boolean(row.branch_head_reviewed_at) && row.status !== "rejected"}
+                    reachable={Boolean(row.accounts_head_reviewed_at) && row.status !== "rejected"}
                   />
                 </GrnTd>
                 {(onEdit || rows.some(canDelete)) && (

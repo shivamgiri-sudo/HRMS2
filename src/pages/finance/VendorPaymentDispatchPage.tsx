@@ -129,10 +129,16 @@ const PAYMENT_STATUSES = [
 ] as const;
 
 // Approval Backlog panel stages — GRN statuses gating a payment from ever reaching this page's
-// own vendor_payment_tracking grid (Branch Head approval, then Finance Head approval).
+// own vendor_payment_tracking grid. 3-stage chain (owner ruling, 2026-09-12): Branch Head ->
+// Accounts Head -> Finance Head.
 const BACKLOG_STAGES: { key: string; label: string }[] = [
-  { key: "branch_head_approved", label: "Awaiting Finance Head (cleared Branch Head)" },
-  { key: "finance_head_approved", label: "Awaiting Accounts Head (cleared Finance Head)" },
+  { key: "branch_head_approved", label: "Awaiting Accounts Head (cleared Branch Head)" },
+  { key: "accounts_head_approved", label: "Awaiting Finance Head (cleared Accounts Head)" },
+  // finance_head_approved is declared on the enum but never actually written for a vendor GRN —
+  // Finance Head's own approval goes straight to pending_accounts_payment (grn.service.ts's
+  // reviewGrn). Left here rather than removed: a legacy or future row in that status should
+  // still surface somewhere rather than silently vanish from this backlog.
+  { key: "finance_head_approved", label: "Awaiting Accounts Head payment run (cleared Finance Head)" },
 ];
 
 const STATUS_CLASS: Record<string, string> = {
@@ -343,10 +349,13 @@ export default function VendorPaymentDispatchPage() {
     const byStatus = (pendingApprovalQuery.data as any)?.data?.byStatus;
     if (!byStatus) return null;
     const branchHead = byStatus.branch_head_approved ?? { count: 0, value: 0 };
+    // Accounts Head's own approval gate (owner ruling, 2026-09-12) — a GRN sitting here is just
+    // as much "not yet reached this page" as one still with Branch Head or Finance Head.
+    const accountsHead = byStatus.accounts_head_approved ?? { count: 0, value: 0 };
     const financeHead = byStatus.finance_head_approved ?? { count: 0, value: 0 };
     return {
-      count: Number(branchHead.count ?? 0) + Number(financeHead.count ?? 0),
-      value: Number(branchHead.value ?? 0) + Number(financeHead.value ?? 0),
+      count: Number(branchHead.count ?? 0) + Number(accountsHead.count ?? 0) + Number(financeHead.count ?? 0),
+      value: Number(branchHead.value ?? 0) + Number(accountsHead.value ?? 0) + Number(financeHead.value ?? 0),
     };
   })();
 
@@ -462,91 +471,118 @@ export default function VendorPaymentDispatchPage() {
         </div>
 
         {/* ── Filter bar ── */}
+        {/* A labeled grid, not a ragged flex-wrap row: every control sits under its own caption
+            at the same 32px height (the MonthYearPicker's two <select>s included — it defaults
+            to h-9 when no selectClassName is passed, which is what made it stand a visible notch
+            taller than every Select/Input beside it), so fields line up in clean columns instead
+            of drifting to whatever width their content happened to need. */}
         {showFilters && (
-          <div className="flex flex-wrap gap-2 border-b px-4 py-2 shrink-0">
-            <Select
-              value={filters.branchId || "_all"}
-              onValueChange={(value) => {
-                setFilters((c) => ({ ...c, branchId: value === "_all" ? "" : value }));
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="h-7 w-36 text-xs">
-                <SelectValue placeholder="All branches" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_all">All branches</SelectItem>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id}>{branchLabel(branch)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <MonthYearPicker
-              className="w-52"
-              value={filters.month}
-              onChange={(v) => { setFilters((c) => ({ ...c, month: v })); setPage(1); }}
-              emptyLabel="All months"
-            />
-            <Select
-              value={filters.financialYear || "_all"}
-              onValueChange={(value) => {
-                setFilters((c) => ({ ...c, financialYear: value === "_all" ? "" : value }));
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="h-7 w-28 text-xs">
-                <SelectValue placeholder="All years" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_all">All years</SelectItem>
-                {financialYearOptions().map((fy) => (
-                  <SelectItem key={fy} value={fy}>{fy}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={filters.paymentStatus || "_all"}
-              onValueChange={(value) => {
-                setFilters((c) => ({ ...c, paymentStatus: value === "_all" ? "" : value }));
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="h-7 w-36 text-xs">
-                <SelectValue placeholder="All statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_all">All statuses</SelectItem>
-                {PAYMENT_STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              type="date"
-              className="h-7 text-xs"
-              value={filters.dueDateFrom}
-              onChange={(e) => { setFilters((c) => ({ ...c, dueDateFrom: e.target.value })); setPage(1); }}
-              placeholder="Due from"
-            />
-            <Input
-              type="date"
-              className="h-7 text-xs"
-              value={filters.dueDateTo}
-              onChange={(e) => { setFilters((c) => ({ ...c, dueDateTo: e.target.value })); setPage(1); }}
-              placeholder="Due to"
-            />
-            <div className="relative">
-              <Search className="absolute left-2 top-1.5 h-3.5 w-3.5 text-slate-400" />
-              <Input
-                className="h-7 pl-7 text-xs"
-                value={filters.search}
-                onChange={(e) => { setFilters((c) => ({ ...c, search: e.target.value })); setPage(1); }}
-                placeholder="GRN / vendor / UTR"
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-b bg-slate-50/60 px-4 py-3 shrink-0 sm:grid-cols-3 lg:grid-cols-7 lg:items-end">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Branch</label>
+              <Select
+                value={filters.branchId || "_all"}
+                onValueChange={(value) => {
+                  setFilters((c) => ({ ...c, branchId: value === "_all" ? "" : value }));
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-full text-xs">
+                  <SelectValue placeholder="All branches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_all">All branches</SelectItem>
+                  {branches.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id}>{branchLabel(branch)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Month</label>
+              <MonthYearPicker
+                className="w-full"
+                selectClassName="h-8 flex-1 rounded-md border border-input bg-background px-2 text-xs"
+                value={filters.month}
+                onChange={(v) => { setFilters((c) => ({ ...c, month: v })); setPage(1); }}
+                emptyLabel="All months"
               />
             </div>
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={clearFilters}>
-              <X className="mr-1 h-3 w-3" />Clear
-            </Button>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Financial year</label>
+              <Select
+                value={filters.financialYear || "_all"}
+                onValueChange={(value) => {
+                  setFilters((c) => ({ ...c, financialYear: value === "_all" ? "" : value }));
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-full text-xs">
+                  <SelectValue placeholder="All years" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_all">All years</SelectItem>
+                  {financialYearOptions().map((fy) => (
+                    <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Status</label>
+              <Select
+                value={filters.paymentStatus || "_all"}
+                onValueChange={(value) => {
+                  setFilters((c) => ({ ...c, paymentStatus: value === "_all" ? "" : value }));
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="h-8 w-full text-xs">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_all">All statuses</SelectItem>
+                  {PAYMENT_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Due from</label>
+              <Input
+                type="date"
+                className="h-8 w-full text-xs"
+                value={filters.dueDateFrom}
+                onChange={(e) => { setFilters((c) => ({ ...c, dueDateFrom: e.target.value })); setPage(1); }}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Due to</label>
+              <Input
+                type="date"
+                className="h-8 w-full text-xs"
+                value={filters.dueDateTo}
+                onChange={(e) => { setFilters((c) => ({ ...c, dueDateTo: e.target.value })); setPage(1); }}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Search</label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <Input
+                  className="h-8 w-full pl-7 text-xs"
+                  value={filters.search}
+                  onChange={(e) => { setFilters((c) => ({ ...c, search: e.target.value })); setPage(1); }}
+                  placeholder="GRN / vendor / UTR"
+                />
+              </div>
+            </div>
+            <div className="col-span-2 flex justify-end sm:col-span-3 lg:col-span-7">
+              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={clearFilters}>
+                <X className="mr-1 h-3 w-3" />Clear filters
+              </Button>
+            </div>
           </div>
         )}
 

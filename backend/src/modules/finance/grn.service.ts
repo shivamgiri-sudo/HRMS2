@@ -33,6 +33,7 @@ export type GrnStatus =
   | "draft"
   | "submitted"
   | "branch_head_approved"
+  | "accounts_head_approved"
   | "finance_head_approved"
   | "pending_accounts_payment"
   | "payment_scheduled"
@@ -776,7 +777,7 @@ export const grnService = {
     let grnNumber: string | null = null;
     // Captured inside the transaction below, for the bell notification raised after it commits —
     // `grn` and `effectiveStage` are declared inside the try block and go out of scope at `finally`.
-    let notifyStage: "branch_head" | "finance_head" | null = null;
+    let notifyStage: "branch_head" | "accounts_head" | "finance_head" | null = null;
     let notifyGrnNumber: string | null = null;
     let notifyBranchId: string | null = null;
     let notifyVendorName: string | null = null;
@@ -816,12 +817,19 @@ export const grnService = {
       notifyVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
       notifyAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
 
+      // 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head.
+      // See finance-workflow-role.ts's resolveFinanceStageRole, which every OTHER caller of this
+      // stage resolution goes through — duplicated here only for the super_admin "acting as
+      // whichever stage the row is actually at" case, exactly as it always was for the 2-stage
+      // chain.
       const effectiveStage = role === "super_admin"
         ? grn.status === "submitted"
           ? "branch_head"
           : grn.status === "branch_head_approved"
-            ? "finance_head"
-            : null
+            ? "accounts_head"
+            : grn.status === "accounts_head_approved"
+              ? "finance_head"
+              : null
         : role;
 
       // P0-2: a type with no payment/ledger/reversal lifecycle cannot be approved.
@@ -850,6 +858,18 @@ export const grnService = {
             "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN"
           );
         }
+        if (effectiveStage === "accounts_head") {
+          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who submitted this GRN"
+            );
+          }
+          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head review"
+            );
+          }
+        }
         if (effectiveStage === "finance_head") {
           if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
             throw new Error(
@@ -859,6 +879,11 @@ export const grnService = {
           if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
             throw new Error(
               "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
+            );
+          }
+          if (grn.accounts_head_reviewed_by && String(grn.accounts_head_reviewed_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review"
             );
           }
         }
@@ -924,10 +949,67 @@ export const grnService = {
             { code: "STATE_CHANGED", statusCode: 409 }
           );
         }
-      } else if (effectiveStage === "finance_head") {
+      } else if (effectiveStage === "accounts_head") {
+        // Owner ruling (2026-09-12): Accounts Head sits between Branch Head and Finance Head,
+        // not only at the downstream payment step. This stage mirrors Branch Head's shape —
+        // approving does not move budget (the reservation from Branch Head's approve() stands
+        // untouched; only Finance Head's final approve() converts reserved into consumed) — it
+        // is a second pair of eyes on the invoice before Finance commits money against it.
         if (grn.status !== "branch_head_approved") {
           throw new Error(
-            `Finance Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`
+            `Accounts Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`
+          );
+        }
+
+        if (payload.decision === "approved") {
+          newStatus = "accounts_head_approved";
+        } else {
+          // Rejecting here undoes exactly what Branch Head's approval reserved — nothing has
+          // been consumed yet, so this is the same release() a rejection at the old
+          // branch_head_approved -> finance_head boundary always did.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.release(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
+          newStatus = "rejected";
+        }
+
+        const [ahUpdateResult] = await connection.execute<ResultSetHeader>(
+          `UPDATE grn_request
+              SET status = ?,
+                  accounts_head_reviewed_by = ?,
+                  accounts_head_reviewed_at = NOW(),
+                  accounts_head_review_note = ?,
+                  reviewed_by = ?,
+                  reviewed_at = NOW(),
+                  review_note = ?,
+                  rejection_reason = ?
+            WHERE id = ? AND status = 'branch_head_approved'`,
+          [
+            newStatus,
+            actorUserId,
+            payload.reviewNote?.trim() || null,
+            actorUserId,
+            payload.reviewNote?.trim() || null,
+            payload.decision === "rejected" ? payload.reviewNote?.trim() : null,
+            grnId,
+          ]
+        );
+        if (ahUpdateResult.affectedRows !== 1) {
+          throw Object.assign(
+            new Error("GRN state changed concurrently; refresh and try again"),
+            { code: "STATE_CHANGED", statusCode: 409 }
+          );
+        }
+      } else if (effectiveStage === "finance_head") {
+        if (grn.status !== "accounts_head_approved") {
+          throw new Error(
+            `Finance Head can only review Accounts-Head-approved GRNs. Current status: ${grn.status}`
           );
         }
 
@@ -968,7 +1050,7 @@ export const grnService = {
                     rejection_reason = NULL,
                     grn_number = COALESCE(grn_number, ?),
                     is_unbudgeted = CASE WHEN ? THEN 1 ELSE is_unbudgeted END
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ? AND status = 'accounts_head_approved'`,
             [
               newStatus,
               grn.grn_type === "vendor" ? "pending" : "not_required",
@@ -1018,7 +1100,7 @@ export const grnService = {
                     reviewed_at = NOW(),
                     review_note = ?,
                     rejection_reason = ?
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ? AND status = 'accounts_head_approved'`,
             [
               actorUserId,
               payload.reviewNote?.trim(),
@@ -1077,8 +1159,9 @@ export const grnService = {
         connection
       );
 
-      if (effectiveStage === "branch_head" && payload.decision === "approved") {
-        notifyStage = "finance_head";
+      if (payload.decision === "approved") {
+        if (effectiveStage === "branch_head") notifyStage = "accounts_head";
+        else if (effectiveStage === "accounts_head") notifyStage = "finance_head";
       }
 
       await connection.commit();
@@ -1139,7 +1222,13 @@ export const grnService = {
         throw new Error(`Cannot cancel a GRN with status '${grn.status}'`);
       }
 
-      if (grn.status === "branch_head_approved" && grn.budget_line_id) {
+      // Reserved-but-not-consumed spans two statuses now that Accounts Head sits between
+      // Branch Head and Finance Head — consumption only ever happens at Finance Head's final
+      // approve(), so both pre-Finance-Head statuses are still holding a reservation to release.
+      if (
+        (grn.status === "branch_head_approved" || grn.status === "accounts_head_approved")
+        && grn.budget_line_id
+      ) {
         await budgetConsumptionService.release(
           connection,
           grn.budget_line_id,
@@ -1639,6 +1728,10 @@ export const grnService = {
                 CONCAT(bhb.first_name, ' ', bhb.last_name),
                 CASE WHEN g.grn_type = 'imprest' THEN g.legacy_approved_by_name END
               ) AS branch_head_reviewed_by_name,
+              -- No legacy fallback here: the Accounts Head approval stage postdates every
+              -- db_bill-migrated row (owner ruling, 2026-09-12) — a legacy row simply never has
+              -- one, which is honestly NULL rather than borrowed from legacy_approved_by_name.
+              CONCAT(ahb.first_name, ' ', ahb.last_name) AS accounts_head_reviewed_by_name,
               COALESCE(
                 CONCAT(fhb.first_name, ' ', fhb.last_name),
                 CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
@@ -1661,6 +1754,7 @@ export const grnService = {
          LEFT JOIN employees cb ON cb.user_id = g.created_by
          LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
          LEFT JOIN employees bhb ON bhb.user_id = g.branch_head_reviewed_by
+         LEFT JOIN employees ahb ON ahb.user_id = g.accounts_head_reviewed_by
          LEFT JOIN employees fhb ON fhb.user_id = g.finance_head_reviewed_by
          ${contextAllocationJoin}
          ${where}
@@ -2028,16 +2122,21 @@ export const grnService = {
       const from = String(grn.status);
 
       // Only a GRN that is actually with a reviewer can be sent back. Returning a paid or
-      // cancelled one would reopen something already accounted for.
-      const RETURNABLE = new Set(["submitted", "branch_head_approved", "returned_to_branch_head"]);
+      // cancelled one would reopen something already accounted for. accounts_head_approved
+      // added alongside branch_head_approved — Accounts Head's own approval, like Branch Head's,
+      // is not yet a final commitment, so Finance Head can still send it back from there.
+      const RETURNABLE = new Set([
+        "submitted", "branch_head_approved", "accounts_head_approved", "returned_to_branch_head",
+      ]);
       if (!RETURNABLE.has(from)) {
         throw new Error(`A GRN with status ${from} cannot be returned`);
       }
       const to = target === "branch_head" ? "returned_to_branch_head" : "returned_to_raiser";
       if (from === to) throw new Error(`This GRN is already ${to}`);
 
-      // Release only from branch_head_approved — that is the only state holding a reservation.
-      if (from === "branch_head_approved" && grn.budget_line_id) {
+      // Release from either pre-Finance-Head status — both are still holding a reservation;
+      // only Finance Head's own approve() converts it into consumed.
+      if ((from === "branch_head_approved" || from === "accounts_head_approved") && grn.budget_line_id) {
         await budgetConsumptionService.release(
           connection,
           String(grn.budget_line_id),
@@ -2178,9 +2277,10 @@ export const grnService = {
       };
     }
 
-    // "In queue" spans both review stages: a GRN waiting on the Branch Head and one already
-    // through it and waiting on Finance are both awaiting a decision from someone.
-    const inQueue = ["submitted", "branch_head_approved"].reduce(
+    // "In queue" spans all three review stages now (Branch Head -> Accounts Head -> Finance
+    // Head, owner ruling 2026-09-12) — a GRN waiting on any of the three is awaiting a decision
+    // from someone.
+    const inQueue = ["submitted", "branch_head_approved", "accounts_head_approved"].reduce(
       (acc, status) => {
         const bucket = byStatus[status];
         if (bucket) {

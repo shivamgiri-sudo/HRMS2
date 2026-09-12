@@ -2521,7 +2521,10 @@ export const grnSmartService = {
       // Linking is an approval-stage action. Before submission the raiser still owns the splits
       // and the next invoice-components save replaces every allocation row wholesale, which would
       // discard the link; after Finance Head approval the budget has already moved.
-      if (!["submitted", "branch_head_approved"].includes(String(grn.status))) {
+      // accounts_head_approved included: the extra Accounts Head stage between Branch Head and
+      // Finance Head (owner ruling, 2026-09-12) is still "awaiting review" for this purpose —
+      // nothing consumes budget until Finance Head's own approve().
+      if (!["submitted", "branch_head_approved", "accounts_head_approved"].includes(String(grn.status))) {
         throw new Error(
           `A budget line can only be linked while the GRN is awaiting review. Current status: ${grn.status}`
         );
@@ -2777,6 +2780,18 @@ export const grnSmartService = {
             "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN"
           );
         }
+        if (role === "accounts_head") {
+          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who submitted this GRN"
+            );
+          }
+          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head review"
+            );
+          }
+        }
         if (role === "finance_head") {
           if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
             throw new Error(
@@ -2786,6 +2801,11 @@ export const grnSmartService = {
           if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
             throw new Error(
               "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
+            );
+          }
+          if (grn.accounts_head_reviewed_by && String(grn.accounts_head_reviewed_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review"
             );
           }
         }
@@ -2820,9 +2840,40 @@ export const grnSmartService = {
             { code: "STATE_CHANGED", statusCode: 409 }
           );
         }
-      } else if (role === "finance_head") {
+      } else if (role === "accounts_head") {
+        // Owner ruling (2026-09-12): Accounts Head sits between Branch Head and Finance Head.
+        // Mirrors branch_head's shape — approving does not move allocations (Branch Head's
+        // reserveAllocations() already ran; only Finance Head's consumeAllocations() below
+        // commits it), rejecting undoes exactly what Branch Head reserved.
         if (String(grn.status) !== "branch_head_approved") {
-          throw new Error(`Finance Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`);
+          throw new Error(`Accounts Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`);
+        }
+        if (decision === "approved") {
+          newStatus = "accounts_head_approved";
+        } else {
+          await releaseAllocations(connection, allocations);
+          newStatus = "rejected";
+        }
+        const [ahUpdateResult] = await connection.execute<ResultSetHeader>(
+          `UPDATE grn_request
+              SET status = ?, accounts_head_reviewed_by = ?, accounts_head_reviewed_at = NOW(),
+                  accounts_head_review_note = ?, reviewed_by = ?, reviewed_at = NOW(),
+                  review_note = ?, rejection_reason = ?
+            WHERE id = ? AND status = 'branch_head_approved'`,
+          [
+            newStatus, actorUserId, reviewNote?.trim() || null, actorUserId,
+            reviewNote?.trim() || null, decision === "rejected" ? reviewNote?.trim() : null, grnId,
+          ]
+        );
+        if (ahUpdateResult.affectedRows !== 1) {
+          throw Object.assign(
+            new Error("GRN state changed concurrently; refresh and try again"),
+            { code: "STATE_CHANGED", statusCode: 409 }
+          );
+        }
+      } else if (role === "finance_head") {
+        if (String(grn.status) !== "accounts_head_approved") {
+          throw new Error(`Finance Head can only review Accounts-Head-approved GRNs. Current status: ${grn.status}`);
         }
         if (decision === "approved") {
           /*
@@ -2861,7 +2912,7 @@ export const grnSmartService = {
                     reviewed_by = ?, reviewed_at = NOW(), review_note = ?, approved_by = ?,
                     approved_at = NOW(), rejection_reason = NULL,
                     grn_number = COALESCE(grn_number, ?)
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ? AND status = 'accounts_head_approved'`,
             [
               newStatus, grn.grn_type === "vendor" ? "pending" : "not_required",
               actorUserId, reviewNote?.trim() || null, actorUserId,
@@ -2900,7 +2951,7 @@ export const grnSmartService = {
                 SET status = 'rejected', finance_head_reviewed_by = ?,
                     finance_head_reviewed_at = NOW(), finance_head_review_note = ?,
                     reviewed_by = ?, reviewed_at = NOW(), review_note = ?, rejection_reason = ?
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ? AND status = 'accounts_head_approved'`,
             [actorUserId, reviewNote?.trim(), actorUserId, reviewNote?.trim(), reviewNote?.trim(), grnId]
           );
           if (fhRejectResult.affectedRows !== 1) {
@@ -2952,12 +3003,18 @@ export const grnSmartService = {
     if (paymentId) await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
     // The stage this decision cleared is done with; close its bell alert regardless of outcome,
     // then raise the next stage's alert only when the chain continues (Branch Head approving
-    // moves it to Finance Head). Finance Head's own decision ends the chain either way, so
-    // nothing new is raised there. Mirrors grn.service.ts's reviewGrn() — see grn-notify.ts's
-    // header for why this call, not that one, is the one that actually fires in production.
+    // moves it to Accounts Head, Accounts Head approving moves it to Finance Head). Finance
+    // Head's own decision ends the chain either way, so nothing new is raised there. Mirrors
+    // grn.service.ts's reviewGrn() — see grn-notify.ts's header for why this call, not that one,
+    // is the one that actually fires in production.
     await resolveGrnNotifications(grnId);
-    if (actorRole.toLowerCase() === "branch_head" && decision === "approved") {
-      await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head");
+    if (decision === "approved") {
+      const clearedRole = actorRole.toLowerCase();
+      if (clearedRole === "branch_head") {
+        await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "accounts_head");
+      } else if (clearedRole === "accounts_head") {
+        await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head");
+      }
     }
     return { success: true, newStatus, paymentId, grnNumber };
   },
@@ -2971,7 +3028,9 @@ export const grnSmartService = {
         throw new Error(`Cannot cancel a GRN with status '${grn.status}'`);
       }
       const allocations = await loadAllocations(connection, grnId, true);
-      if (String(grn.status) === "branch_head_approved") {
+      // Both pre-Finance-Head statuses are still holding a reservation — consumeAllocations()
+      // only ever runs at Finance Head's own approve().
+      if (["branch_head_approved", "accounts_head_approved"].includes(String(grn.status))) {
         await releaseAllocations(connection, allocations);
       }
       const [result] = await connection.execute<ResultSetHeader>(

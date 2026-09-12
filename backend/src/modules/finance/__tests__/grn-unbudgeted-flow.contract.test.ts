@@ -202,7 +202,12 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(service).toContain(
       "Every cost-centre split on this GRN is already funded by its own cost centre's budget line"
     );
-    expect(service).toContain('if (!["submitted", "branch_head_approved"].includes(String(grn.status)))');
+    // 3-stage GRN chain (owner ruling, 2026-09-12) added accounts_head_approved as a genuine
+    // pre-Finance-Head status — linking must still be reachable there, since budget still has
+    // not moved (Finance Head's consumeAllocations() is what finally commits it).
+    expect(service).toContain(
+      'if (!["submitted", "branch_head_approved", "accounts_head_approved"].includes(String(grn.status)))'
+    );
 
     // Same branch (via lockBudgetLine), same period, same cost centre, real capacity.
     expect(service).toContain("await lockBudgetLine(connection, String(link.budgetLineId), String(grn.branch_id))");
