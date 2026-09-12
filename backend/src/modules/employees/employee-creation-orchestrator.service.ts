@@ -299,6 +299,16 @@ export async function createEmployeeFromCandidate(
          COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
          -- The statutory forms need these; they were collected and then dropped.
          COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
+         -- Father/Husband relation sits right next to father_name on the onboarding form
+         -- (candidate_onboarding_profile.relation) but was never read here — same class of
+         -- bug blood_group had below before that was fixed. No employees column holds this;
+         -- written into employee_legacy_meta.relationship_type after the main insert below,
+         -- matching where the Employee Master report already reads it from.
+         p.relation,
+         -- Onboarding-form submission timestamp — "Entry Date" on the legacy-format export.
+         -- Requires employees.candidate_id to actually be set at insert time (added below);
+         -- without that FK the report's join to this table can never match, for any employee.
+         p.submitted_at AS onboarding_submitted_at,
          p.marital_status,
          -- Collected on the Onboarding form and then dropped here, exactly like the
          -- emergency contact below: the INSERT never named the column, so every employee
@@ -399,10 +409,16 @@ export async function createEmployeeFromCandidate(
           -- them from legacy import. ESI registration reads employees.pan_number and had
           -- nothing to read for anyone onboarded through the current flow.
           pan_number, aadhaar_number,
+          -- Never written before, so no employee created through this path could ever be
+          -- joined back to their own onboarding-form submission (candidate_onboarding_profile
+          -- via this FK) — every candidate-profile-linked field (e.g. the Employee Master
+          -- report's "Entry Date") silently had nothing to read for every future hire, not
+          -- just the pre-ATS backfilled population.
+          candidate_id,
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
@@ -429,6 +445,7 @@ export async function createEmployeeFromCandidate(
         /^[0-9]{12}$/.test(String(candRow?.aadhar_number ?? "").replace(/\D/g, ""))
           ? String(candRow?.aadhar_number).replace(/\D/g, "")
           : null,
+        candidateId,
         resolvedBranchId,
         resolvedProcessId,
         offer.department_id ?? null,
@@ -441,6 +458,20 @@ export async function createEmployeeFromCandidate(
         offer.reporting_manager_id ?? null,
       ]
     );
+
+    // Father/Husband relation: no employees column holds this (only father_name does), and
+    // employee_legacy_meta — where the Employee Master report already reads relationship_type
+    // from — had no live writer anywhere until now. Only written when the onboarding form
+    // actually captured it, so this never creates an empty row for no reason.
+    if (candRow?.relation && String(candRow.relation).trim() !== "") {
+      await conn.execute(
+        `INSERT INTO employee_legacy_meta (id, employee_id, relationship_type)
+         VALUES (UUID(), ?, ?)
+         ON DUPLICATE KEY UPDATE
+           relationship_type = COALESCE(NULLIF(relationship_type,''), VALUES(relationship_type))`,
+        [employeeId, String(candRow.relation).trim()]
+      );
+    }
 
     // Create related records (statutory, salary, nominee, leave, pf-opt-out)
     await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow, approverId);

@@ -9,6 +9,7 @@ import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check
 // instead of running migrations. Use `npm run migrate` to apply migrations separately.
 const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
+import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -243,6 +244,10 @@ function startServer() {
         startPerformanceScorecardSnapshotScheduler();
         startPerformanceIngestionScheduler();
         initBusinessActionSyncJobs();
+        // Keeps employee_master_snapshot (the 73-column legacy-format employee export,
+        // including db_bill fallback enrichment) fresh every 30 minutes so the report can
+        // read a plain table instead of recomputing two cross-database fallbacks on request.
+        startEmployeeMasterSnapshotScheduler();
         startBreachSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
