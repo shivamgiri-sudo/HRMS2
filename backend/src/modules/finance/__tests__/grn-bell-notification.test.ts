@@ -8,8 +8,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
  * inboxService.createItem anywhere in grn.service.ts.
  *
  * This exercises the fix: submitForApproval raises a branch_head alert, a branch_head approval
- * closes it and raises a finance_head alert, and a rejection at either stage closes the alert
- * with nothing new raised.
+ * closes it and raises an accounts_head alert, an accounts_head approval closes that and raises
+ * a finance_head alert (3-stage chain, owner ruling 2026-09-12), and a rejection at any stage
+ * closes the alert with nothing new raised.
  */
 
 const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
@@ -60,6 +61,8 @@ const SUBMITTED_GRN = {
 };
 
 const BH_APPROVED_GRN = { ...SUBMITTED_GRN, status: "branch_head_approved" };
+// 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head.
+const AH_APPROVED_GRN = { ...SUBMITTED_GRN, status: "accounts_head_approved" };
 
 beforeEach(() => {
   execute.mockReset();
@@ -105,7 +108,7 @@ describe("submitForApproval raises a branch_head bell alert", () => {
 });
 
 describe("reviewGrn's bell alerts follow the stage", () => {
-  it("branch_head approval closes its own alert and raises one for finance_head", async () => {
+  it("branch_head approval closes its own alert and raises one for accounts_head", async () => {
     const conn = makeConnection(SUBMITTED_GRN);
     getConnection.mockResolvedValue(conn);
 
@@ -114,7 +117,7 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     expect(resolveItems).toHaveBeenCalledWith({
       entity_type: "grn_request", entity_id: "g1", types: ["grn_approval_pending"],
     });
-    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("finance_head", "branch-A");
+    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("accounts_head", "branch-A");
     expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
       type: "grn_approval_pending",
       entity_id: "g1",
@@ -133,8 +136,24 @@ describe("reviewGrn's bell alerts follow the stage", () => {
     expect(createItem).not.toHaveBeenCalled();
   });
 
-  it("finance_head's own decision closes the alert and raises nothing new (chain ends)", async () => {
+  it("accounts_head approval closes its own alert and raises one for finance_head", async () => {
     const conn = makeConnection(BH_APPROVED_GRN);
+    getConnection.mockResolvedValue(conn);
+
+    await grnService.reviewGrn("g1", { decision: "approved" }, "u2", "accounts_head");
+
+    expect(resolveItems).toHaveBeenCalledWith({
+      entity_type: "grn_request", entity_id: "g1", types: ["grn_approval_pending"],
+    });
+    expect(resolveRoleHolderUserIds).toHaveBeenCalledWith("finance_head", "branch-A");
+    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
+      type: "grn_approval_pending",
+      entity_id: "g1",
+    }));
+  });
+
+  it("finance_head's own decision closes the alert and raises nothing new (chain ends)", async () => {
+    const conn = makeConnection(AH_APPROVED_GRN);
     getConnection.mockResolvedValue(conn);
 
     await grnService.reviewGrn("g1", { decision: "approved" }, "u2", "finance_head");

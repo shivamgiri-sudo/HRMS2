@@ -43,6 +43,16 @@ export const GST_STATE_CODES = [
 
 export type GstStateCode = typeof GST_STATE_CODES[number]["value"];
 
+const STATE_LABEL_BY_CODE = new Map(GST_STATE_CODES.map((s) => [s.value, s.label]));
+
+/** "07 - Delhi" for a known code, the raw code alone if unrecognised, "—" if empty — never
+ *  a blank cell, so a reviewer sees SOMETHING is there even for a code this list doesn't know. */
+export function gstStateLabel(code: string | null | undefined): string {
+  const trimmed = String(code ?? "").trim();
+  if (!trimmed) return "—";
+  return STATE_LABEL_BY_CODE.get(trimmed) ?? trimmed;
+}
+
 /**
  * Derives GST type from vendor and billing state codes.
  * - Same state → CGST/SGST (intra-state)

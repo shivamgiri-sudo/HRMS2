@@ -308,6 +308,10 @@ imprestRouter.get(
   h(async (req, res) => {
     const data = await imprestService.listAllocations({
       branchScope: await scopeOf(req),
+      // listAllocations already accepted this (used as a fallback when branchScope is absent) —
+      // the route just never read it off the query string, so an org-wide viewer had no way to
+      // narrow the list to one branch; the same param /managers already exposes.
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
       imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
       status: req.query.status ? String(req.query.status) : undefined,
       from: req.query.from ? String(req.query.from) : undefined,
