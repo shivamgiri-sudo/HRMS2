@@ -16,9 +16,11 @@ export function useCostCentres() {
     hrmsApi
       .get<{ data?: CostCentre[] } | CostCentre[]>("/org/cost-centres?active_status=1&limit=500")
       .then((res) => {
-        // org/cost-centres returns { data: [...] } with pagination, or a plain array
-        const raw = res.data;
-        const list = Array.isArray(raw) ? raw : (raw as { data?: CostCentre[] }).data ?? [];
+        // org/cost-centres returns { data: [...] } with pagination, or a plain array. Checking
+        // Array.isArray(res) directly (rather than res.data first) matters: when res really is a
+        // plain array, res.data is undefined, so reading .data off THAT before checking its shape
+        // would throw instead of falling back to [].
+        const list = Array.isArray(res) ? res : res.data ?? [];
         setCostCentres(list);
       })
       .catch(() => setCostCentres([]))

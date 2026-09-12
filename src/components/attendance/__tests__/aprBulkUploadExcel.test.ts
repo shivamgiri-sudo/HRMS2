@@ -109,7 +109,9 @@ describe("excelFileToCsvText — real workbook end to end", () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "APR");
     const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-    return new File([buf], filename, {
+    // Buffer is a Uint8Array at runtime, but newer @types/node's Buffer typing doesn't
+    // structurally satisfy DOM's BlobPart — wrapping makes the real ArrayBufferView explicit.
+    return new File([new Uint8Array(buf)], filename, {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
   }

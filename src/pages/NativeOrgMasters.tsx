@@ -1701,6 +1701,9 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const openMigrate = (rec: CostCentreRecord) => {
+    // Same modal component as Edit (ProcessFormModal renders every CostCentreFormData field),
+    // so the seat-mandate/billing fields need real values here too — omitting them left the
+    // migrate dialog rendering them blank rather than the cost centre's actual current mandate.
     setMigrateForm({
       cost_centre_code: rec.cost_centre_code,
       cost_centre_name: rec.cost_centre_name,
@@ -1708,6 +1711,11 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
       lob_id: rec.lob_id ?? "",
       branch_id: rec.branch_id ?? "",
       process_id: rec.process_id ?? "",
+      current_mandate: String(rec.current_mandate ?? 0),
+      working_days_per_week: String(rec.working_days_per_week ?? 6),
+      billing_days_per_month: String(rec.billing_days_per_month ?? 26),
+      hours_per_fte_per_day: String(rec.hours_per_fte_per_day ?? 8),
+      billing_type: rec.billing_type ?? "seat",
     });
     setMigrateRecord(rec);
   };

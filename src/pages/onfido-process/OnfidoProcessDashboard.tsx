@@ -694,11 +694,27 @@ function BreakdownDrilldownSheet({
   );
 }
 
-function PillGroup<T extends string>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (v: T) => void }) {
+/**
+ * Two separate inference traps, both worth spelling out since the fix for each looks redundant
+ * on its own:
+ *
+ * `options` is typed with a plain `string` key rather than `{ key: T }[]` — every call site
+ * passes an options array literal without `as const`, so a `T`-typed key would widen inference to
+ * plain `string` (the literal `"daily"` etc. has no narrower type to offer). The cast in the
+ * click handler below is safe because the option keys a caller supplies are always members of T
+ * by construction (they're this pill group's own state values).
+ *
+ * `onChange` uses `NoInfer<T>` because every call site passes a raw `useState` setter
+ * (`Dispatch<SetStateAction<Granularity>>`), and contravariant inference from that parameter's
+ * union type (`Granularity | ((prev: Granularity) => Granularity)`) pulled T back to its `string`
+ * constraint even with `options` fixed above — confirmed by isolating the two changes. `NoInfer`
+ * forces T to be inferred from `value` alone, which already carries the real narrow union.
+ */
+function PillGroup<T extends string>({ options, value, onChange }: { options: { key: string; label: string }[]; value: T; onChange: (v: NoInfer<T>) => void }) {
   return (
     <div className="oc-pillbar">
       {options.map((o) => (
-        <button key={o.key} className={o.key === value ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => onChange(o.key)}>
+        <button key={o.key} className={o.key === value ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => onChange(o.key as T)}>
           {o.label}
         </button>
       ))}

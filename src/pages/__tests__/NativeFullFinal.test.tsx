@@ -22,9 +22,15 @@ import {
   DEVIATION_TOLERANCE,
   type FFFormState,
   type FfComputePreview,
+  type ComputedComponent,
 } from "../NativeFullFinal";
 
-const BASE_FORM: FFFormState = {
+// earned_leave_encashment/leave_encashment aren't real FFFormState/FfComputePreview fields —
+// 6cf1a6c8 removed leave encashment from the F&F form entirely (see the comments below). They're
+// intentionally still carried on these test fixtures as an excess property, to prove a stray
+// value in submitted data is ignored rather than silently re-entering the computation. The
+// intersection type documents that on purpose instead of widening the real production types.
+const BASE_FORM: FFFormState & { earned_leave_encashment: string } = {
   calculation_date: "2026-08-20",
   notice_period_days: "30",
   notice_shortfall_days: "0",
@@ -36,7 +42,7 @@ const BASE_FORM: FFFormState = {
   net_payable: "0",
 };
 
-const PREVIEW: FfComputePreview = {
+const PREVIEW: FfComputePreview & { leave_encashment: { amount: ComputedComponent } } = {
   notice: { recovery_amount: { value: 11000, status: "computed", note: "" } },
   leave_encashment: { amount: { value: 0, status: "not_applicable", note: "policy off" } },
   gratuity: { amount: 45000, status: "draft", note: "" },
@@ -52,8 +58,10 @@ describe("computedFieldsFromPreview", () => {
     // Leave encashment is deliberately NOT surfaced as a computed field (6cf1a6c8 removed it
     // from the F&F form entirely). The preview payload still carries a leave_encashment block —
     // the backend keeps sending it — so this asserts the mapper drops it rather than that the
-    // upstream field is gone. Guards the removal against being silently re-added.
-    expect(fields.earned_leave_encashment).toBeUndefined();
+    // upstream field is gone. Guards the removal against being silently re-added. Cast to a plain
+    // record because the real FFFormState (and so `fields`'s key type) has no such property at
+    // all any more — the strongest possible version of this guard.
+    expect((fields as Record<string, unknown>).earned_leave_encashment).toBeUndefined();
   });
 
   it("omits gratuity when it isn't in draft status (pending_configuration/not_eligible)", () => {
@@ -88,7 +96,7 @@ describe("deviatingFields — must match createFF()'s own comparison exactly", (
   });
 
   it("never flags a field with no computed baseline (e.g. leave encashment when not_applicable)", () => {
-    const form: FFFormState = { ...BASE_FORM, earned_leave_encashment: "99999", notice_recovery: "11000", gratuity_amount: "45000", advances_recovery: "5000" };
+    const form: FFFormState & { earned_leave_encashment: string } = { ...BASE_FORM, earned_leave_encashment: "99999", notice_recovery: "11000", gratuity_amount: "45000", advances_recovery: "5000" };
     expect(deviatingFields(form, PREVIEW)).toEqual([]);
   });
 
@@ -106,7 +114,7 @@ describe("DEVIATION_TOLERANCE matches the backend's FF_NET_TOLERANCE", () => {
 
 describe("netFromForm", () => {
   it("is gratuity - notice recovery - salary hold - advances, EXCLUDING leave encashment", () => {
-    const form: FFFormState = { ...BASE_FORM, earned_leave_encashment: "10000", gratuity_amount: "45000", notice_recovery: "11000", salary_hold: "2000", advances_recovery: "5000" };
+    const form: FFFormState & { earned_leave_encashment: string } = { ...BASE_FORM, earned_leave_encashment: "10000", gratuity_amount: "45000", notice_recovery: "11000", salary_hold: "2000", advances_recovery: "5000" };
     // earned_leave_encashment is set to a non-zero value on purpose: 6cf1a6c8 removed leave
     // encashment from the F&F payout, so a form still carrying the figure must not let it back
     // into the net. If it ever re-enters the formula this reads 10000 higher and fails.
