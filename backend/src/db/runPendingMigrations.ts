@@ -1034,6 +1034,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1753_payroll_debit_account_config.sql", // Registered 2026-09-11. payroll_debit_account_config -- the single debit account number the Salary Transfer File's "Debit Ac No" column reads, previously hardcoded in the export code. Already applied to production.
   "1754_salary_transfer_batch.sql", // Registered 2026-09-11. salary_transfer_batch + salary_transfer_batch_item -- the export/rejection/correction/re-export audit trail behind the Salary Transfer & Reconciliation feature. Already applied to production.
   "1756_bank_exception_auto_assign_event.sql", // Registered 2026-09-11. Seeds the bank_exception_invalid_assigned notification event (shadow/disabled by default, per the 1022 registry convention) so bank-manual-review.service.ts's auto-assign-to-branch-payroll-HR pass has an event to call; the UPDATE further down flips it live. Used 1756 rather than 1755 because a concurrent session had already claimed 1755 (wfm_notification_rule) for an unrelated feature at the same time.
+  "1758_grn_accounts_head_approval_stage.sql", // Registered 2026-09-12. Adds 'accounts_head_approved' to grn_request.status and the accounts_head_reviewed_by/_at/_note columns grn.service.ts and grn-smart.service.ts's review() now read and write — the real Accounts Head approval gate inserted between Branch Head and Finance Head (owner ruling, 2026-09-12; GRN was a 2-stage chain before this). Additive only: every existing status value and column is untouched.
   ];
 
 export type MigrationHealth = {

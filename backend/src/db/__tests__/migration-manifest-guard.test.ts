@@ -230,6 +230,20 @@ describe("migration manifest — duplicates", () => {
     // (reginald_abandoned_cart_daily_actual, bla_bli_blu_cdr_daily_actual). Same shape
     // as every jump above; renaming either side is the one thing that would break
     // schema_migrations' by-filename tracking.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(85);
+    //
+    // 85 -> 89 (2026-09-12): running scripts/update-migration-lock.mjs --write to catch
+    // sql/MIGRATION_MANIFEST.lock.json up with 108 files that were already in
+    // MIGRATION_MANIFEST but never locked (unrelated pre-existing drift, discovered while
+    // registering this session's own 1758_grn_accounts_head_approval_stage.sql — a new,
+    // non-colliding number) surfaced four collisions the lock had never been regenerated
+    // against: 1739 (vendor_payment_transaction_bank_account vs
+    // bla_bli_blu_dd_tagging_raw), 1740 (imprest_allocation_bank_account vs
+    // gnc_sale_masmis_uploader), 1741 (bank_ledger_direct_source_types vs
+    // gnc_apr_reconcile_to_masmis) and 1747 (vendor_advance_payments vs
+    // gnc_allocation_masmis_uploader) — the Payment Voucher/vendor-advance branch's own
+    // numbering colliding with unrelated bulk-upload/masmis raw-table work, same shape as
+    // every jump above. All eight files are real, already-merged migrations tracked by
+    // distinct full filenames; this session added none of them and renamed none of them.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(89);
   });
 });
