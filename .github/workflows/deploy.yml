@@ -382,7 +382,18 @@ jobs:
           # back a good release and leaves code and schema at different versions, which is the
           # more expensive mistake, so the budget is generous rather than tight.
           wait_for_backend_health() {
-            for attempt in $(seq 1 90); do
+            # 200 attempts, not 90. 90 (~7.5 min) was itself raised from an original 30 for the
+            # same reason it is being raised again here: runPendingMigrations can retry against a
+            # transient MySQL lock-wait-timeout (another session's own migration check contending
+            # for the same named advisory lock on this shared DB), and each retry re-scans the
+            # full migration/checksum set before finding out the lock is free. On 2026-09-12 that
+            # pushed several genuinely-successful boots past 90 attempts, so the deploy rolled back
+            # correctly-applied releases and reported failure while the schema had already moved —
+            # nine consecutive deploys of one small fix were lost this way in about ninety minutes.
+            # Same trade-off the original comment already accepted: waiting too long costs minutes;
+            # giving up too early costs a rolled-back good release with code and schema now
+            # disagreeing, which is the more expensive mistake.
+            for attempt in $(seq 1 200); do
               if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
                 if [ "$attempt" -gt 30 ]; then
                   echo "Backend became healthy on attempt ${attempt} — slower than the old 30-attempt budget."
@@ -390,10 +401,10 @@ jobs:
                 fi
                 return 0
               fi
-              echo "Waiting for backend health (${attempt}/90)"
+              echo "Waiting for backend health (${attempt}/200)"
               sleep 2
             done
-            echo "Backend did not become healthy within 90 attempts (~5 minutes)."
+            echo "Backend did not become healthy within 200 attempts (~16.5 minutes)."
             return 1
           }
 
