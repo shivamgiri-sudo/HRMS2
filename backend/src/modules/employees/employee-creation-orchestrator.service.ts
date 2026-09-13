@@ -341,7 +341,13 @@ export async function createEmployeeFromCandidate(
          -- either, so employees.annual_income/count_of_dependents (added specifically
          -- to mirror this form, see 1073_employee_profile_parity.sql) stayed NULL for
          -- every employee created through this path.
-         fam.annual_income, fam.count_of_dependents
+         fam.annual_income, fam.count_of_dependents,
+         -- Nominee — same story again: candidate_onboarding_profile.nominee_name/
+         -- nominee_relation/nominee_dob is captured on the form, and this function's own
+         -- comments ("Create related records (statutory, salary, nominee, leave...)")
+         -- claimed employee_nominee was already handled here — it never was. No code in
+         -- this file has ever inserted a row into employee_nominee.
+         p.nominee_name, p.nominee_relation, p.nominee_dob
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
        LEFT JOIN candidate_onboarding_family fam ON fam.candidate_id = c.id
@@ -533,6 +539,31 @@ export async function createEmployeeFromCandidate(
            pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
         [employeeId, candRow?.permanent_address_line1 ?? null, candRow?.permanent_address_line2 ?? null,
          candRow?.permanent_city ?? null, candRow?.permanent_state ?? null, candRow?.permanent_pincode ?? null]
+      );
+    }
+
+    // Nominee — captured on the onboarding form (candidate_onboarding_profile.nominee_*)
+    // and, until now, never written to employee_nominee at all despite this function's own
+    // long-standing comment claiming it handled it (see createRelatedEmployeeRecords below,
+    // whose header comment says "statutory, salary, nominee, leave" but never actually
+    // touches this table). Only written when the form actually captured both a name and a
+    // relation, since both are NOT NULL on employee_nominee. share_percentage defaults to
+    // 100 (single-nominee case, which this form only ever collects one of); nominee_for
+    // defaults to 'general' rather than asserting a specific statutory purpose (gratuity/pf/
+    // esic) the form never asked the candidate to choose between. is_minor is computed from
+    // nominee_dob when given, rather than guessed, since the actual date is right here.
+    const nomineeName = String(candRow?.nominee_name ?? "").trim();
+    const nomineeRelation = String(candRow?.nominee_relation ?? "").trim();
+    if (nomineeName && nomineeRelation) {
+      const nomineeDob = candRow?.nominee_dob ? new Date(candRow.nominee_dob) : null;
+      const isMinor = nomineeDob && !Number.isNaN(nomineeDob.getTime())
+        ? (Date.now() - nomineeDob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) < 18
+        : false;
+      await conn.execute(
+        `INSERT INTO employee_nominee
+           (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, is_minor)
+         VALUES (?, ?, ?, ?, ?, 100, 'general', ?)`,
+        [randomUUID(), employeeId, toStoredNameRequired(nomineeName), nomineeRelation, candRow?.nominee_dob ?? null, isMinor ? 1 : 0]
       );
     }
 
