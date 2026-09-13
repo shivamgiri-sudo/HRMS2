@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, Database, FileSearch, FileText, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
@@ -293,8 +293,12 @@ function TrendChart({ points }: { points: TrendPoint[] }) {
         <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} />
         <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-        <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={48} />
-        <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={48} />
+        <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={48}>
+          <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+        </Bar>
+        <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={48}>
+          <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -394,8 +398,12 @@ function TrendsView({ range }: { range: { from: string; to: string } }) {
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} />
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+              </Bar>
+              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -583,7 +591,9 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
                   <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                   <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                   <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-                  <Bar dataKey="tasks" name="Tasks" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                  <Bar dataKey="tasks" name="Tasks" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                    <LabelList dataKey="tasks" position="top" fontSize={10} fill="var(--muted)" />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -814,7 +824,9 @@ function AttritionView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="attritionCount" name="Attrition Count" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+              <Bar dataKey="attritionCount" name="Attrition Count" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="attritionCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -992,8 +1004,12 @@ function EtmView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40} />
-              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+              </Bar>
+              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -1103,7 +1119,9 @@ function TaskSkipView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="count" name="Task Skip" fill="var(--orange)" radius={[4, 4, 0, 0]} maxBarSize={40} />
+              <Bar dataKey="count" name="Task Skip" fill="var(--orange)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -1200,11 +1218,9 @@ function QualityView({
   return (
     <div className="space-y-4">
       {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+        <div className="kr" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.overallErrorRate} kc="var(--red)" />
-          <KpiPlain kpi={ov.farRate} kc="var(--orange)" />
-          <KpiPlain kpi={ov.frrRate} kc="var(--orange)" />
         </div>
       )}
       {ov && (
@@ -1233,7 +1249,9 @@ function QualityView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} tick={{ fontSize: 11, fill: "var(--muted)" }} unit="%" />
               <RTooltip content={<DarkTooltip />} />
-              <Line type="monotone" dataKey="errorRate" name="Error Rate %" stroke="var(--red)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              <Line type="monotone" dataKey="errorRate" name="Error Rate %" stroke="var(--red)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="errorRate" position="top" fontSize={10} fill="var(--red)" formatter={(v: number) => `${v}%`} />
+              </Line>
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -1254,16 +1272,14 @@ function QualityView({
         <div className="oc-card-sub">Top 50 by task count.</div>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
-            <thead><tr><th>{dimLabel}</th><th className="oc-right">Tasks</th><th className="oc-right">Error Rate</th><th className="oc-right">FAR %</th><th className="oc-right">FRR %</th></tr></thead>
+            <thead><tr><th>{dimLabel}</th><th className="oc-right">Tasks</th><th className="oc-right">Error Rate</th></tr></thead>
             <tbody>
-              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={5}>No data</td></tr>}
+              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={3}>No data</td></tr>}
               {breakdown.map((r) => (
                 <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.overallErrorRate !== null ? `${r.overallErrorRate}%` : "—"}</td>
-                  <td className="oc-right">{r.farRate !== null ? `${r.farRate}%` : "—"}</td>
-                  <td className="oc-right">{r.frrRate !== null ? `${r.frrRate}%` : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -1382,7 +1398,9 @@ function EscalationsView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="count" name="Escalation Lines" fill="var(--red)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="count" name="Escalation Lines" fill="var(--red)" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -1564,7 +1582,9 @@ function DocRawView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="taskCount" name="Tasks" fill="var(--blue)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="taskCount" name="Tasks" fill="var(--blue)" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -1684,7 +1704,9 @@ function PoaView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -1775,7 +1797,9 @@ function LiveView() {
             <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} interval={0} angle={-20} textAnchor="end" height={50} />
             <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
             <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-            <Bar dataKey="taskCount" name="Task" fill="var(--teal)" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="taskCount" name="Task" fill="var(--teal)" radius={[4, 4, 0, 0]}>
+              <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       )}
