@@ -458,7 +458,27 @@ jobs:
           #
           # Retried briefly, and a failure now PRINTS what it actually got. A deploy that fails
           # must say why; one that half-deploys in silence is worse than one that refuses.
-          CORS_HEADERS="$(mktemp)"
+          #
+          # 2026-09-13: the mktemp call itself had no error handling. Under set -euo pipefail, a
+          # single mktemp failure (observed after a run of back-to-back deploys/restarts put the
+          # box under load) kills the step immediately with that exact same silent-death
+          # signature -- except this path skipped rollback_backend entirely, so a release that
+          # had JUST passed the health check was abandoned rather than explicitly rolled back.
+          # Retried a few times before giving up, and a persistent failure now rolls back and
+          # says why, like every other check in this step.
+          CORS_HEADERS=""
+          for mktemp_attempt in 1 2 3; do
+            if CORS_HEADERS="$(mktemp)"; then
+              break
+            fi
+            echo "mktemp failed for CORS header check (attempt ${mktemp_attempt}/3), retrying…"
+            sleep 2
+          done
+          if [ -z "$CORS_HEADERS" ]; then
+            echo "Could not create a temp file for the CORS header check after 3 attempts -- treating this as a failed health verification."
+            rollback_backend
+            exit 1
+          fi
           trap 'rm -f "$CORS_HEADERS"' EXIT
           cors_ok=0
           for cors_attempt in 1 2 3 4 5 6 7 8 9 10; do
