@@ -1754,6 +1754,89 @@ export async function getPoaBreakdown(
     .slice(0, 50);
 }
 
+// ── POA Trial (onfido_poa_trial_raw, standalone) ────────────────────────────
+//
+// Unlike the POA tab above (which always combines onfido_poa_raw +
+// onfido_poa_trial_raw), this tab is scoped to the trial table alone — the
+// client asked for POA Trial to have its own dashboard, not just a silent
+// volume add-on inside POA. There is no onfido_poa_trial_quality_raw table
+// (no separate error/no-error columns), so "Consider Rate" (from this
+// table's own overall_result column: Consider vs Clear) is the quality
+// signal here instead of POA's Error Rate/FAR/FRR breakdown.
+
+export interface PoaTrialOverview {
+  taskCount: KpiValue; avgAht: KpiValue; considerRate: KpiValue;
+}
+
+export async function getPoaTrialOverview(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<PoaTrialOverview> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const agg = await scalar<RowDataPacket & { n: number; aht: number | null; considerN: number }>(
+    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht,
+            SUM(CASE WHEN overall_result = 'Consider' THEN 1 ELSE 0 END) AS considerN
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+    [f.from, f.to, ...params]
+  );
+  const kpi = (key: string, label: string, value: number | null, unit: KpiValue["unit"], note?: string): KpiValue => ({
+    key, label, value, unit, availability: value === null ? "no_data" : "ok", note,
+  });
+  const n = Number(agg.n ?? 0);
+  const considerN = Number(agg.considerN ?? 0);
+  return {
+    taskCount: kpi("poa_trial_task_count", "POA Trial Reports Processed", n, "count"),
+    avgAht: kpi("poa_trial_aht", "POA Trial Avg Handling Time", agg.aht !== null ? Math.round(Number(agg.aht)) : null, "seconds"),
+    considerRate: kpi("poa_trial_consider_rate", "POA Trial Consider Rate", rate1(considerN, n), "percent",
+      n > 0 ? `${considerN} Consider vs ${n - considerN} Clear` : "no POA Trial reports in range"),
+  };
+}
+
+export interface PoaTrialTrendPoint { bucket: string; taskCount: number }
+
+export async function getPoaTrialTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<PoaTrialTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const expr = bucketExpr("report_completed_date", granularity);
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${expr} AS bucket, COUNT(*) AS n FROM onfido_poa_trial_raw
+      WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  return rows
+    .map((r) => ({ bucket: bucketLabel(r.bucket, granularity), taskCount: Number(r.n) }))
+    .sort((a, b) => a.bucket.localeCompare(b.bucket));
+}
+
+export type PoaTrialDimension = "tl_name" | "am_name";
+export interface PoaTrialBreakdownRow { label: string; taskCount: number; avgAht: number | null; considerRate: number | null }
+
+export async function getPoaTrialBreakdown(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: PoaTrialDimension
+): Promise<PoaTrialBreakdownRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const label = `COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)')`;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${label} AS label, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht,
+            SUM(CASE WHEN overall_result = 'Consider' THEN 1 ELSE 0 END) AS considerN
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY label`,
+    [f.from, f.to, ...params]
+  );
+  return rows
+    .map((r): PoaTrialBreakdownRow => ({
+      label: r.label, taskCount: Number(r.n),
+      avgAht: r.aht !== null ? Math.round(Number(r.aht)) : null,
+      considerRate: rate1(Number(r.considerN ?? 0), Number(r.n)),
+    }))
+    .sort((a, b) => b.taskCount - a.taskCount)
+    .slice(0, 50);
+}
+
 // ── Live / Today snapshot ────────────────────────────────────────────────────
 //
 // Unlike every other tab (which reads whatever date range Executive Filters

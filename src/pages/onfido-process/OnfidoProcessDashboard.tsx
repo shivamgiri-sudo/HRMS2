@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, CalendarRange, Database, FileSearch, FileText, LayoutGrid, Layers3,
+  AlertTriangle, ArrowLeft, CalendarRange, Database, FileSearch, FileText, FlaskConical, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -65,7 +65,7 @@ type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string
 
 type ViewKey =
   | "overview" | "analyst" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
-  | "escalations" | "docraw" | "poa" | "live";
+  | "escalations" | "docraw" | "poa" | "poatrial" | "live";
 type Granularity = "daily" | "weekly" | "monthly";
 
 interface VolumeTrendPoint { bucket: string; doc: number; poa: number }
@@ -161,6 +161,10 @@ interface PoaOverview {
 interface PoaTrendPoint { bucket: string; taskCount: number }
 type PoaDimension = "tl_name" | "am_name";
 interface PoaBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
+interface PoaTrialOverview { taskCount: KpiValue; avgAht: KpiValue; considerRate: KpiValue }
+interface PoaTrialTrendPoint { bucket: string; taskCount: number }
+type PoaTrialDimension = "tl_name" | "am_name";
+interface PoaTrialBreakdownRow { label: string; taskCount: number; avgAht: number | null; considerRate: number | null }
 
 interface LiveOverview {
   docLiveTaskCount: KpiValue; docLiveAht: KpiValue; docLiveAuditCount: KpiValue; docLiveErrorCount: KpiValue;
@@ -322,7 +326,7 @@ function ChartLegendRow() {
  *  search box) don't take one, so the Executive Filters TL/AM dropdowns hide there
  *  rather than silently doing nothing when changed. */
 const FILTERABLE_VIEWS = new Set<ViewKey>([
-  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa",
+  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial",
 ]);
 
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -337,6 +341,7 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "escalations", label: "Client Escalations", icon: MessageSquareWarning },
   { key: "docraw", label: "DOC Raw", icon: Database },
   { key: "poa", label: "POA", icon: FileText },
+  { key: "poatrial", label: "POA Trial", icon: FlaskConical },
   { key: "live", label: "Live", icon: Radio },
 ];
 
@@ -1756,6 +1761,112 @@ function PoaView({
   );
 }
 
+function PoaTrialView({
+  range, tlFilter, amFilter, onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  const [dimension, setDimension] = useState<PoaTrialDimension>("tl_name");
+  const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
+  const qs = tlAmQS(tlFilter, amFilter);
+
+  const overviewQuery = useQuery({
+    queryKey: ["onfido-process", "poa-trial-overview", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaTrialOverview }>(`/api/onfido-process/poa-trial/overview?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const trendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-trial-trend", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: PoaTrialTrendPoint[] }>(`/api/onfido-process/poa-trial/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
+  const breakdownQuery = useQuery({
+    queryKey: ["onfido-process", "poa-trial-breakdown", range, dimension, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaTrialBreakdownRow[] }>(`/api/onfido-process/poa-trial/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
+  });
+
+  const ov = overviewQuery.data?.data;
+  const points = trendQuery.data?.data ?? [];
+  const breakdown = breakdownQuery.data?.data ?? [];
+  const dimLabel = { tl_name: "TL", am_name: "AM" }[dimension];
+
+  return (
+    <div className="space-y-4">
+      {ov && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
+          <KpiPlain kpi={ov.avgAht} kc="var(--teal)" />
+          <KpiPlain kpi={ov.considerRate} kc="var(--orange)" />
+        </div>
+      )}
+
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>POA Trial Volume Trend</h3>
+          <PillGroup
+            value={granularity} onChange={setGranularity}
+            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+          />
+        </div>
+        <div className="oc-card-sub">onfido_poa_trial_raw only — not combined with POA Raw.</div>
+        {points.length === 0 ? (
+          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+              <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>Breakdown</h3>
+          <PillGroup
+            value={dimension}
+            onChange={setDimension}
+            options={[{ key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" }]}
+          />
+        </div>
+        <div className="oc-card-sub">Click a row for the raw POA Trial reports behind it.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead><tr><th>{dimLabel}</th><th className="oc-right">Reports</th><th className="oc-right">Avg AHT</th><th className="oc-right">Consider Rate</th></tr></thead>
+            <tbody>
+              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
+              {breakdown.map((r) => (
+                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
+                  <td>{r.label}</td>
+                  <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
+                  <td className="oc-right">{r.considerRate !== null ? `${r.considerRate}%` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {drilldown && (
+        <BreakdownDrilldownSheet
+          open={!!drilldown}
+          title={`POA Trial — ${dimLabel}`}
+          tableKey="ONFIDO_POA_TRIAL_RAW"
+          filterColumn={dimension}
+          filterValue={drilldown.label}
+          range={range}
+          onOpenChange={(v) => { if (!v) setDrilldown(null); }}
+          onOpenRecord={onOpenRecord}
+        />
+      )}
+    </div>
+  );
+}
+
 /**
  * Live view — deliberately not wired to Executive Filters' date range (see
  * the backend's own comment): it always shows today / this month, the same
@@ -2169,6 +2280,7 @@ export default function OnfidoProcessDashboard() {
           {view === "escalations" && <EscalationsView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "docraw" && <DocRawView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poa" && <PoaView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "poatrial" && <PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
 
           {view === "overview" && (

@@ -249,6 +249,22 @@ router.get("/poa/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES
   res.json({ success: true, data });
 }));
 
+router.get("/poa-trial/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaTrialOverview(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/poa-trial/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaTrialTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
+const POA_TRIAL_DIMENSIONS = new Set(["tl_name", "am_name"]);
+router.get("/poa-trial/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const dim = req.params.dimension;
+  if (!POA_TRIAL_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
+  const data = await svc.getPoaTrialBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getPoaTrialBreakdown>[1]);
+  res.json({ success: true, data });
+}));
+
 // Live/Today — deliberately not range-filtered, see the service's own comment.
 router.get("/live/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
   const data = await svc.getLiveOverview();
