@@ -332,6 +332,7 @@ export const ONFIDO_REPORT_CONFIGS: OnfidoReportConfig[] = [
       { column: "tl_name", header: "TL Name", type: "string" },
       { column: "am_name", header: "AM Name", type: "string" },
       { column: "auditor_name", header: "Auditor Name", type: "string" },
+      { column: "manual_processing_time_secs", header: "Tasks - Information Proof of Address Task Manual Processing Time In Sec", type: "int" },
       { column: "overall_result", header: "Report Report Result", type: "string" },
       { column: "month_label", header: "Month", type: "string" },
     ],

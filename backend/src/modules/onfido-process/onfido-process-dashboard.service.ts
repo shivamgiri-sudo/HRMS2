@@ -125,10 +125,22 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
        FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
     [f.from, f.to, ...filterParams]
   );
-  const poaTrial = await scalar<RowDataPacket & { n: number }>(
-    `SELECT COUNT(*) AS n FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
+  const poaTrial = await scalar<RowDataPacket & { n: number; aht: number | null }>(
+    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
     [f.from, f.to, ...filterParams]
   );
+  // Volume-weighted combine, not an average-of-averages: onfido_poa_raw and
+  // onfido_poa_trial_raw are two file formats for the same real POA queue (see
+  // getPoaBreakdown's identical ahtSum/ahtN pattern below), so a report from
+  // either table should count equally toward the combined AHT, not have each
+  // table's average count equally regardless of how many reports it covers.
+  const poaAhtWeightedSum =
+    (poaVolume.aht !== null ? poaVolume.aht * poaVolume.n : 0) +
+    (poaTrial.aht !== null ? poaTrial.aht * poaTrial.n : 0);
+  const poaAhtWeightedCount =
+    (poaVolume.aht !== null ? poaVolume.n : 0) + (poaTrial.aht !== null ? poaTrial.n : 0);
+  const poaCombinedAht = poaAhtWeightedCount > 0 ? poaAhtWeightedSum / poaAhtWeightedCount : null;
   const poaQuality = await scalar<RowDataPacket & { errors: number; noErrors: number }>(
     `SELECT COALESCE(SUM(error_count),0) AS errors, COALESCE(SUM(no_error_count),0) AS noErrors
        FROM onfido_poa_quality_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
@@ -179,7 +191,7 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
     poa: {
       volume: kpi("poa_volume", "POA Reports Processed", (poaVolume.n ?? 0) + (poaTrial.n ?? 0), "count",
         poaTrial.n > 0 ? `includes ${poaTrial.n} trial-queue report(s)` : undefined),
-      avgAht: kpi("poa_aht", "POA Avg Handling Time", poaVolume.aht !== null ? Math.round(poaVolume.aht) : null, "seconds"),
+      avgAht: kpi("poa_aht", "POA Avg Handling Time", poaCombinedAht !== null ? Math.round(poaCombinedAht) : null, "seconds"),
       errorRate: kpi("poa_error_rate", "POA Audit Error Rate", poaErrorRate !== null ? Math.round(poaErrorRate * 10) / 10 : null, "percent",
         poaQualityTotal > 0 ? `${poaQuality.errors} error(s) across ${poaQualityTotal} audit(s)` : "no POA audits in range"),
       classificationErrorRate: kpi(
@@ -1612,10 +1624,14 @@ export async function getPoaOverview(
        FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
     [f.from, f.to, ...params]
   );
-  const trial = await scalar<RowDataPacket & { n: number }>(
-    `SELECT COUNT(*) AS n FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+  const trial = await scalar<RowDataPacket & { n: number; aht: number | null }>(
+    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
     [f.from, f.to, ...params]
   );
+  const poaAhtWeightedSum = (raw.aht !== null ? raw.aht * raw.n : 0) + (trial.aht !== null ? trial.aht * trial.n : 0);
+  const poaAhtWeightedCount = (raw.aht !== null ? raw.n : 0) + (trial.aht !== null ? trial.n : 0);
+  const poaCombinedAht = poaAhtWeightedCount > 0 ? poaAhtWeightedSum / poaAhtWeightedCount : null;
   const quality = await scalar<RowDataPacket & {
     errN: number; noErrN: number; totalQc: number; classN: number; extN: number; dcN: number;
   }>(
@@ -1633,7 +1649,7 @@ export async function getPoaOverview(
   return {
     taskCount: kpi("poa_raw_task_count", "POA Reports Processed", taskTotal, "count",
       Number(trial.n ?? 0) > 0 ? `includes ${trial.n} trial-queue report(s)` : undefined),
-    avgAht: kpi("poa_raw_aht", "POA Avg Handling Time", raw.aht !== null ? Math.round(Number(raw.aht)) : null, "seconds"),
+    avgAht: kpi("poa_raw_aht", "POA Avg Handling Time", poaCombinedAht !== null ? Math.round(poaCombinedAht) : null, "seconds"),
     errorRate: kpi("poa_raw_error_rate", "POA Audit Error Rate", rate1(Number(quality.errN ?? 0), errDenom), "percent",
       errDenom > 0 ? `${quality.errN} error(s) across ${errDenom} audit(s)` : "no POA audits in range"),
     classificationErrorRate: kpi("poa_raw_class_err", "POA Classification Error Rate", rate1(Number(quality.classN ?? 0), totalQc), "percent",
@@ -1693,7 +1709,7 @@ export async function getPoaBreakdown(
     [f.from, f.to, ...params]
   );
   const [trialRows] = await pool.query<RowDataPacket[]>(
-    `SELECT ${label} AS label, COUNT(*) AS n FROM onfido_poa_trial_raw
+    `SELECT ${label} AS label, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht FROM onfido_poa_trial_raw
       WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY label`,
     [f.from, f.to, ...params]
   );
@@ -1713,7 +1729,11 @@ export async function getPoaBreakdown(
     e.taskCount += Number(r.n);
     if (r.aht !== null) { e.ahtSum += Number(r.aht) * Number(r.n); e.ahtN += Number(r.n); }
   }
-  for (const r of trialRows) { get(r.label).taskCount += Number(r.n); }
+  for (const r of trialRows) {
+    const e = get(r.label);
+    e.taskCount += Number(r.n);
+    if (r.aht !== null) { e.ahtSum += Number(r.aht) * Number(r.n); e.ahtN += Number(r.n); }
+  }
   for (const r of qualityRows) {
     const e = get(r.label);
     e.errN += Number(r.errN ?? 0);
