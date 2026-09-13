@@ -419,12 +419,21 @@ export const ONFIDO_DOC_EXTERNAL_AUDIT_CONFIG: OnfidoReportConfig = {
     { column: "error_breakdown", header: "Error Breakdown", type: "string" },
     { column: "batch_label", header: "Batch", type: "string" },
     { column: "queue_status", header: "Queue Status", type: "string" },
-    { column: "classification_flag", header: "Classification", type: "int" },
-    { column: "extraction_flag", header: "Extraction", type: "int" },
-    { column: "add_extraction_flag", header: "Add. Extraction", type: "int" },
-    { column: "raw_extraction_flag", header: "Raw. Extraction", type: "int" },
-    { column: "manual_far_flag", header: "Manual FAR", type: "int" },
-    { column: "manual_frr_flag", header: "Manual FRR", type: "int" },
+    // These 6 columns previously extracted the BARE "Classification"/"Extraction"/
+    // "Add. Extraction"/"Raw. Extraction"/"Manual FAR"/"Manual FRR" headers, which
+    // are task-stage/volume indicators (did this row go through this processing
+    // stage at all), not error flags — using them as error counts showed a 35%
+    // "Extraction Error Rate" and a 57% "Raw Extraction Error Rate" on real data,
+    // when the file's own true error columns ("Ext. Yes" etc.) put the real rates
+    // at 0.5% and 0.7%. Fixed to read the correct "*.Yes" error-flag columns,
+    // which the file's own header schema (DOC_EXTERNAL_AUDIT_HEADERS) already
+    // lists right next to the ones this used to read.
+    { column: "classification_flag", header: "Class. Yes", type: "int" },
+    { column: "extraction_flag", header: "Ext. Yes", type: "int" },
+    { column: "add_extraction_flag", header: "Add.Ext. Yes", type: "int" },
+    { column: "raw_extraction_flag", header: "Raw.Ext. Yes", type: "int" },
+    { column: "manual_far_flag", header: "Manual FAR. Yes", type: "int" },
+    { column: "manual_frr_flag", header: "Manual FRR. Yes", type: "int" },
   ],
 };
 ONFIDO_REPORT_CONFIGS.push(ONFIDO_DOC_EXTERNAL_AUDIT_CONFIG);
