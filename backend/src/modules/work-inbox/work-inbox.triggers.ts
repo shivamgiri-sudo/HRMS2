@@ -201,22 +201,77 @@ export async function triggerOfferApprovalPending(
   });
 }
 
+/**
+ * A possible absconding, raised to the two people who each need to do something different.
+ *
+ * Owner ruling 2026-09-12: seven consecutive no-show days, and the REPORTING MANAGER is the only
+ * one who may confirm it. The system must never mark someone absconded on its own.
+ *
+ * Two work items, deliberately:
+ *
+ *   AWOL_SUSPECTED       -> the reporting manager, BY USER ID. This is a decision, and a
+ *                           role-addressed item asks every manager in the branch to make
+ *                           somebody else's call. Falls back to role addressing when the
+ *                           employee has no reporting manager on file, which is not rare —
+ *                           123 of 1,120 active employees had none at last count.
+ *   AWOL_PAYROLL_NOTICE  -> Payroll HR, by role. They are not deciding; they need to know that
+ *                           somebody who has stopped coming in is still on the payroll, because
+ *                           nothing halts salary until an exit exists with a last working day.
+ *
+ * They cannot be one item with two assignees. createWorkItemIfNotExists dedupes on
+ * (entityType, entityId, itemType) among pending items, so a second AWOL_SUSPECTED for the same
+ * employee is suppressed — one audience would silently never be told.
+ *
+ * lastWorkedDate is passed through into the description because it is the number the manager is
+ * actually being asked to confirm: it becomes the employee's last working day, and therefore the
+ * date payroll pays them up to.
+ */
 export async function triggerAwolSuspected(
   employeeId: string,
   employeeName: string,
-  branchId?: string
+  branchId?: string,
+  opts?: { reportingManagerUserId?: string | null; lastWorkedDate?: string | null; absentDays?: number }
 ): Promise<void> {
+  const absentDays = opts?.absentDays ?? 7;
+  const lastWorked = opts?.lastWorkedDate
+    ? ` Last date actually worked: ${opts.lastWorkedDate}.`
+    : " No attendance on record for them at all, so the last worked date could not be established.";
+
+  const evidence =
+    `Absent on ${absentDays} consecutive recorded attendance days, with no leave request ` +
+    `(approved or pending) covering the window and no exit request on file.${lastWorked}`;
+
   await createWorkItemIfNotExists({
     itemType: "AWOL_SUSPECTED",
-    title: `Possible AWOL: ${employeeName}`,
-    description: "Marked absent for 3+ of their last 5 recorded attendance days, most recent record (within 3 days) is absent, no leave request covers the last 10 days, and no exit request is on file.",
+    title: `Confirm absconding: ${employeeName}`,
+    description:
+      `${evidence} Confirm to raise an absconding exit dated the last day they worked, or reject ` +
+      `if they are expected back. Nothing is marked until you decide.`,
     moduleCode: "attendance",
     entityType: "employee",
     entityId: employeeId,
-    assignedToRole: "hr",
+    // Per-user where we know the manager; role only as the fallback. Both are read by
+    // getMyWorkItems / getWorkItemStats, which match on (assigned_to_user_id OR assigned_to_role).
+    assignedToUserId: opts?.reportingManagerUserId ?? undefined,
+    assignedToRole: opts?.reportingManagerUserId ? undefined : "manager",
     branchId,
     priority: "high",
     dueAt: dueAt("AWOL_SUSPECTED"),
+  });
+
+  await createWorkItemIfNotExists({
+    itemType: "AWOL_PAYROLL_NOTICE",
+    title: `Possible absconding, salary still running: ${employeeName}`,
+    description:
+      `${evidence} Awaiting the reporting manager's confirmation. Until an exit is raised there ` +
+      `is no last working day, so this employee remains in the payroll run.`,
+    moduleCode: "payroll",
+    entityType: "employee",
+    entityId: employeeId,
+    assignedToRole: "payroll",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("AWOL_PAYROLL_NOTICE"),
   });
 }
 

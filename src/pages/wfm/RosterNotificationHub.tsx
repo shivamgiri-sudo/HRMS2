@@ -4,8 +4,9 @@
  * Follows MAS HRMS frozen design patterns
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { hrmsApi } from '@/lib/hrmsApi';
 import {
   Bell,
   BellRing,
@@ -198,9 +199,33 @@ const getChannelIcon = (channel: string) => {
 };
 
 export default function RosterNotificationHub() {
+  const queryClient = useQueryClient();
   const [rules, setRules] = useState<NotificationRule[]>(defaultRules);
   const [expandedRule, setExpandedRule] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+
+  // Real persisted rules from wfm_notification_rule (migration 1755) — replaces the
+  // hardcoded defaultRules the moment the fetch resolves. defaultRules stays only as the
+  // pre-load placeholder so the page isn't blank while this query is in flight.
+  const rulesQuery = useQuery({
+    queryKey: ['wfm-notification-rules'],
+    queryFn: async () =>
+      (await hrmsApi.get<{ data: NotificationRule[] }>('/api/wfm/notification-rules')).data ?? [],
+  });
+
+  useEffect(() => {
+    if (rulesQuery.data && rulesQuery.data.length > 0) {
+      setRules(rulesQuery.data);
+    }
+  }, [rulesQuery.data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => hrmsApi.put('/api/wfm/notification-rules', { rules }),
+    onSuccess: () => {
+      toast.success('Notification settings saved');
+      queryClient.invalidateQueries({ queryKey: ['wfm-notification-rules'] });
+    },
+    onError: (err: Error) => toast.error(err.message ?? 'Failed to save notification settings'),
+  });
 
   const handleToggle = (ruleId: string) => {
     setRules((prev) =>
@@ -230,14 +255,6 @@ export default function RosterNotificationHub() {
     );
   };
 
-  const handleSaveAll = async () => {
-    setIsSaving(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSaving(false);
-    toast.success('Notification settings saved');
-  };
-
   const enabledCount = rules.filter((r) => r.enabled).length;
   const immediateCount = rules.filter((r) => r.enabled && r.frequency === 'immediate').length;
   const digestCount = rules.filter(
@@ -262,11 +279,11 @@ export default function RosterNotificationHub() {
               </div>
             </div>
             <Button
-              onClick={handleSaveAll}
-              disabled={isSaving}
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending || rulesQuery.isLoading}
               className="bg-white text-indigo-600 hover:bg-white/90"
             >
-              {isSaving ? (
+              {saveMutation.isPending ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
                 <Save className="w-4 h-4 mr-2" />

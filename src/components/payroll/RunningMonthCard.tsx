@@ -189,7 +189,7 @@ export function RunningMonthCard({
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-3 text-center border-t border-indigo-100 pt-3 mt-3">
+      <div className="grid grid-cols-2 gap-3 text-center border-t border-indigo-100 pt-3 mt-3">
         <div>
           <p className="text-sm font-semibold text-slate-700">{amount(INR(rs.pf_employee))}</p>
           <p className="text-[10px] text-slate-500 mt-0.5">PF (Employee)</p>
@@ -203,10 +203,6 @@ export function RunningMonthCard({
           <p className="text-[10px] text-slate-500 mt-0.5">
             ESIC{rs.esic_applicable === false ? " (above ceiling)" : ""}
           </p>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-700">{amount(INR(rs.professional_tax))}</p>
-          <p className="text-[10px] text-slate-500 mt-0.5">Prof. Tax</p>
         </div>
       </div>
     </div>

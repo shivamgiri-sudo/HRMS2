@@ -31,18 +31,19 @@ const CandidatePortalDashboard = lazy(() => import("@/pages/CandidatePortalDashb
 const PortalLogin          = lazy(() => import("@/pages/portal/PortalLogin"));
 
 const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocumentEsignReviewPage"));
+const EmployeeNocFormPage = lazy(() => import("@/pages/EmployeeNocFormPage"));
 const EmployeeJoiningKitEsignPage     = lazy(() => import("@/pages/EmployeeJoiningKitEsignPage"));
 const PublicAppointmentLetterVerify   = lazy(() => import("@/pages/PublicAppointmentLetterVerify").then(m => ({ default: m.PublicAppointmentLetterVerify })));
 const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfComplianceReviewPage"));
 const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
 const VisitorStatusPage   = lazy(() => import("@/pages/VisitorStatusPage"));
 const VisitorGatePage     = lazy(() => import("@/pages/VisitorGatePage"));
-const UXSkillDemo         = lazy(() => import("@/pages/UXSkillDemo"));
-const UXSkillDemoCompare  = lazy(() => import("@/pages/UXSkillDemoCompare"));
-const ProfileCompare      = lazy(() => import("@/pages/ProfileCompare"));
-const ProfileV3Demo       = lazy(() => import("@/pages/ProfileV3Demo"));
-const Step10Demo          = lazy(() => import("@/components/onboarding-full/Step10Demo"));
-const OnboardingFullDemo  = lazy(() => import("@/components/onboarding-full/OnboardingFullDemo"));
+const UXSkillDemo         = import.meta.env.DEV ? lazy(() => import("@/pages/UXSkillDemo")) : null;
+const UXSkillDemoCompare  = import.meta.env.DEV ? lazy(() => import("@/pages/UXSkillDemoCompare")) : null;
+const ProfileCompare      = import.meta.env.DEV ? lazy(() => import("@/pages/ProfileCompare")) : null;
+const ProfileV3Demo       = import.meta.env.DEV ? lazy(() => import("@/pages/ProfileV3Demo")) : null;
+const Step10Demo          = import.meta.env.DEV ? lazy(() => import("@/components/onboarding-full/Step10Demo")) : null;
+const OnboardingFullDemo  = import.meta.env.DEV ? lazy(() => import("@/components/onboarding-full/OnboardingFullDemo")) : null;
 const CandidateOnboardingFullPageV2 = lazy(() => import("@/pages/CandidateOnboardingFullPageV2"));
 const PublicKpiCapture        = lazy(() => import("@/pages/PublicKpiCapture"));
 const PublicKpiCaptureResults = lazy(() => import("@/pages/PublicKpiCaptureResults"));
@@ -60,13 +61,13 @@ export const publicRouteElements = (
       <Route path="/terms-of-service" element={<TermsOfService />} />
       <Route path="/security"         element={<Security />} />
 
-      {/* Demo */}
-      <Route path="/ux-skill-demo"    element={<UXSkillDemo />} />
-      <Route path="/ux-skill-compare" element={<UXSkillDemoCompare />} />
-      <Route path="/profile-compare" element={<ProfileCompare />} />
-      <Route path="/profile-v3-demo" element={<ProfileV3Demo />} />
-      <Route path="/onboarding-step10-demo" element={<Step10Demo />} />
-      <Route path="/onboarding-demo" element={<OnboardingFullDemo />} />
+      {/* Demo routes — development only, stripped from production builds */}
+      {import.meta.env.DEV && UXSkillDemo         && <Route path="/ux-skill-demo"           element={<UXSkillDemo />} />}
+      {import.meta.env.DEV && UXSkillDemoCompare  && <Route path="/ux-skill-compare"        element={<UXSkillDemoCompare />} />}
+      {import.meta.env.DEV && ProfileCompare      && <Route path="/profile-compare"         element={<ProfileCompare />} />}
+      {import.meta.env.DEV && ProfileV3Demo       && <Route path="/profile-v3-demo"         element={<ProfileV3Demo />} />}
+      {import.meta.env.DEV && Step10Demo          && <Route path="/onboarding-step10-demo"  element={<Step10Demo />} />}
+      {import.meta.env.DEV && OnboardingFullDemo  && <Route path="/onboarding-demo"         element={<OnboardingFullDemo />} />}
 
       {/* Auth */}
       <Route path="/auth"           element={<Auth />} />
@@ -126,6 +127,9 @@ export const publicRouteElements = (
       {/* One link, all joining documents. joiningKitDispatch.service.ts emails this exact path. */}
       <Route path="/employee/joining-kit/esign/:token"       element={<EmployeeJoiningKitEsignPage />} />
       <Route path="/employee/epf-compliance/review/:token"   element={<EmployeeEpfComplianceReviewPage />} />
+      {/* NOC Certificate — leaver's HRMS account is being deprovisioned, so this carries its own
+          token rather than a session. noc-case.service.ts's mintInvite() emails this exact path. */}
+      <Route path="/employee/noc/:token"                     element={<EmployeeNocFormPage />} />
 
       {/* KPI capture — intentionally open so process owners can fill it from a link with no
           HRMS account. The form writes only to the kpi_capture_submission staging table.

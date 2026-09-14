@@ -6,8 +6,8 @@
  * rows. They disagreed: bonus appeared on one, admin charges on none, DA and gratuity
  * nowhere — so a reviewer could see a Gross the rows above it did not add up to. Two live
  * examples: a package with basic ₹8,000 shows gross ₹15,059, which is only explicable once
- * the ₹666 bonus is on screen; and the offer table's ₹1,600 conveyance / ₹200 PT rows had
- * no home at all on the offered-salary card.
+ * the ₹666 bonus is on screen; and the offer table's ₹1,600 conveyance row had no home at
+ * all on the offered-salary card.
  *
  * Field names differ by source — ats_employment_offer says pf_employer, the package master
  * says epf_employer, salary_component_assignments says employer_pf — so every row resolves
@@ -74,10 +74,15 @@ export function earningRows(src: Source): ComponentRow[] {
 /**
  * Employee deductions OTHER than PF and ESIC — those two are rendered by each screen with
  * its own Yes/No eligibility label (see salaryEligibility.ts), so they stay out of here.
+ *
+ * Professional Tax was the only member of this list and has been removed from payroll
+ * company-wide (all states) per explicit stakeholder approval — it is no longer computed,
+ * stored, or displayed anywhere. This stays a function (rather than being deleted, along
+ * with its four call sites across the Salary Review / Salary Change screens) so a future
+ * non-PF/ESIC deduction has one shared place to be added back.
  */
-export function otherDeductionRows(src: Source): ComponentRow[] {
-  const pt = pick(src, ['professional_tax']);
-  return pt > 0 ? [{ label: 'Professional Tax', value: pt }] : [];
+export function otherDeductionRows(_src: Source): ComponentRow[] {
+  return [];
 }
 
 /** Employer-side cost lines that sit between net and CTC. Only the funded ones. */

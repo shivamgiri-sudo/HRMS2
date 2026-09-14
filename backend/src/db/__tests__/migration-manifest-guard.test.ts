@@ -231,19 +231,21 @@ describe("migration manifest — duplicates", () => {
     // as every jump above; renaming either side is the one thing that would break
     // schema_migrations' by-filename tracking.
     //
-    // 85 -> 89 (2026-09-12): running scripts/update-migration-lock.mjs --write to catch
-    // sql/MIGRATION_MANIFEST.lock.json up with 108 files that were already in
-    // MIGRATION_MANIFEST but never locked (unrelated pre-existing drift, discovered while
-    // registering this session's own 1758_grn_accounts_head_approval_stage.sql — a new,
-    // non-colliding number) surfaced four collisions the lock had never been regenerated
-    // against: 1739 (vendor_payment_transaction_bank_account vs
-    // bla_bli_blu_dd_tagging_raw), 1740 (imprest_allocation_bank_account vs
-    // gnc_sale_masmis_uploader), 1741 (bank_ledger_direct_source_types vs
-    // gnc_apr_reconcile_to_masmis) and 1747 (vendor_advance_payments vs
-    // gnc_allocation_masmis_uploader) — the Payment Voucher/vendor-advance branch's own
-    // numbering colliding with unrelated bulk-upload/masmis raw-table work, same shape as
-    // every jump above. All eight files are real, already-merged migrations tracked by
-    // distinct full filenames; this session added none of them and renamed none of them.
+    // 85 -> 88 (2026-09-10): merging worktree-payment-voucher-phase1 a third time (bank
+    // ledger completeness / vendor picker / optional reference work) into main. The
+    // branch's own 1739-1741 (vendor_payment_transaction_bank_account,
+    // imprest_allocation_bank_account, bank_ledger_direct_source_types) collided with
+    // main's independently-numbered 1739-1741, part of a concurrent session's larger
+    // 1739-1746 batch (Bla Bli Blu / GNC / Bellavita / Neemans uploaders). Same shape as
+    // every jump above; renaming either side is the one thing that would break
+    // schema_migrations' by-filename tracking.
+    //
+    // 88 -> 89 (2026-09-10): merging worktree-payment-voucher-phase1 a fourth time (vendor
+    // advance payments / reconciliation hardening) into main. This merge's own conflict
+    // resolution on this exact manifest silently dropped the branch's 1739-1741 entries
+    // above (a real regression, caught by this test and re-added) while a fifth concurrent
+    // batch independently registered 1747_gnc_allocation_masmis_uploader.sql against the
+    // branch's own 1747_vendor_advance_payments.sql. Same shape as every jump above.
     expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(89);
   });
 });

@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Settings, Save } from "lucide-react";
+import { Settings, Save, Info } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -81,6 +81,12 @@ export default function OrgChartSettings() {
               Save Changes
             </Button>
           </div>
+        </div>
+
+        {/* Local-only notice */}
+        <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" aria-hidden />
+          <p>These preferences are saved in your browser only and do not sync across devices or affect other users. Server-side persistence will be enabled in a future update.</p>
         </div>
 
         {/* Settings cards */}

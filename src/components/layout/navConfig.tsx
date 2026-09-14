@@ -539,6 +539,7 @@ export const navGroups: NavGroup[] = [
           { label: "Attendance Rules",    href: "/attendance-rules-master",      icon: ic(Settings2), roles: ["admin","hr"],              description: "Attendance rules" },
           { label: "Client Master",       href: "/client-master",                icon: ic(Users),     roles: ["admin","hr"],              description: "Clients" },
           { label: "Org Chart Settings", href: "/org-chart/settings", icon: ic(Settings2), roles: ["admin","hr","super_admin"], description: "Organisation chart rules" },
+          // OrgChartSettings: save is local-only (no backend persistence) — hidden until wired (HR-018)
         ],
       },
       {

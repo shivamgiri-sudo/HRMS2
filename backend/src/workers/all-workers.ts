@@ -17,6 +17,7 @@ import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from 
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
+import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
 import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sync.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
@@ -39,6 +40,7 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 // here first would have silently stopped all five, exactly as happened to
 // ats-reminders when it lived in one file only.
 import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
+import { startEmployeeMasterSnapshotScheduler, stopEmployeeMasterSnapshotScheduler } from "../cron/employee-master-snapshot.cron.js";
 import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
 import {
   startPerformanceScorecardSnapshotScheduler,
@@ -50,6 +52,7 @@ import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker
 // why a single-file registration silently never runs in one of the two worker
 // topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
 import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
+import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startAtsDailyReportScheduler, stopAtsDailyReportScheduler } from "../modules/ats/ats-daily-report.cron.js";
@@ -170,6 +173,14 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
   },
   {
+    // Self-populates cost_centre_master.process_id for cost centres db-bill-finance-sync just
+    // brought in — see cost-centre-process-resolver.service.ts. Excludes NOIDA-DIALDESK/IDC by
+    // branch_id (user-confirmed out of scope for MAS Callnet's P&L, 2026-09-11) regardless of
+    // that branch's own (partly mislabelled) company_name.
+    name: "cost-centre-process-resolver",
+    start: () => { startCostCentreProcessResolverWorker(); return Promise.resolve(); },
+  },
+  {
     name: "db-bill-hr-sync",
     start: () => { startDbBillHrSyncWorker(); return Promise.resolve(); },
   },
@@ -254,6 +265,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startManagerDailyBriefScheduler(); return Promise.resolve(); },
   },
   {
+    // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly
+    // "true" — see intervention-recommendation.cron.ts's header.
+    name: "intervention-recommendation-generation",
+    start: () => { startInterventionRecommendationScheduler(); return Promise.resolve(); },
+  },
+  {
     name: "dashboard-snapshot",
     start: () => { startDashboardSnapshotScheduler(); return Promise.resolve(); },
   },
@@ -268,6 +285,16 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "business-action-sync",
     start: () => { initBusinessActionSyncJobs(); return Promise.resolve(); },
+  },
+  {
+    // Registered in server.ts too, same convention as every other scheduler in this
+    // file — server.ts's copy only runs when WORKERS_PROCESS is not "external", so
+    // without this entry the cron silently never fires in the external-workers
+    // topology production actually runs (confirmed live: the snapshot table sat at
+    // its 2026-09-11 15:58 backfill timestamp, 800+ minutes stale, the morning after
+    // this scheduler was first deployed).
+    name: "employee-master-snapshot",
+    start: () => startEmployeeMasterSnapshotScheduler(),
   },
   {
     name: "lms-sync",
@@ -454,10 +481,12 @@ function shutdown(): void {
   // Newly moved here from server.ts. privacy-retention and ats-reminders export
   // no stop function, so they are not listed — their timers die with the process.
   stopBusinessActionSyncJobs();
+  stopEmployeeMasterSnapshotScheduler();
   stopDashboardSnapshotScheduler();
   stopPerformanceScorecardSnapshotScheduler();
   stopAttendanceReconciliationWorker();
   stopManagerDailyBriefScheduler();
+  stopInterventionRecommendationScheduler();
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
@@ -484,6 +513,7 @@ function shutdown(): void {
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
   stopDbBillFinanceSyncWorker();
+  stopCostCentreProcessResolverWorker();
   stopDbBillHrSyncWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();

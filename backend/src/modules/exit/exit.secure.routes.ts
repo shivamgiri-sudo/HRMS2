@@ -28,15 +28,30 @@ const EXIT_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "
  * - hr_review: HR does retention/interview but doesn't approve resignations
  * - admin_review: Admin does IT deprovisioning via clearance tasks, not status approval
  */
+/**
+ * 'rejected' is NOT reachable — owner ruling 2026-09-12.
+ *
+ * A manager cannot refuse a resignation. They may record that they disagree, WITH A REASON, and
+ * that objection is kept on the exit's history — but the resignation stays active and the notice
+ * period keeps running, because only the employee who raised it may withdraw it. See
+ * POST /:id/objection in this file for where the objection is recorded.
+ *
+ * 'rejected' therefore no longer appears as a destination from manager_review. It is retained as
+ * a terminal key so that the 11 historical rows already carrying it stay valid states with no
+ * outbound transitions, rather than becoming a status the FSM does not recognise at all —
+ * normalizeExitStatus would then hand them an empty allow-list and every action on them would
+ * report "Allowed: none", which is correct but for the wrong reason.
+ */
 export const ALLOWED_EXIT_TRANSITIONS: Record<string, string[]> = {
   draft: ["submitted", "revoked", "withdrawn"],
   submitted: ["manager_review", "revoked", "withdrawn"],
-  manager_review: ["accepted", "rejected", "revoked", "withdrawn"],
+  manager_review: ["accepted", "revoked", "withdrawn"],
   accepted: ["notice_serving", "clearance_pending", "revoked", "withdrawn"],
   notice_serving: ["exited", "revoked", "withdrawn"],
   clearance_pending: ["fnf_pending", "revoked", "withdrawn"],
   fnf_pending: ["closed", "revoked", "withdrawn"],
   closed: [],
+  /** Terminal and unreachable. Kept for rows written before the ruling above. */
   rejected: [],
   revoked: [],
   withdrawn: [],
@@ -259,15 +274,68 @@ async function handleExitStatusUpdate(req: any, res: any) {
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);
-  const allowed = ["submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "rejected", "withdrawn"];
+  // 'rejected' removed (owner ruling 2026-09-12): nobody may refuse a resignation. A manager who
+  // disagrees records an objection via POST /:id/objection, which leaves the request active and
+  // the notice period running. Refused here as well as in the FSM map so the API answers the
+  // policy question directly instead of reporting a transition error.
+  const allowed = ["submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "withdrawn"];
   if (!allowed.includes(nextStatus)) {
-    return res.status(400).json({ success: false, message: "Invalid exit status" });
+    return res.status(400).json({
+      success: false,
+      message:
+        nextStatus === "rejected"
+          ? "A resignation cannot be rejected. Record an objection with a reason instead — the resignation stays active and only the employee can withdraw it."
+          : "Invalid exit status",
+    });
   }
 
   const remarks = String(req.body?.remarks ?? "").trim();
   const remarksOptionalFor = ["revoked", "withdrawn"];
   if (!remarks && !remarksOptionalFor.includes(nextStatus)) {
     return res.status(400).json({ success: false, message: "Remarks are required" });
+  }
+
+  // Notice terms. Both were already being SENT by NativeExitManagement's "Confirm & Advance"
+  // modal (updateStatus() puts lastWorkingDayConfirmed and noticePeriodDays on the PATCH body)
+  // and this handler read neither, so HR confirmed a Last Working Day and a notice period,
+  // got a success toast, and nothing was persisted. Validated here rather than trusted:
+  // last_working_day_confirmed feeds payroll's employment-end-date resolver, so a malformed
+  // value would propagate into who gets paid and through what date.
+  const rawLwd = req.body?.lastWorkingDayConfirmed ?? req.body?.last_working_day_confirmed;
+  let lastWorkingDayConfirmed: string | null = null;
+  if (rawLwd !== undefined && rawLwd !== null && String(rawLwd).trim() !== "") {
+    const candidate = String(rawLwd).trim().slice(0, 10);
+    // Format AND real-calendar check: /^\d{4}-\d{2}-\d{2}$/ alone accepts 2026-02-31, which
+    // MySQL would then reject or coerce depending on sql_mode.
+    const parsed = new Date(`${candidate}T00:00:00Z`);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(candidate) ||
+      Number.isNaN(parsed.getTime()) ||
+      parsed.toISOString().slice(0, 10) !== candidate
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "lastWorkingDayConfirmed must be a real calendar date in YYYY-MM-DD format",
+      });
+    }
+    lastWorkingDayConfirmed = candidate;
+  }
+
+  const rawNoticeDays = req.body?.noticePeriodDays ?? req.body?.notice_period_days;
+  let noticePeriodDays: number | null = null;
+  if (rawNoticeDays !== undefined && rawNoticeDays !== null && String(rawNoticeDays).trim() !== "") {
+    const n = Number(rawNoticeDays);
+    // 0..365 matches the modal's max attribute. The bound is not cosmetic: this number is
+    // multiplied by a per-day salary rate in ff-compute.service.ts to produce a notice-shortfall
+    // recovery deducted from someone's settlement, so nonsense (negatives, 10000, "thirty",
+    // 30.5) has to be refused here rather than turned into money.
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > 365) {
+      return res.status(400).json({
+        success: false,
+        message: "noticePeriodDays must be a whole number of days between 0 and 365",
+      });
+    }
+    noticePeriodDays = n;
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -307,12 +375,79 @@ async function handleExitStatusUpdate(req: any, res: any) {
     remarks,
     req.authUser!.id,
     currentStatus,
+    { lastWorkingDayConfirmed, noticePeriodDays },
   );
   return res.json({ success: true, data, message: `Exit request status updated to ${nextStatus}` });
 }
 
 exitSecureRouter.patch("/:id/status", h(handleExitStatusUpdate));
 exitSecureRouter.post("/:id/status", h(handleExitStatusUpdate));
+
+/**
+ * POST /:id/objection — the manager disagrees with a resignation, on the record.
+ *
+ * Owner ruling 2026-09-12: a manager may not refuse a resignation. Before this there was no way
+ * to express disagreement at all — the screen offered only Accept and Revoke, and "Revoke" means
+ * something entirely different (the employee was retained and the exit is cancelled). A manager
+ * who thought the resignation was a mistake had to either accept it or cancel someone else's
+ * decision.
+ *
+ * What this deliberately does NOT do:
+ *   - it does not change status. The request stays exactly where it was and the notice period
+ *     keeps running. Recording an objection is not a veto.
+ *   - it does not stop the clock, the clearance checklist, or the F&F.
+ *   - only the EMPLOYEE may withdraw a resignation (POST /resignation/:exitId/withdraw), and
+ *     nothing here touches that.
+ *
+ * The reason is mandatory. An objection with no reason is unreadable six months later in a
+ * dispute, and this is written into the same exit_approval_log the rest of the timeline comes
+ * from — so it surfaces on the employee's journey and in the exit drill-down for free.
+ */
+exitSecureRouter.post("/:id/objection", h(async (req: any, res: any) => {
+  if (!(await canActOnExit(req.authUser!.id, req.params.id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
+  }
+
+  const reason = String(req.body?.reason ?? req.body?.remarks ?? "").trim();
+  if (!reason) {
+    return res.status(400).json({
+      success: false,
+      message: "A reason is required to record an objection — it is the only record of why the manager disagreed",
+    });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+    [req.params.id],
+  );
+  const current = rows[0];
+  if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+
+  const currentStatus = normalizeExitStatus(current.status);
+  // Pointless — and misleading on the timeline — once the exit is over. The employee has either
+  // already left or the request was cancelled; an objection logged now reads as though it were
+  // considered during the process.
+  if (["exited", "closed", "revoked", "withdrawn", "rejected"].includes(currentStatus)) {
+    return res.status(409).json({
+      success: false,
+      message: `This exit request is already '${currentStatus}' — an objection can only be recorded while it is still in progress`,
+    });
+  }
+
+  await db.execute(
+    `INSERT INTO exit_approval_log
+       (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
+     VALUES (UUID(), ?, ?, 'objection_recorded', ?, ?, ?, NOW())`,
+    [req.params.id, currentStatus, req.authUser!.id, req.authUser!.role ?? null, reason],
+  );
+
+  return res.status(201).json({
+    success: true,
+    message:
+      "Objection recorded. The resignation remains active and the notice period continues — only the employee can withdraw it.",
+    data: { exit_request_id: req.params.id, status: currentStatus, objection_reason: reason },
+  });
+}));
 
 /**
  * Test-only export. finalExitBlockers is module-private on purpose — it is not a second

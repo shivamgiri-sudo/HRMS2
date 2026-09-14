@@ -153,7 +153,9 @@ export default function RosterViewPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link to="/wfm/roster-command-center">
+            {/* Roster Command Center is now the merged console — Compliance and Audit
+                Trail below link to its tabs rather than separate pages. */}
+            <Link to="/wfm/roster-command-center?tab=live">
               <Button variant="outline" size="sm" className="text-xs">
                 <Activity className="w-3.5 h-3.5 mr-1" /> Command Center
               </Button>
@@ -163,12 +165,12 @@ export default function RosterViewPage() {
                 <Trophy className="w-3.5 h-3.5 mr-1" /> Team Rankings
               </Button>
             </Link>
-            <Link to="/wfm/roster-compliance">
+            <Link to="/wfm/roster-command-center?tab=compliance">
               <Button variant="outline" size="sm" className="text-xs">
                 <ShieldCheck className="w-3.5 h-3.5 mr-1" /> Compliance
               </Button>
             </Link>
-            <Link to="/wfm/roster-audit">
+            <Link to="/wfm/roster-command-center?tab=audit">
               <Button variant="outline" size="sm" className="text-xs">
                 <History className="w-3.5 h-3.5 mr-1" /> Audit Trail
               </Button>

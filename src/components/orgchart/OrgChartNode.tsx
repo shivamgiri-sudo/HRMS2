@@ -1,6 +1,7 @@
 import { memo, useState } from "react";
 import { ChevronDown, ChevronRight, Building2, CameraOff, AlertTriangle, MapPin } from "lucide-react";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
+import { AuthedImage } from "@/components/ui/AuthedImage";
 import type { OrgTreeNode } from "@/types/orgChart";
 
 /**
@@ -101,12 +102,11 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
               ].join(" ")}
             >
               {photoUrl ? (
-                <img
+                <AuthedImage
                   src={photoUrl}
                   alt={node.name}
                   className="h-full w-full object-cover"
                   loading="lazy"
-                  draggable={false}
                 />
               ) : (
                 <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${style.avatar}`}>

@@ -409,6 +409,70 @@ export async function qualityAuditLog(
 }
 
 // ---------------------------------------------------------------------------
+// reginald-abandoned-cart-sales-report
+// Source: process_metric_actual, pivoted from long (one row per metric_key
+// per date) to wide (one row per date) -- the shape the real Reginald_Men_
+// Abandoned_Cart_Dashboard_SOP_WITH_PATH.xlsx's own "Day-wise" tab uses.
+// Metrics themselves come from reginald_abandoned_cart_sales_raw (sql/1752)
+// via kpi_studio_definition REGINALD_ABCD_*/REGINALD_REPT_* -- see
+// scripts/add-reginald-abandoned-cart-sales-kpis.ts and scripts/backfill-
+// new-kpi-compute.ts for how those rows were computed.
+// ---------------------------------------------------------------------------
+const REGINALD_ABC_METRIC_KEYS = [
+  "REGINALD_ABCD_SALES_COUNT", "REGINALD_ABCD_REVENUE", "REGINALD_ABCD_AOV",
+  "REGINALD_REPT_SALES_COUNT", "REGINALD_REPT_REVENUE",
+] as const;
+
+export async function reginaldAbandonedCartSalesReport(
+  filters: ExecFilters,
+  _scope: ExecScope,
+  options: ExecOptions,
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, "2026-01-01");
+  const to = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+
+  const [procRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, process_name FROM process_master WHERE process_name = 'Reginald' AND active_status = 1 LIMIT 1",
+  );
+  const process = procRows[0];
+  if (!process) return { rows: [], rowCount: 0, isTruncated: false };
+
+  const placeholders = REGINALD_ABC_METRIC_KEYS.map(() => "?").join(",");
+  const rows = await query(
+    `SELECT score_date, metric_key, actual_value
+       FROM process_metric_actual
+      WHERE process_id = ? AND metric_key IN (${placeholders})
+        AND score_date BETWEEN ? AND ?
+      ORDER BY score_date ASC`,
+    [process.id, ...REGINALD_ABC_METRIC_KEYS, from, to],
+  );
+
+  // Pivot: one row per date, one column per metric_key. A date is only ever
+  // absent here because no sale of either LOB happened that day -- not
+  // because the pivot failed to find it -- so the column stays blank
+  // (undefined) rather than defaulting to a guessed 0.
+  const byDate = new Map<string, Record<string, unknown>>();
+  for (const r of rows) {
+    const dateKey = r.score_date instanceof Date
+      ? r.score_date.toISOString().slice(0, 10)
+      : String(r.score_date);
+    const entry = byDate.get(dateKey) ?? { report_date: dateKey, process_name: process.process_name };
+    entry[String(r.metric_key).toLowerCase()] = r.actual_value;
+    byDate.set(dateKey, entry);
+  }
+
+  const pivoted = Array.from(byDate.values()).sort((a, b) =>
+    String(a.report_date).localeCompare(String(b.report_date)));
+
+  const page = pivoted.slice(options.offset, options.offset + options.limit);
+  return {
+    rows: page,
+    rowCount: pivoted.length,
+    isTruncated: pivoted.length > options.offset + page.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // fatal-error-register
 // Source: db_audit.call_quality_assessment — fatal = low score + missing competency
 // ---------------------------------------------------------------------------

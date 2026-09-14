@@ -135,6 +135,23 @@ const KNOWN_UNMAPPED_PAGE_CODES = [
   // one thing this whole file guards against (a granted code silently 404ing/dead-ending)
   // is still checked for this code, just via ModuleLauncher's test instead of this map.
   "WFM_ATTENDANCE_EXCEPTIONS",
+
+  // Same boundary, one console further on: the merged /wfm/roster-command-center console
+  // (RosterCommandCenter.tsx) covers 8 page codes, one per tab, for the same reason
+  // WFM_ATTENDANCE_EXCEPTIONS is unmapped above — one code can't express the union of all
+  // 8 panels' audiences, and ProtectedRoute's getRoutePageCode() forward lookup would 403
+  // a viewer whose grant covers a different tab before the console's own per-tab
+  // canViewPage() gating ever runs (see pageRoutePageCodes.ts's comment on
+  // "/wfm/roster-command-center"). Each is granted via
+  // backend/sql/1757_roster_command_center_console_page_codes.sql.
+  "WFM_ROSTER_LIVE_MONITORING",
+  "WFM_ROSTER_TEAM_ROSTER",
+  "WFM_ROSTER_ANALYTICS",
+  "WFM_ROSTER_TRENDS",
+  "WFM_ROSTER_COMPLIANCE",
+  "WFM_ROSTER_SHIFT_EFFECTIVENESS",
+  "WFM_ROSTER_INTERVENTIONS",
+  "WFM_ROSTER_AUDIT_TRAIL",
 ].sort();
 
 describe("page catalog / router drift", () => {

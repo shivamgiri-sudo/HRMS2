@@ -299,6 +299,16 @@ export async function createEmployeeFromCandidate(
          COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
          -- The statutory forms need these; they were collected and then dropped.
          COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
+         -- Father/Husband relation sits right next to father_name on the onboarding form
+         -- (candidate_onboarding_profile.relation) but was never read here — same class of
+         -- bug blood_group had below before that was fixed. No employees column holds this;
+         -- written into employee_legacy_meta.relationship_type after the main insert below,
+         -- matching where the Employee Master report already reads it from.
+         p.relation,
+         -- Onboarding-form submission timestamp — "Entry Date" on the legacy-format export.
+         -- Requires employees.candidate_id to actually be set at insert time (added below);
+         -- without that FK the report's join to this table can never match, for any employee.
+         p.submitted_at AS onboarding_submitted_at,
          p.marital_status,
          -- Collected on the Onboarding form and then dropped here, exactly like the
          -- emergency contact below: the INSERT never named the column, so every employee
@@ -316,9 +326,31 @@ export async function createEmployeeFromCandidate(
          -- fallback until someone manually re-typed what the candidate already gave.
          p.emergency_contact_name,
          p.emergency_contact_relation,
-         p.emergency_contact_mobile
+         p.emergency_contact_mobile,
+         -- Present/permanent address, structured (line1/line2/city/state/pincode) —
+         -- captured on the onboarding form and, until now, never read here at all (the
+         -- single-blob current_address/permanent_address above went into employees'
+         -- flat address1/permanent_address1 columns, which the Employee Master report
+         -- never reads; this structured version is what the report's employee_address
+         -- join actually needs — see the INSERT below).
+         p.present_address_line1, p.present_address_line2, p.present_city,
+         p.present_state, p.present_pincode,
+         p.permanent_address_line1, p.permanent_address_line2, p.permanent_city,
+         p.permanent_state, p.permanent_pincode,
+         -- FamilyForm — captured into candidate_onboarding_family and never read here
+         -- either, so employees.annual_income/count_of_dependents (added specifically
+         -- to mirror this form, see 1073_employee_profile_parity.sql) stayed NULL for
+         -- every employee created through this path.
+         fam.annual_income, fam.count_of_dependents,
+         -- Nominee — same story again: candidate_onboarding_profile.nominee_name/
+         -- nominee_relation/nominee_dob is captured on the form, and this function's own
+         -- comments ("Create related records (statutory, salary, nominee, leave...)")
+         -- claimed employee_nominee was already handled here — it never was. No code in
+         -- this file has ever inserted a row into employee_nominee.
+         p.nominee_name, p.nominee_relation, p.nominee_dob
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_family fam ON fam.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
       [candidateId]
     );
@@ -399,10 +431,19 @@ export async function createEmployeeFromCandidate(
           -- them from legacy import. ESI registration reads employees.pan_number and had
           -- nothing to read for anyone onboarded through the current flow.
           pan_number, aadhaar_number,
+          -- Never written before, so no employee created through this path could ever be
+          -- joined back to their own onboarding-form submission (candidate_onboarding_profile
+          -- via this FK) — every candidate-profile-linked field (e.g. the Employee Master
+          -- report's "Entry Date") silently had nothing to read for every future hire, not
+          -- just the pre-ATS backfilled population.
+          candidate_id,
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
+          -- FamilyForm — see the fam join above. Mirrors the candidate journey exactly as
+          -- 1073_employee_profile_parity.sql intended when it added these two columns.
+          annual_income, count_of_dependents,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
@@ -429,6 +470,7 @@ export async function createEmployeeFromCandidate(
         /^[0-9]{12}$/.test(String(candRow?.aadhar_number ?? "").replace(/\D/g, ""))
           ? String(candRow?.aadhar_number).replace(/\D/g, "")
           : null,
+        candidateId,
         resolvedBranchId,
         resolvedProcessId,
         offer.department_id ?? null,
@@ -439,8 +481,91 @@ export async function createEmployeeFromCandidate(
         salaryStartDate,
         offer.emp_type,
         offer.reporting_manager_id ?? null,
+        candRow?.annual_income ?? null,
+        candRow?.count_of_dependents ?? null,
       ]
     );
+
+    // Father/Husband relation: no employees column holds this (only father_name does), and
+    // employee_legacy_meta — where the Employee Master report already reads relationship_type
+    // from — had no live writer anywhere until now. Only written when the onboarding form
+    // actually captured it, so this never creates an empty row for no reason.
+    if (candRow?.relation && String(candRow.relation).trim() !== "") {
+      await conn.execute(
+        `INSERT INTO employee_legacy_meta (id, employee_id, relationship_type)
+         VALUES (UUID(), ?, ?)
+         ON DUPLICATE KEY UPDATE
+           relationship_type = COALESCE(NULLIF(relationship_type,''), VALUES(relationship_type))`,
+        [employeeId, String(candRow.relation).trim()]
+      );
+    }
+
+    // Structured present/permanent address -> employee_address. This is the table the
+    // Employee Master report actually joins on (address_type='current'/'permanent'); the
+    // flat address1/permanent_address1 written into `employees` above is a different,
+    // already-existing column the report never reads, kept as-is for the other callers
+    // that do (profile display, ESI docs, DPDP export, etc.) — this is additive, not a
+    // replacement. Only written when the onboarding form actually captured at least one
+    // structured field, so this never creates an empty row for no reason.
+    const hasPresentAddress = [candRow?.present_address_line1, candRow?.present_city,
+      candRow?.present_state, candRow?.present_pincode].some((v) => v && String(v).trim() !== "");
+    if (hasPresentAddress) {
+      await conn.execute(
+        `INSERT INTO employee_address
+           (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
+         VALUES (UUID(), ?, 'current', ?, ?, ?, ?, ?, 'India')
+         ON DUPLICATE KEY UPDATE
+           address_line1 = COALESCE(NULLIF(address_line1,''), VALUES(address_line1)),
+           address_line2 = COALESCE(NULLIF(address_line2,''), VALUES(address_line2)),
+           city          = COALESCE(NULLIF(city,''), VALUES(city)),
+           state         = COALESCE(NULLIF(state,''), VALUES(state)),
+           pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
+        [employeeId, candRow?.present_address_line1 ?? null, candRow?.present_address_line2 ?? null,
+         candRow?.present_city ?? null, candRow?.present_state ?? null, candRow?.present_pincode ?? null]
+      );
+    }
+    const hasPermanentAddress = [candRow?.permanent_address_line1, candRow?.permanent_city,
+      candRow?.permanent_state, candRow?.permanent_pincode].some((v) => v && String(v).trim() !== "");
+    if (hasPermanentAddress) {
+      await conn.execute(
+        `INSERT INTO employee_address
+           (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
+         VALUES (UUID(), ?, 'permanent', ?, ?, ?, ?, ?, 'India')
+         ON DUPLICATE KEY UPDATE
+           address_line1 = COALESCE(NULLIF(address_line1,''), VALUES(address_line1)),
+           address_line2 = COALESCE(NULLIF(address_line2,''), VALUES(address_line2)),
+           city          = COALESCE(NULLIF(city,''), VALUES(city)),
+           state         = COALESCE(NULLIF(state,''), VALUES(state)),
+           pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
+        [employeeId, candRow?.permanent_address_line1 ?? null, candRow?.permanent_address_line2 ?? null,
+         candRow?.permanent_city ?? null, candRow?.permanent_state ?? null, candRow?.permanent_pincode ?? null]
+      );
+    }
+
+    // Nominee — captured on the onboarding form (candidate_onboarding_profile.nominee_*)
+    // and, until now, never written to employee_nominee at all despite this function's own
+    // long-standing comment claiming it handled it (see createRelatedEmployeeRecords below,
+    // whose header comment says "statutory, salary, nominee, leave" but never actually
+    // touches this table). Only written when the form actually captured both a name and a
+    // relation, since both are NOT NULL on employee_nominee. share_percentage defaults to
+    // 100 (single-nominee case, which this form only ever collects one of); nominee_for
+    // defaults to 'general' rather than asserting a specific statutory purpose (gratuity/pf/
+    // esic) the form never asked the candidate to choose between. is_minor is computed from
+    // nominee_dob when given, rather than guessed, since the actual date is right here.
+    const nomineeName = String(candRow?.nominee_name ?? "").trim();
+    const nomineeRelation = String(candRow?.nominee_relation ?? "").trim();
+    if (nomineeName && nomineeRelation) {
+      const nomineeDob = candRow?.nominee_dob ? new Date(candRow.nominee_dob) : null;
+      const isMinor = nomineeDob && !Number.isNaN(nomineeDob.getTime())
+        ? (Date.now() - nomineeDob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) < 18
+        : false;
+      await conn.execute(
+        `INSERT INTO employee_nominee
+           (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, is_minor)
+         VALUES (?, ?, ?, ?, ?, 100, 'general', ?)`,
+        [randomUUID(), employeeId, toStoredNameRequired(nomineeName), nomineeRelation, candRow?.nominee_dob ?? null, isMinor ? 1 : 0]
+      );
+    }
 
     // Create related records (statutory, salary, nominee, leave, pf-opt-out)
     await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow, approverId);

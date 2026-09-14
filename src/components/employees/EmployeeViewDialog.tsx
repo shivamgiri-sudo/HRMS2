@@ -24,7 +24,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
@@ -106,7 +107,7 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
         <header className="bg-[#073f78] px-6 py-7 text-white sm:px-8">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
             <Avatar className="size-32 border-4 border-white shadow-xl ring-2 ring-green-300">
-              <AvatarImage
+              <AuthedAvatarImage
                 src={normalizeMediaUrl(details?.avatar_url || details?.photo_url || employee.avatar)}
                 alt={`${displayName} profile photo`}
               />

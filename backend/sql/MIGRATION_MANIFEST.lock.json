@@ -795,12 +795,8 @@
     "1754_salary_transfer_batch.sql",
     "1756_bank_exception_auto_assign_event.sql",
     "1758_grn_accounts_head_approval_stage.sql",
-    "1759_roster_conflict_resolution_evidence.sql",
     "1760_exit_absconding_since.sql",
-    "1761_esic_registration_automation.sql",
-    "1762_fnf_transfer_batch.sql",
-    "1763_noc_cases_page_access.sql",
-    "1764_exit_clearance_task_attachment.sql"
+    "1762_fnf_transfer_batch.sql"
   ],
   "approvedDeletions": [
     {
@@ -840,12 +836,7 @@
     "migrations/1611_employee_salary_change_log.sql",
     "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
     "migrations/1613_add_missing_festival_calendar_2026_entries.sql",
-    "migrations/440_salary_date_revision_requests.sql",
-    "1739_vendor_payment_transaction_bank_account.sql",
-    "1740_imprest_allocation_bank_account.sql",
-    "1741_bank_ledger_direct_source_types.sql",
-    "1747_vendor_advance_payments.sql",
-    "1755_wfm_notification_rule.sql"
+    "migrations/440_salary_date_revision_requests.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

@@ -23,7 +23,7 @@ const NativeEmployeeLifecycle       = lazy(() => import("@/pages/NativeEmployeeL
 const NativePeopleExperienceCommandCenter = lazy(() => import("@/pages/NativePeopleExperienceCommandCenter"));
 const NativeMyResignation           = lazy(() => import("@/pages/NativeMyResignation"));
 const NativeExitCommandCenter       = lazy(() => import("@/pages/NativeExitCommandCenter"));
-const NativeExitManagement          = lazy(() => import("@/pages/NativeExitManagement"));
+// NativeExitManagement replaced by redirect to /exit/command-center (HR-017)
 const MyTeamPage                    = lazy(() => import("@/pages/MyTeamPage"));
 const EmployeeJourney               = lazy(() => import("@/pages/EmployeeJourney"));
 const IjpPage                       = lazy(() => import("@/pages/people/IjpPage"));
@@ -106,8 +106,8 @@ export const peopleRouteElements = (
 
       {/* Exit */}
       <Route path="/exit/command-center" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitCommandCenter /></Gate></ProtectedRoute>} />
-      {/* LEGACY: /exit-management uses different component — kept pending convergence review */}
-      <Route path="/exit-management" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitManagement /></Gate></ProtectedRoute>} />
+      {/* HR-017: merged into command center — redirect old URL */}
+      <Route path="/exit-management" element={<Navigate to="/exit/command-center" replace />} />
       <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />
       <Route path="/exit/resignation-command-center" element={
         <ProtectedRoute roles={['admin','hr','manager','finance','payroll','super_admin','branch_hr','payroll_head']}>

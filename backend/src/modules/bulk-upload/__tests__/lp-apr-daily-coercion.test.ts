@@ -35,6 +35,15 @@ describe("parseDurationSeconds", () => {
     expect(parseDurationSeconds("")).toBe(0);
     expect(parseDurationSeconds(null)).toBe(0);
   });
+  // The real WebConsole export mixes formats in the SAME row: Login Time/Net
+  // LoginTime/Idle Duration are fraction-of-a-day decimal text, not HH:MM:SS,
+  // confirmed against a real live row from "Lp Regional...xlsx"'s own APR sheet.
+  it("reads a real fraction-of-a-day sample (0.36966435185185187 = 31,939 seconds)", () => {
+    expect(parseDurationSeconds("0.36966435185185187")).toBe(31939);
+  });
+  it("does not mistake a literal zero for a day-fraction", () => {
+    expect(parseDurationSeconds("0")).toBe(0);
+  });
 });
 
 describe("parseDate", () => {
@@ -42,6 +51,12 @@ describe("parseDate", () => {
     expect(parseDate("2026-09-08")).toBe("2026-09-08");
     expect(parseDate("8-Sep-2026")).toBe("2026-09-08");
     expect(parseDate("9/8/2026")).toBe("2026-09-08");
+  });
+  // The real WebConsole export's own "CalLDate" column is a plain Excel
+  // serial number as text -- confirmed against a real live row (46204 =
+  // 2026-07-01, the same month as the real "...July26.xlsx" workbook name).
+  it("reads the real CalLDate Excel-serial-as-text sample", () => {
+    expect(parseDate("46204")).toBe("2026-07-01");
   });
   it("refuses anything else rather than inventing a date", () => {
     expect(parseDate("last Tuesday")).toBeNull();

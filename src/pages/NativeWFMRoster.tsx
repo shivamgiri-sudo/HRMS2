@@ -169,16 +169,18 @@ export default function NativeWFMRoster() {
           <p className="mt-2 text-sm text-slate-300">Process Manager and WFM jointly own draft-to-publish planning in their mapped process. TL/AM manage exceptions, not published roster truth.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link to="/wfm/roster-command-center" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+          {/* Roster Command Center is now the merged console — all 4 links below point at
+              its tabs (?tab=live/analytics/compliance/audit) rather than separate pages. */}
+          <Link to="/wfm/roster-command-center?tab=live" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
             <Activity className="w-3.5 h-3.5" /> Command Center
           </Link>
-          <Link to="/wfm/roster-analytics" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+          <Link to="/wfm/roster-command-center?tab=analytics" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
             <BarChart3 className="w-3.5 h-3.5" /> Analytics
           </Link>
-          <Link to="/wfm/roster-compliance" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+          <Link to="/wfm/roster-command-center?tab=compliance" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
             <ShieldCheck className="w-3.5 h-3.5" /> Compliance
           </Link>
-          <Link to="/wfm/roster-audit" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+          <Link to="/wfm/roster-command-center?tab=audit" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
             <History className="w-3.5 h-3.5" /> Audit Trail
           </Link>
         </div>

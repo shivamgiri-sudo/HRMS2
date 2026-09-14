@@ -489,7 +489,7 @@ export default function WFMCapacityDashboard() {
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
   });
 
-  const { data: capacityData, isLoading, refetch } = useQuery({
+  const { data: capacityData, isLoading, refetch, isError } = useQuery({
     queryKey: ["capacity", "summary", branchFilter],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -590,6 +590,19 @@ export default function WFMCapacityDashboard() {
       })),
     };
   })();
+
+  if (isError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <p className="text-sm text-rose-600 font-semibold">Failed to load data. Please try again.</p>
+          <button onClick={() => refetch()} className="text-sm text-blue-600 underline hover:no-underline">
+            Retry
+          </button>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

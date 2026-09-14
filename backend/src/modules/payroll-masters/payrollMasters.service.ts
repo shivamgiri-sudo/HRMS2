@@ -193,6 +193,18 @@ function amt(v: unknown): number {
 }
 
 /**
+ * Same as amt(), except for the professional_tax column: PT removed 2026-09-11
+ * per user decision — full company-wide removal. A new or edited salary package
+ * can no longer store a nonzero professional_tax, regardless of what the caller
+ * submits. Existing stored rows are left untouched (additive-only rule) and
+ * still readable via getPackageById/listPackages.
+ */
+function amtColumn(column: string, v: unknown): number {
+  if (column === "professional_tax") return 0;
+  return amt(v);
+}
+
+/**
  * The columns salary_package_master actually has, in the order the statements
  * below use them. branch_name, band_code and package_amount are NOT NULL with
  * no default, so they are required; every other money column defaults to 0.00.
@@ -257,7 +269,7 @@ async function checkPackageMinimumWage(branchName: unknown, packageAmount: numbe
 export async function createPackage(data: any, createdBy: string) {
   requirePackageKeys(data);
   const id = randomUUID();
-  const money = PACKAGE_MONEY_COLUMNS.map((c) => amt(data[c]));
+  const money = PACKAGE_MONEY_COLUMNS.map((c) => amtColumn(c, data[c]));
   const packageAmount = amt(data.package_amount);
   const minWage = await checkPackageMinimumWage(data.branch_name, packageAmount);
 
@@ -315,7 +327,7 @@ export async function updatePackage(id: string, data: any) {
       merged.cost_centre_code ?? null,
       merged.band_code,
       packageAmount,
-      ...PACKAGE_MONEY_COLUMNS.map((c) => amt(merged[c])),
+      ...PACKAGE_MONEY_COLUMNS.map((c) => amtColumn(c, merged[c])),
       merged.active_status ?? 1,
       minWage.min_wage_provisional,
       minWage.min_wage_check_note,

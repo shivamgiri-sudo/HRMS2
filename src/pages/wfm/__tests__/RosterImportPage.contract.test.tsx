@@ -25,7 +25,10 @@ describe("RosterImportPage — API path prefix", () => {
    * unnoticed. Verified live: /processes -> 200 text/html, /api/processes -> 401 JSON.
    */
   it("prefixes every hrmsApi call with /api", () => {
-    const calls = SOURCE.match(/hrmsApi\.\w+(?:<[^>]*>)?\(\s*[`"']([^`"']+)/g) ?? [];
+    // Explicit annotation, not inferred: `SOURCE.match(...) ?? []` without one left TypeScript
+    // resolving `calls`'s element type to `never`, so the array itself type-checked fine but
+    // every element inside .filter() below did not (confirmed by isolating the two changes).
+    const calls: string[] = SOURCE.match(/hrmsApi\.\w+(?:<[^>]*>)?\(\s*[`"']([^`"']+)/g) ?? [];
     expect(calls.length).toBeGreaterThan(0);
 
     const unprefixed = calls.filter((call) => {

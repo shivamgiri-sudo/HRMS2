@@ -3,7 +3,7 @@ import {
   AlertTriangle, BarChart3, CheckCircle2, Clock, FileText, Filter,
   IndianRupee, Percent, RefreshCcw, ShieldCheck, TrendingDown, TrendingUp,
   UserMinus, Users, Building2, Briefcase, Calendar, Download, Search,
-  ChevronDown, ChevronRight, X, CheckSquare, Square, Loader2,
+  ChevronDown, ChevronRight, X, CheckSquare, Square, Loader2, Plus,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -20,6 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { AIInsightPanel } from "@/components/ai";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 
@@ -77,6 +78,25 @@ type FullFinalCalc = {
 };
 
 const statusFlow = ["submitted", "manager_review", "accepted", "notice_serving", "exited"];
+
+// NOC clearance only makes sense once the resignation is actually accepted and moving —
+// same window the "Generate clearance" checklist action already uses.
+const NOC_ELIGIBLE_STATUSES = ["accepted", "notice_serving", "exited", "exit_confirmed"];
+
+// Mirrors noc-case.routes.ts's ROLE_EVIDENCE exactly, but checked most-senior-first (not
+// the order that table declares them): the escalation matrix notifies everyone ABOVE the
+// initiator's tier, so classifying an admin/HR viewer as a plain "agent" (the loosest match,
+// since "admin" sits in every evidence list) would over-notify. Falls back to "agent" only
+// for someone with no other matching evidence — e.g. a bare "employee" role, which "agent"
+// uniquely covers.
+const NOC_INITIATOR_EVIDENCE: Array<{ role: "agent" | "tl" | "manager" | "hr" | "it" | "admin_mis"; roleKeys: string[] }> = [
+  { role: "hr",        roleKeys: ["hr", "branch_hr", "payroll_hr", "payroll_head", "admin", "super_admin"] },
+  { role: "admin_mis", roleKeys: ["branch_admin", "admin", "super_admin"] },
+  { role: "manager",   roleKeys: ["process_manager", "manager", "branch_head", "admin", "super_admin"] },
+  { role: "it",        roleKeys: ["branch_it", "it", "it_head", "admin", "super_admin"] },
+  { role: "tl",        roleKeys: ["tl", "team_leader", "admin", "super_admin"] },
+  { role: "agent",     roleKeys: ["employee", "tl", "team_leader", "hr", "admin", "super_admin"] },
+];
 const CHART_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"];
 const REASON_COLORS: Record<string, string> = {
   better_opportunity: "#3B82F6",
@@ -761,11 +781,12 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Overview Tab
 // ─────────────────────────────────────────────────────────────────────────────
-function OverviewTab({ data, loading, onStatusChange, onGenerateClearance }: {
+function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onStartNocClearance }: {
   data: CenterData | null;
   loading: boolean;
   onStatusChange: (id: string, status: string) => Promise<void>;
   onGenerateClearance: (id: string) => Promise<void>;
+  onStartNocClearance: (exitRequestId: string, employeeId: string) => Promise<void>;
 }) {
   const [status, setStatus] = useState("all");
   const [message, setMessage] = useState("");
@@ -790,6 +811,15 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance }: {
       setMessage("Clearance tasks generated");
     } catch (err: any) {
       setMessage(err?.message || "Unable to generate clearance");
+    }
+  };
+
+  const startNocClearance = async (exitRequestId: string, employeeId: string) => {
+    try {
+      await onStartNocClearance(exitRequestId, employeeId);
+      setMessage("NOC clearance started — see NOC Clearance Chain under Payroll");
+    } catch (err: any) {
+      setMessage(err?.message || "Unable to start NOC clearance");
     }
   };
 
@@ -904,6 +934,14 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance }: {
                             className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
                           >
                             <ShieldCheck className="h-3 w-3" /> Generate clearance
+                          </button>
+                        )}
+                        {NOC_ELIGIBLE_STATUSES.includes(r.status) && (
+                          <button
+                            onClick={() => startNocClearance(r.id, r.employee_id)}
+                            className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                          >
+                            <ShieldCheck className="h-3 w-3" /> Start NOC clearance
                           </button>
                         )}
                       </div>
@@ -1122,9 +1160,30 @@ function NoticePeriodTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
+type EmpResult = {
+  id: string; name: string; employee_code: string;
+  branch_name?: string | null; process_name?: string | null;
+  department_name?: string | null; reporting_manager_name?: string | null;
+};
+
 export default function NativeExitCommandCenter() {
   const [data, setData] = useState<CenterData | null>(null);
   const [loading, setLoading] = useState(false);
+  const { hasAnyRole } = useWorkforceAccess();
+
+  // ── Create exit request ──────────────────────────────────────────────────
+  const [showCreate, setShowCreate] = useState(false);
+  const [createMessage, setCreateMessage] = useState("");
+  const [createForm, setCreateForm] = useState({
+    employeeId: "", employeeLabel: "", employeeBranch: "", employeeProcess: "", employeeDept: "", employeeRm: "",
+    exitType: "voluntary", exitSubType: "resignation", exitReasonCategory: "career_growth",
+    resignationReason: "", lastWorkingDayProposed: "", abscondingSince: "",
+  });
+  const [empQuery, setEmpQuery] = useState("");
+  const [empResults, setEmpResults] = useState<EmpResult[]>([]);
+  const [empSearching, setEmpSearching] = useState(false);
+  const [empInactiveCount, setEmpInactiveCount] = useState(0);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1140,6 +1199,48 @@ export default function NativeExitCommandCenter() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (empQuery.trim().length < 2) { setEmpResults([]); return; }
+    let cancelled = false;
+    setEmpSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await hrmsApi.get<{ success: boolean; employees: EmpResult[]; inactive_count?: number }>(
+          `/api/employees/search?q=${encodeURIComponent(empQuery.trim())}&status=active`
+        );
+        if (!cancelled) {
+          setEmpResults(res.employees ?? []);
+          setEmpInactiveCount(res.inactive_count ?? 0);
+        }
+      } finally { if (!cancelled) setEmpSearching(false); }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [empQuery]);
+
+  const submitExitRequest = async () => {
+    if (!createForm.employeeId.trim()) return setCreateMessage("Select an employee first.");
+    if (!createForm.lastWorkingDayProposed) return setCreateMessage("Proposed last working day is required.");
+    if (createForm.exitSubType === "absconding" && !createForm.abscondingSince) return setCreateMessage("Absconding Since date is required.");
+    setSaving(true);
+    try {
+      await hrmsApi.post("/api/exit", {
+        employeeId: createForm.employeeId,
+        exitType: createForm.exitType,
+        exitSubType: createForm.exitSubType,
+        exitReasonCategory: createForm.exitReasonCategory,
+        resignationReason: createForm.resignationReason || null,
+        lastWorkingDayProposed: createForm.lastWorkingDayProposed,
+        ...(createForm.exitSubType === "absconding" && createForm.abscondingSince ? { abscondingSince: createForm.abscondingSince } : {}),
+      });
+      setShowCreate(false);
+      setEmpQuery(""); setEmpResults([]);
+      setCreateForm({ employeeId: "", employeeLabel: "", employeeBranch: "", employeeProcess: "", employeeDept: "", employeeRm: "", exitType: "voluntary", exitSubType: "resignation", exitReasonCategory: "career_growth", resignationReason: "", lastWorkingDayProposed: "", abscondingSince: "" });
+      setCreateMessage("");
+      await load();
+    } catch (err: unknown) { setCreateMessage((err as Error)?.message || "Submission failed."); }
+    finally { setSaving(false); }
+  };
+
   const handleStatusChange = async (id: string, status: string) => {
     await hrmsApi.patch(`/api/exit/${id}/status`, { status, remarks: `Moved to ${status}` });
     await load();
@@ -1148,6 +1249,14 @@ export default function NativeExitCommandCenter() {
   const handleGenerateClearance = async (id: string) => {
     await hrmsApi.post(`/api/exit/${id}/clearance/generate`, {});
     await load();
+  };
+
+  // Opens (or, harmlessly, re-fetches) the NOC clearance case for one exit. openCase() on
+  // the backend is idempotent — a case that already exists for this employee is returned
+  // as-is rather than duplicated — so this button is always safe to click again.
+  const handleStartNocClearance = async (exitRequestId: string, employeeId: string) => {
+    const initiatorRole = NOC_INITIATOR_EVIDENCE.find((e) => hasAnyRole(...e.roleKeys))?.role ?? "hr";
+    await hrmsApi.post("/api/payroll/noc-cases", { employeeId, initiatorRole, exitRequestId });
   };
 
   return (
@@ -1167,15 +1276,25 @@ export default function NativeExitCommandCenter() {
                 </p>
               </div>
             </div>
-            <Button
-              onClick={load}
-              disabled={loading}
-              variant="outline"
-              className="bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white"
-            >
-              <RefreshCcw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => setShowCreate(true)}
+                variant="outline"
+                className="bg-white/20 border-white/30 text-white hover:bg-white/30 hover:text-white font-semibold"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                New Exit Request
+              </Button>
+              <Button
+                onClick={load}
+                disabled={loading}
+                variant="outline"
+                className="bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white"
+              >
+                <RefreshCcw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1210,6 +1329,7 @@ export default function NativeExitCommandCenter() {
               loading={loading}
               onStatusChange={handleStatusChange}
               onGenerateClearance={handleGenerateClearance}
+              onStartNocClearance={handleStartNocClearance}
             />
           </TabsContent>
 
@@ -1230,6 +1350,123 @@ export default function NativeExitCommandCenter() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* ── New Exit Request Modal ───────────────────────────────────────── */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b p-6">
+              <h2 className="text-lg font-black text-slate-950">New Exit Request</h2>
+              <button onClick={() => { setShowCreate(false); setCreateMessage(""); }} className="text-slate-400 hover:text-slate-700">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-6">
+              {createMessage && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">
+                  {createMessage}
+                </div>
+              )}
+              {/* Employee picker */}
+              <div className="relative">
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Employee</label>
+                {createForm.employeeId ? (
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-900">{createForm.employeeLabel}</span>
+                      <button type="button" onClick={() => setCreateForm({ ...createForm, employeeId: "", employeeLabel: "" })} className="text-xs font-semibold text-blue-700 hover:underline">Change</button>
+                    </div>
+                    {(createForm.employeeBranch || createForm.employeeProcess) && (
+                      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
+                        {createForm.employeeBranch && <span><span className="text-slate-400">Branch:</span> {createForm.employeeBranch}</span>}
+                        {createForm.employeeProcess && <span><span className="text-slate-400">Process:</span> {createForm.employeeProcess}</span>}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <input value={empQuery} onChange={(e) => setEmpQuery(e.target.value)} placeholder="Search by name or employee code" className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" autoComplete="off" />
+                    {empQuery.trim().length >= 2 && (
+                      <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-2xl border bg-white shadow-lg">
+                        {empSearching && <div className="px-4 py-3 text-sm text-slate-500">Searching…</div>}
+                        {!empSearching && empResults.length === 0 && <div className="px-4 py-3 text-sm text-slate-500">No active employee matches.</div>}
+                        {!empSearching && empInactiveCount > 0 && <div className="border-t bg-amber-50/70 px-4 py-2.5 text-xs text-amber-900">{empInactiveCount} inactive employee{empInactiveCount === 1 ? "" : "s"} also found. Exits only for active employees.</div>}
+                        {empResults.map((emp) => (
+                          <button key={emp.id} type="button" onClick={() => {
+                            setCreateForm({ ...createForm, employeeId: emp.id, employeeLabel: `${emp.employee_code} — ${emp.name}`, employeeBranch: emp.branch_name ?? "", employeeProcess: emp.process_name ?? "", employeeDept: emp.department_name ?? "", employeeRm: emp.reporting_manager_name ?? "" });
+                            setEmpQuery(""); setEmpResults([]);
+                          }} className="flex w-full flex-col px-4 py-3 text-left hover:bg-slate-50 border-b last:border-b-0">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-slate-900">{emp.name}</span>
+                              <span className="font-mono text-xs text-slate-500">{emp.employee_code}</span>
+                            </div>
+                            {emp.branch_name && <div className="text-xs text-slate-400">{emp.branch_name}{emp.process_name ? ` · ${emp.process_name}` : ""}</div>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              {/* Exit type + subtype */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Exit Type</label>
+                  <select value={createForm.exitType} onChange={(e) => setCreateForm({ ...createForm, exitType: e.target.value, exitSubType: e.target.value === "voluntary" ? "resignation" : "termination" })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400">
+                    <option value="voluntary">Voluntary</option>
+                    <option value="involuntary">Involuntary</option>
+                    <option value="absconding">Absconding</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Sub-type</label>
+                  <select value={createForm.exitSubType} onChange={(e) => setCreateForm({ ...createForm, exitSubType: e.target.value })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400">
+                    {createForm.exitType === "voluntary" && <><option value="resignation">Resignation</option><option value="retirement">Retirement</option></>}
+                    {createForm.exitType === "involuntary" && <><option value="termination">Termination</option><option value="layoff">Layoff</option><option value="contract_end">Contract End</option></>}
+                    {createForm.exitType === "absconding" && <option value="absconding">Absconding</option>}
+                  </select>
+                </div>
+              </div>
+              {/* Reason */}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Reason Category</label>
+                <select value={createForm.exitReasonCategory} onChange={(e) => setCreateForm({ ...createForm, exitReasonCategory: e.target.value })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400">
+                  <option value="career_growth">Career Growth</option>
+                  <option value="compensation">Compensation</option>
+                  <option value="relocation">Relocation</option>
+                  <option value="personal">Personal Reasons</option>
+                  <option value="health">Health</option>
+                  <option value="further_education">Further Education</option>
+                  <option value="misconduct">Misconduct</option>
+                  <option value="performance">Performance</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Resignation Reason (optional)</label>
+                <textarea value={createForm.resignationReason} onChange={(e) => setCreateForm({ ...createForm, resignationReason: e.target.value })} rows={2} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none" placeholder="Brief description…" />
+              </div>
+              {/* Dates */}
+              {createForm.exitSubType === "absconding" && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Absconding Since *</label>
+                  <input type="date" value={createForm.abscondingSince} onChange={(e) => setCreateForm({ ...createForm, abscondingSince: e.target.value })} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Proposed Last Working Day *</label>
+                <input type="date" value={createForm.lastWorkingDayProposed} onChange={(e) => setCreateForm({ ...createForm, lastWorkingDayProposed: e.target.value })} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 border-t px-6 py-4">
+              <button onClick={() => { setShowCreate(false); setCreateMessage(""); }} className="rounded-2xl border px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button onClick={() => void submitExitRequest()} disabled={saving} className="rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
+                {saving ? "Submitting…" : "Submit Exit Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

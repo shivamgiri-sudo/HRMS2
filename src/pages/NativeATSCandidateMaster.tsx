@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TableStates } from "@/components/ui/table-states";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import {
   AlertCircle,
   CalendarDays,
@@ -1066,9 +1068,11 @@ export default function NativeATSCandidateMaster() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
-            {error}
-          </div>
+          <ErrorState
+            title="Couldn't load candidates"
+            description={error}
+            onRetry={() => { setError(""); void loadData(); }}
+          />
         )}
 
         {/* Stat chips */}
@@ -1133,13 +1137,14 @@ export default function NativeATSCandidateMaster() {
         {/* Compact table */}
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="max-h-[calc(100vh-320px)] overflow-auto">
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading candidates…
-              </div>
-            ) : !filtered.length ? (
-              <div className="py-16 text-center text-sm text-slate-400">No candidates match the current filters.</div>
-            ) : (
+            <TableStates
+              loading={loading}
+              empty={!filtered.length}
+              filtersActive={query.trim() !== "" || statusFilter !== "All" || branchFilter !== "All" || fromDate !== "" || toDate !== ""}
+              onClearFilters={() => { setQuery(""); setStatusFilter("All"); setBranchFilter("All"); setFromDate(""); setToDate(""); }}
+              skeletonRows={8}
+              skeletonCols={5}
+            >
               <table className="w-full min-w-[700px] text-sm border-collapse">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-left">
                   <tr className="border-b border-slate-200">
@@ -1226,7 +1231,7 @@ export default function NativeATSCandidateMaster() {
                   })}
                 </tbody>
               </table>
-            )}
+            </TableStates>
           </div>
           {filtered.length > 0 && (
             <div className="border-t border-slate-100 px-4 py-2 flex items-center justify-between">

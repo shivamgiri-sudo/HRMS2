@@ -68,12 +68,6 @@ function defaultConfig(sourceType: PerformanceSourceType): Record<string, unknow
       maxRows: 10000,
     };
   }
-  if (sourceType === "google_sheet") {
-    return {
-      csvUrl: "https://docs.google.com/spreadsheets/d/REPLACE/export?format=csv&gid=0",
-      maxRows: 10000,
-    };
-  }
   return { maxRows: 10000 };
 }
 
@@ -238,7 +232,6 @@ export function PerformanceSourceEditor({
               <option value="mssql">SQL Server</option>
               <option value="excel">Excel</option>
               <option value="csv">CSV</option>
-              <option value="google_sheet">Google Sheet CSV</option>
             </select>
           </div>
           <div className="grid gap-2">

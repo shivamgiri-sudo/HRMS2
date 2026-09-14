@@ -7,7 +7,6 @@
  *   Manual  → edit any earning → gross bottom-up → net/CTC auto-derived
  *
  * Advanced features:
- *   - Branch selector → auto-resolves state → correct PT slab (Delhi/UP = ₹0)
  *   - Band compliance: red/amber/green indicator if CTC is in-band
  *   - Minimum wage compliance: state-wise floor check
  *   - Take-home % meter: healthy ≥ 72%, warn < 65%
@@ -29,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Calculator, Loader2, CheckCircle2, AlertTriangle, Lock, Unlock, TrendingUp, ShieldCheck } from 'lucide-react';
 import {
-  calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, ADMIN_RATE,
+  calcFromCtc, calcFromInHand, ADMIN_RATE,
   type PkgCalcOptions, type PkgComponents,
 } from '@/lib/salaryCalculator';
 
@@ -44,7 +43,7 @@ interface ExistingPkg {
   basic?: number; hra?: number; conveyance?: number; special_allowance?: number;
   other_allowance?: number; bonus?: number; lta?: number; portfolio?: number;
   medical?: number; pli?: number; gross?: number; epf_employee?: number;
-  esic_employee?: number; professional_tax?: number; net_in_hand?: number;
+  esic_employee?: number; net_in_hand?: number;
   epf_employer?: number; esic_employer?: number; admin_charges?: number; ctc?: number;
 }
 
@@ -69,7 +68,7 @@ const BLANK: Draft = {
   lta: 0, gratuity: 0,
   basic: 0, hra: 0, conveyance: 0, special_allowance: 0, other_allowance: 0,
   bonus: 0, pli: 0, portfolio: 0, medical: 0, gross: 0,
-  epf_employee: 0, esic_employee: 0, professional_tax: 0, net_in_hand: 0,
+  epf_employee: 0, esic_employee: 0, net_in_hand: 0,
   epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0,
 };
 
@@ -182,8 +181,6 @@ export function PackageBuilderDialog({
   const resolvedState = branchStates.find(b => b.branch_name === draft.branch_name)?.state;
   const selectedBand  = bands.find(b => b.band_code === draft.band_code);
 
-  const ptApplicable = resolvedState ? !!(PT_BY_STATE[resolvedState] && PT_BY_STATE[resolvedState](50000) > 0) : false;
-
   const bandStatus: 'ok' | 'low' | 'high' | null = useMemo(() => {
     if (!selectedBand || !draft.ctc) return null;
     const monthly = draft.ctc;
@@ -209,8 +206,8 @@ export function PackageBuilderDialog({
   // ── Calculation helpers ───────────────────────────────────────────────────
 
   const getOpts = useCallback((): PkgCalcOptions => ({
-    includePf, includeEsic, includeBonus, basicPct, hraPct, state: resolvedState,
-  }), [includePf, includeEsic, includeBonus, basicPct, hraPct, resolvedState]);
+    includePf, includeEsic, includeBonus, basicPct, hraPct,
+  }), [includePf, includeEsic, includeBonus, basicPct, hraPct]);
 
   const deriveFromGross = useCallback((d: Draft): Draft => {
     const o = getOpts();
@@ -223,15 +220,14 @@ export function PackageBuilderDialog({
     const pfBase = Math.min(d.basic || 0, pfCap);
     const epf_employee  = o.includePf ? r2(pfBase * 0.12) : 0;
     const esic_employee = o.includeEsic && gross <= 21000 ? r2(gross * 0.0075) : 0;
-    const professional_tax = r2(getProfessionalTax(gross, o.state));
-    const net_in_hand = r2(gross - epf_employee - esic_employee - professional_tax);
+    const net_in_hand = r2(gross - epf_employee - esic_employee);
     const epf_employer  = o.includePf ? r2(pfBase * 0.12) : 0;
     const esic_employer = o.includeEsic && gross <= 21000 ? r2(gross * 0.0325) : 0;
     const gratuity      = r2((d.basic || 0) * (15 / 26 / 12));
     const admin_charges = o.includePf ? r2(pfBase * ADMIN_RATE) : 0;
     // Gratuity is a statutory accrual shown as a P&L provision — NOT part of monthly CTC.
     const ctc = r2(gross + epf_employer + esic_employer + admin_charges);
-    return { ...d, gross, epf_employee, esic_employee, professional_tax, net_in_hand, epf_employer, esic_employer, gratuity, admin_charges, ctc, package_amount: ctc };
+    return { ...d, gross, epf_employee, esic_employee, net_in_hand, epf_employer, esic_employer, gratuity, admin_charges, ctc, package_amount: ctc };
   }, [getOpts]);
 
   // ── Auto-calc trigger ─────────────────────────────────────────────────────
@@ -356,11 +352,6 @@ export function PackageBuilderDialog({
             Advanced Salary Package Builder
             {mode === 'manual' && (
               <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[11px]">Manual mode</Badge>
-            )}
-            {resolvedState && (
-              <Badge className={`text-[11px] ${ptApplicable ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-                {resolvedState} · PT {ptApplicable ? '✓ applicable' : '✗ not applicable'}
-              </Badge>
             )}
             {bandStatus === 'ok' && <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[11px]">✓ In Band {draft.band_code}</Badge>}
             {bandStatus === 'low' && <Badge className="bg-amber-50 text-amber-700 border-amber-200 text-[11px]">⚠ Below Band {draft.band_code} floor</Badge>}
@@ -586,7 +577,6 @@ export function PackageBuilderDialog({
               {[
                 ['epf_employee',    includePf ? 'PF (12% basic)' : 'PF (off)'],
                 ['esic_employee',   draft.gross <= 21000 && includeEsic ? 'ESIC (0.75% gross)' : `ESIC (${draft.gross > 21000 ? 'gross >₹21k' : 'off'})`],
-                ['professional_tax', resolvedState ? (ptApplicable ? `PT — ${resolvedState}` : `PT — N/A (${resolvedState})`) : 'PT (select branch)'],
               ].map(([field, label]) => (
                 <div key={field} className="flex items-center gap-2">
                   <Label className="text-[11px] w-32 shrink-0 text-slate-600 truncate" title={label}>{label}</Label>

@@ -36,7 +36,6 @@ import {
 const SOURCE_TYPE_LABEL: Record<string, string> = {
   local_query: "A table in this system",
   integration_connector: "An external database",
-  google_sheet_csv: "A live Google Sheet",
   upload: "Spreadsheet upload",
   manual: "Typed in or uploaded",
 };
@@ -207,62 +206,8 @@ export function DataSourceManager() {
                 </label>
               )}
 
-              {newSource.source_type === "google_sheet_csv" && (
-                <>
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-medium text-slate-700">Published CSV link</span>
-                    <Input
-                      value={newSource.csv_url}
-                      onChange={(event) => setNewSource((previous) => ({ ...previous, csv_url: event.target.value }))}
-                      placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"
-                      className="text-xs"
-                    />
-                    <span className="mt-1 block text-[11px] leading-snug text-slate-500">
-                      In the sheet: File → Share → Publish to web → choose the tab → Comma-separated
-                      values (.csv) → Publish, then paste the link here. The sheet is read live, so
-                      edits show up on the next calculation.
-                    </span>
-                  </label>
-
-                  {/* Stated plainly because it is a property of Google's publish feature, the data is
-                      employee performance, and the person configuring it is the only one who can
-                      decide whether that is acceptable. */}
-                  <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-[11px] leading-snug text-amber-900">
-                    Publishing makes the sheet readable by anyone who has the link, without signing
-                    in. Only publish a sheet whose contents you are content to expose that way, and
-                    keep the link private.
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-700">Employee code column</span>
-                      <Input
-                        value={newSource.employee_key_column}
-                        onChange={(event) =>
-                          setNewSource((previous) => ({ ...previous, employee_key_column: event.target.value }))
-                        }
-                        placeholder="Employee Code"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-700">Date column</span>
-                      <Input
-                        value={newSource.date_column}
-                        onChange={(event) => setNewSource((previous) => ({ ...previous, date_column: event.target.value }))}
-                        placeholder="Audit Date"
-                      />
-                    </label>
-                  </div>
-                  <span className="block text-[11px] leading-snug text-slate-500">
-                    These are the column HEADINGS as typed in the sheet. Capitalisation and spacing do
-                    not matter.
-                  </span>
-                </>
-              )}
-
               {newSource.source_type !== "manual" &&
-                newSource.source_type !== "upload" &&
-                newSource.source_type !== "google_sheet_csv" && (
+                newSource.source_type !== "upload" && (
                 <>
                   <label className="block">
                     <span className="mb-1 block text-xs font-medium text-slate-700">Table</span>

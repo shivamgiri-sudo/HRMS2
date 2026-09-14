@@ -19,6 +19,7 @@ import { rosterActualSecureRouter } from "./modules/wfm/roster.actual.secure.rou
 import { rosterRouter } from "./modules/wfm/roster.routes.js";
 import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { leaveSecureRouter } from "./modules/leave/leave.secure.routes.js";
+import leaveReconciliationRouter from "./modules/leave/leave-attendance-reconciliation.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { payrollSecureRouter } from "./modules/payroll/payroll.secure.routes.js";
 import { payrollPublicRouter } from "./modules/payroll/payroll.public.routes.js";
@@ -57,6 +58,7 @@ import { nocRouter } from "./modules/payroll/noc.routes.js";
 import { nocCaseRouter } from "./modules/payroll/noc-case.routes.js";
 import { runningSalaryRouter } from "./modules/payroll/running-salary.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
+import employeeMappingGapsRouter from "./modules/employees/employee-mapping-gaps.routes.js";
 import { requireAuth as requireAuthForDpdpGuard } from "./middleware/authMiddleware.js";
 import { checkDpdpRestriction } from "./modules/privacy/dpdpRestrictionGuard.js";
 import { employeeReportMasterRouter } from "./modules/employees/employee.report-master.routes.js";
@@ -178,6 +180,7 @@ import { authLaunchRouter } from "./modules/auth/auth-launch.routes.js";
 import passwordResetRouter from "./modules/auth/password-reset.routes.js";
 import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js";
 import { clientRouter } from "./modules/portal/client.routes.js";
+import portalAdminRouter from "./modules/portal/portal-admin.routes.js";
 import { autoRosterSyncedRouter } from "./modules/wfm/auto-roster-synced.routes.js";
 import { controlTowerRouter } from "./modules/control-tower/control-tower.routes.js";
 import { payrollComplianceRouter } from "./modules/payroll-compliance/payrollCompliance.routes.js";
@@ -396,6 +399,7 @@ app.use("/api/wfm/roster", rosterActualSecureRouter);
 app.use("/api/wfm/roster", rosterRouter);
 app.use("/api/leave", leaveSecureRouter);
 app.use("/api/leave", leaveRouter);
+app.use("/api/leave", leaveReconciliationRouter);
 // PUBLIC payslip QR verification — must precede every other /api/payroll router,
 // since those apply requireAuth at router level and would 401 the scan first.
 // The rate limit itself is applied inside payroll.public.routes.ts on the specific
@@ -481,6 +485,7 @@ app.use("/api/employees", listEndpointLimiter, employeeGovernanceRouter);
 app.use("/api/employees", employeePhotoCompatRouter);
 app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
+app.use("/api/employees", employeeMappingGapsRouter);
 app.use("/api/employees", listEndpointLimiter, employeeJoiningDocumentsRouter);
 // HR-facing kit controls. Without these the dispatcher was only reachable by
 // running a script on the server.
@@ -499,6 +504,7 @@ app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi-studio", kpiStudioRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
+app.use("/api/portal/admin", portalAdminRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is

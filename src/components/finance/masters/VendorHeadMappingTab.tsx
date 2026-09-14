@@ -12,7 +12,12 @@ import { toast } from "sonner";
 interface VendorSummary { id: string; vendor_code: string; vendor_name: string; vendor_type: string; is_active: number; mapping_count: number; }
 interface ExpenseHead { id: string; headCode: string; headName: string; subHeads: SubHead[]; }
 interface SubHead { id: string; subHeadCode: string; subHeadName: string; capexOpex?: string | null; }
-interface MappingRow { headCode: string; subHeadCode: string; }
+// The read and write shapes for this endpoint are genuinely asymmetric, not a naming slip on one
+// side: listForVendor returns raw SQL rows (snake_case) as-is, while saveForVendor's payload
+// parameter is destructured as m.headCode/m.subHeadCode (camelCase) — see
+// vendor-expense-mapping.service.ts for both. Two types, matching each direction exactly.
+interface MappingRow { head_code: string; sub_head_code: string | null; }
+interface MappingSaveInput { headCode: string; subHeadCode: string; }
 
 export function VendorHeadMappingTab() {
   const qc = useQueryClient();
@@ -57,7 +62,7 @@ export function VendorHeadMappingTab() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (mappings: MappingRow[]) =>
+    mutationFn: (mappings: MappingSaveInput[]) =>
       hrmsApi.put(`/api/finance/vendors/${selectedVendorId}/expense-mappings`, { mappings }),
     onSuccess: () => {
       toast.success("Mappings saved");
@@ -79,7 +84,7 @@ export function VendorHeadMappingTab() {
   }
 
   function saveAll() {
-    const mappings: MappingRow[] = Array.from(localMappings).map(key => {
+    const mappings: MappingSaveInput[] = Array.from(localMappings).map(key => {
       const [headCode, subHeadCode] = key.split("::");
       return { headCode, subHeadCode: subHeadCode === "*" ? "" : subHeadCode };
     });

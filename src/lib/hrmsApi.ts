@@ -138,6 +138,12 @@ export function getHrmsApiErrorStatus(error: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
+export function getHrmsApiErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  const code = (error as HrmsApiError).code;
+  return typeof code === "string" ? code : null;
+}
+
 async function fetchOnce(normalizedPath: string, method: string, body: unknown, timeoutMs: number): Promise<Response> {
   const headers = getAuthHeader();
   const controller = new AbortController();

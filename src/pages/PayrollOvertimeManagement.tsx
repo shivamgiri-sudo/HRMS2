@@ -43,7 +43,9 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Switch } from "@/components/ui/switch";
 
 interface PayrollLine {
@@ -546,7 +548,7 @@ export default function PayrollOvertimeManagement() {
                         <TableCell>
                           <div className="flex items-center gap-3">
                             <Avatar className="h-8 w-8">
-                              <AvatarImage src={line.employee_avatar} />
+                              <AuthedAvatarImage src={normalizeMediaUrl(line.employee_avatar)} />
                               <AvatarFallback>
                                 {line.employee_name
                                   .split(" ")

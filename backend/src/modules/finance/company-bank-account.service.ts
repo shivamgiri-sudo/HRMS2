@@ -3,6 +3,51 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+
+// Same role set as BANK_ACCOUNT_WRITE_ROLES in company-bank-account.routes.ts, duplicated
+// (not imported) to avoid a service <-> routes import cycle — routes.ts already imports
+// companyBankAccountService from this file.
+const BALANCE_CHANGE_NOTIFY_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
+
+/**
+ * Bell notification when the opening balance changes — same non-blocking, best-effort
+ * pattern as grn-notify.ts's notifyGrnStage: a notification failure must never roll back
+ * or block the edit that triggered it. FYI only (the change has already happened, single-
+ * approval by design — see the class header comment above), fanned out to every OTHER
+ * finance_head/accounts_head/super_admin so the change is never visible to just the one
+ * person who made it.
+ */
+async function notifyOpeningBalanceChanged(
+  bankAccountId: string,
+  accountName: string,
+  oldValue: number,
+  newValue: number,
+  actorUserId: string,
+) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    const roleHolders = await Promise.all(
+      BALANCE_CHANGE_NOTIFY_ROLES.map((role) => resolveRoleHolderUserIds(role, null)),
+    );
+    const userIds = new Set(roleHolders.flat());
+    userIds.delete(actorUserId);
+    for (const userId of userIds) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "bank_account_balance_changed",
+        title: `Opening balance changed — ${accountName}`,
+        description: `₹${oldValue.toLocaleString("en-IN")} → ₹${newValue.toLocaleString("en-IN")}.`,
+        entity_type: "company_bank_account",
+        entity_id: bankAccountId,
+        action_url: "/finance/bank-accounts",
+        priority: "high",
+      });
+    }
+  } catch {
+    // Non-fatal — a notification failure must not block the edit itself.
+  }
+}
 
 /**
  * Company Bank Account master — the organisation's OWN paying/receiving accounts.
@@ -180,10 +225,14 @@ export const companyBankAccountService = {
       ifscCode: input.ifscCode ?? existing.ifsc_code,
       branchId: input.branchId ?? existing.branch_id,
       tallyLedgerName: input.tallyLedgerName ?? existing.tally_ledger_name,
-      openingBalance: input.openingBalance ?? Number(existing.opening_balance ?? 0),
+      openingBalance: input.openingBalance !== undefined ? Number(input.openingBalance) : Number(existing.opening_balance ?? 0),
       openingBalanceAsOf: input.openingBalanceAsOf ?? existing.opening_balance_as_of,
     };
     const { ifscCode, accountNumber } = normaliseInput(merged);
+
+    const oldOpeningBalance = Number(existing.opening_balance ?? 0);
+    const newOpeningBalance = Number(merged.openingBalance ?? oldOpeningBalance);
+    const openingBalanceChanged = newOpeningBalance !== oldOpeningBalance;
 
     const setAccountNumber = accountNumber !== undefined;
     const [result] = await db.execute<ResultSetHeader>(
@@ -199,7 +248,7 @@ export const companyBankAccountService = {
         ifscCode,
         merged.branchId,
         merged.tallyLedgerName.trim(),
-        Number(merged.openingBalance ?? 0),
+        newOpeningBalance,
         merged.openingBalanceAsOf ?? null,
         ...(setAccountNumber ? [encryptField(accountNumber as string), (accountNumber as string).slice(-4)] : []),
         actorUserId,
@@ -208,14 +257,26 @@ export const companyBankAccountService = {
     );
     if (result.affectedRows !== 1) throw new CompanyBankAccountError("Update did not affect a record");
 
+    // Opening balance is the base the Bank Ledger, the Payment Voucher chain and the Tally
+    // export are all built on, so a change to it gets its own audit action type carrying the
+    // explicit before/after value (not just "updated"), plus a bell notification to every
+    // other finance_head/accounts_head/super_admin — same non-blocking pattern grn-notify.ts
+    // uses for GRN stage alerts.
     await logSensitiveAction({
       actor_user_id: actorUserId,
-      action_type: "COMPANY_BANK_ACCOUNT_UPDATED",
+      action_type: openingBalanceChanged ? "COMPANY_BANK_ACCOUNT_OPENING_BALANCE_CHANGED" : "COMPANY_BANK_ACCOUNT_UPDATED",
       module_key: "FINANCE",
       entity_type: "company_bank_account",
       entity_id: id,
-      change_summary: { account_name: merged.accountName, account_number_changed: setAccountNumber },
+      change_summary: openingBalanceChanged
+        ? { account_name: merged.accountName, old_opening_balance: oldOpeningBalance, new_opening_balance: newOpeningBalance }
+        : { account_name: merged.accountName, account_number_changed: setAccountNumber },
     }).catch(() => undefined);
+
+    if (openingBalanceChanged) {
+      await notifyOpeningBalanceChanged(id, merged.accountName, oldOpeningBalance, newOpeningBalance, actorUserId);
+    }
+
     return this.get(id);
   },
 

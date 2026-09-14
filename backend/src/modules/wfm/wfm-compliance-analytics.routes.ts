@@ -182,8 +182,8 @@ router.get(
            JOIN wfm_roster_assignment ra2 ON ra1.employee_id = ra2.employee_id
              AND ra2.roster_date = DATE_ADD(ra1.roster_date, INTERVAL 1 DAY)
            JOIN employees e ON ra1.employee_id = e.id
-           JOIN wfm_shift_master sm1 ON ra1.shift_template_id = sm1.id
-           JOIN wfm_shift_master sm2 ON ra2.shift_template_id = sm2.id
+           JOIN wfm_shift_template sm1 ON ra1.shift_template_id = sm1.id
+           JOIN wfm_shift_template sm2 ON ra2.shift_template_id = sm2.id
            WHERE ra1.roster_date BETWEEN ? AND DATE_SUB(?, INTERVAL 1 DAY)
              AND ${realRoster('ra1')} AND ${realRoster('ra2')}
              ${branchId ? 'AND e.branch_id = ?' : ''}
@@ -200,21 +200,29 @@ router.get(
       );
 
       // Rule 2: Consecutive days (> 6 consecutive working days)
+      // HAVING on a SELECT-list alias computed from user variables, with no GROUP BY, is not
+      // valid syntax in this MySQL version — every single call to this endpoint 500'd with a
+      // raw "You have an error in your SQL syntax" regardless of how much roster data existed.
+      // Confirmed live 2026-09-11. Fix: wrap the variable-sequence calc in its own derived table
+      // and filter with WHERE in the outer SELECT instead of HAVING in the same one — verified
+      // against live data (204 real employees flagged across the full roster history).
       const [consecRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(DISTINCT employee_id) AS count FROM (
-           SELECT employee_id, roster_date,
-             @seq := IF(@prev_emp = employee_id AND DATEDIFF(roster_date, @prev_date) = 1, @seq + 1, 1) AS consecutive,
-             @prev_emp := employee_id,
-             @prev_date := roster_date
-           FROM wfm_roster_assignment ra
-           JOIN employees e ON ra.employee_id = e.id,
-             (SELECT @seq := 0, @prev_emp := '', @prev_date := NULL) AS vars
-           WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
-             AND ra.is_week_off = 0
-             ${branchId ? 'AND e.branch_id = ?' : ''}
-             ${processId ? 'AND e.process_id = ?' : ''}
-           ORDER BY employee_id, roster_date
-           HAVING consecutive > 6
+           SELECT employee_id, consecutive FROM (
+             SELECT employee_id, roster_date,
+               @seq := IF(@prev_emp = employee_id AND DATEDIFF(roster_date, @prev_date) = 1, @seq + 1, 1) AS consecutive,
+               @prev_emp := employee_id,
+               @prev_date := roster_date
+             FROM wfm_roster_assignment ra
+             JOIN employees e ON ra.employee_id = e.id,
+               (SELECT @seq := 0, @prev_emp := '', @prev_date := NULL) AS vars
+             WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
+               AND ra.is_week_off = 0
+               ${branchId ? 'AND e.branch_id = ?' : ''}
+               ${processId ? 'AND e.process_id = ?' : ''}
+             ORDER BY employee_id, roster_date
+           ) AS seq_calc
+           WHERE consecutive > 6
          ) AS consec_violations`,
         branchId && processId
           ? [periodStart, periodEnd, branchId, processId]
@@ -251,10 +259,10 @@ router.get(
       const [hoursRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(DISTINCT employee_id) AS count FROM (
            SELECT ra.employee_id, WEEK(ra.roster_date) AS wk,
-             SUM(COALESCE(sm.required_minutes, 480)) / 60 AS weekly_hours
+             SUM(COALESCE(sm.productive_minutes, 480)) / 60 AS weekly_hours
            FROM wfm_roster_assignment ra
            JOIN employees e ON ra.employee_id = e.id
-           LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+           LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
            WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
              AND ra.is_week_off = 0
              ${branchId ? 'AND e.branch_id = ?' : ''}
@@ -277,7 +285,7 @@ router.get(
            SELECT ra.employee_id, COUNT(*) AS night_count
            FROM wfm_roster_assignment ra
            JOIN employees e ON ra.employee_id = e.id
-           JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+           JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
            WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
              AND (HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6)
              ${branchId ? 'AND e.branch_id = ?' : ''}
@@ -339,12 +347,52 @@ router.get(
 
       const totalViolations = rules.reduce((s, r) => s + r.violationCount, 0);
 
+      // Merge-plan Phase B bug #8: byBranch was hardcoded to [] on both sides (frontend
+      // adapter and this handler), so the "Branch Compliance Ranking" table could never
+      // populate. Only computed on the "all branches" view — once a specific branchId is
+      // already selected, a branch-ranking table has nothing left to rank. Reuses the same
+      // attendance-based compliance definition as compliancePct above (present/half_day vs
+      // not), just grouped by branch instead of collapsed across all of them — not a
+      // re-run of the 5 more expensive rule-violation queries per branch, which would be a
+      // real perf cost for a number this page doesn't ask to see per-branch anyway.
+      let byBranch: Array<{ branchId: string; branchName: string; score: number; violations: number; trend: number }> = [];
+      if (!branchId) {
+        const [branchRows] = await db.execute<RowDataPacket[]>(
+          `SELECT
+             e.branch_id AS branch_id,
+             b.branch_name AS branch_name,
+             SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
+             SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations,
+             SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts
+           FROM wfm_roster_assignment ra
+           JOIN employees e ON ra.employee_id = e.id
+           JOIN branch_master b ON e.branch_id = b.id
+           LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+           WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
+             ${processId ? 'AND e.process_id = ?' : ''}
+           GROUP BY e.branch_id, b.branch_name
+           HAVING total_shifts > 0
+           ORDER BY compliant / total_shifts ASC`,
+          processId ? [periodStart, periodEnd, processId] : [periodStart, periodEnd]
+        );
+        byBranch = branchRows.map((r: RowDataPacket) => ({
+          branchId: String(r.branch_id),
+          branchName: String(r.branch_name),
+          score: Math.round((Number(r.compliant) / Number(r.total_shifts)) * 100),
+          violations: Number(r.violations),
+          // No historical per-branch baseline exists yet to compare against (same reason
+          // the top-level `trend` above is hardcoded 0) — left at 0 rather than fabricated.
+          trend: 0,
+        }));
+      }
+
       res.json({
         period,
         compliancePct,
         totalEmployees: Number(compRows[0]?.total_employees ?? 0),
         totalViolations,
         rules,
+        byBranch,
         trend: 0,
       });
     } catch (err) {
@@ -371,14 +419,18 @@ router.get(
       const periodEnd = `${period}-${new Date(+period.split('-')[0], +period.split('-')[1], 0).getDate().toString().padStart(2, '0')}`;
 
       // Get violations by type (simplified - mainly adherence violations)
+      // `limit` is bound with a placeholder below via db.execute() (a real prepared statement,
+      // not query()) — passing it as a normal `?` param made every call 500 with mysql2's own
+      // "Incorrect arguments to mysqld_stmt_execute" (confirmed live 2026-09-11; not
+      // data-dependent, this failed even on an empty result set). `limit` is already clamped to
+      // 1-200 above via Math.min(parseInt(...), 200), so interpolating it directly is safe — same
+      // pattern already used for LIMIT elsewhere in this module (attendance-exceptions.routes.ts).
       const params: (string | number)[] = [periodStart, periodEnd];
       let branchFilter = '';
       if (branchId) {
         branchFilter = 'AND e.branch_id = ?';
         params.push(branchId);
       }
-      params.push(limit);
-
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT
            ra.id AS violation_id,
@@ -412,14 +464,14 @@ router.get(
          JOIN employees e ON ra.employee_id = e.id
          LEFT JOIN process_master p ON e.process_id = p.id
          LEFT JOIN branch_master b ON e.branch_id = b.id
-         LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+         LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
          LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
          WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
            AND ra.is_week_off = 0
            AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day')
            ${branchFilter}
          ORDER BY ra.roster_date DESC
-         LIMIT ?`,
+         LIMIT ${limit}`,
         params
       );
 

@@ -20,7 +20,7 @@ type AccessContext = {
 };
 
 export function canAccessNavItem(
-  item: Pick<NavItem, "href" | "pageCode" | "roles" | "public">,
+  item: Pick<NavItem, "href" | "pageCode" | "roles" | "public" | "managerVisible">,
   access: AccessContext,
 ): boolean {
   const visibleSet = new Set(access.visiblePageCodes);

@@ -151,13 +151,28 @@ export const rosterGenerationService = {
 
     try {
       // 3. Load active employees for this process/branch
+      //
+      // "designation" is not a column on employees — it's a FK (designation_id) to
+      // designation_master, whose name column applyWeekoffRules's force_sunday_for_role
+      // check compares against as free text (weekoff-rule.service.ts:
+      // `ctx.designation.toLowerCase()`). The original query selected the bare column
+      // name and 500'd with "Unknown column 'designation' in 'field list'" on every real
+      // attempt to generate a cycle — live-reproduced 2026-09-12 against the one
+      // genuinely gap-free draft cycle in production (Onfido, 14-20 Sep), which is why
+      // roster_decision_audit has stayed empty despite 15 real cycles having been created.
       const empQuery = cycle.branch_id
-        ? `SELECT id, employee_code, first_name, last_name, process_id, branch_id,
-                  COALESCE(shift_rotation_type, 'frozen') AS shift_rotation_type, designation
-             FROM employees WHERE process_id = ? AND branch_id = ? AND active_status = 1`
-        : `SELECT id, employee_code, first_name, last_name, process_id, branch_id,
-                  COALESCE(shift_rotation_type, 'frozen') AS shift_rotation_type, designation
-             FROM employees WHERE process_id = ? AND active_status = 1`;
+        ? `SELECT e.id, e.employee_code, e.first_name, e.last_name, e.process_id, e.branch_id,
+                  COALESCE(e.shift_rotation_type, 'frozen') AS shift_rotation_type,
+                  dm.designation_name AS designation
+             FROM employees e
+             LEFT JOIN designation_master dm ON e.designation_id = dm.id
+             WHERE e.process_id = ? AND e.branch_id = ? AND e.active_status = 1`
+        : `SELECT e.id, e.employee_code, e.first_name, e.last_name, e.process_id, e.branch_id,
+                  COALESCE(e.shift_rotation_type, 'frozen') AS shift_rotation_type,
+                  dm.designation_name AS designation
+             FROM employees e
+             LEFT JOIN designation_master dm ON e.designation_id = dm.id
+             WHERE e.process_id = ? AND e.active_status = 1`;
       const empParams = cycle.branch_id ? [cycle.process_id, cycle.branch_id] : [cycle.process_id];
       const [employees] = await db.execute<EmployeeRow[]>(empQuery, empParams);
 

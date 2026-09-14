@@ -11,6 +11,7 @@ import {
   changeCandidateBranch,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
+import { parseCtcInput } from './ctc-parser.js';
 import { resolveBandPct } from './band-package-ratio.service.js';
 import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
 import { db } from '../../db/mysql.js';
@@ -27,6 +28,15 @@ const h = (fn: AsyncHandler): RequestHandler =>
   (req: Request, res: Response, next: NextFunction) => {
     void fn(req, res).catch(next);
   };
+
+/** Resolves a branch's state name, for state-specific Professional Tax lookup. */
+async function resolveBranchState(branchId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
+    [branchId],
+  ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
+  return (rows as RowDataPacket[])[0]?.state ?? null;
+}
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -154,12 +164,22 @@ router.post(
   requireAuth,
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req, res) => {
-    const { ctc, bandCode, isMetro } = req.body;
+    const { ctc, bandCode, isMetro, pf_eligible, esi_eligible, branch_id } = req.body;
     if (!ctc || !bandCode) { res.status(400).json({ error: 'ctc and bandCode required' }); return; }
+    // Defensive parse -- see ctc-parser.ts. The current frontend already sends a
+    // computed number, but a comma/period-grouped string reaching this endpoint
+    // directly must not silently corrupt the preview the way a bare Number() would.
+    const annualCtc = parseCtcInput(ctc);
+    if (annualCtc === null || annualCtc <= 0) { res.status(400).json({ error: `ctc "${ctc}" is not a valid amount` }); return; }
     // Same source as saveOffer() -- see band-package-ratio.service.ts -- so this
     // preview never disagrees with what actually gets saved a moment later.
-    const band = await resolveBandPct(String(bandCode), Number(ctc) / 12);
-    const components = calculateSalary(Number(ctc), band.basicPct, band.hraPct, Boolean(isMetro));
+    const band = await resolveBandPct(String(bandCode), annualCtc / 12);
+    // Default true (deduct) to match the DB column default when the caller omits
+    // the field -- only an explicit false previews an opted-out candidate.
+    const pfEligible = pf_eligible !== false && pf_eligible !== 0;
+    const esiEligible = esi_eligible !== false && esi_eligible !== 0;
+    const stateCode = branch_id ? await resolveBranchState(String(branch_id)) : null;
+    const components = await calculateSalary(annualCtc, band.basicPct, band.hraPct, Boolean(isMetro), undefined, pfEligible, esiEligible, stateCode);
     res.json({ ok: true, components });
   }),
 );

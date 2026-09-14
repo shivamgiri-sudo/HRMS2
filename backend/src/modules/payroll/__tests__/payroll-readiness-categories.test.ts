@@ -208,9 +208,9 @@ describe("1. incentive amount readiness", () => {
 });
 
 describe("2. reimbursement readiness", () => {
-  it("reports SOURCE_MISSING when payroll reads a column the claim table does not have", async () => {
-    // This is the live production condition: payrollCalculate reads claim_amount, which does
-    // not exist. The probe returns "column absent" for that one lookup.
+  it("reports SOURCE_MISSING when amount_approved does not exist on the claim table", async () => {
+    // payrollCalculate.service.ts was fixed to read amount_approved.
+    // Simulate the probe returning "column absent" for amount_approved.
     rules = [
       { match: /COLUMN_NAME = \?[\s\S]*$/, rows: [{ c: 0 }] },
       { match: /information_schema\.TABLES/, rows: [{ c: 1 }] },

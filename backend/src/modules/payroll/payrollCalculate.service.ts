@@ -6,7 +6,8 @@ import { missingTdsConfigKeys } from "./statutory-regime.js";
 // The closed-run set was `["locked", "disbursed"]`, which matched no row in
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
-import { isProfessionalTaxExempt } from "./professional-tax-states.js";
+// PT removed 2026-09-11 per user decision — professional-tax-states.ts is no longer
+// consumed here; kept in the tree for historical reference only, not deleted.
 import {
   EMPLOYMENT_END_DATE_SELECT,
   employmentWindowPredicate,
@@ -465,56 +466,19 @@ export function calculateTds(
 // ─── Professional Tax from Slab ───────────────────────────────────────────────
 
 /**
- * Look up PT amount for a given state and monthly income from pt_slab_master.
- * Falls back to 200 if no matching slab is found.
+ * PT removed 2026-09-11 per user decision — full company-wide removal across all
+ * states. This previously looked up pt_amount from pt_slab_master (and consulted
+ * professional-tax-states.ts for genuinely-exempt states vs configuration gaps).
+ * That table is kept for historical reference only (additive-only rule — nothing
+ * dropped), but is no longer queried for live calculation: this always resolves
+ * to 0 now, unconditionally, for every state. Signature kept unchanged for API/
+ * caller shape compatibility (ats/salary.calculator.ts, running-salary.service.ts,
+ * payroll-compliance's own copy).
  */
 export async function getPtFromSlab(
-  stateCode: string,
-  monthlyIncome: number
+  _stateCode: string,
+  _monthlyIncome: number
 ): Promise<number> {
-  // Case-insensitive match on state_code (abbreviation) OR state_name (full name)
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT pt_amount FROM pt_slab_master
-      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?))
-        AND is_active = 1
-        AND income_from <= FLOOR(?)
-        AND (income_to IS NULL OR income_to >= FLOOR(?))
-      ORDER BY income_from DESC
-      LIMIT 1`,
-    [stateCode, stateCode, monthlyIncome, monthlyIncome]
-  );
-  const row = (rows as Array<{ pt_amount: number }>)[0];
-  if (row) return Number(row.pt_amount);
-
-  const [anyRows] = await db.execute<RowDataPacket[]>(
-    `SELECT 1 FROM pt_slab_master
-      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?)) AND is_active = 1
-      LIMIT 1`,
-    [stateCode, stateCode]
-  );
-
-  if ((anyRows as RowDataPacket[]).length === 0) {
-    // No slab rows for this state. That means one of two very different things,
-    // and treating them alike is how an under-deduction hides:
-    //
-    //   the state levies no PT   -> 0 is the correct answer. Uttar Pradesh and
-    //                               Delhi are in this position and account for
-    //                               831 employees.
-    //   nobody configured it yet -> 0 is an under-deduction, and the shortfall
-    //                               is the employer's liability. Punjab levies
-    //                               PT and has no rows here.
-    //
-    // The table cannot tell them apart, so the exempt states are named
-    // explicitly and anything else is reported as the configuration gap it is.
-    if (isProfessionalTaxExempt(stateCode)) return 0;
-    throw new Error(
-      `Professional tax is not configured for state "${stateCode}". Add its slabs to ` +
-      `pt_slab_master, or record the state as PT-exempt if it levies none. ` +
-      `No amount is assumed, because zero would be an under-deduction if the state does levy PT.`,
-    );
-  }
-
-  // State has slabs but the income falls below the lowest bracket → genuinely 0.
   return 0;
 }
 
@@ -586,36 +550,21 @@ interface StatutoryRow {
 }
 
 /**
- * Professional tax for one employee.
+ * PT removed 2026-09-11 per user decision — full company-wide removal.
  *
- * PT is levied by the STATE. An employee whose branch has no state therefore
- * has no determinable liability, and no organisation-wide amount could be
- * correct for them.
- *
- * This previously fell back to a hardcoded 200 — a number nobody configured;
- * statutory_config has never held a professional_tax key. In the 2026-03 run
- * alone that deducted ₹200 from 172 employees whose branch had no state
- * (₹34,400), while employees in Uttar Pradesh and Delhi — states with no
- * professional tax at all — correctly paid nothing.
- *
- * Stopping and naming the branch is recoverable in a single edit. Silently
- * deducting from someone who owes nothing is not.
- *
- * Where the state IS known, getPtFromSlab resolves it, including returning 0 for
- * states that levy no PT. That path was always correct and is unchanged.
+ * This used to throw when an employee's branch had no state (PT is a state
+ * levy, so an indeterminate state meant an indeterminate liability), which
+ * blocked that employee out of the run entirely via pt_blocked_employees. With
+ * PT removed there is nothing to determine and nothing to block on — this now
+ * always resolves to 0 for every employee, state known or not. Signature and
+ * the async contract are kept unchanged so every caller keeps compiling.
  */
 export async function resolveProfessionalTax(
-  employeeCode: string,
-  stateCode: string | null | undefined,
-  monthlyGross: number,
+  _employeeCode: string,
+  _stateCode: string | null | undefined,
+  _monthlyGross: number,
 ): Promise<number> {
-  if (!stateCode) {
-    throw new Error(
-      `Professional tax cannot be determined for ${employeeCode}: their branch has no state set. ` +
-      `PT is levied per state, so no default is applied. Set the branch's state and re-run.`,
-    );
-  }
-  return getPtFromSlab(stateCode, monthlyGross);
+  return 0;
 }
 
 /**
@@ -640,11 +589,13 @@ export function buildStatutoryRow(statConfig: Record<string, number>): Statutory
     esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
     esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
     pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
-    // No `?? 200`. Professional tax is a state levy with no sensible
-    // organisation-wide default, and statutory_config has never held this key —
-    // that constant was a number nobody approved. resolveProfessionalTax stops
-    // the run rather than guessing.
-    professional_tax:  statConfig["professional_tax"]  ?? 0,
+    // PT removed 2026-09-11 per user decision — hardcoded 0 regardless of what
+    // statConfig carries, not just defaulted when absent. Kept for API shape
+    // compatibility (this field was already unconsumed by the calc call below,
+    // which uses the separately-resolved `professionalTax` variable, itself
+    // now always 0 via resolveProfessionalTax). A leftover statutory_config row
+    // must not be able to revive a PT deduction here.
+    professional_tax:  0,
   };
 }
 

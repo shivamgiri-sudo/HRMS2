@@ -3,7 +3,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Badge } from "@/components/ui/badge";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
@@ -269,7 +271,7 @@ export default function EmployeeJourney() {
             <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-4">
                 <Avatar className="h-20 w-20 border-4 border-slate-100">
-                  <AvatarImage src={profile.avatar_url || undefined} alt={profile.first_name} />
+                  <AuthedAvatarImage src={normalizeMediaUrl(profile.avatar_url)} alt={profile.first_name} />
                   <AvatarFallback className="text-lg font-bold">
                     {profile.first_name[0]}{profile.last_name[0]}
                   </AvatarFallback>

@@ -12,7 +12,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
-import { INDIA_STATES } from "@/data/indiaStatesCities";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 
 type QueueRow = {
   candidate_id: string;
@@ -159,7 +159,6 @@ const blankStatutory = {
   uan: "",
   pf_applicable: true,
   esi_applicable: false,
-  professional_tax_state: "",
   nominee_name: "",
   nominee_relationship: "",
   nominee_dob: "",
@@ -238,7 +237,6 @@ function seedStatutoryForm(saved: any, profile: OnboardingProfile) {
     ...row,
     epf_member: firstFilled(row.epf_member === "unknown" ? "" : row.epf_member, epfFromProfile) || "unknown",
     uan: firstFilled(row.uan, p.uan_number, p.epf_number),
-    professional_tax_state: firstFilled(row.professional_tax_state, p.present_state, p.permanent_state),
     nominee_name: firstFilled(row.nominee_name, p.nominee_name),
     nominee_relationship: firstFilled(row.nominee_relationship, p.nominee_relation),
     nominee_dob: toDateInput(firstFilled(row.nominee_dob, p.nominee_date_of_birth)),
@@ -543,7 +541,7 @@ export default function NativeJoiningControlRoom() {
 
         <OnboardingTabBar />
 
-        {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {error && <ErrorState title="Couldn't load joining queue" description={error} onRetry={() => void loadQueue()} className="mb-3" />}
         {message && <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
 
         <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
@@ -1091,21 +1089,6 @@ export default function NativeJoiningControlRoom() {
                         </select>
                       </Field>
                       <Field label="UAN"><TextInput form={statutoryForm} setForm={setStatutoryForm} name="uan" /></Field>
-                      {/* Professional tax is levied per state — a closed set, so a dropdown,
-                          not the free-text Input this used to be. */}
-                      <Field label="Professional Tax State">
-                        <select className="h-10 rounded border px-3" value={statutoryForm.professional_tax_state || ""} onChange={(e) => setStatutoryForm({ ...statutoryForm, professional_tax_state: e.target.value })}>
-                          <option value="">Select state</option>
-                          {INDIA_STATES.map((state) => (
-                            <option key={state} value={state}>{state}</option>
-                          ))}
-                          {/* A pre-filled value from an older free-text row may not be in the
-                              master list; keep it selectable rather than silently blanking it. */}
-                          {statutoryForm.professional_tax_state && !INDIA_STATES.includes(statutoryForm.professional_tax_state) && (
-                            <option value={statutoryForm.professional_tax_state}>{statutoryForm.professional_tax_state} (as recorded)</option>
-                          )}
-                        </select>
-                      </Field>
                       <Field label="Nominee Name"><TextInput form={statutoryForm} setForm={setStatutoryForm} name="nominee_name" /></Field>
                       <Field label="Nominee Relationship">
                         <select className="h-10 rounded border px-3" value={statutoryForm.nominee_relationship || ""} onChange={(e) => setStatutoryForm({ ...statutoryForm, nominee_relationship: e.target.value })}>

@@ -74,6 +74,10 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
       ROUND(AVG(cqa.quality_percentage), 2) as cq_7day_avg,
       (SELECT ROUND(AVG(quality_percentage), 2) FROM db_audit.call_quality_assessment
        WHERE User = ? AND Campaign LIKE 'INBOUND%' AND CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)) as cq_30day_avg,
+      (SELECT ROUND(AVG(quality_percentage), 2) FROM db_audit.call_quality_assessment
+       WHERE User = ? AND Campaign LIKE 'INBOUND%'
+         AND CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY)
+         AND CallDate < DATE_SUB(NOW(), INTERVAL 30 DAY)) as cq_prev30day_avg,
       ast.cq_clean,
       ar.rank_position,
       ps.total_agents,
@@ -105,7 +109,7 @@ export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): Q
 
   return {
     query: query.replace(/\n\s+/g, ' ').trim(),
-    params: [employeeCode, employeeCode, employeeCode, employeeCode]
+    params: [employeeCode, employeeCode, employeeCode, employeeCode, employeeCode]
   };
 }
 

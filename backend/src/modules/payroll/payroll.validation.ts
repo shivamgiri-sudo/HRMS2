@@ -11,6 +11,9 @@ export const netSalaryParamsSchema = z.object({
   esicEmployeePct: z.number().min(0).max(100).default(0.75),
   esicWageLimit: z.number().positive().default(21000),
   pfWageLimit: z.number().positive().default(15000),
+  // PT removed 2026-09-11 per user decision — full company-wide removal. This schema
+  // has no live route consumer (unused today), but the field is kept for API shape
+  // compatibility; real callers of calculateNetSalary now always pass 0.
   professionalTax: z.number().min(0).default(0),
   tds: z.number().min(0).default(0),
   basicPct: z.number().min(1).max(100).default(40),

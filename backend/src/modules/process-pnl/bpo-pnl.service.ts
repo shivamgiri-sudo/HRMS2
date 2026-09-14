@@ -14,7 +14,7 @@ import {
   type RevenueComponentInput,
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
-import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals } from "./pnl-actuals.service.js";
+import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -816,45 +816,6 @@ export function allocateBranchPools<T extends { amount: number }>(
     for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
   }
   return result;
-}
-
-/**
- * Approved per-employee cost-centre splits for the period, resolved to PROCESSES.
- *
- * Support staff who serve several cost centres are pooled at branch level today and spread by
- * the allocation driver, which is a reasonable guess and nothing more. Where finance has
- * recorded what someone actually splits across, the guess should not be used at all.
- *
- * The cost centre is mapped to a process by the same modal-employee rule the actuals use
- * (cost_centre_master.process_id is NULL on all 927 rows, so there is no FK to follow). A share
- * pointing at a cost centre with no derivable process is dropped HERE and left in the branch
- * pool by the caller, because posting it nowhere would quietly delete salary.
- */
-async function getApprovedCostCentreSplits(
-  period: string
-): Promise<Map<string, { processId: string; pct: number }[]>> {
-  const splits = new Map<string, { processId: string; pct: number }[]>();
-  if (!(await tableExists("employee_cost_centre_allocation"))) return splits;
-  const [year, month] = period.split("-").map(Number);
-  if (!year || !month) return splits;
-  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
-
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.employee_id, a.allocation_pct, pc.process_id
-       FROM employee_cost_centre_allocation a
-       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = a.cost_centre_id
-      WHERE a.status = 'approved'
-        AND a.effective_from <= ? AND (a.effective_to IS NULL OR a.effective_to >= ?)`,
-    [periodEnd, periodEnd]
-  );
-  for (const row of rows) {
-    if (!row.process_id) continue;
-    const key = String(row.employee_id);
-    const list = splits.get(key) ?? [];
-    list.push({ processId: String(row.process_id), pct: toNumber(row.allocation_pct) });
-    splits.set(key, list);
-  }
-  return splits;
 }
 
 /**
@@ -2219,13 +2180,34 @@ export const bpoPnlService = {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
     const before = await readExistingConfigRow("process_revenue_rule", id);
+
+    // This form is process-wide (no LOB picker), which historically left process_lob_id
+    // NULL -- invisible to every LOB-scoped reader (P&L LOB table, dataStatus), even though
+    // the rule itself was saved and approved. Every process today resolves to exactly one
+    // LOB (the system-created "Core / Unallocated" default), so auto-resolving to it here
+    // closes that gap at the source instead of requiring another manual DB relink later.
+    // If a process ever legitimately has more than one LOB, this intentionally leaves
+    // process_lob_id NULL rather than guessing which one -- same discipline as the manual
+    // fix this replaces.
+    let processLobId: string | null =
+      typeof payload.processLobId === "string" && payload.processLobId ? payload.processLobId : null;
+    if (!processLobId && payload.processId) {
+      const [lobRows] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM process_lob_master WHERE process_id = ? LIMIT 2",
+        [payload.processId]
+      );
+      if (lobRows.length === 1) {
+        processLobId = String(lobRows[0].id);
+      }
+    }
+
     await db.execute(
       `INSERT INTO process_revenue_rule
-        (id, process_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
+        (id, process_id, process_lob_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
          fx_to_inr, monthly_minimum_commitment, included_units, overage_rate, mandated_seats,
          quality_gate_pct, sla_gate_pct, effective_from, effective_to, status, approved_by, approved_at,
          approval_reference, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          contract_id=VALUES(contract_id), rule_name=VALUES(rule_name), billing_model=VALUES(billing_model),
          metric_key=VALUES(metric_key), rate_amount=VALUES(rate_amount), currency_code=VALUES(currency_code),
@@ -2234,10 +2216,12 @@ export const bpoPnlService = {
          quality_gate_pct=VALUES(quality_gate_pct), sla_gate_pct=VALUES(sla_gate_pct),
          effective_from=VALUES(effective_from), effective_to=VALUES(effective_to), status=VALUES(status),
          approved_by=VALUES(approved_by), approved_at=VALUES(approved_at),
-         approval_reference=VALUES(approval_reference), updated_by=VALUES(updated_by)`,
+         approval_reference=VALUES(approval_reference), updated_by=VALUES(updated_by),
+         process_lob_id=COALESCE(process_lob_id, VALUES(process_lob_id))`,
       [
         id,
         payload.processId,
+        processLobId,
         payload.contractId ?? null,
         payload.ruleName,
         payload.billingModel,

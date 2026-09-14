@@ -14,7 +14,7 @@ export default function ChangePassword() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { completePasswordChange } = useAuth();
+  const { signOut } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -33,9 +33,17 @@ export default function ChangePassword() {
     setLoading(true);
     try {
       await hrmsApi.post("/api/auth/change-password", { currentPassword, newPassword });
-      completePasswordChange();
-      toast({ title: "Password updated", description: "Verify your login to continue." });
-      navigate("/two-factor", { replace: true });
+      // The token that got us onto this page is scoped to password_change only
+      // (SEC-06, authMiddleware.ts) and is never upgraded — it still carries that
+      // scope after this call succeeds, so every other endpoint keeps 403'ing
+      // MUST_CHANGE_PASSWORD and ProtectedRoute keeps bouncing back here no matter
+      // where the app tries to go next. The backend's own design intent (see
+      // auth.service.ts changePassword: "MFA still runs on the *next* login") is a
+      // fresh login, not a seamless continuation, so drop the now-useless token and
+      // send the user to sign in for real with the password they just set.
+      await signOut();
+      toast({ title: "Password updated", description: "Please sign in with your new password." });
+      navigate("/auth", { replace: true });
     } catch (error) {
       toast({
         title: "Password not updated",

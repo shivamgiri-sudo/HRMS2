@@ -127,17 +127,44 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     requiresScope:     true,
   },
   {
-    // Active employee: most recent attendance record (within 3 days) is 'absent', 3+ of
-    // the last 5 recorded attendance days are 'absent', no leave request (approved or
-    // pending) covers the last 10 days, and no exit_request row exists at all — i.e. they
-    // simply stopped showing up with nothing filed. See awol-detection.service.ts for the
-    // exact query. Deliberately distinct from bi.service.ts::getAttritionRiskSignal(),
-    // which is a read-only dashboard signal (no leave/exit exclusion, creates no task).
+    // Active employee absent on SEVEN consecutive recorded attendance days, with no leave
+    // request (approved or pending) covering the window and no exit_request row at all — i.e.
+    // they simply stopped showing up with nothing filed. See awol-detection.service.ts for the
+    // exact query. Deliberately distinct from bi.service.ts::getAttritionRiskSignal(), which is
+    // a read-only dashboard signal (no leave/exit exclusion, creates no task).
+    //
+    // Owner ruling 2026-09-12: seven days, and the REPORTING MANAGER decides. The threshold was
+    // 3-of-5 with the most recent record within 3 days, and the item went to the hr role. Both
+    // changed: this item is now addressed to the specific reporting manager's user id, because
+    // only their confirmation may turn a no-show into an absconding. The system never marks it
+    // by itself.
     itemType:          "AWOL_SUSPECTED",
-    displayName:       "Employee possibly AWOL",
+    displayName:       "Employee possibly absconded — confirm or reject",
     module:            "ATTENDANCE",
     entityType:        "employee",
-    defaultAssigneeRoles: ["hr", "branch_head"],
+    // Retained as the FALLBACK audience for an employee with no reporting manager on file, and
+    // for scope-based visibility. The live item carries assigned_to_user_id for the manager.
+    defaultAssigneeRoles: ["manager", "hr", "branch_head"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/employees/{entityId}/360",
+    requiresScope:     true,
+  },
+  {
+    // The Payroll HR half of the same event. A separate item type, not a second assignee on
+    // the one above: createWorkItemIfNotExists dedupes on (entityType, entityId, itemType) with
+    // status='pending', so two items sharing AWOL_SUSPECTED for the same employee would collapse
+    // into one and only the first audience would ever see it.
+    //
+    // The two audiences also want different things. The manager must DECIDE. Payroll HR must
+    // KNOW, because an unconfirmed no-show is still being paid: nothing stops attendance capture
+    // or salary for someone who has stopped coming in until an exit exists with a last working
+    // day on it.
+    itemType:          "AWOL_PAYROLL_NOTICE",
+    displayName:       "Possible absconding — salary still running",
+    module:            "PAYROLL",
+    entityType:        "employee",
+    defaultAssigneeRoles: ["payroll", "payroll_head"],
     defaultPriority:   ACTION_PRIORITY.HIGH,
     defaultTtlHours:   48,
     deeplinkPattern:   "/employees/{entityId}/360",
@@ -303,6 +330,46 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     defaultTtlHours:   48,
     deeplinkPattern:   "/exit/command-center?resignationId={entityId}",
     requiresScope:     true,
+  },
+  // ── Exit: notice-period override (owner ruling 2026-09-12) ───────────────────
+  // 30 days is the company standard and the reporting manager may change it. These three carry
+  // that change to the people who bear its consequences. Three separate item types for one event
+  // because createWorkItemIfNotExists dedupes on (entityType, entityId, itemType) among pending
+  // items — one shared type would collapse into a single row and only one audience would be told.
+  {
+    itemType:          "NOTICE_PERIOD_OVERRIDE_OPS",
+    displayName:       "Notice period overridden on an exit",
+    module:            "EXIT",
+    entityType:        "exit_request",
+    defaultAssigneeRoles: ["process_manager", "manager"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/exit-management?id={entityId}",
+    requiresScope:     true,
+  },
+  {
+    itemType:          "NOTICE_PERIOD_OVERRIDE_OPS_HEAD",
+    displayName:       "Notice period overridden on an exit (Operations)",
+    module:            "EXIT",
+    entityType:        "exit_request",
+    defaultAssigneeRoles: ["operations_head"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/exit-management?id={entityId}",
+    requiresScope:     false,
+  },
+  {
+    // Payroll's stake is direct: notice_period_days drives the notice-shortfall recovery
+    // deducted from the final settlement, so this figure changing changes what is paid.
+    itemType:          "NOTICE_PERIOD_OVERRIDE_PAYROLL",
+    displayName:       "Notice period overridden — affects final settlement",
+    module:            "PAYROLL",
+    entityType:        "exit_request",
+    defaultAssigneeRoles: ["payroll", "payroll_head"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/full-final?exitId={entityId}",
+    requiresScope:     false,
   },
   {
     itemType:          "FF_CLEARANCE_PENDING",

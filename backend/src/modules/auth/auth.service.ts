@@ -798,7 +798,14 @@ export const authService = {
         [payload.challengeId, payload.sub]
       );
       if (claim.affectedRows !== 1) {
-        throw Object.assign(new Error('Pre-auth challenge not found, expired, or already consumed'), { statusCode: 401 });
+        // Same generic message for all three failure reasons (not found / expired /
+        // already consumed), deliberately -- an attacker probing challengeIds must not
+        // be able to distinguish "wrong id" from "right id, already used" from the
+        // response. Wording (not behavior) reordered so the phrase this file's own
+        // auth-security.test.ts checks for ("Pre-auth challenge already consumed")
+        // appears verbatim -- that test was added by the same SEC-07 commit as the
+        // atomic claim above but checked for text this message didn't literally contain.
+        throw Object.assign(new Error('Pre-auth challenge already consumed, expired, or not found'), { statusCode: 401 });
       }
     }
 

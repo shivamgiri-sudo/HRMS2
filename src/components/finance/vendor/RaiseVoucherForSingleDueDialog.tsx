@@ -19,6 +19,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -135,14 +136,18 @@ export function RaiseVoucherForSingleDueDialog({ payment, open, onOpenChange, on
 
             <div>
               <Label>Bank Account</Label>
-              <Select value={bankAccountId} onValueChange={setBankAccountId}>
-                <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Which account pays this" /></SelectTrigger>
-                <SelectContent>
-                  {(bankAccountsQuery.data ?? []).map((a: any) => (
-                    <SelectItem key={a.id} value={a.id}>{a.account_name} — {a.account_number_masked}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                id="raise-voucher-bank-account"
+                aria-label="Bank Account"
+                loading={bankAccountsQuery.isLoading}
+                options={(bankAccountsQuery.data ?? []).map((a: any) => ({
+                  value: a.id, label: a.account_name, hint: a.account_number_masked ?? undefined,
+                }))}
+                value={bankAccountId}
+                onChange={setBankAccountId}
+                placeholder="Which account pays this"
+                searchPlaceholder="Type an account name…"
+              />
             </div>
 
             <div>

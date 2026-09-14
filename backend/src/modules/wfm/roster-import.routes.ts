@@ -9,6 +9,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   createImportBatch,
   getImportBatch,
+  listImportBatches,
   getImportRows,
   commitImportBatch,
   updateImportRow,
@@ -21,6 +22,15 @@ const upload = multer({
 });
 
 const WFM_ROLES = ['wfm', 'admin', 'super_admin'];
+
+// Read-only viewing endpoints (view/table, adherence-trend, status-summary) are reachable from
+// /wfm/roster-view, which rbacPageMatrix.ts grants WFM_ROSTER page access to manager,
+// process_manager, team_leader and tl as well as wfm/admin/super_admin — but this file's shared
+// WFM_ROLES (upload/commit/branches, which SHOULD stay wfm/admin/super_admin-only) was also
+// guarding these pure-read routes, so every one of those page-granted roles hit a page they could
+// navigate to and immediately got a 403 "Access denied" banner the moment the table query fired.
+// Confirmed live 2026-09-11. Keep WFM_ROLES itself unchanged for the write endpoints below.
+const WFM_VIEW_ROLES = [...WFM_ROLES, 'manager', 'process_manager', 'team_leader', 'tl'];
 
 export const rosterImportRouter = Router();
 
@@ -116,6 +126,29 @@ rosterImportRouter.get(
   }
 );
 
+// ── GET /api/wfm/roster-imports ───────────────────────────────────────────
+// List batches so any WFM-role user can find one to open/commit, even one they did not upload
+// themselves — previously there was no way to discover a batch's id at all (see listImportBatches
+// docblock). Defaults to open (non-terminal) batches; pass ?status=COMMITTED,FAILED for history.
+rosterImportRouter.get(
+  '/',
+  requireRole(...WFM_ROLES),
+  async (req, res) => {
+    try {
+      const statusParam = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const status = statusParam
+        ? statusParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+        : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
+      const batches = await listImportBatches({ status, limit });
+      res.json({ batches });
+    } catch (err: any) {
+      console.error('[roster-import] GET list error:', err);
+      res.status(500).json({ error: 'Failed to list import batches' });
+    }
+  }
+);
+
 // ── GET /api/wfm/roster-imports/:batchId ─────────────────────────────────
 rosterImportRouter.get(
   '/:batchId',
@@ -193,11 +226,9 @@ rosterImportRouter.post(
       }
       const authUser = (req as any).authUser;
       const committedBy = authUser?.id;
-      // Maker-checker (owner ruling 2026-08-22): the rule exists so a plain WFM/team-leader
-      // uploader can't wave their own roster through — it needs a WFM head's sign-off. It was
-      // never meant to stop a super_admin, who has no separate "checker" above them in this flow
-      // and is trusted to upload and approve in one step (this is also exactly the account used to
-      // test the roster-import fixes shipped this week).
+      // Maker-checker removed (owner ruling 2026-09-11) — any uploader with WFM_ROLES access can
+      // now commit their own batch. committerIsSuperAdmin is still computed and passed through
+      // since commitImportBatch's signature still accepts it as a (now no-op) option.
       const committerIsSuperAdmin = Array.isArray(authUser?.roles)
         ? authUser.roles.includes('super_admin')
         : authUser?.role === 'super_admin';
@@ -298,7 +329,7 @@ rosterImportRouter.get(
 // The roster as a table: one row per employee, dates across, with the context needed to read it
 // (reporting manager, process, branch, cost centre) and filters for branch / process / cost centre.
 // Pass includeAdherence=true for color-coded adherence status per cell (GREEN/AMBER/RED/BROWN).
-rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res) => {
+rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
   try {
     const { getRosterView } = await import('./roster-view.service.js');
     const q = req.query as Record<string, string | undefined>;
@@ -326,7 +357,7 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res
 
 // ── GET /api/wfm/roster-imports/adherence-trend/:employeeId ───────────────
 // Historical adherence trend for a single employee over past N months.
-rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_ROLES), async (req, res) => {
+rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
   try {
     const { getEmployeeAdherenceTrend } = await import('./roster-view.service.js');
     const { employeeId } = req.params;
@@ -342,7 +373,7 @@ rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_ROLES)
 // ── GET /api/wfm/roster-imports/status-summary ────────────────────────────
 // "Has the roster actually been published, and has anyone acknowledged it" — for a branch/process/
 // date-range scope. See roster-view.service.ts::getRosterStatusSummary for why this exists.
-rosterImportRouter.get('/status-summary', requireRole(...WFM_ROLES), async (req, res) => {
+rosterImportRouter.get('/status-summary', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
   try {
     const { getRosterStatusSummary } = await import('./roster-view.service.js');
     const q = req.query as Record<string, string | undefined>;

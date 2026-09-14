@@ -17,9 +17,9 @@ const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
  * payslip that had one. Every other head falls through to Other Deductions by
  * design, so a new head is never silently hidden.
  */
-const TILED_DEDUCTIONS = new Set(["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV",
+const TILED_DEDUCTIONS = new Set(["PF_EMP", "ESIC_EMP", "TDS", "LWP", "ADV",
   // Component codes the payroll engine writes to salary_prep_line_component
-  "PF_EMPLOYEE", "ESIC_EMPLOYEE", "PROFESSIONAL_TAX", "LWP_DEDUCTION", "ADVANCE_RECOVERY", "LOAN_EMI"]);
+  "PF_EMPLOYEE", "ESIC_EMPLOYEE", "LWP_DEDUCTION", "ADVANCE_RECOVERY", "LOAN_EMI"]);
 
 function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: string }) {
   const [open, setOpen] = useState(false);
@@ -171,7 +171,6 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                   {[
                     { label: "PF (Employee)", value: detail.pf_employee },
                     { label: "ESIC", value: detail.esic_employee },
-                    { label: "Prof. Tax", value: detail.professional_tax },
                     { label: "TDS", value: detail.tds },
                     { label: "LWP Deduction", value: detail.lwp_deduction },
                     { label: "Advance Recovery", value: detail.advance_recovery },

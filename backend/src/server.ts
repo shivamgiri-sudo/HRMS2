@@ -9,6 +9,7 @@ import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check
 // instead of running migrations. Use `npm run migrate` to apply migrations separately.
 const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
+import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -29,6 +30,10 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // registration silently never runs in the WORKERS_PROCESS=external topology).
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
+// Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly "true" —
+// see intervention-recommendation.cron.ts's header for why this engine existed
+// but never ran before this scheduler was added.
+import { startInterventionRecommendationScheduler } from "./modules/analytics/intervention-recommendation.cron.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
@@ -210,6 +215,8 @@ function startServer() {
         // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
         // header for the dependency-timing evidence behind its default run time.
         startManagerDailyBriefScheduler();
+        // No-op unless INTERVENTION_RECOMMENDATIONS_ENABLED=true.
+        startInterventionRecommendationScheduler();
         // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
         // populates integration_biometric_daily, and so the source every non-Operations
         // employee's payroll attendance is built from.
@@ -237,6 +244,10 @@ function startServer() {
         startPerformanceScorecardSnapshotScheduler();
         startPerformanceIngestionScheduler();
         initBusinessActionSyncJobs();
+        // Keeps employee_master_snapshot (the 73-column legacy-format employee export,
+        // including db_bill fallback enrichment) fresh every 30 minutes so the report can
+        // read a plain table instead of recomputing two cross-database fallbacks on request.
+        startEmployeeMasterSnapshotScheduler();
         startBreachSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from

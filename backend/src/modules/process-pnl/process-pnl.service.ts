@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
-import { getInvoicedRevenueActuals, OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
 import type {
   PnlQueryFilters,
@@ -755,31 +755,87 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
 
   if (runRows.length > 0) {
     const runIds = runRows.map((row) => String(row.id));
-    const rows = await queryRows<RowDataPacket>(
-      `SELECT
-          e.process_id,
-          COUNT(DISTINCT spl.employee_id) AS headcount,
-          SUM(${grossExpr}) AS gross_total,
-          SUM(${pfExpr}) AS pf_employer_total,
-          SUM(${esicExpr}) AS esic_employer_total,
-          SUM(${gratuityExpr}) AS gratuity_total,
-          SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_total
-        FROM salary_prep_line spl
-        JOIN employees e ON e.id = spl.employee_id
-        WHERE spl.run_id IN (${placeholders(runIds)})
-          AND e.process_id IN (${placeholders(processIds)})
-        GROUP BY e.process_id`,
-      [...runIds, ...processIds]
-    );
 
-    for (const row of rows) {
-      map.set(String(row.process_id), {
-        total: toNumber(row.loaded_total),
-        gross: toNumber(row.gross_total),
-        pfEmployer: toNumber(row.pf_employer_total),
-        esicEmployer: toNumber(row.esic_employer_total),
-        gratuity: toNumber(row.gratuity_total),
-        headcount: toNumber(row.headcount),
+    // Per-employee, not pre-aggregated: a support employee approved for a cost-centre split
+    // (Finance > Billability > Support cost splits) must have their loaded cost divided across
+    // every process their split resolves to, not dumped 100% onto their home e.process_id. This
+    // mirrors bpo-pnl.service.ts's getActualPeopleCost exactly — the P&L statement tab already
+    // gets this right; the Revenue/Costs/GRN tabs (this function) did not, silently disagreeing
+    // with the statement whenever a split employee existed. Not restricted to `processIds` here
+    // because a split target can land outside the caller's current filter scope.
+    const [employeeRows, splits] = await Promise.all([
+      queryRows<RowDataPacket>(
+        `SELECT
+            spl.employee_id,
+            e.process_id AS home_process_id,
+            SUM(${grossExpr}) AS gross_total,
+            SUM(${pfExpr}) AS pf_employer_total,
+            SUM(${esicExpr}) AS esic_employer_total,
+            SUM(${gratuityExpr}) AS gratuity_total,
+            SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_total
+          FROM salary_prep_line spl
+          JOIN employees e ON e.id = spl.employee_id
+          WHERE spl.run_id IN (${placeholders(runIds)})
+            AND e.process_id IS NOT NULL
+          GROUP BY spl.employee_id, e.process_id`,
+        runIds
+      ),
+      getApprovedCostCentreSplits(period),
+    ]);
+
+    interface Bucket { total: number; gross: number; pfEmployer: number; esicEmployer: number; gratuity: number; headcount: Set<string> }
+    const buckets = new Map<string, Bucket>();
+    const bucketFor = (processId: string): Bucket => {
+      let b = buckets.get(processId);
+      if (!b) { b = { total: 0, gross: 0, pfEmployer: 0, esicEmployer: 0, gratuity: 0, headcount: new Set() }; buckets.set(processId, b); }
+      return b;
+    };
+
+    for (const row of employeeRows) {
+      const employeeId = String(row.employee_id);
+      const homeProcessId = String(row.home_process_id);
+      const loaded = toNumber(row.loaded_total);
+      const gross = toNumber(row.gross_total);
+      const pf = toNumber(row.pf_employer_total);
+      const esic = toNumber(row.esic_employer_total);
+      const gratuity = toNumber(row.gratuity_total);
+
+      // Headcount is a staffing count, not a cost split — an employee posted to two processes
+      // via a split is still one person, counted once, on their home process (matches how
+      // activeHeadcount is computed elsewhere in this file: one row in `employees` per person).
+      bucketFor(homeProcessId).headcount.add(employeeId);
+
+      const split = splits.get(employeeId);
+      if (!split || split.length === 0) {
+        const b = bucketFor(homeProcessId);
+        b.total += loaded; b.gross += gross; b.pfEmployer += pf; b.esicEmployer += esic; b.gratuity += gratuity;
+        continue;
+      }
+      const splitTotalPct = split.reduce((sum, s) => sum + s.pct, 0);
+      if (splitTotalPct <= 0) {
+        const b = bucketFor(homeProcessId);
+        b.total += loaded; b.gross += gross; b.pfEmployer += pf; b.esicEmployer += esic; b.gratuity += gratuity;
+        continue;
+      }
+      for (const share of split) {
+        const fraction = share.pct / splitTotalPct;
+        const b = bucketFor(share.processId);
+        b.total += loaded * fraction;
+        b.gross += gross * fraction;
+        b.pfEmployer += pf * fraction;
+        b.esicEmployer += esic * fraction;
+        b.gratuity += gratuity * fraction;
+      }
+    }
+
+    for (const [processId, b] of buckets) {
+      map.set(processId, {
+        total: b.total,
+        gross: b.gross,
+        pfEmployer: b.pfEmployer,
+        esicEmployer: b.esicEmployer,
+        gratuity: b.gratuity,
+        headcount: b.headcount.size,
         status: "actual",
         // The newest run of the month still identifies the figure's provenance; runRows is
         // ordered created_at DESC so [0] is that one, as it was when only one was read.

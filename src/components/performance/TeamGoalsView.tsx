@@ -3,7 +3,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -187,7 +188,7 @@ export function TeamGoalsView({ managerId }: TeamGoalsViewProps) {
               <div key={employee.id} className="space-y-3">
                 <div className="flex items-center gap-3 pb-2 border-b">
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={normalizeMediaUrl(employee.avatar_url)} />
+                    <AuthedAvatarImage src={normalizeMediaUrl(employee.avatar_url)} />
                     <AvatarFallback>{employee.first_name[0]}{employee.last_name[0]}</AvatarFallback>
                   </Avatar>
                   <div>

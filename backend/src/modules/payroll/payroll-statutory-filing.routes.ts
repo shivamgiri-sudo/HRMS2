@@ -164,7 +164,10 @@ payrollStatutoryFilingRouter.post(
       // (1 Apr 2026). Chosen by the period being filed, not by today's date, so
       // a late filing for an earlier month still records the form it was due on.
       { type: quarterlyTdsFilingType(month), amount: Number(amounts.tds_due) || null },
-      { type: "PT",      amount: Number(amounts.pt_due)   || null },
+      // PT removed 2026-09-11: Professional Tax was explicitly discontinued
+      // company-wide by stakeholder decision. No new PT filing obligation is
+      // auto-created for any month going forward. amounts.pt_due is left in the
+      // SELECT above only as a harmless leftover; nothing reads it now.
     ];
 
     let created = 0;
@@ -261,7 +264,11 @@ payrollStatutoryFilingRouter.post(
     if (!filing_month || !filing_type || !due_date) {
       return res.status(400).json({ success: false, message: "filing_month, filing_type, due_date are required" });
     }
-    const validTypes = ["EPF", "ESIC", "PT", "TDS_24Q", "TDS_138", "LWF"];
+    // PT removed 2026-09-11: Professional Tax discontinued company-wide by
+    // explicit stakeholder decision. No new filing record of type PT may be
+    // manually created either. Existing historical PT rows are left as-is
+    // (additive-only DB rule — the ENUM value itself is not dropped).
+    const validTypes = ["EPF", "ESIC", "TDS_24Q", "TDS_138", "LWF"];
     if (!validTypes.includes(filing_type)) {
       return res.status(400).json({ success: false, message: `filing_type must be one of: ${validTypes.join(", ")}` });
     }

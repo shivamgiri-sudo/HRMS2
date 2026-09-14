@@ -14,6 +14,9 @@ import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
 import { recordManagerChange } from "../management/manager-attribution.service.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { upsertOpenWorkItem } from "../../shared/workItem.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -51,6 +54,79 @@ async function notifyManagerOfResignation(employeeId: string, exitRequestId: str
 
 function normalizeStatus(status: string) {
   return status === "exit_confirmed" ? "exited" : status;
+}
+
+/**
+ * Tell the people who carry the consequences that a notice period was changed from policy.
+ *
+ * One work item per audience, each with its own item_type. createWorkItemIfNotExists dedupes on
+ * (entityType, entityId, itemType) among pending items, so sharing a type across audiences would
+ * collapse them into one and only the first would ever be told — the same trap the absconding
+ * alert pair documents.
+ *
+ * Non-throwing by construction: the caller invokes this post-commit and the exit stands whether
+ * or not anybody is notified. Failures are logged by the caller.
+ */
+async function notifyNoticePeriodOverride(
+  exitRequestId: string,
+  employeeId: string,
+  previousDays: number,
+  newDays: number,
+  actorUserId: string,
+): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
+            e.employee_code, e.branch_id
+       FROM employees e WHERE e.id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const emp = rows[0] as { employee_name?: string; employee_code?: string; branch_id?: string } | undefined;
+  const who = emp?.employee_name ?? emp?.employee_code ?? employeeId;
+
+  const description =
+    `Notice period changed from ${previousDays} to ${newDays} day(s) on the exit for ${who}. ` +
+    `The company standard is 30 days. This figure sets the notice window and drives the ` +
+    `notice-shortfall recovery deducted from the final settlement, so the change affects what ` +
+    `this employee is paid.`;
+
+  // Same event, three audiences, three item types — see the note above on dedup.
+  const targets: Array<{ itemType: string; role: string; moduleCode: string }> = [
+    { itemType: "NOTICE_PERIOD_OVERRIDE_OPS", role: "process_manager", moduleCode: "exit" },
+    { itemType: "NOTICE_PERIOD_OVERRIDE_OPS_HEAD", role: "operations_head", moduleCode: "exit" },
+    { itemType: "NOTICE_PERIOD_OVERRIDE_PAYROLL", role: "payroll", moduleCode: "payroll" },
+  ];
+
+  for (const t of targets) {
+    try {
+      await upsertOpenWorkItem({
+        itemType: t.itemType,
+        title: `Notice period overridden (${previousDays} → ${newDays} days): ${who}`,
+        description,
+        moduleCode: t.moduleCode,
+        entityType: "exit_request",
+        entityId: exitRequestId,
+        assignedToRole: t.role,
+        priority: "high",
+      });
+    } catch (err) {
+      // One unreachable audience must not stop the others being told.
+      logger.warn({ err, itemType: t.itemType, exitRequestId }, '[exit] notice-override alert not raised');
+    }
+  }
+
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: "EXIT_NOTICE_PERIOD_OVERRIDDEN",
+    module_key: "exit",
+    entity_type: "exit_request",
+    entity_id: exitRequestId,
+    change_summary: {
+      employee_id: employeeId,
+      previous_notice_period_days: previousDays,
+      new_notice_period_days: newDays,
+      company_standard_days: 30,
+    },
+  });
 }
 
 /**
@@ -182,8 +258,24 @@ export const exitService = {
       exitType: string;
       exitSubType?: string | null;
       exitReasonCategory?: string | null;
+      /**
+       * Last date the employee actually worked. Required for absconding/abandonment.
+       *
+       * This IS their last working day — the 7-day no-show window is how long the company waits
+       * before deciding, not time they are paid for (owner ruling 2026-09-12).
+       */
+      abscondingSince?: string | null;
       reason?: string | null;
       noticePeriodDays?: number;
+      /**
+       * Who raised this exit: 'employee' | 'manager' | 'hr' — the vocabulary
+       * exit_request.initiated_by was declared with (sql/011_exit_management.sql).
+       *
+       * Supplied by the route, which is the only layer that knows whether the caller is
+       * acting on themselves or on someone else. Defaults to 'employee' so no existing
+       * caller changes behaviour by omitting it.
+       */
+      initiatedBy?: "employee" | "manager" | "hr";
     },
     userId: string
   ): Promise<ExitRequest> {
@@ -195,23 +287,94 @@ export const exitService = {
     );
     if (openRows.length) throw new Error("An active exit request already exists for this employee");
 
+    /**
+     * Notice period at creation.
+     *
+     * Company policy (owner ruling 2026-09-12): 30 days for everyone by default, which the
+     * reporting manager may change. Before this, notice_period_days was hardcoded to 0 on every
+     * exit ever created — no UI collected it and the schema defaulted it — so the notice window,
+     * the "days remaining" figures and the F&F notice-shortfall calculation all had nothing to
+     * work from.
+     *
+     * Read through getPolicyValue rather than hardcoded, so the company default is
+     * effective-dated and changeable from business_policy_config without a deploy. It carries
+     * "30" as its fallback and swallows lookup failures, so an unseeded or unreachable config
+     * table yields the policy value rather than dropping back to a silent 0.
+     *
+     * An explicitly supplied value always wins, INCLUDING 0. That is what makes the involuntary
+     * branch below expressible: someone who absconded or was terminated serves no notice, and a
+     * 30-day default on those would compute a notice shortfall — and therefore a recovery
+     * deducted from their settlement — for notice they were never asked to serve.
+     */
+    const noticePeriodDays =
+      input.noticePeriodDays ??
+      (String(input.exitType).trim().toLowerCase() === "voluntary"
+        ? Number(await getPolicyValue("exit", "notice", "default_notice_days", "30")) || 30
+        : 0);
+
+    /**
+     * For an absconding, the last worked date IS the last working day.
+     *
+     * The form auto-filled the proposed LWD as abscondingSince + 7 days and labelled it "grace
+     * period ends". Owner ruling 2026-09-12: those 7 days are the company's decision window, not
+     * paid employment. last_working_day_proposed feeds payroll's employment-end-date resolver,
+     * which prorates the final month and caps payable days — so the +7 was paying every
+     * absconding leaver for a week they did not work, and would later stamp
+     * employees.date_of_exit a week late as well.
+     *
+     * Overriding exitDate here rather than trusting the caller keeps the two in step no matter
+     * which client raised the exit: the API and the form cannot disagree about when an absconder
+     * stopped being employed.
+     */
+    const isAbsconding = ["absconding", "abandonment"].includes(
+      String(input.exitSubType ?? "").trim().toLowerCase()
+    );
+    const abscondingSince = input.abscondingSince ?? null;
+    const effectiveExitDate = isAbsconding && abscondingSince ? abscondingSince : input.exitDate;
+
     const id = randomUUID();
+    // submitted_at is written here, and NOT left to a stage transition.
+    //
+    // The row is created already at status='submitted', so it never *transitions* into that
+    // state and updateExitStatus's stageMap — which stamps manager_actioned_at,
+    // hr_actioned_at, admin_actioned_at and exit_confirmed_at — has no 'submitted' entry and
+    // never could fire one. The column was therefore NULL on every exit_request ever created,
+    // with three consequences that all read as data rather than as a missing write:
+    //
+    //   - ff-compute.service.ts derives served notice as
+    //     DATEDIFF(last_working_day, er.submitted_at). Against NULL that yields NULL, so
+    //     notice shortfall could never be computed from real dates.
+    //   - ai-account.service.ts reports "Submitted: Not yet submitted" to an employee asking
+    //     about the resignation they had in fact already submitted.
+    //   - listExitRequests papers over it with `er.created_at AS submitted_at`, which is why
+    //     the list screens looked correct while the column underneath was empty.
+    //
+    // NOW() rather than the created_at default so the two are independent: created_at is when
+    // the row was written, submitted_at is when the employee tendered. They coincide today,
+    // but a future draft→submitted path would need them to differ, and back-filling a
+    // meaning onto created_at at that point would be worse.
     await db.execute(
       `INSERT INTO exit_request
          (id, employee_id, initiated_by, initiated_by_user_id, exit_type, exit_sub_type,
-          exit_reason_category, last_working_day_proposed, resignation_reason, notice_period_days, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          exit_reason_category, absconding_since, last_working_day_proposed, resignation_reason,
+          notice_period_days, status, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         input.employeeId,
-        "employee",
+        // Was the string literal "employee", unconditionally — so an HR-raised termination or
+        // absconding exit was recorded as employee-initiated and was indistinguishable from a
+        // self-resignation on the record. initiated_by was declared for 'employee, manager, hr'
+        // and only ever held one of the three.
+        input.initiatedBy ?? "employee",
         userId,
         input.exitType,
         input.exitSubType ?? "resignation",
         input.exitReasonCategory ?? null,
-        input.exitDate,
+        abscondingSince,
+        effectiveExitDate,
         input.reason ?? null,
-        input.noticePeriodDays ?? 0,
+        noticePeriodDays,
         "submitted",
       ]
     );
@@ -272,7 +435,24 @@ export const exitService = {
      * if anything moved in between, instead of silently applying a transition the
      * caller never actually validated.
      */
-    expectedStatus?: string
+    expectedStatus?: string,
+    /**
+     * Notice terms agreed at this transition.
+     *
+     * These used to be collected by the UI and thrown away. NativeExitManagement's "Confirm &
+     * Advance" modal asks for a confirmed Last Working Day and a notice period, sends them as
+     * lastWorkingDayConfirmed / noticePeriodDays, and the route handler read only `status` and
+     * `remarks` — so HR filled the form in, saw "Updated to Accepted", and nothing was stored.
+     * exit_request.last_working_day_confirmed, notice_start_date and notice_end_date had no
+     * writer anywhere in the backend and were NULL on every row.
+     *
+     * Optional: omitting them leaves every notice column exactly as it was, so the plain
+     * status transitions (Notice, Confirm Exit, Revoke, bulk actions) are unaffected.
+     */
+    noticeTerms?: {
+      lastWorkingDayConfirmed?: string | null;
+      noticePeriodDays?: number | null;
+    }
   ): Promise<ExitRequest> {
     const existing = await this.getExitRequest(id);
     const nextStatus = normalizeStatus(status);
@@ -300,15 +480,77 @@ export const exitService = {
     // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
     // the mapper and the activation guard's exclusion list must stay in one place.
     const nextEmploymentStatus = employmentStatusForExit(exitRecord.exit_type, exitRecord.exit_sub_type);
+
+    // Notice terms supplied on this call, normalised. A blank string is not a date.
+    const confirmedLwdInput =
+      typeof noticeTerms?.lastWorkingDayConfirmed === "string" && noticeTerms.lastWorkingDayConfirmed.trim()
+        ? noticeTerms.lastWorkingDayConfirmed.trim().slice(0, 10)
+        : null;
+    const noticeDaysInput =
+      noticeTerms?.noticePeriodDays === null || noticeTerms?.noticePeriodDays === undefined
+        ? null
+        : Number(noticeTerms.noticePeriodDays);
+
     // Confirmed before proposed — the same precedence payroll's employment-end-date resolver
     // applies. Owner ruling 2026-08-16 (decision 1): the LWD written here IS the value payroll
     // reads, so employee master and payroll cannot disagree about when someone stopped being
     // paid. Writing `proposed` here while payroll preferred `confirmed` would put a leaver's
     // final day one value apart in two systems.
+    //
+    // The LWD being confirmed ON THIS CALL takes precedence over the stored one. Without that
+    // first term, confirming an LWD and marking the employee exited in a single request would
+    // write the new date into exit_request but stamp employees.date_of_exit from the stale
+    // value — reintroducing the exact two-systems-disagree split this precedence exists to
+    // prevent, on the one transition where it is unrecoverable.
     const lastWorkingDay =
+      confirmedLwdInput ??
       (exitRecord.last_working_day_confirmed as string | null) ??
       (exitRecord.last_working_day_proposed as string | null) ??
       new Date().toISOString().slice(0, 10);
+
+    // Notice columns, folded into the single status UPDATE below so they commit atomically
+    // with the transition that agreed them.
+    //
+    // notice_start_date is a FACT, not a policy choice: the day the resignation was tendered,
+    // i.e. DATE(submitted_at), falling back to DATE(created_at) for rows written before
+    // submitted_at was populated. COALESCE'd against the existing value so a start date, once
+    // recorded, is never moved by a later transition.
+    //
+    // notice_end_date prefers the confirmed LWD, which IS the last day of notice once HR and
+    // the employee have agreed it. Only when there is no confirmed LWD does it fall back to
+    // start + notice_period_days — the same arithmetic the readers already perform
+    // (manpower-risk.routes.ts computes days_remaining as
+    // notice_period_days - DATEDIFF(CURDATE(), notice_start_date), so start + days is the day
+    // remaining hits zero). Computed in SQL, never in JS: mysql2 hands a DATE back as a
+    // host-timezone JS Date and this codebase has a documented history of that shifting a day,
+    // which on a notice boundary is a day of pay.
+    //
+    // Written only when a positive notice period is known. A zero-day window is not a fact
+    // about anyone's notice — it is the absence of one — and inventing
+    // notice_start = notice_end would make "no notice recorded" indistinguishable from
+    // "notice served and finished today" for every reader downstream.
+    const NOTICE_ANCHOR = `COALESCE(notice_start_date, DATE(submitted_at), DATE(created_at))`;
+    const noticeSet: string[] = [];
+    const noticeParams: unknown[] = [];
+
+    if (confirmedLwdInput) {
+      noticeSet.push(`last_working_day_confirmed = ?`);
+      noticeParams.push(confirmedLwdInput);
+    }
+    if (noticeDaysInput !== null && Number.isFinite(noticeDaysInput) && noticeDaysInput > 0) {
+      noticeSet.push(`notice_period_days = ?`);
+      noticeParams.push(Math.trunc(noticeDaysInput));
+      // Both assignments repeat NOTICE_ANCHOR rather than one reading the other's result.
+      // MySQL applies SET assignments left to right and a later one sees earlier updates, so
+      // referencing the freshly-written notice_start_date here would make the statement
+      // order-dependent. Repeating the expression makes it identical either way.
+      noticeSet.push(`notice_start_date = ${NOTICE_ANCHOR}`);
+      noticeSet.push(
+        `notice_end_date = COALESCE(?, DATE_ADD(${NOTICE_ANCHOR}, INTERVAL ? DAY))`
+      );
+      noticeParams.push(confirmedLwdInput, Math.trunc(noticeDaysInput));
+    }
+    const noticeClause = noticeSet.length ? `, ${noticeSet.join(", ")}` : "";
 
     // ONE transaction for the whole core state change.
     //
@@ -345,8 +587,9 @@ export const exitService = {
       }
 
       const [statusResult] = await conn.execute<ResultSetHeader>(
-        `UPDATE exit_request SET status = ?${tsClause}, updated_at = NOW() WHERE id = ? AND status = ?`,
-        [nextStatus, id, lockedStatus]
+        `UPDATE exit_request SET status = ?${tsClause}${noticeClause}, updated_at = NOW()
+          WHERE id = ? AND status = ?`,
+        [nextStatus, ...noticeParams, id, lockedStatus]
       );
       // Never report success on a transition that did not happen.
       if (statusResult.affectedRows !== 1) {
@@ -380,6 +623,35 @@ export const exitService = {
     } finally {
       // 45 workers share this pool; a connection left unreleased here starves all of them.
       conn.release();
+    }
+
+    /**
+     * A changed notice period is an override of company policy, so somebody is told.
+     *
+     * Owner ruling 2026-09-12: 30 days is the standard and the reporting manager may change it —
+     * with Process Manager / Operations Manager / Payroll HR alerted. Payroll in particular has a
+     * direct stake: this number drives the notice-shortfall recovery deducted from the final
+     * settlement, so a quiet change to it is a quiet change to what the employee is paid.
+     *
+     * Fires only when the value actually MOVED. Re-confirming 30 on an exit already at 30 is not
+     * an override, and alerting on it would train the recipients to ignore the alert.
+     *
+     * Post-commit and non-blocking, like every other side effect in this function: the transition
+     * and the notice terms are already durable, and a failed notification must not undo them.
+     */
+    if (noticeDaysInput !== null && Number.isFinite(noticeDaysInput)) {
+      const previousNoticeDays = Number(exitRecord.notice_period_days ?? 0);
+      const newNoticeDays = Math.trunc(noticeDaysInput);
+      if (newNoticeDays !== previousNoticeDays) {
+        void notifyNoticePeriodOverride(id, employeeIdForExit, previousNoticeDays, newNoticeDays, userId)
+          .catch((err: unknown) => {
+            logger.error(
+              { err, exitRequestId: id, previousNoticeDays, newNoticeDays },
+              '[exit] Notice-period override alert failed',
+            );
+            return null;
+          });
+      }
     }
 
     // Email only on the outcomes the employee is entitled to hear about. The

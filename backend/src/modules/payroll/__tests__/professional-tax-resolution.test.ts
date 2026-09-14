@@ -1,23 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Professional tax is levied by the STATE. There is no organisation-wide amount
- * that could be correct for an employee whose state is unknown.
+ * Professional Tax — full removal, 2026-09-11 (stakeholder-confirmed, company-wide,
+ * all states, go-forward only).
  *
- * The engine used to fall back to a hardcoded 200 — a number nobody configured,
- * since statutory_config has never held a professional_tax key. Measured against
- * production, in the 2026-03 run alone that deducted ₹200 from 172 employees
- * whose branch had no state (₹34,400), while employees in Uttar Pradesh and
- * Delhi — states that levy no professional tax — correctly paid nothing.
+ * This file used to pin the state-aware PT resolution logic: a known-PT-state slab
+ * lookup, a no-PT-state returning 0, and an unknown/unconfigured state refusing to
+ * guess (rather than falling back to a hardcoded 200 — the historical regression
+ * this suite originally existed to prevent; see git history for the pre-removal
+ * version of these tests, which is preserved there for that context).
  *
- * These tests pin both halves: the known-state path, which was always right and
- * must keep returning 0 for a no-PT state, and the unknown-state path, which
- * must now stop rather than invent a figure.
- *
- * They also pin the PF wage limit, for the opposite reason: 999999 in production
- * is deliberate — this employer contributes PF above the ₹15,000 statutory
- * ceiling — and "correcting" it to 15000 would cut every employee's PF and
- * change take-home pay.
+ * PT has now been withdrawn from payroll entirely, for every employee regardless of
+ * state, effective for runs computed from 2026-09-11 onward. Already-finalised /
+ * historical runs are NOT rewritten — this only changes what future computation
+ * produces. resolveProfessionalTax() and buildStatutoryRow() keep their exact
+ * signatures (and buildStatutoryRow still carries a professional_tax field) purely
+ * so every existing caller keeps compiling; neither does a state lookup any more.
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -25,90 +23,41 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() }
 
 import { resolveProfessionalTax, buildStatutoryRow } from "../payrollCalculate.service.js";
 
-describe("professional tax when the state is unknown", () => {
+describe("professional tax is no longer resolved or applied (removed 2026-09-11)", () => {
   beforeEach(() => execute.mockReset());
 
-  it("refuses to compute rather than deducting an invented amount", async () => {
-    await expect(resolveProfessionalTax("MAS1234", null, 30000)).rejects.toThrow(
-      /Professional tax cannot be determined for MAS1234/,
-    );
-    // Never reaches the slab lookup — there is nothing to look up.
+  it("resolves to 0 for a state that used to levy professional tax", async () => {
+    await expect(resolveProfessionalTax("MAS1234", "Gujarat", 30000)).resolves.toBe(0);
+    // No slab lookup happens any more -- there is nothing left to look up.
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("names the employee and the fix, so the run is actionable", async () => {
-    // A run that stops with "cannot compute" and no subject is not actionable;
-    // this is the difference between a five-minute fix and an investigation.
-    await expect(resolveProfessionalTax("MAS9999", "", 30000)).rejects.toThrow(/MAS9999/);
-    await expect(resolveProfessionalTax("MAS9999", undefined, 30000)).rejects.toThrow(
-      /branch has no state set/,
-    );
-  });
-
-  it("does not fall back to 200", async () => {
-    // The specific regression. 200 was never configuration — it was a literal.
-    // Asserted as "rejects" rather than "does not return 200", because any
-    // returned number here would be a guess whatever its value.
-    const outcome = await resolveProfessionalTax("MAS1234", null, 30000).then(
-      (value) => ({ resolved: true, value }),
-      (err: Error) => ({ resolved: false, value: err.message }),
-    );
-    expect(outcome.resolved).toBe(false);
-    expect(outcome.value).not.toBe(200);
-  });
-});
-
-describe("professional tax when the state is known", () => {
-  beforeEach(() => execute.mockReset());
-
-  it("uses the state's slab amount", async () => {
-    execute.mockResolvedValueOnce([[{ pt_amount: 200 }], []]);
-    await expect(resolveProfessionalTax("MAS1234", "Gujarat", 30000)).resolves.toBe(200);
-  });
-
-  it("returns 0 for a state that levies no professional tax", async () => {
-    // Uttar Pradesh and Delhi have no PT, and 780+ employees sit in UP. Zero
-    // here is the correct answer, not a missing one.
-    execute
-      .mockResolvedValueOnce([[], []])   // no slab matches this income
-      .mockResolvedValueOnce([[], []]);  // and the state has no slabs at all
+  it("resolves to 0 for a state that never levied professional tax", async () => {
     await expect(resolveProfessionalTax("MAS1234", "Uttar Pradesh", 30000)).resolves.toBe(0);
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it("recognises an exempt state whatever the casing", async () => {
-    // branch_master holds "DELHI", "Delhi" and "GUJARAT" interchangeably. A
-    // case-sensitive check would misclassify a real state as unconfigured and
-    // block payroll for it.
-    execute.mockResolvedValue([[], []]);
-    await expect(resolveProfessionalTax("MAS1", "DELHI", 30000)).resolves.toBe(0);
-    await expect(resolveProfessionalTax("MAS2", "  haryana  ", 30000)).resolves.toBe(0);
+  it("resolves to 0 for an unknown/unconfigured state instead of refusing", async () => {
+    // Previously this threw ("cannot be determined") to avoid inventing a figure --
+    // with PT gone entirely, 0 is not a guess, it is the removed value, so there is
+    // nothing left to block the run on.
+    await expect(resolveProfessionalTax("MAS9999", null, 30000)).resolves.toBe(0);
+    await expect(resolveProfessionalTax("MAS9999", undefined, 30000)).resolves.toBe(0);
+    await expect(resolveProfessionalTax("MAS9999", "", 30000)).resolves.toBe(0);
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it("refuses when a state has no slabs and is not known to be exempt", async () => {
-    // The under-deduction this prevents. Punjab levies professional tax and has
-    // no rows in pt_slab_master, so the old code returned 0 — indistinguishable
-    // from Uttar Pradesh, which genuinely owes nothing. A shortfall here is the
-    // employer's liability, so it is reported rather than assumed away.
-    execute
-      .mockResolvedValueOnce([[], []])   // no slab for this income
-      .mockResolvedValueOnce([[], []]);  // and none for the state at all
-    await expect(resolveProfessionalTax("MAS1234", "Punjab", 30000)).rejects.toThrow(
-      /not configured for state "Punjab"/,
-    );
+  it("never falls back to the old hardcoded 200 default", async () => {
+    const outcome = await resolveProfessionalTax("MAS1234", null, 30000);
+    expect(outcome).toBe(0);
+    expect(outcome).not.toBe(200);
   });
 
-  it("says what to do about an unconfigured state", async () => {
-    execute.mockResolvedValue([[], []]);
-    await expect(resolveProfessionalTax("MAS1234", "Kerala", 30000)).rejects.toThrow(
-      /Add its slabs to pt_slab_master, or record the state as PT-exempt/,
-    );
-  });
-
-  it("returns 0 when the state has slabs but the income is below the lowest", async () => {
-    execute
-      .mockResolvedValueOnce([[], []])          // no bracket for this income
-      .mockResolvedValueOnce([[{ 1: 1 }], []]); // but the state does levy PT
-    await expect(resolveProfessionalTax("MAS1234", "Maharashtra", 5000)).resolves.toBe(0);
+  it("is state-independent: a known-exempt state and a known-levying state resolve identically", async () => {
+    const delhi = await resolveProfessionalTax("MAS1", "DELHI", 30000);
+    const gujarat = await resolveProfessionalTax("MAS2", "  Gujarat  ", 30000);
+    expect(delhi).toBe(0);
+    expect(gujarat).toBe(0);
   });
 });
 
@@ -117,7 +66,7 @@ describe("PF and ESIC parameters", () => {
     // Production sets 999999: this employer contributes PF on wages above the
     // ₹15,000 EPF ceiling, which is permitted and deliberate. If this assertion
     // ever fails because someone hardcoded 15000, that change cuts every
-    // employee's PF — it is not a correction.
+    // employee's PF — it is not a correction. Unrelated to PT removal; kept as-is.
     const row = buildStatutoryRow({ pf_wage_limit: 999999, pf_employee_pct: 12 });
     expect(row.pf_wage_limit).toBe(999999);
   });
@@ -133,9 +82,11 @@ describe("PF and ESIC parameters", () => {
     });
   });
 
-  it("no longer carries a professional-tax default", () => {
-    // The field remains on the row for compatibility, but it is not a fallback
-    // any more: nothing reads it, and 0 rather than 200 makes that visible.
+  it("no longer carries a professional-tax default -- the field is inert, always 0", () => {
+    // The field remains on the row for compatibility (some caller may still read
+    // it), but it is not a fallback any more: nothing computes a nonzero value for
+    // it, and passing one in explicitly is ignored too -- PT is off, full stop.
     expect(buildStatutoryRow({}).professional_tax).toBe(0);
+    expect(buildStatutoryRow({ professional_tax: 200 }).professional_tax).toBe(0);
   });
 });

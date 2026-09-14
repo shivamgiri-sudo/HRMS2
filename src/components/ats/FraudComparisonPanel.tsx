@@ -530,7 +530,10 @@ export function FraudComparisonPanel({
     const picked = RESOLUTIONS[choice[alert.id] ?? -1];
     const reason = (notes[alert.id] ?? "").trim();
     if (!picked) { setSaveError("Choose what you found before clearing this alert."); return; }
-    if (picked.value !== "under_review" && !reason) { setSaveError("Add a note — it becomes the audit record."); return; }
+    // RESOLUTIONS (below) has no "under_review" option — every real choice here already
+    // requires a note, so this was already unconditional at runtime. Simplified rather than
+    // widening RESOLUTIONS' type just to keep a comparison that could never be true.
+    if (!reason) { setSaveError("Add a note — it becomes the audit record."); return; }
     setSavingId(alert.id);
     setSaveError(null);
     try {

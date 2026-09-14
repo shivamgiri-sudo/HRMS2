@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
+import { AuthedImage } from '@/components/ui/AuthedImage';
+import { normalizeMediaUrl } from '@/lib/mediaUrl';
 
 type DeskSession = {
   id: string;
@@ -128,7 +130,7 @@ function EmployeeRowComponent<T extends DeskEmployee>({
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[linear-gradient(145deg,rgba(20,93,160,0.12),rgba(67,160,71,0.14))] text-xs font-bold text-[#145da0]">
             {employee.avatar_url ? (
-              <img src={employee.avatar_url} alt={employee.employee_name} className="h-full w-full object-cover" />
+              <AuthedImage src={normalizeMediaUrl(employee.avatar_url) ?? ""} alt={employee.employee_name} className="h-full w-full object-cover" />
             ) : (
               employee.employee_name.slice(0, 1).toUpperCase()
             )}

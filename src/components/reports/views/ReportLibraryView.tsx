@@ -256,9 +256,21 @@ function buildFiltersForReport(code: string): FilterDef[] {
 
   const filterMap: Record<string, FilterDef[]> = {
     "headcount": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER],
-    // From/To are honoured now (tenure window in employeeMaster) — they previously did
-    // nothing. STATUS_FILTER replaced by EMPLOYEE_STATUS_FILTER: see the note on that const.
-    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER, ...dateFilters],
+    // No date filter — deliberately removed 2026-09-14. It used to be offered here and the
+    // backend does honour it (a "tenure window" filter in employeeMaster: only employees
+    // in force sometime between From/To), but that is fundamentally the wrong shape for
+    // this report. The catalog entry's own name and description promise "Complete employee
+    // directory ... one row per employee" — nothing here told a user that filling in either
+    // date silently switches the report from "every employee" to "only employees employed
+    // during this window", with no warning that ~98% of the directory had just vanished.
+    // Live-reported 2026-09-14: a user with From/To populated (01-08 to 14-09) saw 1,009
+    // rows instead of ~59,000, and every column on the visible ones looked "blank" only
+    // because that narrow recent-hires subset happens to be the one slice of the workforce
+    // the legacy data migration never covered — not because the report was actually broken.
+    // A tenure window belongs on period-scoped reports (New Join/Left Employee Export,
+    // both of which keep dateFilters below); a complete directory should not have one.
+    // STATUS_FILTER replaced by EMPLOYEE_STATUS_FILTER: see the note on that const.
+    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER],
     "manager-mapping": [...branchProcess, EMPLOYEE_STATUS_FILTER],
     "org-structure-snapshot": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "cost-centre-headcount": [...branchOnly, EMPLOYEE_STATUS_FILTER],
@@ -328,8 +340,6 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "pf-ecr-format": [...monthFilter, branchOnly[0]],
     "esic-contribution-register": [...monthFilter, ...branchProcess],
     "esic-monthly-summary": [...monthFilter, branchOnly[0]],
-    "pt-register": [...monthFilter, ...branchProcess],
-    "pt-monthly-register": [...monthFilter, branchOnly[0]],
     "tds-computation-register": branchOnly,
     "form-16-status": branchOnly,
     "investment-declaration-status": branchOnly,
@@ -784,7 +794,6 @@ const _LEGACY_CATALOG_UNUSED: LegacyReportDef[] = [
       { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right" },
       { key: "pf_employee", label: "PF (Employee)", format: "currency", width: 100, align: "right" },
       { key: "esic_employee", label: "ESIC (Employee)", format: "currency", width: 100, align: "right" },
-      { key: "professional_tax", label: "PT", format: "currency", width: 80, align: "right" },
       { key: "tds", label: "TDS", format: "currency", width: 100, align: "right" },
       { key: "lwp_deduction", label: "LWP Deduction", format: "currency", width: 120, align: "right" },
       { key: "total_deductions", label: "Total Deductions", format: "currency", width: 120, align: "right" },

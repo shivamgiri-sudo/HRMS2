@@ -56,17 +56,18 @@ const RosterViewPage               = lazy(() => import("@/pages/wfm/RosterViewPa
 const RosterInsightsPage           = lazy(() => import("@/pages/wfm/RosterInsightsPage"));
 const RosterRequestsPage           = lazy(() => import("@/pages/wfm/RosterRequestsPage"));
 const RosterBuilderPage            = lazy(() => import("@/pages/wfm/RosterBuilderPage"));
-const RosterAnalyticsDashboard     = lazy(() => import("@/pages/wfm/RosterAnalyticsDashboard"));
-const RosterAnalyticsPanel         = lazy(() => import("@/pages/wfm/RosterAnalyticsPanel"));
 const NativeTNIAnalysis            = lazy(() => import("@/pages/NativeTNIAnalysis"));
+// RosterCommandCenter is now the merged console shell (7 tabs: Live Monitoring,
+// Analytics, Trends & Publish, Compliance, Shift Effectiveness, Interventions, Audit
+// Trail) — see its own header comment. The 6 other page components it absorbed
+// (RosterAnalyticsDashboard, RosterAnalyticsPanel, RosterInterventionDashboard,
+// RosterComplianceMonitor, ShiftEffectivenessDashboard, RosterAuditTrail) and their
+// routes below are deleted; each is now a lazy panel imported from inside
+// RosterCommandCenter.tsx itself, not from here.
 const RosterCommandCenter          = lazy(() => import("@/pages/wfm/RosterCommandCenter"));
-const RosterInterventionDashboard  = lazy(() => import("@/pages/wfm/RosterInterventionDashboard"));
 const EmployeeRosterProfile        = lazy(() => import("@/pages/wfm/EmployeeRosterProfile"));
-const RosterComplianceMonitor      = lazy(() => import("@/pages/wfm/RosterComplianceMonitor"));
-const ShiftEffectivenessDashboard  = lazy(() => import("@/pages/wfm/ShiftEffectivenessDashboard"));
 const WFMCapacityDashboard         = lazy(() => import("@/pages/wfm/WFMCapacityDashboard"));
 const TeamRosterComparison         = lazy(() => import("@/pages/wfm/TeamRosterComparison"));
-const RosterAuditTrail             = lazy(() => import("@/pages/wfm/RosterAuditTrail"));
 const RosterNotificationHub        = lazy(() => import("@/pages/wfm/RosterNotificationHub"));
 const MobileRosterDashboard        = lazy(() => import("@/pages/wfm/MobileRosterDashboard"));
 const MobileTeamAttendance         = lazy(() => import("@/pages/wfm/MobileTeamAttendance"));
@@ -172,20 +173,26 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRequestsPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-insights"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInsightsPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-analytics"  element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-analytics-panel" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsPanel /></Gate></ProtectedRoute>} />
       {/* Own page code (TNI_ANALYSIS) as of 2026-09-09, not WFM_ROSTER: that code
           gates a whole roster-planning module and carried no grant for trainer/qa,
           the two roles this training-needs view exists for -- see 1711_tni_analysis_page.sql. */}
       <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager','branch_wfm','manager','process_manager','team_leader','tl','trainer','qa']}><Gate pageCode="TNI_ANALYSIS"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-command-center" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterCommandCenter /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-interventions" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInterventionDashboard /></Gate></ProtectedRoute>} />
+      {/*
+        Roster Command Center console — merges 7 previously separate WFM roster dashboards
+        (Live Monitoring, Analytics, Trends & Publish, Compliance, Shift Effectiveness,
+        Interventions, Audit Trail) into one tabbed page. No Gate wrapper here: one page
+        code cannot express the union of all 7 panels' audiences, so the console does its
+        own per-tab canViewPage() gating internally (see RosterCommandCenter.tsx and
+        AttendanceIntegrityConsole.tsx, whose pattern this reuses) — ProtectedRoute +
+        DashboardLayout is the only wrapper this route needs. The 6 other routes this
+        replaced are deleted, not redirected (owner's explicit choice) — see
+        backend/sql/1757_roster_command_center_console_page_codes.sql for the RBAC migration
+        that must be applied before this ships.
+      */}
+      <Route path="/wfm/roster-command-center" element={<ProtectedRoute><DashboardLayout><RosterCommandCenter /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-compliance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterComplianceMonitor /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/shift-effectiveness" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><ShiftEffectivenessDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_CAPACITY_DASHBOARD"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/team-comparison" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><TeamRosterComparison /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-audit" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAuditTrail /></Gate></ProtectedRoute>} />
       <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterNotificationHub /></Gate></ProtectedRoute>} />
       {/* Mobile PWA optimized views for managers */}
       <Route path="/wfm/mobile-roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileRosterDashboard /></Gate></ProtectedRoute>} />

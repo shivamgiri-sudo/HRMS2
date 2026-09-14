@@ -284,6 +284,41 @@ const SCORE_EXPR = `
   ))
 `;
 
+interface AtRiskEmployeeIdRow extends RowDataPacket {
+  id: string;
+  prediction_score: number;
+}
+
+/**
+ * Plain (non-HTTP) accessor reusing the exact same FULL_SCORING_CTES/SCORE_EXPR
+ * as getAtRiskEmployees below, for callers that need just the id list — e.g.
+ * intervention-recommendation.cron.ts, which drives generateRecommendationsForEmployee
+ * per at-risk employee rather than duplicating this scoring formula a second time.
+ *
+ * @param minScore  Only employees scoring >= this are returned (default 55 = HIGH+CRITICAL)
+ * @param limit     Hard cap on rows returned, bounding the cost of any caller's batch loop
+ */
+export async function getAtRiskEmployeeIds(
+  minScore = 55,
+  limit = 300
+): Promise<Array<{ id: string; predictionScore: number }>> {
+  const query = `
+    WITH ${SCORING_CTES}
+    SELECT e.id, ${SCORE_EXPR} AS prediction_score
+    FROM mas_hrms.employees e
+    LEFT JOIN attendance_cte att ON e.id = att.employee_id
+    LEFT JOIN quality_cte q      ON e.id = q.employee_id
+    LEFT JOIN late_marks_cte lm  ON e.id = lm.employee_id
+    WHERE e.employment_status = 'Active'
+      AND e.active_status = 1
+    HAVING prediction_score >= ?
+    ORDER BY prediction_score DESC
+    LIMIT ?
+  `;
+  const [rows] = await pool.query<AtRiskEmployeeIdRow[]>(query, [minScore, limit]);
+  return rows.map((r) => ({ id: r.id, predictionScore: r.prediction_score }));
+}
+
 // ---------------------------------------------------------------------------
 // Handler 1: getAtRiskEmployees
 // ---------------------------------------------------------------------------

@@ -32,7 +32,7 @@ import { SimpleConnectorWizard } from "@/components/integrations/SimpleConnector
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type ConnectorType = "manual" | "api" | "db" | "scheduled";
-type ConnectorKind = "api" | "mysql" | "mssql" | "google_sheets";
+type ConnectorKind = "api" | "mysql" | "mssql";
 type ConnectorStatus = "active" | "inactive" | "error" | "pending";
 
 interface Connector {
@@ -155,13 +155,6 @@ interface NewConnectorForm {
   employee_code_column: string;
   encrypt: boolean;
   trust_server_certificate: boolean;
-  spreadsheet_id: string;
-  sheet_name: string;
-  sheet_range: string;
-  header_row: string;
-  sheets_auth_mode: "service_account" | "oauth" | "public";
-  service_account_email: string;
-  sync_direction: "pull" | "push";
 }
 
 const emptyConnectorForm = (): NewConnectorForm => ({
@@ -186,13 +179,6 @@ const emptyConnectorForm = (): NewConnectorForm => ({
   employee_code_column: "employee_code",
   encrypt: false,
   trust_server_certificate: true,
-  spreadsheet_id: "",
-  sheet_name: "Sheet1",
-  sheet_range: "A:Z",
-  header_row: "1",
-  sheets_auth_mode: "service_account",
-  service_account_email: "",
-  sync_direction: "pull",
 });
 
 const emptyFieldMapForm = (): FieldMapForm => ({
@@ -584,16 +570,7 @@ export default function NativeIntegrationHub() {
       setMessage("Database host, database name, and username are required.");
       return;
     }
-    if (newForm.kind === "google_sheets" && !newForm.spreadsheet_id.trim()) {
-      setMessage("Google Spreadsheet ID is required.");
-      return;
-    }
-
-    const integrationType = isDatabase
-      ? "db"
-      : newForm.kind === "google_sheets" || newForm.sync_direction === "pull"
-        ? "api"
-        : "api";
+    const integrationType = isDatabase ? "db" : "api";
     const configJson = newForm.kind === "api"
       ? {
           connector_kind: "rest_api",
@@ -602,30 +579,19 @@ export default function NativeIntegrationHub() {
           timeout_seconds: Number(newForm.timeout_seconds) || 30,
           pagination: newForm.pagination,
         }
-      : isDatabase
-        ? {
-            connector_kind: newForm.kind,
-            db_type: newForm.kind,
-            host: newForm.host.trim(),
-            port: Number(newForm.port),
-            database: newForm.database.trim(),
-            username: newForm.username.trim(),
-            source_tables: newForm.tables.split(",").map((value) => value.trim()).filter(Boolean),
-            date_column: newForm.date_column.trim(),
-            employee_code_column: newForm.employee_code_column.trim(),
-            encrypt: newForm.encrypt,
-            trust_server_certificate: newForm.trust_server_certificate,
-          }
-        : {
-            connector_kind: "google_sheets",
-            spreadsheet_id: newForm.spreadsheet_id.trim(),
-            sheet_name: newForm.sheet_name.trim(),
-            range: newForm.sheet_range.trim(),
-            header_row: Number(newForm.header_row) || 1,
-            auth_mode: newForm.sheets_auth_mode,
-            service_account_email: newForm.service_account_email.trim() || null,
-            sync_direction: newForm.sync_direction,
-          };
+      : {
+          connector_kind: newForm.kind,
+          db_type: newForm.kind,
+          host: newForm.host.trim(),
+          port: Number(newForm.port),
+          database: newForm.database.trim(),
+          username: newForm.username.trim(),
+          source_tables: newForm.tables.split(",").map((value) => value.trim()).filter(Boolean),
+          date_column: newForm.date_column.trim(),
+          employee_code_column: newForm.employee_code_column.trim(),
+          encrypt: newForm.encrypt,
+          trust_server_certificate: newForm.trust_server_certificate,
+        };
 
     try {
       await hrmsApi.post("/api/integration-hub/", {
@@ -633,9 +599,9 @@ export default function NativeIntegrationHub() {
         name: newForm.name.trim(),
         type: integrationType,
         description: newForm.description,
-        vendor_name: newForm.kind === "google_sheets" ? "Google" : null,
+        vendor_name: null,
         base_url: newForm.kind === "api" ? newForm.base_url.trim() : null,
-        auth_type: newForm.kind === "api" ? newForm.auth_type : newForm.sheets_auth_mode,
+        auth_type: newForm.kind === "api" ? newForm.auth_type : null,
         secret_name: newForm.secret_name.trim() || null,
         config_json: configJson,
       });
@@ -1917,7 +1883,6 @@ export default function NativeIntegrationHub() {
                   <option value="api">REST API</option>
                   <option value="mysql">MySQL Database</option>
                   <option value="mssql">Microsoft SQL Server</option>
-                  <option value="google_sheets">Google Sheets</option>
                 </select>
               </div>
               <div>
@@ -2125,96 +2090,6 @@ export default function NativeIntegrationHub() {
                 </div>
               )}
 
-              {newForm.kind === "google_sheets" && (
-                <div className="space-y-4 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4">
-                  <div className="flex items-center gap-2 font-bold text-emerald-900">
-                    <FileSpreadsheet className="h-4 w-4" />
-                    Google Sheets Configuration
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-semibold text-slate-700">Spreadsheet ID *</label>
-                    <input
-                      value={newForm.spreadsheet_id}
-                      onChange={(event) => setNewForm({ ...newForm, spreadsheet_id: event.target.value })}
-                      placeholder="The ID between /d/ and /edit in the Sheets URL"
-                      className="w-full rounded-2xl border px-4 py-3 font-mono text-sm"
-                    />
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-semibold text-slate-700">Sheet / Tab Name</label>
-                      <input
-                        value={newForm.sheet_name}
-                        onChange={(event) => setNewForm({ ...newForm, sheet_name: event.target.value })}
-                        className="w-full rounded-2xl border px-4 py-3 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-semibold text-slate-700">Range</label>
-                      <input
-                        value={newForm.sheet_range}
-                        onChange={(event) => setNewForm({ ...newForm, sheet_range: event.target.value })}
-                        placeholder="A:Z"
-                        className="w-full rounded-2xl border px-4 py-3 font-mono text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-semibold text-slate-700">Header Row</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={newForm.header_row}
-                        onChange={(event) => setNewForm({ ...newForm, header_row: event.target.value })}
-                        className="w-full rounded-2xl border px-4 py-3 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-semibold text-slate-700">Sync Direction</label>
-                      <select
-                        value={newForm.sync_direction}
-                        onChange={(event) => setNewForm({ ...newForm, sync_direction: event.target.value as "pull" | "push" })}
-                        className="w-full rounded-2xl border px-4 py-3 text-sm"
-                      >
-                        <option value="pull">Pull from Google Sheets</option>
-                        <option value="push">Push to Google Sheets</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-semibold text-slate-700">Authentication</label>
-                      <select
-                        value={newForm.sheets_auth_mode}
-                        onChange={(event) => setNewForm({ ...newForm, sheets_auth_mode: event.target.value as NewConnectorForm["sheets_auth_mode"] })}
-                        className="w-full rounded-2xl border px-4 py-3 text-sm"
-                      >
-                        <option value="service_account">Service account</option>
-                        <option value="oauth">OAuth</option>
-                        <option value="public">Public read-only sheet</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-semibold text-slate-700">Credential Secret Reference</label>
-                      <input
-                        value={newForm.secret_name}
-                        onChange={(event) => setNewForm({ ...newForm, secret_name: event.target.value })}
-                        placeholder="e.g. GOOGLE_HRMS_SHEETS"
-                        className="w-full rounded-2xl border px-4 py-3 font-mono text-sm"
-                      />
-                    </div>
-                    {newForm.sheets_auth_mode === "service_account" && (
-                      <div className="md:col-span-2">
-                        <label className="mb-1.5 block text-sm font-semibold text-slate-700">Service Account Email</label>
-                        <input
-                          type="email"
-                          value={newForm.service_account_email}
-                          onChange={(event) => setNewForm({ ...newForm, service_account_email: event.target.value })}
-                          placeholder="hrms-sync@project.iam.gserviceaccount.com"
-                          className="w-full rounded-2xl border px-4 py-3 text-sm"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
             <div className="flex gap-3 border-t p-6">
               <button

@@ -76,6 +76,10 @@ async function fetchSalaryBreakup(
     special_allowance_component: Number(r.special_allowance ?? 0),
     pf_deduction: Number(r.pf_employee ?? 0),
     esic_deduction: Number(r.esic_employee ?? 0),
+    // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+    // company-wide, all states). r.professional_tax is 0 for any current run;
+    // kept plumbed through so a historical month that already carried a real
+    // PT amount is still reported accurately (see ai-safety.service.ts).
     professional_tax_deduction: Number(r.professional_tax ?? 0),
     tds_deduction: Number(r.tds ?? 0),
     lwp_deduction: Number(r.lwp_deduction ?? 0),

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { localISODate } from "@/lib/localDate";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -163,7 +164,7 @@ function DayCell({
 }) {
   const isOff = assignment?.is_week_off === 1;
   const isHoliday = assignment?.is_holiday === 1;
-  const isToday = date === new Date().toISOString().slice(0, 10);
+  const isToday = date === localISODate();
   const ackStatus = assignment?.acknowledgement_status;
   const isAcked = ackStatus === "acknowledged";
   const isDisputed = ackStatus === "disputed";

@@ -116,9 +116,14 @@ describe('employerCostRows — one row, three different column names', () => {
 });
 
 describe('otherDeductionRows', () => {
-  it('shows professional tax only where the state levies it', () => {
-    expect(otherDeductionRows({ professional_tax: 200 })).toEqual([{ label: 'Professional Tax', value: 200 }]);
+  // Professional Tax was the only member of this list and has been removed from payroll
+  // company-wide (all states) per explicit stakeholder approval. otherDeductionRows now
+  // always returns [] — this test locks that down (rather than deleting the describe block)
+  // so a future non-PF/ESIC deduction added back here is deliberate, not a silent regression.
+  it('returns no rows — Professional Tax removed company-wide, nothing else populates this list yet', () => {
+    expect(otherDeductionRows({ professional_tax: 200 })).toEqual([]);
     expect(otherDeductionRows({ professional_tax: 0 })).toEqual([]);
+    expect(otherDeductionRows({})).toEqual([]);
   });
 });
 

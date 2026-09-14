@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { buildEmployeeIdQrData, buildQrCodeUrl } from "@/integrations/apis/qrCode.api";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
+import { AuthedImage } from "@/components/ui/AuthedImage";
 
 interface EmployeeIDCardProps {
   employeeId: string;
@@ -124,7 +125,7 @@ export function EmployeeIDCard({
   const photoElement = (
     <div style={{ width: PI, height: PI, borderRadius: "50%", overflow: "hidden", background: "#e5e7eb" }}>
       {photoUrl
-        ? <img src={normalizeMediaUrl(photoUrl)} alt={fullName} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 20%" }} />
+        ? <AuthedImage src={normalizeMediaUrl(photoUrl) ?? ""} alt={fullName} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 20%" }} />
         : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#9ca3af" }}>No Photo</div>
       }
     </div>

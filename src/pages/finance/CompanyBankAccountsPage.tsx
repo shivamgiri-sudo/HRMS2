@@ -35,6 +35,15 @@ type BankAccount = {
   updated_at: string;
 };
 
+type AuditEntry = {
+  action_type: string;
+  actor_user_id: string;
+  actor_role: string | null;
+  change_summary: Record<string, unknown> | null;
+  reason: string | null;
+  created_at: string;
+};
+
 function money(value: unknown) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value ?? 0));
 }
@@ -44,6 +53,17 @@ function dateTime(value: string | null | undefined) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(d);
+}
+
+/** Human label for an audit row, with the opening-balance before/after spelled out —
+ *  otherwise a "COMPANY_BANK_ACCOUNT_OPENING_BALANCE_CHANGED" row is just an unreadable
+ *  code with no visible before/after value. */
+function auditLabel(entry: AuditEntry) {
+  const s = entry.change_summary ?? {};
+  if (entry.action_type === "COMPANY_BANK_ACCOUNT_OPENING_BALANCE_CHANGED") {
+    return `Opening balance changed: ${money(s.old_opening_balance)} → ${money(s.new_opening_balance)}`;
+  }
+  return entry.action_type;
 }
 
 const emptyForm = {
@@ -96,10 +116,10 @@ export default function CompanyBankAccountsPage() {
       // Fetched separately (not Promise.all) on purpose: a failure in the audit-trail
       // call must never blank out the account details the user actually clicked for.
       const account = await hrmsApi.get<{ success: boolean; data: BankAccount }>(`/api/finance/bank-accounts/${detailId}`);
-      let audit: any[] = [];
+      let audit: AuditEntry[] = [];
       let auditError: string | null = null;
       try {
-        const auditRes = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/finance/bank-accounts/${detailId}/audit`);
+        const auditRes = await hrmsApi.get<{ success: boolean; data: AuditEntry[] }>(`/api/finance/bank-accounts/${detailId}/audit`);
         audit = auditRes.data ?? [];
       } catch (e) {
         auditError = e instanceof Error ? e.message : "Failed to load audit trail";
@@ -128,6 +148,7 @@ export default function CompanyBankAccountsPage() {
     onSuccess: () => {
       toast({ title: form.id ? "Bank account updated" : "Bank account created" });
       queryClient.invalidateQueries({ queryKey: ["company-bank-accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["company-bank-account-detail"] });
       setFormOpen(false);
       setForm(emptyForm);
     },
@@ -218,7 +239,12 @@ export default function CompanyBankAccountsPage() {
         </div>
       </div>
 
-      {/* Create/Edit form */}
+      {/* Create/Edit form. Opening Balance is directly editable here (finance_head/
+          accounts_head/super_admin, single-approval by design — see
+          company-bank-account.service.ts's header comment). Every change to it is captured
+          with its own audit action type carrying the before/after value, and fans out a bell
+          notification to every OTHER finance_head/accounts_head/super_admin — see
+          notifyOpeningBalanceChanged in company-bank-account.service.ts. */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -264,8 +290,12 @@ export default function CompanyBankAccountsPage() {
               <Input value={form.tallyLedgerName} onChange={(e) => setForm((f) => ({ ...f, tallyLedgerName: e.target.value }))} placeholder="Exact ledger name as it exists in Tally" />
             </div>
             <div>
-              <Label>Opening Balance</Label>
-              <Input type="number" value={form.openingBalance} onChange={(e) => setForm((f) => ({ ...f, openingBalance: e.target.value }))} />
+              <Label>Opening Balance {form.id && <span className="text-xs text-slate-400">(changing this notifies every other Finance/Accounts Head and is recorded in the Audit Trail)</span>}</Label>
+              <Input
+                type="number"
+                value={form.openingBalance}
+                onChange={(e) => setForm((f) => ({ ...f, openingBalance: e.target.value }))}
+              />
             </div>
           </div>
           <DialogFooter>
@@ -361,9 +391,9 @@ export default function CompanyBankAccountsPage() {
                     <p className="text-sm text-slate-400">None</p>
                   ) : (
                     <ul className="space-y-2">
-                      {detailQuery.data.audit.map((entry: any, i: number) => (
+                      {detailQuery.data.audit.map((entry, i) => (
                         <li key={i} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
-                          <span className="font-semibold text-gray-700">{entry.action_type}</span>{" "}
+                          <span className="font-semibold text-gray-700">{auditLabel(entry)}</span>{" "}
                           <span className="text-slate-400">— {dateTime(entry.created_at)}</span>
                         </li>
                       ))}

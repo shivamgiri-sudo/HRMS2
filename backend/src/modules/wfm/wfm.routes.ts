@@ -277,6 +277,61 @@ wfmRouter.patch("/roster-preferences/:id/reject", requireAuth, requireRole("admi
   res.json({ success: true });
 }));
 
+// ── Notification Rules (Roster Notification Hub) ────────────────────────────
+// Was pure front-end mock — RosterNotificationHub.tsx held 8 hardcoded rules in React
+// state and "Save All Settings" only awaited a setTimeout, no backend call anywhere in
+// the file. wfm_notification_rule (migration 1755) gives this a real, persisted store;
+// these two endpoints are its entire backend.
+wfmRouter.get("/notification-rules", requireAuth, requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"), h(async (_req: any, res: any) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, alert_type, alert_name, description, recipients_json, channels_json,
+            frequency, enabled, threshold_pct, schedule_time, updated_at
+       FROM wfm_notification_rule
+      ORDER BY alert_type`
+  );
+  const data = (rows as any[]).map((r) => ({
+    id: r.id,
+    alertType: r.alert_type,
+    alertName: r.alert_name,
+    description: r.description,
+    recipients: typeof r.recipients_json === "string" ? JSON.parse(r.recipients_json) : r.recipients_json,
+    channels: typeof r.channels_json === "string" ? JSON.parse(r.channels_json) : r.channels_json,
+    frequency: r.frequency,
+    enabled: !!r.enabled,
+    threshold: r.threshold_pct ?? undefined,
+    scheduleTime: r.schedule_time ?? undefined,
+  }));
+  res.json({ success: true, data });
+}));
+
+// PUT /api/wfm/notification-rules — bulk upsert (the page always saves the whole rule set
+// at once via "Save All Settings"; each rule already exists from the migration's seed, so
+// this always UPDATEs by alert_type rather than needing a separate create path).
+wfmRouter.put("/notification-rules", requireAuth, requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"), h(async (req: any, res: any) => {
+  const rules = Array.isArray(req.body?.rules) ? req.body.rules : [];
+  if (rules.length === 0) return res.status(400).json({ error: "rules array required" });
+  for (const rule of rules) {
+    if (!rule.alertType) continue;
+    await db.execute(
+      `UPDATE wfm_notification_rule
+          SET recipients_json = ?, channels_json = ?, frequency = ?, enabled = ?,
+              threshold_pct = ?, schedule_time = ?, updated_by = ?
+        WHERE alert_type = ?`,
+      [
+        JSON.stringify(rule.recipients ?? []),
+        JSON.stringify(rule.channels ?? []),
+        rule.frequency ?? "immediate",
+        rule.enabled ? 1 : 0,
+        rule.threshold ?? null,
+        rule.scheduleTime ?? null,
+        req.authUser!.id,
+        rule.alertType,
+      ]
+    );
+  }
+  res.json({ success: true });
+}));
+
 // ── Week-Off Preference ────────────────────────────────────────────────────
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 

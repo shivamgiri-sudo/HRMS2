@@ -337,8 +337,16 @@ export default function NativeOpsCommandCenter() {
   };
 
   return (
-    <DashboardLayout title="Ops Command Center" description="Unified operations control room">
+    <DashboardLayout>
       <div className="space-y-6">
+        {/* DashboardLayout only accepts children/subheader (CompactDashboardLayout.tsx) — the
+            title/description this page used to pass on the wrapper itself were silently dropped,
+            so this heading never actually rendered. Rendered as real content instead. */}
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Ops Command Center</h1>
+          <p className="text-sm text-slate-500">Unified operations control room</p>
+        </div>
+
         {/* Header Controls */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">

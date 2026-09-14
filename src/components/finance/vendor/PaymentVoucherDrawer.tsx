@@ -138,12 +138,23 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                   <dd className="font-semibold text-gray-800">
                     {detailQuery.data.source_type === "vendor_grn" ? (detailQuery.data.vendor_name ?? detailQuery.data.grn_number)
                       : detailQuery.data.source_type === "imprest_allocation" ? detailQuery.data.imprest_manager_name
+                      : detailQuery.data.source_type === "vendor_advance" ? `Advance to ${detailQuery.data.linked_vendor_name ?? "vendor"}`
+                      : detailQuery.data.source_type === "vendor_advance_application" ? `Apply advance — ${detailQuery.data.linked_vendor_name ?? "vendor"}`
                       : (detailQuery.data.particulars ?? "General payment")}
                   </dd>
                   {detailQuery.data.source_type === "vendor_grn" && (
                     <>
                       <dt className="text-slate-500">Head</dt><dd className="text-gray-600">{detailQuery.data.head ?? "—"}</dd>
                       <dt className="text-slate-500">Sub Head</dt><dd className="text-gray-600">{detailQuery.data.sub_head ?? "—"}</dd>
+                    </>
+                  )}
+                  {(detailQuery.data.source_type === "vendor_advance" || detailQuery.data.source_type === "vendor_advance_application") && (
+                    <>
+                      <dt className="text-slate-500">Vendor</dt><dd className="text-gray-600">{detailQuery.data.linked_vendor_name ?? "—"}</dd>
+                      <dt className="text-slate-500">Advance Balance {detailQuery.data.status === "released" ? "(after this voucher)" : "(now)"}</dt>
+                      <dd className="font-mono text-gray-600">
+                        {detailQuery.data.vendor_advance_balance != null ? money(detailQuery.data.vendor_advance_balance) : "—"}
+                      </dd>
                     </>
                   )}
                   <dt className="text-slate-500">Bank Account</dt><dd className="font-semibold text-gray-800">{detailQuery.data.bank_account_name}</dd>
@@ -169,9 +180,12 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                 </dl>
               </section>
 
-              {detailQuery.data.source_type === "vendor_grn" && (detailQuery.data.grn_allocations?.length ?? 0) > 1 && (
+              {((detailQuery.data.source_type === "vendor_grn" && (detailQuery.data.grn_allocations?.length ?? 0) > 1)
+                || (detailQuery.data.source_type === "vendor_advance_application" && (detailQuery.data.grn_allocations?.length ?? 0) > 0)) && (
                 <section>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">GRNs Paid by This Voucher</h3>
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                    {detailQuery.data.source_type === "vendor_advance_application" ? "GRNs Settled From This Advance" : "GRNs Paid by This Voucher"}
+                  </h3>
                   <ul className="space-y-1.5">
                     {detailQuery.data.grn_allocations!.map((a) => (
                       <li key={a.vendor_payment_tracking_id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs">
@@ -258,7 +272,7 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                     <Input type="date" value={releaseForm.paymentDate} onChange={(e) => setReleaseForm((f) => ({ ...f, paymentDate: e.target.value }))} />
                   </div>
                   <div>
-                    <Label>Transaction Ref / UTR / Cheque No.</Label>
+                    <Label>Transaction Ref / UTR / Cheque No. (optional)</Label>
                     <Input value={releaseForm.transactionRef} onChange={(e) => setReleaseForm((f) => ({ ...f, transactionRef: e.target.value }))} />
                   </div>
                   <Button className="cursor-pointer bg-emerald-600 hover:bg-emerald-700" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(detailQuery.data!.id)}>

@@ -115,6 +115,9 @@ describe("VendorPaymentDispatchPage — overdue chip, ledger tooltip, clearable 
   });
 
   it("MonthYearPicker in the filter bar is clearable via emptyLabel", () => {
-    expect(SRC).toMatch(/<MonthYearPicker[\s\S]{0,200}emptyLabel="All months"/);
+    // Bound widened 200->400 (2026-09-12): the element now also carries a longer
+    // selectClassName prop for consistent filter-bar height, pushing emptyLabel further from
+    // the opening tag with no change to the actual clearable-month behaviour this test checks.
+    expect(SRC).toMatch(/<MonthYearPicker[\s\S]{0,400}emptyLabel="All months"/);
   });
 });

@@ -8,6 +8,7 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { isShiftDueYet } from './shift-due.util.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -155,6 +156,11 @@ function getDayName(dateStr: string): string {
   return days[new Date(dateStr).getDay()];
 }
 
+// Local (server wall-clock) date/time helpers moved to shift-due.util.ts (Phase C,
+// 2026-09-12) — deliberately NOT toISOString(), which reads a Date back in UTC and
+// would misclassify "today" for part of the day on a UTC-offset host. The production
+// box's own OS clock is IST, so those local getters give the right calendar day/minute.
+
 const GRACE_MINUTES = 5;
 const INCOMPLETE_THRESHOLD_PCT = 80;
 const DEFAULT_HOURLY_COST_INR = 150; // Average BPO agent cost per hour
@@ -258,13 +264,28 @@ export async function getWeeklyShrinkageIntelligence(
       // Not counted
     } else {
       // Working day
+      const shiftStart = r.template_start || r.shift_start_time;
+      const shiftEnd = r.template_end || r.shift_end_time;
+
+      // A shift scheduled for TODAY that has not started yet (current time still before shift
+      // start + grace) has no measurable outcome — it is not present, but it is not genuinely
+      // absent either. A bare `clock_in IS NULL` check (the only thing available) can't tell
+      // "hasn't shown up" apart from "shift hasn't begun", and previously always read it as an
+      // absence — so a branch with, say, a 19:00 shift showed 100% shrinkage all afternoon,
+      // before a single person was even due in. Excluded entirely from today's tally until the
+      // shift is actually due; a past date is unaffected since its shift has necessarily already
+      // started by the time it's queried. Found live 2026-09-11 on Roster Analytics. Guard
+      // extracted to shift-due.util.ts as part of Phase C (2026-09-12) so this exact check
+      // isn't duplicated a 4th time by the new Process Team Roster feature.
+      if (!r.first_in && !isShiftDueYet(shiftStart ? String(shiftStart) : null, dateKey, GRACE_MINUTES)) {
+        continue;
+      }
+
       totalPlanned++;
       if (dayStat) dayStat.planned++;
       mgrStat.teamDays++;
       procStat.planned++;
 
-      const shiftStart = r.template_start || r.shift_start_time;
-      const shiftEnd = r.template_end || r.shift_end_time;
       let expectedHours = 8;
       if (shiftStart && shiftEnd) {
         const startMin = timeToMinutes(String(shiftStart));

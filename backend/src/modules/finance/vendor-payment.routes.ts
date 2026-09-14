@@ -16,7 +16,6 @@ import {
 } from "./finance-access-scope.js";
 import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
-import { paymentVoucherService } from "./payment-voucher.service.js";
 
 const PAYMENT_WRITE_ROLES = ["accounts_head", "super_admin"] as const;
 const PAYMENT_READ_ROLES = [
@@ -585,18 +584,15 @@ router.get(
   })
 );
 
+// 4-D: Vendor advance/on-account balance — backs the Raise form's inline display and the
+// Dispatch page's advance badge.
 router.get(
   "/vendors/:vendorId/advance-balance",
-  requireAuth,
   requireRole(...PAYMENT_READ_ROLES),
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const balance = await paymentVoucherService.vendorAdvanceBalance(req.params.vendorId);
-      res.json({ success: true, data: { balance } });
-    } catch (err) {
-      res.status(500).json({ success: false, error: "Unable to fetch vendor advance balance" });
-    }
-  }
+  h(async (req, res) => {
+    const balance = await vendorPaymentService.getAdvanceBalance(req.params.vendorId);
+    res.json({ success: true, data: { balance } });
+  })
 );
 
 export { router as vendorPaymentRouter };

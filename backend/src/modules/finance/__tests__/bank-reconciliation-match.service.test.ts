@@ -106,6 +106,8 @@ describe("bankReconciliationMatchService.postAdjustment", () => {
       .mockResolvedValueOnce([[{ id: "line-1", txn_date: "2026-09-06", description: "Bank charges", debit_amount: 250, credit_amount: 0, match_status: "unmatched" }]])
       // SELECT ... FOR UPDATE company_bank_account
       .mockResolvedValueOnce([[{ id: "acct-1" }]])
+      // assertNotInClosedPeriod — no closed period covers this date
+      .mockResolvedValueOnce([[]])
       // SELECT last running_balance
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       // INSERT bank_account_ledger_entry

@@ -26,6 +26,7 @@ import {
 import { identitySpineSelect, identitySpineJoins } from "../identity-spine.js";
 import { resolvePii } from "../../../shared/piiCiphertext.js";
 import { resolveAccountNumber } from "../../../shared/fieldEncryption.js";
+import { billQuery } from "../../../db/billDb.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -38,6 +39,236 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
     params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
+}
+
+// ---------------------------------------------------------------------------
+// db_bill legacy-master fallback (employee-master only)
+// ---------------------------------------------------------------------------
+/**
+ * mas_hrms's own "migrated" mirror tables (employee_legacy_meta, employee_education,
+ * employee_experience, employee_salary_snapshot, employee_client_mapping) are almost entirely
+ * empty in practice — verified 2026-09-11 against live data: employee_legacy_meta covers 1.4%
+ * of active employees, employee_education/employee_experience 0%, employee_client_mapping 1.4%,
+ * employee_salary_snapshot 11.3%. The bulk migration that was supposed to populate them never
+ * ran (or ran against a different snapshot) for the overwhelming majority of employees.
+ *
+ * db_bill.masjclrentry — the same table [[hrms2-bank-details-real-source-is-masjclrentry]]
+ * already established as the real source for bank details — still holds this data for 90%+ of
+ * active employees (verified by EmpCode match: Father 90.6%, Qualification 91.1%, Gross/CTC/
+ * NetInhand 94-100%, Nominee* ~99.5%, EntryDate 89%). This is a READ-ONLY upstream source per
+ * the Database Boundary Rule — never written to, matched by EmpCode text (trimmed/uppercased on
+ * both sides, since db_bill values carry inconsistent casing/whitespace), and used only to fill
+ * in a field the live mas_hrms tables above left blank — it never overrides a value mas_hrms
+ * already has.
+ */
+interface LegacyMasterRow extends RowDataPacket {
+  EmpCode: string | null;
+  Father: string | null;
+  Husband: string | null;
+  BloodGruop: string | null;
+  Qualification: string | null;
+  Qualification_Details: string | null;
+  Passed_Out_Year: string | null;
+  Passed_Out_State: string | null;
+  Passed_Out_City: string | null;
+  Passed_Out_Percent: string | null;
+  Experience: string | null;
+  Experience_Year: string | null;
+  Family_Annual_Income: string | null;
+  Count_Of_Dependents: string | null;
+  Reporting_Manager_Mobile_No: string | null;
+  LandLine: string | null;
+  LandLine1: string | null;
+  Mobile1: string | null;
+  documentDone: string | null;
+  Gross: string | null;
+  NetInhand: string | null;
+  CTC: string | null;
+  PassportNo: string | null;
+  dlNo: string | null;
+  EPFNo: string | null;
+  ESICNo: string | null;
+  EntryDate: Date | string | null;
+  LeftReason: string | null;
+  BoxFileNo: string | null;
+  UpdatedBy: string | null;
+  NomineeName: string | null;
+  NomineeRelation: string | null;
+  NomineeDob: Date | string | null;
+}
+
+async function fetchLegacyMasterByCode(): Promise<Map<string, LegacyMasterRow>> {
+  const map = new Map<string, LegacyMasterRow>();
+  const rows = await billQuery<LegacyMasterRow>(
+    `SELECT EmpCode, Father, Husband, BloodGruop, Qualification, Qualification_Details,
+            Passed_Out_Year, Passed_Out_State, Passed_Out_City, Passed_Out_Percent,
+            Experience, Experience_Year, Family_Annual_Income, Count_Of_Dependents,
+            Reporting_Manager_Mobile_No, LandLine, LandLine1, Mobile1, documentDone, Gross,
+            NetInhand, CTC, PassportNo, dlNo, EPFNo, ESICNo, EntryDate, LeftReason, BoxFileNo,
+            UpdatedBy, NomineeName, NomineeRelation, NomineeDob
+       FROM masjclrentry
+      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`
+  );
+  for (const row of rows) {
+    if (row.EmpCode) map.set(String(row.EmpCode).trim().toUpperCase(), row);
+  }
+  return map;
+}
+
+/**
+ * Second legacy source. db_bill.employee_master (35,902 rows) is a separate snapshot from
+ * masjclrentry, covering a different, overlapping set of employee codes — verified 2026-09-11:
+ * 33,434 of 59,031 mas_hrms employee codes match here, and several fields masjclrentry has
+ * nothing for are 100% populated on the matched rows here (EmpFor 100% vs 0% in masjclrentry;
+ * CostCenter, CTCOffered, MaritalStatus also 100% of matched). Column names in this table are
+ * close to verbatim matches of the legacy export headers this report reproduces (CTCOffered,
+ * LeftRmks, TMobNo, EmpFor, BiometricCode) — it looks like the table the original export tool
+ * itself read from. Applied as a third fill layer, after mas_hrms live data and after
+ * masjclrentry, so it only reaches fields still blank after both of those.
+ */
+interface LegacyMasterRow2 extends RowDataPacket {
+  EmpCode: string | null;
+  Fname: string | null;
+  Gender: string | null;
+  Qualification: string | null;
+  MaritalStatus: string | null;
+  BloodG: string | null;
+  TMobNo: string | null;
+  TLandLine: string | null;
+  PLandLine: string | null;
+  documentDone: string | null;
+  CTCOffered: string | null;
+  Gross: string | null;
+  NetInHand: string | null;
+  PassPortNo: string | null;
+  dlNo: string | null;
+  EpfNo: string | null;
+  EsiNo: string | null;
+  EntryDate: Date | string | null;
+  LeftRmks: string | null;
+  BoxFileNo: string | null;
+  UpdatedBy: string | null;
+  CostCenter: string | null;
+  EmpFor: string | null;
+  BiometricCode: string | null;
+  SourceType: string | null;
+  Source: string | null;
+  UAN: string | null;
+}
+
+async function fetchEmployeeMasterByCode(): Promise<Map<string, LegacyMasterRow2>> {
+  const map = new Map<string, LegacyMasterRow2>();
+  const rows = await billQuery<LegacyMasterRow2>(
+    `SELECT EmpCode, Fname, Gender, Qualification, MaritalStatus, BloodG, TMobNo, TLandLine,
+            PLandLine, documentDone, CTCOffered, Gross, NetInHand, PassPortNo, dlNo, EpfNo,
+            EsiNo, EntryDate, LeftRmks, BoxFileNo, UpdatedBy, CostCenter, EmpFor, BiometricCode,
+            SourceType, Source, UAN
+       FROM employee_master
+      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`
+  );
+  for (const row of rows) {
+    if (row.EmpCode) map.set(String(row.EmpCode).trim().toUpperCase(), row);
+  }
+  return map;
+}
+
+function blank(v: unknown): boolean {
+  return v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+}
+
+/** DD-MMM-YYYY, matching this file's DATE_FORMAT(..., '%d-%b-%Y') convention. */
+function formatLegacyDate(value: unknown): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1901) return null;
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${String(d.getDate()).padStart(2, "0")}-${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+/**
+ * Fills fields that came back blank from mas_hrms's own tables, first from
+ * db_bill.masjclrentry then from db_bill.employee_master, matched by employee_code. Never
+ * overwrites a value an earlier, higher-priority source already filled in.
+ */
+function enrichWithLegacyMaster(
+  row: Record<string, unknown>,
+  legacyByCode: Map<string, LegacyMasterRow>,
+  employeeMasterByCode: Map<string, LegacyMasterRow2>
+): Record<string, unknown> {
+  const fill = (key: string, value: unknown) => {
+    if (blank(row[key]) && !blank(value)) row[key] = value;
+  };
+
+  const code = row.employee_code ? String(row.employee_code).trim().toUpperCase() : null;
+  const lg = code ? legacyByCode.get(code) : undefined;
+
+  if (lg) {
+    fill("father_husband_name", lg.Father || lg.Husband);
+    fill("father_husband_relation", !blank(lg.Father) ? "Father" : !blank(lg.Husband) ? "Husband" : null);
+    fill("nominee_name", lg.NomineeName);
+    fill("nominee_relation", lg.NomineeRelation);
+    fill("nominee_dob", formatLegacyDate(lg.NomineeDob));
+    fill("blood_group", lg.BloodGruop);
+    fill("qualification", lg.Qualification);
+    fill("qualification_details", lg.Qualification_Details);
+    fill("passed_out_year", lg.Passed_Out_Year);
+    fill("passed_out_state", lg.Passed_Out_State);
+    fill("passed_out_city", lg.Passed_Out_City);
+    fill("passed_out_percentage", lg.Passed_Out_Percent);
+    fill("experience_years", lg.Experience_Year);
+    fill("family_annual_income", lg.Family_Annual_Income);
+    fill("count_of_dependents", lg.Count_Of_Dependents);
+    fill("reporting_manager_mobile", lg.Reporting_Manager_Mobile_No);
+    fill("permanent_landline", lg.LandLine);
+    fill("temporary_landline", lg.LandLine1);
+    fill("temporary_mobile", lg.Mobile1);
+    fill("document_done", lg.documentDone);
+    fill("gross", lg.Gross);
+    // No distinct "CTC offered" column exists in masjclrentry; CTC is the closest proxy
+    // (mas_hrms's own employee_salary_snapshot.ctc_offered is still the first choice, and
+    // employee_master.CTCOffered below is an exact-name match tried before this guesses).
+    fill("ctc_offered", lg.CTC);
+    fill("net_in_hand", lg.NetInhand);
+    fill("passport_no", lg.PassportNo);
+    fill("dl_no", lg.dlNo);
+    fill("epf_number", lg.EPFNo);
+    fill("esi_number", lg.ESICNo);
+    fill("entry_date", formatLegacyDate(lg.EntryDate));
+    fill("left_remarks", lg.LeftReason);
+    fill("box_file_no", lg.BoxFileNo);
+    fill("manual_update_by", lg.UpdatedBy);
+  }
+
+  const em = code ? employeeMasterByCode.get(code) : undefined;
+  if (em) {
+    fill("father_husband_name", em.Fname);
+    fill("gender", em.Gender);
+    fill("qualification", em.Qualification);
+    fill("marital_status", em.MaritalStatus);
+    fill("blood_group", em.BloodG);
+    fill("temporary_mobile", em.TMobNo);
+    fill("temporary_landline", em.TLandLine);
+    fill("permanent_landline", em.PLandLine);
+    fill("document_done", em.documentDone);
+    fill("ctc_offered", em.CTCOffered);
+    fill("gross", em.Gross);
+    fill("net_in_hand", em.NetInHand);
+    fill("passport_no", em.PassPortNo);
+    fill("dl_no", em.dlNo);
+    fill("epf_number", em.EpfNo);
+    fill("esi_number", em.EsiNo);
+    fill("entry_date", formatLegacyDate(em.EntryDate));
+    fill("left_remarks", em.LeftRmks);
+    fill("box_file_no", em.BoxFileNo);
+    fill("manual_update_by", em.UpdatedBy);
+    fill("emp_for", em.EmpFor);
+    fill("biometric_code", em.BiometricCode);
+    fill("source_type", em.SourceType);
+    fill("source", em.Source);
+    fill("uan_number", em.UAN);
+  }
+
+  return row;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,10 +330,154 @@ export async function headcount(
 // ---------------------------------------------------------------------------
 // employee-master
 // ---------------------------------------------------------------------------
+
+/** Columns of employee_master_snapshot (migration 1615), in report-catalog.ts column order. */
+const SNAPSHOT_DISPLAY_COLUMNS = [
+  "employee_code", "biometric_code", "employment_type", "employee_name", "father_husband_name",
+  "father_husband_relation", "gender", "nominee_name", "nominee_relation", "nominee_dob",
+  "date_of_birth", "date_of_joining", "designation_name", "billable_status", "department_name",
+  "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
+  "qualification_details", "passed_out_year", "passed_out_state", "passed_out_city",
+  "passed_out_percentage", "working_experience", "experience_years", "marital_status",
+  "family_annual_income", "count_of_dependents", "reporting_manager", "reporting_manager_mobile",
+  "blood_group", "permanent_address_line1", "permanent_city", "permanent_state",
+  "permanent_pincode", "current_address_line1", "current_city", "current_state",
+  "current_pincode", "contact_number", "permanent_landline", "temporary_mobile",
+  "temporary_landline", "email", "document_done", "gross", "ctc_offered", "net_in_hand",
+  "bank_account_number", "ifsc_code", "bank_name", "bank_branch", "passport_no", "dl_no",
+  "uan_number", "epf_number", "pf_eligible", "esi_number", "esi_eligible", "entry_date",
+  "status", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
+  "aadhaar_number", "pan_number", "work_status", "manual_update_by", "manual_update_date",
+] as const;
+
+/** Snapshot is refused as stale beyond this — falls back to the live computation instead of
+ *  silently serving a payroll-adjacent PII report that stopped refreshing. The cron runs every
+ *  30 minutes; 3 hours gives it room for a few missed/slow ticks before anyone notices wrong
+ *  data instead of just a slower page. */
+const SNAPSHOT_MAX_STALENESS_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * employee-master, fast path: reads the pre-computed employee_master_snapshot (migration 1615,
+ * refreshed every 30 min by cron/employee-master-snapshot.cron.ts) instead of re-running the
+ * live query's dozen mas_hrms joins plus two db_bill cross-database fallback fetches on every
+ * request. Scope/filter/status/date-range conditions are unchanged and still applied to
+ * `employees e` — only the SELECT list changes, from the live computation to a join against
+ * the snapshot's pre-resolved display columns. Falls back to employeeMasterLive() whenever the
+ * snapshot can't be trusted: missing table, empty, or stale past SNAPSHOT_MAX_STALENESS_MS.
+ */
 export async function employeeMaster(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
+): Promise<ExecResult> {
+  const freshness = await checkSnapshotFreshness();
+  if (!freshness.usable) {
+    console.warn(`[employee-master] snapshot not usable (${freshness.reason}) — falling back to live computation`);
+    return employeeMasterLive(filters, scope, options);
+  }
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  appendEmployeeStatusFilter(filters, clauses, params);
+
+  if (filters.from || filters.to) {
+    const from = dateParam(filters.from, "1900-01-01");
+    const to   = dateParam(filters.to, "9999-12-31");
+    const inForce = employeeInForce.byTenure(from, to);
+    clauses.push(inForce.clause);
+    params.push(...inForce.params);
+  }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("e.id > ?");
+    params.push(options.cursor);
+  }
+
+  const selectList = SNAPSHOT_DISPLAY_COLUMNS.map((c) => `ems.${c}`).join(",\n           ");
+  const base = `
+    SELECT e.id AS _cursor,
+           ${selectList}
+      FROM employees e
+      JOIN employee_master_snapshot ems ON ems.employee_code = e.employee_code
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY e.id ASC`;
+
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    nextCursor,
+  };
+}
+
+interface SnapshotFreshness {
+  usable: boolean;
+  reason?: string;
+}
+
+async function checkSnapshotFreshness(): Promise<SnapshotFreshness> {
+  try {
+    const rows = await query(
+      `SELECT COUNT(*) AS row_count, MAX(snapshot_refreshed_at) AS last_refreshed
+         FROM employee_master_snapshot`,
+      []
+    );
+    const row = rows[0] as { row_count?: number; last_refreshed?: string | Date } | undefined;
+    const rowCount = Number(row?.row_count ?? 0);
+    if (rowCount === 0) return { usable: false, reason: "empty" };
+
+    const lastRefreshed = row?.last_refreshed ? new Date(row.last_refreshed) : null;
+    if (!lastRefreshed || Number.isNaN(lastRefreshed.getTime())) {
+      return { usable: false, reason: "no refresh timestamp" };
+    }
+    const ageMs = Date.now() - lastRefreshed.getTime();
+    if (ageMs > SNAPSHOT_MAX_STALENESS_MS) {
+      return { usable: false, reason: `stale (${Math.round(ageMs / 60000)} min old)` };
+    }
+    return { usable: true };
+  } catch (err) {
+    // Table doesn't exist yet (migration not applied in this environment) or some other
+    // read failure — never let a snapshot-table problem take down the report itself.
+    return { usable: false, reason: `read error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+/**
+ * The full live computation: every mas_hrms join, reading mas_hrms's own dedicated tables
+ * first for every field. This is what employee_master_snapshot's refresh job
+ * (employee-master-snapshot.service.ts) calls directly — it must never read the snapshot to
+ * populate the snapshot. The fast-path employeeMaster() above calls this only as a fallback
+ * when the snapshot can't be trusted.
+ *
+ * db_bill dependency: OFF by default (`useDbBillFallback = false`). Until 2026-09-11,
+ * mas_hrms's own employee_legacy_meta/employee_nominee/employee_education/employee_experience/
+ * employee_client_mapping/employee_salary_snapshot tables were almost entirely empty (1-11%
+ * populated — the bulk migration that was meant to fill them never ran for most employees), so
+ * this function called db_bill.masjclrentry/employee_master live on every request as a
+ * fallback. That data has since been backfilled directly into those mas_hrms tables
+ * (scripts/backfill-legacy-tables-from-dbbill.ts, ~97-99% coverage on most of them — see that
+ * script's own header for exact numbers) — the SQL below already reads those tables first, so
+ * with the backfill done it finds real data there and this function needs db_bill for nothing.
+ * `useDbBillFallback: true` re-enables the live db_bill top-up for anyone genuinely missed by
+ * the backfill (new legacy data entering db_bill after the backfill date, or an employee the
+ * backfill's lock-contention retries never reached) — pass it explicitly for a one-off audit,
+ * never from a routine/scheduled call.
+ */
+export async function employeeMasterLive(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions,
+  useDbBillFallback: boolean = false
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[]  = [];
@@ -153,12 +528,27 @@ export async function employeeMaster(
   const base = `
     SELECT e.id AS _cursor,
            e.employee_code,
+           e.biometric_code,
+           e.employment_type,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(NULLIF(e.father_name,''), lm.father_name) AS father_husband_name,
+           lm.relationship_type AS father_husband_relation,
+           e.gender,
+           COALESCE(en.nominee_name, e.nominee_name) AS nominee_name,
+           COALESCE(en.relationship, e.nominee_relation) AS nominee_relation,
+           DATE_FORMAT(en.date_of_birth, '%d-%b-%Y') AS nominee_dob,
            ${statusExpr} AS status,
            e.official_email,
            e.personal_email,
+           e.email,
            e.mobile AS contact_number,
            e.personal_phone AS personal_contact_number,
+           -- TMobNo = temporary/alternate mobile number, distinct from PMobNo (e.mobile).
+           -- employees.alternate_mobile is the live, profile-editable field; the onboarding-form
+           -- snapshot is the fallback for anyone who hasn't had it re-entered since hire.
+           COALESCE(NULLIF(e.alternate_mobile,''), cop.alt_mobile_number) AS temporary_mobile,
+           lm.land_line_p AS permanent_landline,
+           lm.land_line_t AS temporary_landline,
            DATE_FORMAT(e.date_of_birth, '%d-%b-%Y') AS date_of_birth,
            DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS date_of_joining,
            DATE_FORMAT(e.date_of_exit, '%d-%b-%Y') AS date_of_leaving,
@@ -170,13 +560,41 @@ export async function employeeMaster(
                TIMESTAMPDIFF(MONTH, e.date_of_joining, COALESCE(e.date_of_exit, CURDATE())) % 12, 'm'
              )
            END AS tenure,
+           -- CASE WHEN e.billable_status/is_billable disagree, the text column wins (matches
+           -- v_master_employee_source's fallback order); neither was populated by the legacy
+           -- bulk migration, so this is commonly blank for older employees.
+           COALESCE(NULLIF(e.billable_status,''), CASE e.is_billable WHEN 1 THEN 'Yes' WHEN 0 THEN 'No' END) AS billable_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            des.designation_name,
+           -- "EmpFor" (which client/LOB the employee is deployed against) — a separate concept
+           -- from cost centre; only tracked on employee_client_mapping, not on employees itself.
+           ecm.emp_for,
+           e.profile_type,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           -- Qualification/education block: sourced from employee_education (the live table the
+           -- Employee Profile page writes to), latest row per employee — not the onboarding-time
+           -- snapshot in candidate_onboarding_qualification, which can go stale after hire.
+           ee.qualification,
+           ee.specialization_course_name AS qualification_details,
+           ee.passed_out_year,
+           ee.passed_out_state,
+           ee.passed_out_city,
+           ee.passed_out_percentage,
+           -- Same live-vs-snapshot call as qualification: employee_experience is what the
+           -- Employee Profile page maintains. "WorkingExperience"/"ExperienceYear" were two
+           -- separate legacy columns with no exact live equivalent split, so this report reads
+           -- them as fresher/experienced status and total years respectively.
+           CASE WHEN ex.is_fresher = 1 THEN 'Fresher' ELSE 'Experienced' END AS working_experience,
+           ex.experience_years,
+           e.marital_status,
+           e.annual_income AS family_annual_income,
+           e.count_of_dependents,
            COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager,
+           m.mobile AS reporting_manager_mobile,
+           COALESCE(NULLIF(e.blood_group,''), lm.blood_group) AS blood_group,
            addr_cur.address_line1  AS current_address_line1,
            addr_cur.address_line2  AS current_address_line2,
            addr_cur.city           AS current_city,
@@ -187,16 +605,48 @@ export async function employeeMaster(
            addr_perm.city          AS permanent_city,
            addr_perm.state         AS permanent_state,
            addr_perm.pincode       AS permanent_pincode,
+           lm.document_done,
            DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_effective_date,
            esa.ctc_annual           AS ctc_annual,
            ssm.structure_name       AS salary_structure_name,
+           COALESCE(ess.gross, e.gross_salary) AS gross,
+           COALESCE(ess.ctc_offered, ess.offered_ctc) AS ctc_offered,
+           COALESCE(ess.net_in_hand, e.net_inhand) AS net_in_hand,
            bd.bank_name             AS bank_name,
            bd.bank_branch           AS bank_branch,
            bd.ifsc_code             AS ifsc_code,
            bd.account_holder_name   AS bank_account_holder_name,
            bd.account_number_enc    AS _bank_account_number_enc,
            bd.account_number        AS _bank_account_number_legacy,
-           COALESCE(NULLIF(TRIM(eu.uan),''), NULLIF(TRIM(e.uan_number),'')) AS uan_number,
+           lm.passport_no,
+           lm.dl_no,
+           -- UAN previously skipped employee_statutory_info even though it's already joined
+           -- below for PF eligibility — some legacy-migrated employees only have their UAN there.
+           COALESCE(NULLIF(TRIM(eu.uan),''), NULLIF(TRIM(si.uan_number),''), NULLIF(TRIM(e.uan_number),'')) AS uan_number,
+           COALESCE(si.epf_number, e.epf_number) AS epf_number,
+           COALESCE(si.esi_number, e.esic_number) AS esi_number,
+           CASE
+             WHEN si.esi_eligible = 1 THEN 'Yes'
+             WHEN si.id IS NOT NULL AND si.esi_eligible = 0 THEN 'No'
+             ELSE 'Unresolved'
+           END AS esi_eligible,
+           -- EntryDate: employee_legacy_meta.entry_date (migration 1616) is the primary source
+           -- — backfilled 2026-09-11 from db_bill.masjclrentry.EntryDate for every employee it
+           -- had it for (~28% of all employees; genuinely absent for the rest, not a query
+           -- gap). candidate_onboarding_profile.submitted_at is a distant second-choice
+           -- fallback for anyone hired through the live ATS onboarding flow since (coverage
+           -- there is separately near-zero — employees.candidate_id is barely populated — but
+           -- it costs nothing to check).
+           COALESCE(DATE_FORMAT(lm.entry_date, '%d-%b-%Y'), DATE_FORMAT(cop.submitted_at, '%d-%b-%Y')) AS entry_date,
+           -- LeftRmks = exit reason. Free-text resignation_reason wins when present (matches the
+           -- field's literal meaning); falls back to the coded exit_reason_category (same source
+           -- leftEmployeeExport() elsewhere in this file uses), then to
+           -- employee_legacy_meta.left_reason (migration 1616, backfilled from db_bill's
+           -- LeftReason 2026-09-11) for exits that predate exit_request entirely.
+           COALESCE(NULLIF(er.resignation_reason,''), er.exit_reason_category, lm.left_reason) AS left_remarks,
+           e.source_type,
+           e.source,
+           lm.box_file_no,
            e.pan_number_encrypted   AS _pan_number_enc,
            e.pan_number             AS _pan_number_legacy,
            si.pan_number            AS _pan_number_statutory,
@@ -204,6 +654,11 @@ export async function employeeMaster(
            e.aadhaar_number         AS _aadhaar_number_legacy,
            e.aadhaar_last4          AS _aadhaar_last4,
            si.aadhaar_id            AS _aadhaar_id_statutory,
+           -- "Work Status" (billable/non-billable, or WFO/WFH/Hybrid depending which legacy
+           -- meaning) has no live per-employee column anywhere in mas_hrms — left NULL.
+           NULL AS work_status,
+           lm.updated_by AS manual_update_by,
+           NULL AS manual_update_date,
            -- PF eligibility: HRMS statutory record is the source, an approved PF opt-out
            -- overrides it. This is NOT the payroll-authoritative answer (that requires a
            -- specific payroll period and reads through db_bill — see
@@ -224,9 +679,48 @@ export async function employeeMaster(
       LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
       LEFT JOIN employee_address addr_cur  ON addr_cur.employee_id  = e.id AND addr_cur.address_type  = 'current'
       LEFT JOIN employee_address addr_perm ON addr_perm.employee_id = e.id AND addr_perm.address_type = 'permanent'
-      LEFT JOIN employee_bank_detail bd ON bd.employee_id = e.id
+      -- Bank record must be the primary, active one — an unfiltered join could surface an
+      -- arbitrary or stale secondary account (the bank-missing report already filters this way).
+      LEFT JOIN employee_bank_detail bd ON bd.employee_id = e.id AND bd.active_status = 1 AND bd.is_primary = 1
       LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
       LEFT JOIN employee_statutory_info si ON si.employee_id = e.id
+      LEFT JOIN employee_legacy_meta lm ON lm.employee_id = e.id
+      LEFT JOIN candidate_onboarding_profile cop ON cop.candidate_id = e.candidate_id
+      -- Latest completed exit per employee. NOTE: leftEmployeeExport() elsewhere in this file
+      -- filters status IN ('confirmed','cleared','completed') — none of those values actually
+      -- occur in exit_request (real values are submitted/accepted/exited/revoked), so that
+      -- filter matches zero rows today. Not fixed here (out of scope, pre-existing), but this
+      -- join uses the real value so LeftRmks isn't silently blank the same way.
+      LEFT JOIN exit_request er ON er.employee_id = e.id
+            AND er.status = 'exited'
+            AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
+      LEFT JOIN (
+        SELECT employee_id, nominee_name, relationship, date_of_birth,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY created_at DESC, id DESC) AS rn
+          FROM employee_nominee
+      ) en ON en.employee_id = e.id AND en.rn = 1
+      LEFT JOIN (
+        SELECT employee_id, qualification, specialization_course_name, passed_out_year,
+               passed_out_state, passed_out_city, passed_out_percentage,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY created_at DESC, id DESC) AS rn
+          FROM employee_education
+      ) ee ON ee.employee_id = e.id AND ee.rn = 1
+      LEFT JOIN (
+        SELECT employee_id, is_fresher, experience_years,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY created_at DESC, id DESC) AS rn
+          FROM employee_experience
+      ) ex ON ex.employee_id = e.id AND ex.rn = 1
+      LEFT JOIN (
+        SELECT employee_id, emp_for,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY effective_from DESC, id DESC) AS rn
+          FROM employee_client_mapping
+         WHERE active_status = 1
+      ) ecm ON ecm.employee_id = e.id AND ecm.rn = 1
+      LEFT JOIN (
+        SELECT employee_id, gross, ctc_offered, offered_ctc, net_in_hand,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY COALESCE(effective_date, snapshot_date) DESC, id DESC) AS rn
+          FROM employee_salary_snapshot
+      ) ess ON ess.employee_id = e.id AND ess.rn = 1
       LEFT JOIN (
         SELECT eso.employee_id
           FROM employee_statutory_override eso
@@ -281,10 +775,26 @@ export async function employeeMaster(
     return { ...rest, pan_number: panValue, aadhaar_number: aadhaarValue, bank_account_number: accountNumber };
   });
 
+  // db_bill fallback: off by default (see this function's doc comment). Fill-blanks-only,
+  // best-effort — if db_bill is unreachable, the report still returns with whatever mas_hrms
+  // itself had rather than failing the whole export over a read-only upstream source being down.
+  let enriched: Record<string, unknown>[] = out;
+  if (useDbBillFallback && out.length > 0) {
+    try {
+      const [legacyByCode, employeeMasterByCode] = await Promise.all([
+        fetchLegacyMasterByCode(),
+        fetchEmployeeMasterByCode(),
+      ]);
+      enriched = out.map((row) => enrichWithLegacyMaster(row, legacyByCode, employeeMasterByCode));
+    } catch (err) {
+      console.error("[employee-master] db_bill legacy-master enrichment skipped:", err);
+    }
+  }
+
   return {
-    rows: out,
+    rows: enriched,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > enriched.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -649,6 +1159,11 @@ const CONFIRMATION_DUE_JOIN = `
  * employee, and the latest salary snapshot per employee via a row-constructor IN. Both are
  * slow — this report takes roughly 15s even with the predicate corrected — but rewriting them
  * is an optimisation, and an optimisation hidden inside a move is not verifiable as either.
+ *
+ * 2026-09-11: one further fix, not part of the original verbatim promotion — the exit_request
+ * join filtered status IN ('confirmed','cleared','completed'), none of which are real values in
+ * that column (actual values: submitted/accepted/exited/revoked), so left_remarks was silently
+ * blank for every row since this report existed. Corrected to status = 'exited'.
  */
 export async function leftEmployeeExport(
   filters: ExecFilters,
@@ -695,8 +1210,11 @@ export async function leftEmployeeExport(
     LEFT JOIN branch_master b ON b.id = e.branch_id
     LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
     LEFT JOIN process_master p ON p.id = e.process_id
+    -- Was 'confirmed'/'cleared'/'completed' — none of those values occur in exit_request (real
+    -- values are submitted/accepted/exited/revoked), so this join matched zero rows and
+    -- left_remarks was silently blank for every exited employee. Fixed 2026-09-11.
     LEFT JOIN exit_request er ON er.employee_id = e.id
-          AND er.status IN ('confirmed','cleared','completed')
+          AND er.status = 'exited'
           AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
     LEFT JOIN (
       SELECT employee_id, net_in_hand
@@ -756,6 +1274,8 @@ export async function bankMissing(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS date_of_joining,
+           DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_effective_date,
            CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status,
            CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e
@@ -763,6 +1283,12 @@ export async function bankMissing(
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      LEFT JOIN (
+        SELECT employee_id, effective_from,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY effective_from DESC) AS rn
+          FROM employee_salary_assignment
+         WHERE active_status = 1
+      ) esa ON esa.employee_id = e.id AND esa.rn = 1
      WHERE ${clauses.join(" AND ")}
      AND (ebd.id IS NULL OR COALESCE(ebd.verified,0)=0)
      ORDER BY bank_status DESC, employee_name`;

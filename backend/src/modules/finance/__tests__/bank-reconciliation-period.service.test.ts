@@ -8,7 +8,7 @@ const { execute, logSensitiveAction } = vi.hoisted(() => ({
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
-import { bankReconciliationPeriodService, BankReconciliationPeriodError } from "../bank-reconciliation-period.service.js";
+import { bankReconciliationPeriodService, BankReconciliationPeriodError, assertNotInClosedPeriod } from "../bank-reconciliation-period.service.js";
 
 beforeEach(() => { execute.mockReset(); logSensitiveAction.mockClear(); });
 
@@ -24,11 +24,21 @@ describe("bankReconciliationPeriodService.create", () => {
   it("creates a period carrying the account's current opening balance", async () => {
     execute
       .mockResolvedValueOnce([[{ opening_balance: 50000 }]])
-      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[]]) // no existing open period
+      .mockResolvedValueOnce([[]]) // no overlapping closed period
       .mockResolvedValueOnce([{}]);
     const result = await bankReconciliationPeriodService.create("acct-1", "2026-09-01", "2026-09-30", "actor-1");
     expect(result.id).toBeTruthy();
     expect(execute).toHaveBeenCalledWith(expect.stringMatching(/INSERT INTO bank_reconciliation_period/), expect.arrayContaining([50000]));
+  });
+
+  it("refuses a date range overlapping an already-closed period", async () => {
+    execute
+      .mockResolvedValueOnce([[{ opening_balance: 0 }]])
+      .mockResolvedValueOnce([[]]) // no existing open period
+      .mockResolvedValueOnce([[{ id: "closed-1", from_date: "2026-08-01", to_date: "2026-08-31" }]]);
+    await expect(bankReconciliationPeriodService.create("acct-1", "2026-08-15", "2026-09-15", "actor-1"))
+      .rejects.toThrow(/overlaps a closed period/i);
   });
 });
 
@@ -98,5 +108,33 @@ describe("bankReconciliationPeriodService.reopen", () => {
     await bankReconciliationPeriodService.reopen("period-1", "found a mismatch", "actor-1");
     expect(execute).toHaveBeenCalledWith(expect.stringMatching(/UPDATE bank_account_ledger_entry SET reconciliation_period_id = NULL/), ["period-1"]);
     expect(logSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({ action_type: "BANK_RECONCILIATION_PERIOD_REOPENED" }));
+  });
+});
+
+/**
+ * assertNotInClosedPeriod guards every bank_account_ledger_entry insert site — Payment Voucher
+ * release, direct vendor dispatch, direct imprest allocation, reconciliation adjustments — so a
+ * closed period's already-stamped computed_closing_balance/outstanding_total can never silently
+ * go stale from a later entry landing inside its window.
+ */
+describe("assertNotInClosedPeriod", () => {
+  it("does nothing when no closed period covers the date", async () => {
+    execute.mockResolvedValueOnce([[]]);
+    await expect(assertNotInClosedPeriod({ execute } as any, "acct-1", "2026-09-15")).resolves.toBeUndefined();
+  });
+
+  it("throws when a closed period covers the date, naming the period's end date", async () => {
+    execute.mockResolvedValueOnce([[{ id: "period-1", to_date: "2026-08-31" }]]);
+    await expect(assertNotInClosedPeriod({ execute } as any, "acct-1", "2026-08-15"))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("2026-08-31") });
+  });
+
+  it("has no lower bound — an entry dated before from_date but still <= to_date is still blocked", async () => {
+    // Matches close()'s own closing-balance query, which is also entry_date <= to_date with no
+    // floor: an entry dated before the period technically "started" still falls inside the
+    // window close() already swept into its computed totals.
+    execute.mockResolvedValueOnce([[{ id: "period-1", to_date: "2026-08-31" }]]);
+    await expect(assertNotInClosedPeriod({ execute } as any, "acct-1", "2026-01-01"))
+      .rejects.toThrow(/closed through 2026-08-31/);
   });
 });

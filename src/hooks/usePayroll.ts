@@ -72,7 +72,6 @@ export interface PayrollRecord {
   pfEmployer?: number;
   esicEmployee?: number;
   esicEmployer?: number;
-  professionalTax?: number;
   tdsAmount?: number;
   lwpDeduction?: number;
   advanceRecovery?: number;
@@ -157,7 +156,6 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     pfEmployer:           row.pf_employer           !== undefined ? Number(row.pf_employer)           : undefined,
     esicEmployee:         row.esic_employee         !== undefined ? Number(row.esic_employee)         : undefined,
     esicEmployer:         row.esic_employer         !== undefined ? Number(row.esic_employer)         : undefined,
-    professionalTax:      row.professional_tax      !== undefined ? Number(row.professional_tax)      : undefined,
     tdsAmount:            row.tds                   !== undefined ? Number(row.tds)                   : undefined,
     lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,
     advanceRecovery:      row.advance_recovery      !== undefined ? Number(row.advance_recovery)      : undefined,

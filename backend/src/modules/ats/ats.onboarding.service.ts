@@ -8,6 +8,7 @@ import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-h
 import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import { resolveBandPct } from './band-package-ratio.service.js';
+import { parseCtcInput } from './ctc-parser.js';
 import {
   sendOnboardingTokenEmail,
   sendBankResubmitEmail,
@@ -909,19 +910,47 @@ export async function saveOffer(
     bhEmail = (bhRows as RowDataPacket[])[0]?.email ?? null;
   }
 
+  // Parsed once, defensively -- offerData.offered_ctc arrives as a plain number from
+  // the current frontend, but this is the one place a comma/period-grouped string
+  // (a direct API call, or a future caller) would otherwise silently corrupt the
+  // whole offer. See ctc-parser.ts for the exact bug this closes.
+  const annualCtcInput = parseCtcInput(offerData.offered_ctc);
+  if (annualCtcInput === null || !Number.isFinite(annualCtcInput) || annualCtcInput <= 0) {
+    throw Object.assign(
+      new Error(`Offered CTC "${String(offerData.offered_ctc)}" could not be read as a valid amount.`),
+      { statusCode: 400 },
+    );
+  }
+
   // salary_band_master has no basic_pct/hra_pct columns -- that lookup always
   // threw and silently defaulted to 40/40 for every band. Derive the split
   // from salary_package_master instead: the canonical master Payroll Head's
   // tools already read. See band-package-ratio.service.ts.
   const band = await resolveBandPct(
     typeof offerData.salary_band === 'string' ? offerData.salary_band : null,
-    Number(offerData.offered_ctc) / 12,
+    annualCtcInput / 12,
   );
-  const components: SalaryComponents = calculateSalary(
-    Number(offerData.offered_ctc),
+  // Default true (deduct) to match the column's own DB default when a caller
+  // omits the field entirely — only an explicit false opts the candidate out.
+  const pfEligible = offerData.pf_eligible !== false && offerData.pf_eligible !== 0;
+  const esiEligible = offerData.esi_eligible !== false && offerData.esi_eligible !== 0;
+  let stateCode: string | null = null;
+  if (req.branch_id) {
+    const [stateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
+      [req.branch_id],
+    ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
+    stateCode = (stateRows as RowDataPacket[])[0]?.state ?? null;
+  }
+  const components: SalaryComponents = await calculateSalary(
+    annualCtcInput,
     band.basicPct,
     band.hraPct,
     false,
+    undefined,
+    pfEligible,
+    esiEligible,
+    stateCode,
   );
 
   // Persisted so an out-of-band CTC carries its justification with it, not just
@@ -988,6 +1017,7 @@ export async function saveOffer(
          da = ?, special_allowance = ?, other_allowance = ?, bonus = ?, gross = ?,
          pf_employee = ?, pf_employer = ?, esic_employee = ?, esic_employer = ?,
          professional_tax = ?, gratuity = ?, admin_charges = ?, net_in_hand = ?,
+         pf_eligible = ?, esi_eligible = ?,
          is_proposed_exception = ?, proposed_exception_reason = ?,
          status = ?, submitted_at = ?, updated_at = NOW()
        WHERE id = ?`,
@@ -1000,6 +1030,7 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfEligible ? 1 : 0, esiEligible ? 1 : 0,
         isProposedException ? 1 : 0, proposedExceptionReason,
         status, submittedAt,
         offerId,
@@ -1014,9 +1045,10 @@ export async function saveOffer(
           salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance,
           other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, gratuity, admin_charges, net_in_hand,
+          pf_eligible, esi_eligible,
           is_proposed_exception, proposed_exception_reason,
           status, created_by, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         offerId, requestId, req.candidate_id,
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
@@ -1027,6 +1059,7 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfEligible ? 1 : 0, esiEligible ? 1 : 0,
         isProposedException ? 1 : 0, proposedExceptionReason,
         status, createdBy, submittedAt,
       ],

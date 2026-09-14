@@ -1,6 +1,3 @@
-import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -39,7 +36,7 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
               ? "border-amber-200 bg-amber-50 text-amber-800"
               : item.tone === "danger"
               ? "border-rose-200 bg-rose-50 text-rose-800"
-              : "border-slate-200 bg-white text-slate-700";
+              : "border-border bg-card text-muted-foreground";
 
           return (
             <div key={item.label} className={`shrink-0 rounded-xl border px-3 py-1.5 ${chipColor}`}>
@@ -52,29 +49,20 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
     );
   }
 
+  // Flat bordered-cell strip modelled on the Process P&L redesign reference: a single
+  // grid of uppercase micro-labels over large tabular-nums figures, the "good"/primary
+  // tile carrying the primary (MAS Blue) accent as a top rule rather than a rounded, shadowed card.
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-2 border border-border bg-card sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
       {items.map((item) => {
-        // Every tile shares the same flat white surface — only the left accent stripe and icon
-        // carry the tone, so a row of good/warning/danger/neutral tiles reads as one consistent
-        // set rather than a row of differently-colored cards.
-        const accent =
+        const toneColor =
           item.tone === "good"
-            ? "border-l-emerald-400"
+            ? "text-foreground"
             : item.tone === "warning"
-            ? "border-l-amber-400"
+            ? "text-amber-700"
             : item.tone === "danger"
-            ? "border-l-rose-400"
-            : "border-l-slate-300";
-
-        const icon =
-          item.tone === "good" ? (
-            <ArrowUpRight className="h-4 w-4 text-emerald-600" />
-          ) : item.tone === "danger" ? (
-            <ArrowDownRight className="h-4 w-4 text-rose-600" />
-          ) : (
-            <Minus className="h-4 w-4 text-slate-400" />
-          );
+            ? "text-rose-700"
+            : "text-foreground";
 
         const renderedValue =
           item.kind === "currency"
@@ -84,17 +72,19 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
             : formatNumber(item.value ?? 0);
 
         return (
-          <Card key={item.label} className={`overflow-hidden border border-slate-200 border-l-4 ${accent} shadow-sm`}>
-            <CardContent className="space-y-2 p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  {item.label}
-                </p>
-                {icon}
-              </div>
-              <div className="text-2xl font-bold tracking-tight text-slate-950">{renderedValue}</div>
-            </CardContent>
-          </Card>
+          <div
+            key={item.label}
+            className={`border-b border-r border-border px-4 py-3 last:border-r-0 ${
+              item.tone === "good" ? "border-t-[3px] border-t-primary" : ""
+            }`}
+          >
+            <p className="whitespace-nowrap text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
+              {item.label}
+            </p>
+            <p className={`mt-1 whitespace-nowrap text-[22px] font-extrabold leading-none tracking-tight tabular-nums ${toneColor}`}>
+              {renderedValue}
+            </p>
+          </div>
         );
       })}
     </div>

@@ -4,7 +4,8 @@ import { leaveTypeColors, getLeaveColor } from "@/lib/leaveColors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Calendar } from "@/components/ui/calendar";
 import { ChevronLeft, ChevronRight, CalendarDays, Users } from "lucide-react";
@@ -258,7 +259,7 @@ export function LeaveCalendarView() {
                     <div className="relative">
                       <Avatar className="h-10 w-10 rounded-lg">
                         {leave.employee?.avatar_url && (
-                          <AvatarImage src={normalizeMediaUrl(leave.employee.avatar_url)} className="rounded-lg" />
+                          <AuthedAvatarImage src={normalizeMediaUrl(leave.employee.avatar_url)} className="rounded-lg" />
                         )}
                         <AvatarFallback className="rounded-lg bg-white/10 text-slate-200">{initials}</AvatarFallback>
                       </Avatar>

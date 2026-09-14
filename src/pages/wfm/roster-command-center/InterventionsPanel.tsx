@@ -16,8 +16,8 @@
  * 5. Outcome tracking (retained, exited, pending)
  */
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -31,8 +31,6 @@ import {
   CheckCircle2,
   Clock,
   Filter,
-  MessageSquare,
-  Phone,
   RefreshCw,
   Shield,
   Target,
@@ -395,10 +393,10 @@ function InterventionCard({
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function RosterInterventionDashboard() {
+export default function InterventionsPanel() {
+  const navigate = useNavigate();
   const [tierFilter, setTierFilter] = useState(ALL);
   const [ownerFilter, setOwnerFilter] = useState(ALL);
-  const [outcomeFilter, setOutcomeFilter] = useState<string>("pending");
   const [selectedIntervention, setSelectedIntervention] = useState<InterventionRecommendation | null>(null);
   const [actionNotes, setActionNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -426,20 +424,23 @@ export default function RosterInterventionDashboard() {
   });
 
   const { data: interventionsData, isLoading } = useQuery({
-    queryKey: ["interventions", "list", tierFilter, ownerFilter, outcomeFilter],
+    queryKey: ["interventions", "list", tierFilter, ownerFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
-      // The API supports `owner` and `limit` only; tier and outcome are filtered client-side
-      // below rather than sent as parameters the handler would silently ignore.
+      // The API supports `owner` and `limit` only; tier is filtered client-side below rather
+      // than sent as a parameter the handler would silently ignore.
       if (ownerFilter !== ALL) params.set("owner", ownerFilter);
       const raw = await hrmsApi.get<{ data?: PendingInterventionApiRow[]; count?: number }>(
         `/api/analytics/intervention-recommendations/pending?${params}`,
       );
       let rows = (raw?.data ?? []).map(adaptPendingRow);
       if (tierFilter !== ALL) rows = rows.filter((r) => r.riskTier === tierFilter);
-      // outcomeFilter is deliberately NOT applied: the endpoint already selects
-      // `outcome = 'pending'`, so every row it returns has the same outcome and filtering on
-      // anything else would blank the list rather than narrow it.
+      // Merge-plan Phase B bug #15: there used to be an Outcome filter here too, but the
+      // endpoint already hard-selects `outcome = 'pending'` server-side, so every row it
+      // returns has the same outcome — the filter was a no-op decoration. The backing table
+      // (employee_retention_recommendation) also has 0 production rows today, so a real
+      // `?outcome=` variant can't be verified against live data yet; removed rather than
+      // shipping a control that silently does nothing. Re-add once the endpoint supports it.
       return { interventions: rows, total: rows.length };
     },
   });
@@ -489,8 +490,8 @@ export default function RosterInterventionDashboard() {
   })();
 
   return (
-    <DashboardLayout>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-violet-50/30 to-purple-50/20 p-4 sm:p-6">
+    <>
+      <div className="bg-gradient-to-br from-slate-50 via-violet-50/30 to-purple-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
         {/* Header with gradient (violet for intervention/HR domain) */}
         <div className="mb-6 rounded-2xl bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 p-6 text-white shadow-lg shadow-violet-500/20">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -606,17 +607,6 @@ export default function RosterInterventionDashboard() {
                 <SelectItem value="manager">Manager</SelectItem>
                 <SelectItem value="wfm">WFM</SelectItem>
                 <SelectItem value="process_head">Process Head</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={outcomeFilter} onValueChange={setOutcomeFilter}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Outcome" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All Outcomes</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="retained">Retained</SelectItem>
-                <SelectItem value="exited">Exited</SelectItem>
               </SelectContent>
             </Select>
             <div className="ml-auto text-sm text-slate-500">
@@ -801,28 +791,30 @@ export default function RosterInterventionDashboard() {
                 </div>
               )}
 
-              {/* Quick Actions */}
+              {/*
+                * Merge-plan Phase B bug #16: this used to be 4 buttons (Call Employee,
+                * Send Message, Schedule Meeting, View Full 360), none wired to a real
+                * handler. There is no telephony, messaging, or scheduling integration
+                * behind Call/Message/Schedule anywhere in this codebase to wire them to,
+                * so they're removed rather than left as decorative controls. "View Full
+                * 360" survives because a real destination already exists — the same
+                * per-employee roster profile page other roster-console tabs deep-link to.
+                */}
               <div className="border-t pt-6">
                 <h4 className="font-semibold text-slate-700 mb-3">Quick Actions</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" className="justify-start gap-2">
-                    <Phone className="h-4 w-4" /> Call Employee
-                  </Button>
-                  <Button variant="outline" size="sm" className="justify-start gap-2">
-                    <MessageSquare className="h-4 w-4" /> Send Message
-                  </Button>
-                  <Button variant="outline" size="sm" className="justify-start gap-2">
-                    <Calendar className="h-4 w-4" /> Schedule Meeting
-                  </Button>
-                  <Button variant="outline" size="sm" className="justify-start gap-2">
-                    <TrendingDown className="h-4 w-4" /> View Full 360
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="justify-start gap-2"
+                  onClick={() => navigate(`/wfm/employee-roster/${selectedIntervention.employeeId}`)}
+                >
+                  <TrendingDown className="h-4 w-4" /> View Full 360
+                </Button>
               </div>
             </div>
           )}
         </SheetContent>
       </Sheet>
-    </DashboardLayout>
+    </>
   );
 }

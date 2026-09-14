@@ -135,6 +135,308 @@ router.get("/:processId/voice-of-customer", requireAuth, requireRole(...VIEWER_R
 }));
 
 /**
+ * Day x CLAP-category heat-cell matrix, last 14 days -- which days carried
+ * a spike of Agent/Logistic/Product/Customer-attributed calls. Not
+ * period-selector-driven, see the service function for why. Declared
+ * before /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer/heatmap", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getClapDailyHeatmap(req.authUser!.id, req.params.processId);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+const CLAP_VALUES = ["Customer", "Logistic", "Agent", "Product"] as const;
+
+/**
+ * Sub-scenario drill for one CLAP bucket (Phase B of the Mydashboards
+ * port) — clicking "Agent: 34%" on the breakdown bar answers WHICH real
+ * scenarios make up that share, grouped on the exact same q.scenario field
+ * CLAP_CASE itself classifies on. Declared before /:processId for the same
+ * shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer/scenarios", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const clap = req.query.clap as string;
+  if (!CLAP_VALUES.includes(clap as any)) {
+    return res.status(400).json({
+      success: false, code: "BAD_REQUEST",
+      message: `clap must be one of ${CLAP_VALUES.join(", ")}.`,
+    });
+  }
+  const data = await svc.getClapScenarioBreakdown(
+    req.authUser!.id, req.params.processId, readPeriod(req), clap as typeof CLAP_VALUES[number],
+  );
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Row-level companion to /voice-of-customer/scenarios (Phase C) -- the real
+ * calls behind one scenario, newest first, capped at 50. Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/voice-of-customer/scenario-calls", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const clap = req.query.clap as string;
+  const scenario = req.query.scenario as string;
+  if (!CLAP_VALUES.includes(clap as any)) {
+    return res.status(400).json({
+      success: false, code: "BAD_REQUEST",
+      message: `clap must be one of ${CLAP_VALUES.join(", ")}.`,
+    });
+  }
+  if (!scenario || !scenario.trim()) {
+    return res.status(400).json({ success: false, code: "BAD_REQUEST", message: "scenario is required." });
+  }
+  const data = await svc.getClapScenarioCalls(
+    req.authUser!.id, req.params.processId, readPeriod(req), clap as typeof CLAP_VALUES[number], scenario,
+  );
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * One call's full audit detail -- transcript, recording, scenario and every
+ * scored parameter's pass/fail/blank state (Phase C). Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/call-detail", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const employeeCode = req.query.employeeCode as string;
+  const callDate = req.query.callDate as string;
+  if (!employeeCode || !callDate) {
+    return res.status(400).json({
+      success: false, code: "BAD_REQUEST", message: "employeeCode and callDate are both required.",
+    });
+  }
+  const data = await svc.getCallDetail(req.authUser!.id, req.params.processId, employeeCode, callDate);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process/employee, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Fatal calls -- every call this period where all six FATAL_PARAM_COLS
+ * scored 0. Declared before /:processId for the same shadowing reason as
+ * its siblings.
+ */
+router.get("/:processId/fatal-calls", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getFatalCalls(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Agent Audit Summary -- TQ/MQ/BQ stack-ranked per-agent audit rollup.
+ * Declared before /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/agent-audit-summary", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getAgentAuditSummary(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Scenario Distribution -- scenario x scenario1 breakdown. Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/scenario-distribution", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getScenarioDistribution(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Score Components -- the five skill-group gauges. Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/score-components", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getScoreComponents(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * ACHT (call-length) categorization. Declared before /:processId for the
+ * same shadowing reason as its siblings.
+ */
+router.get("/:processId/acht-categorization", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getAchtCategorization(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Critical Signals -- Frustration/Threat/Abuse/Slang/Sarcasm categorization.
+ * Declared before /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/critical-signals", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getCriticalSignals(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Daily quality trend vs target (last N days). Declared before /:processId
+ * for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/daily-quality-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const days = Number(req.query.days) || 7;
+  const data = await svc.getDailyQualityTrend(req.authUser!.id, req.params.processId, days);
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Customer risk cards -- social media/court threat + potential scam.
+ * Declared before /:processId for the same shadowing reason as its
+ * siblings.
+ */
+router.get("/:processId/customer-risk-cards", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getCustomerRiskCards(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Fatal Analysis tab. Declared before /:processId for the same shadowing
+ * reason as its siblings.
+ */
+router.get("/:processId/fatal-analysis", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getFatalAnalysis(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Day-wise scenario audit volume (Detail Analysis tab). Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/day-wise-scenario-audit", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getDayWiseScenarioAudit(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Repeat Analysis tab. Declared before /:processId for the same shadowing
+ * reason as its siblings.
+ */
+router.get("/:processId/repeat-analysis", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getRepeatAnalysis(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * Fraud Call tab. Declared before /:processId for the same shadowing
+ * reason as its siblings.
+ */
+router.get("/:processId/fraud-calls", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getFraudCallSummary(req.authUser!.id, req.params.processId, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
+ * One analyst's own recent audited calls -- third real consumer of
+ * CallDetailDrawer, reached from AnalystBreakdownPanel's per-employee
+ * expansion (any metric, not just quality ones). Declared before
+ * /:processId for the same shadowing reason as its siblings.
+ */
+router.get("/:processId/employee-calls", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const employeeCode = req.query.employeeCode as string;
+  if (!employeeCode) {
+    return res.status(400).json({ success: false, code: "BAD_REQUEST", message: "employeeCode is required." });
+  }
+  const data = await svc.getEmployeeRecentCalls(req.authUser!.id, req.params.processId, employeeCode, readPeriod(req));
+  if (!data) {
+    return res.status(404).json({
+      success: false, code: "NOT_FOUND",
+      message: "No such process/employee, or it is outside your access.",
+    });
+  }
+  res.json({ success: true, data });
+}));
+
+/**
  * Root Cause vs. Workforce: the CLAP Agent-share trend alongside ramp-cohort
  * tenure, attrition and roster staffing gap for the same process/dates — a
  * plain juxtaposition, not a computed correlation (see the service function

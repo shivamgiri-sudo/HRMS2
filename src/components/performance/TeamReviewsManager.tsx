@@ -6,7 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -377,7 +379,7 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
               {teamMembers.map(employee => (
                 <div key={employee.id} className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
                   <Avatar className="h-10 w-10">
-                    <AvatarImage src={employee.avatar_url || undefined} />
+                    <AuthedAvatarImage src={normalizeMediaUrl(employee.avatar_url)} />
                     <AvatarFallback>{employee.first_name[0]}{employee.last_name[0]}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
@@ -564,7 +566,7 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
                   <label key={member.id} className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer transition-colors">
                     <Checkbox checked={bulkSelectedIds.has(member.id)} onCheckedChange={() => toggleBulkSelect(member.id)} />
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={member.avatar_url || undefined} />
+                      <AuthedAvatarImage src={normalizeMediaUrl(member.avatar_url)} />
                       <AvatarFallback className="text-xs">{member.first_name[0]}{member.last_name[0]}</AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">

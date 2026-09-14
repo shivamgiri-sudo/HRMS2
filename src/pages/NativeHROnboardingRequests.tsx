@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { parseCtcInput, formatCtcPreview } from '@/lib/ctcParser';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
@@ -135,7 +136,6 @@ interface SalaryPreview {
   pf_employer: number;
   esic_employee: number;
   esic_employer: number;
-  professional_tax: number;
   net_in_hand: number;
   admin_charges?: number;
 }
@@ -261,11 +261,11 @@ function OfferBadge({ status }: { status?: string }) {
 function ErrorBanner({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
   if (!message) return null;
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-3">
-      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+    <div role="alert" className="rounded-[var(--radius-card)] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#B91C1C] flex items-start gap-3">
+      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
       <div className="flex-1">
         <p className="font-semibold">{message}</p>
-        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2 min-h-[44px] bg-white">Retry</Button>}
+        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2 min-h-[44px] bg-[var(--color-surface)]">Try again</Button>}
       </div>
     </div>
   );
@@ -461,6 +461,8 @@ export default function NativeHROnboardingRequests() {
   // fraudAlertCount: open critical/high alerts for the selected candidate
   // fraudAcknowledged: HR checked "I have reviewed" — unblocks Approve
   // showFraudPanel: controls collapse of the fraud section
+  // fraudStatus: "idle" before check, "loading" during, "ok" on success, "unknown" if check API failed
+  const [fraudStatus, setFraudStatus] = useState<"idle" | "loading" | "ok" | "unknown">("idle");
   const [fraudAlertCount, setFraudAlertCount] = useState(0);
   const [fraudAcknowledged, setFraudAcknowledged] = useState(false);
   const [showFraudPanel, setShowFraudPanel] = useState(false);
@@ -980,10 +982,12 @@ export default function NativeHROnboardingRequests() {
     setReviewError(null);
     setCostCentres([]);  // cleared — useEffect will populate once selected + allBranches/allCostCentres are ready
     setFraudAlertCount(0);
+    setFraudStatus("idle");
     setFraudAcknowledged(false);
     setShowFraudPanel(false);
     // Load all branch employees upfront for reporting manager dropdown
     void loadManagersByBranch(row.branch_id ?? '');
+    setFraudStatus("loading");
     Promise.allSettled([
       hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
         .then((r: any) => setDetailData(r?.data ?? r))
@@ -996,9 +1000,10 @@ export default function NativeHROnboardingRequests() {
           const alerts: any[] = r?.alerts ?? [];
           const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
           setFraudAlertCount(blocking.length);
+          setFraudStatus("ok");
           if (blocking.length > 0) setShowFraudPanel(true);
         })
-        .catch(() => setFraudAlertCount(0)),
+        .catch(() => { setFraudAlertCount(0); setFraudStatus("unknown"); }),
     ]).finally(() => setDetailLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadManagersByBranch]);
@@ -1010,11 +1015,21 @@ export default function NativeHROnboardingRequests() {
       setFormError('Enter CTC and salary band before calculating salary.');
       return;
     }
+    // See src/lib/ctcParser.ts -- a bare Number() here silently corrupted real offers
+    // (comma-typed "16,500" became 0; period-typed "16.500" became a broken 16.5).
+    const monthlyCtc = parseCtcInput(offer.offered_ctc);
+    if (monthlyCtc === null || monthlyCtc <= 0) {
+      setFormError(`"${offer.offered_ctc}" doesn't look like a valid monthly CTC. Enter digits only, e.g. 16500.`);
+      return;
+    }
     setCalcLoading(true);
     try {
       const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
-        ctc: Number(offer.offered_ctc) * 12,
+        ctc: monthlyCtc * 12,
         bandCode: offer.salary_band,
+        pf_eligible: offer.pf_eligible,
+        esi_eligible: offer.esi_eligible,
+        branch_id: selected?.branch_id ?? null,
       });
       setSalaryPreview(r.components ?? null);
     } catch (e: any) {
@@ -1041,7 +1056,6 @@ export default function NativeHROnboardingRequests() {
       pf_employer: Number(pkg.epf_employer ?? pkg.pf_employer ?? 0),
       esic_employee: Number(pkg.esic_employee ?? 0),
       esic_employer: Number(pkg.esic_employer ?? 0),
-      professional_tax: Number(pkg.professional_tax ?? 0),
       net_in_hand: Number(pkg.net_in_hand ?? 0),
       admin_charges: Number(pkg.admin_charges ?? 0),
     });
@@ -1061,15 +1075,22 @@ export default function NativeHROnboardingRequests() {
       // `!proposedCtc` alone only catches an empty field -- the *string* "0"
       // is truthy in JS, so a candidate could be submitted with a proposed
       // CTC of zero and no error shown. Checked as a number instead.
-      if (!proposedCtc || !(Number(proposedCtc) > 0)) errors.proposed_ctc = 'Proposed CTC must be greater than zero.';
+      // parseCtcInput (not bare Number()) so a comma/period-grouped entry like
+      // "16,500" or "16.500" is read correctly instead of silently corrupted --
+      // see src/lib/ctcParser.ts for the exact live incident this closes.
+      const parsedProposed = parseCtcInput(proposedCtc);
+      if (parsedProposed === null || !(parsedProposed > 0)) errors.proposed_ctc = 'Proposed CTC must be greater than zero.';
       if (!proposedReason.trim()) errors.proposed_reason = 'Exception reason is required.';
-    } else if (!offer.offered_ctc || !(Number(offer.offered_ctc) > 0)) {
-      // Same truthiness gap as above -- "0" (typed, or left over from a
-      // package whose amount didn't populate) passed this check silently and
-      // produced a ₹0 CTC/gross offer with a negative net-in-hand once
-      // submitted. See ats.onboarding.service.ts saveOffer() for the
-      // matching server-side guard (client validation alone is not enough).
-      errors.offered_ctc = 'Enter a package or a monthly CTC greater than zero.';
+    } else {
+      const parsedOffered = parseCtcInput(offer.offered_ctc);
+      if (parsedOffered === null || !(parsedOffered > 0)) {
+        // Same truthiness gap as above -- "0" (typed, or left over from a
+        // package whose amount didn't populate) passed this check silently and
+        // produced a ₹0 CTC/gross offer with a negative net-in-hand once
+        // submitted. See ats.onboarding.service.ts saveOffer() for the
+        // matching server-side guard (client validation alone is not enough).
+        errors.offered_ctc = 'Enter a package or a monthly CTC greater than zero.';
+      }
     }
     setFormFieldErrors(errors);
     if (Object.keys(errors).length) {
@@ -1086,7 +1107,9 @@ export default function NativeHROnboardingRequests() {
     setFormError(null);
     try {
       const isProposed = offerTab === 'proposed';
-      const monthlyCtc = isProposed ? Number(proposedCtc) : Number(offer.offered_ctc);
+      // parseCtcInput, not bare Number() -- see src/lib/ctcParser.ts. validateOffer()
+      // above already confirmed this parses to a positive number before we get here.
+      const monthlyCtc = (isProposed ? parseCtcInput(proposedCtc) : parseCtcInput(offer.offered_ctc)) ?? 0;
       await hrmsApi.post(`/api/ats/onboarding/requests/${selected.id}/offer`, {
         ...offer,
         offered_ctc: monthlyCtc * 12,
@@ -1376,7 +1399,7 @@ export default function NativeHROnboardingRequests() {
                     <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
                   </div>
                 )}
-                {bgvQueueError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{bgvQueueError}</div>}
+                {bgvQueueError && <ErrorBanner message={bgvQueueError} onRetry={() => void loadBgvQueue()} />}
                 {!bgvQueueLoading && bgvQueue.length === 0 && !bgvQueueError && (
                   <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-16 text-center">
                     <ShieldCheck className="h-12 w-12 text-emerald-400 mb-3" />
@@ -1635,7 +1658,7 @@ export default function NativeHROnboardingRequests() {
                         <button type="button" onClick={() => { setBgvReviewState(null); setBgvReviewError(null); }}><X className="h-4 w-4 text-slate-400" /></button>
                       </div>
                       <div className="p-5 space-y-4">
-                        {bgvReviewError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{bgvReviewError}</div>}
+                        {bgvReviewError && <ErrorBanner message={bgvReviewError} />}
 
                         <div>
                           <label className="block text-xs font-bold text-slate-600 mb-1.5">Decision</label>
@@ -2363,6 +2386,11 @@ export default function NativeHROnboardingRequests() {
                   placeholder="Push-back remarks (required only when pushing back)…"
                   className={`${SEL} py-2`}
                 />
+                {fraudStatus === "unknown" && (
+                  <p className="text-xs text-amber-700 font-semibold mb-2">
+                    Fraud check unavailable — approval blocked until check completes.
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -2375,10 +2403,10 @@ export default function NativeHROnboardingRequests() {
                   </Button>
                   <Button
                     type="button"
-                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged)}
+                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged) || fraudStatus === "loading" || fraudStatus === "unknown"}
                     onClick={() => void submitReview('approved')}
-                    title={fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
-                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudAlertCount > 0 && !fraudAcknowledged ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                    title={fraudStatus === "loading" ? 'Fraud check in progress' : fraudStatus === "unknown" ? 'Fraud check unavailable — approval blocked' : fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
+                    className={`min-h-[44px] flex-1 text-white transition-all ${(fraudAlertCount > 0 && !fraudAcknowledged) || fraudStatus === "loading" || fraudStatus === "unknown" ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
                   >
                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Approve Profile
                   </Button>
@@ -2578,20 +2606,49 @@ export default function NativeHROnboardingRequests() {
                               </button>
                             </div>
                           ) : (
-                            <input
-                              inputMode="numeric"
-                              className={SEL}
-                              value={offer.offered_ctc}
-                              onChange={(e) => setF('offered_ctc', e.target.value)}
-                              placeholder="e.g. 18000"
-                            />
+                            <>
+                              <input
+                                inputMode="decimal"
+                                className={SEL}
+                                value={offer.offered_ctc}
+                                onChange={(e) => setF('offered_ctc', e.target.value)}
+                                placeholder="e.g. 16500 or 16,500"
+                              />
+                              {/* Live "you typed X, this means Y" readback -- commas and Excel-paste
+                                  period-grouping ("16.500") used to silently corrupt this field into
+                                  a near-zero CTC with no warning. See src/lib/ctcParser.ts. */}
+                              {offer.offered_ctc && (() => {
+                                const parsed = parseCtcInput(offer.offered_ctc);
+                                return parsed !== null && parsed > 0 ? (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    = <span className="font-semibold text-slate-700">{formatCtcPreview(parsed)}</span>/month
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-xs font-medium text-amber-600">
+                                    ⚠ "{offer.offered_ctc}" doesn't read as a valid amount — use digits only.
+                                  </p>
+                                );
+                              })()}
+                            </>
                           )}
                         </Field>
                       </>
                     ) : (
                       <>
                         <Field label="Proposed Monthly CTC" required error={formFieldErrors.proposed_ctc}>
-                          <input inputMode="numeric" className={SEL} value={proposedCtc} onChange={(e) => setProposedCtc(e.target.value)} placeholder="e.g. 18000" />
+                          <input inputMode="decimal" className={SEL} value={proposedCtc} onChange={(e) => setProposedCtc(e.target.value)} placeholder="e.g. 16500 or 16,500" />
+                          {proposedCtc && (() => {
+                            const parsed = parseCtcInput(proposedCtc);
+                            return parsed !== null && parsed > 0 ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                = <span className="font-semibold text-slate-700">{formatCtcPreview(parsed)}</span>/month
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs font-medium text-amber-600">
+                                ⚠ "{proposedCtc}" doesn't read as a valid amount — use digits only.
+                              </p>
+                            );
+                          })()}
                         </Field>
                         <Field label="Exception Reason" required error={formFieldErrors.proposed_reason}>
                           <input className={SEL} value={proposedReason} onChange={(e) => setProposedReason(e.target.value)} placeholder="Skill premium / approval reason" />
@@ -2629,7 +2686,6 @@ export default function NativeHROnboardingRequests() {
                           ['PF (Emplr)', salaryPreview.pf_employer],
                           ['ESIC (Emp)', salaryPreview.esic_employee],
                           ['ESIC (Emplr)', salaryPreview.esic_employer],
-                          ['Prof. Tax', salaryPreview.professional_tax],
                           ['Admin Chrg', salaryPreview.admin_charges],
                         ] as [string, number | undefined][]).map(([label, value]) => (
                           <div key={label} className="rounded-lg bg-white p-3 text-center shadow-sm">

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -87,6 +88,10 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
   const [mode, setMode] = useState("");
   const [paymentDate, setPaymentDate] = useState("");
   const [bank, setBank] = useState("");
+  // Which of the company's OWN accounts this pays out of — distinct from `bank` above, which is
+  // only the generic bank-name directory. Required so a direct dispatch can write its own
+  // Bank Ledger entry, the same way a Payment Voucher release already does.
+  const [companyBankAccountId, setCompanyBankAccountId] = useState("");
   const [utr, setUtr] = useState("");
   const [remarks, setRemarks] = useState("");
   const [holdReason, setHoldReason] = useState("");
@@ -107,12 +112,22 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
   });
   const banks = banksQuery.data ?? [];
 
+  // Same shared query key PaymentVoucherDrawer.tsx and RaiseVoucherForSingleDueDialog.tsx use —
+  // one cache for the company's account list, no reason to double-fetch it.
+  const bankAccountsQuery = useQuery({
+    queryKey: ["payment-voucher-bank-accounts"],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/bank-accounts")).data ?? [],
+    enabled: open,
+  });
+  const bankAccounts = bankAccountsQuery.data ?? [];
+
   useEffect(() => {
     if (payment) {
       setInstallmentAmt(String(payment.balance_amount ?? ""));
       setMode(payment.payment_mode ?? "");
       setPaymentDate(payment.payment_date ?? "");
       setBank(payment.bank_id ?? "");
+      setCompanyBankAccountId("");
       setUtr(payment.transaction_id ?? "");
       setRemarks(payment.remarks ?? "");
       setHoldReason(payment.hold_reason ?? "");
@@ -130,6 +145,7 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
         paymentMode: mode,
         paymentDate: paymentDate,
         bankId: bank || undefined,
+        companyBankAccountId: companyBankAccountId || undefined,
         transactionId: utr?.trim() || undefined,
         remarks: remarks?.trim() || undefined,
       });
@@ -338,7 +354,23 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
                 </Select>
               </div>
               <div>
-                <Label className="text-xs">UTR / Cheque no.</Label>
+                <Label className="text-xs">Bank Account *</Label>
+                <SearchableSelect
+                  id="dispatch-bank-account"
+                  aria-label="Bank Account"
+                  className="mt-1 h-8 text-sm"
+                  loading={bankAccountsQuery.isLoading}
+                  options={bankAccounts.map((a: any) => ({
+                    value: a.id, label: a.account_name, hint: a.account_number_masked ?? undefined,
+                  }))}
+                  value={companyBankAccountId}
+                  onChange={setCompanyBankAccountId}
+                  placeholder="Which account pays this"
+                  searchPlaceholder="Type an account name…"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">UTR / Cheque no. (optional)</Label>
                 <Input
                   value={utr}
                   onChange={e => setUtr(e.target.value)}
@@ -487,7 +519,13 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
             size="sm"
             // active_voucher repeats the tab-level guard on purpose: the footer button stays
             // mounted across tabs, so without it a voucher-owned due is still one click away.
-            disabled={dispatchMutation.isPending || !installmentAmt || !mode || !paymentDate || !!payment.active_voucher}
+            // companyBankAccountId only required once the org actually has accounts configured
+            // — mirrors dispatch()'s own server-side gate, so a fresh/test tenant with none set
+            // up isn't blocked from paying anything.
+            disabled={
+              dispatchMutation.isPending || !installmentAmt || !mode || !paymentDate || !!payment.active_voucher
+              || (mode !== "Cash" && bankAccounts.length > 0 && !companyBankAccountId)
+            }
             onClick={() => dispatchMutation.mutate()}
           >
             {dispatchMutation.isPending

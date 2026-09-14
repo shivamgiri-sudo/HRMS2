@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -149,7 +150,7 @@ export default function PayrollConfigFlags() {
           <Button size="sm" variant="outline" onClick={fetchFlags}>Refresh</Button>
         </div>
 
-        {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+        {error && <ErrorState title="Couldn't load config flags" description={error} onRetry={fetchFlags} />}
         {success && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">{success}</div>}
 
         <div className="overflow-x-auto rounded border">

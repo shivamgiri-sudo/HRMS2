@@ -1214,7 +1214,15 @@ export async function salarySheetExport(
       ebd.account_number AS ac_no_legacy,
       COALESCE(ebd.ifsc_code, '') AS ifsc_code,
       COALESCE(ebd.bank_name, '') AS ac_bank,
-      COALESCE(ebd.bank_branch, '') AS ac_branch
+      COALESCE(ebd.bank_branch, '') AS ac_branch,
+      -- Sourced from the Salary Transfer File workflow (bank-payment-readiness), not a real
+      -- cheque: previously hardcoded to "" / "" / today's date regardless of any real
+      -- transfer. ecs_number is the bank's transfer/ECS reference, transfer_date is the
+      -- payment date from that file, confirmed_at is when the number was recorded (i.e. the
+      -- file's upload/commit moment).
+      sti.ecs_number AS cheque_number_raw,
+      DATE_FORMAT(sti.transfer_date, '%Y-%m-%d') AS cheque_date_raw,
+      DATE_FORMAT(sti.confirmed_at, '%Y-%m-%d') AS print_date_raw
     FROM salary_prep_line spl
     JOIN salary_prep_run spr ON spr.id = spl.run_id
     JOIN employees e ON e.id = spl.employee_id
@@ -1226,6 +1234,8 @@ export async function salarySheetExport(
     LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
     LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+    LEFT JOIN salary_transfer_batch_item sti
+           ON sti.run_id = spr.id AND sti.employee_code = e.employee_code AND sti.status = 'confirmed'
     WHERE ${clauses.join(" AND ")}
     ORDER BY e.employee_code`;
 
@@ -1343,9 +1353,9 @@ export async function salarySheetExport(
       uan: row.uan,
       epf_no: row.epf_no,
       esic_no: row.esic_no,
-      cheque_number: "",
-      cheque_date: "",
-      print_date: new Date().toISOString().slice(0, 10),
+      cheque_number: row.cheque_number_raw ?? "",
+      cheque_date: row.cheque_date_raw ?? "",
+      print_date: row.print_date_raw ?? "",
       left_status: row.left_status,
       tax_total_gross: gross * 12,
       tax_section10: 0,

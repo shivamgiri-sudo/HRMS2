@@ -1,5 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * Professional Tax removal (2026-09-11, stakeholder-confirmed, company-wide, all
+ * states, go-forward only): these fixtures already mock getPtFromSlab and
+ * calculateNetSalary's professional_tax as 0 throughout, and getPtFromSlab() /
+ * resolveProfessionalTax() themselves now always resolve 0 unconditionally (see
+ * payrollCalculate.service.ts) — so these attendance/day-count tests, which are
+ * not about PT at all, remain valid unchanged. The stray
+ * `{ config_key: "professional_tax", config_value: 200 }` rows in the
+ * statutory-config mocks below are inert leftovers from before the removal:
+ * running-salary.service.ts no longer reads that config key (its `defaultPt` is
+ * now hardcoded 0), and every fixture here sets state_code so the code path that
+ * would have used it is never taken anyway.
+ */
 const { execute, resolveHolidaysForEmployeeV2, calculateWeekoffEligibility, calculateNetSalary, getPtFromSlab } = vi.hoisted(() => ({
   execute: vi.fn(),
   resolveHolidaysForEmployeeV2: vi.fn(),

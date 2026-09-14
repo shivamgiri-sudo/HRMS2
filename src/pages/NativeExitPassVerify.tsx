@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import {
   Search, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Loader, Undo2,
   Camera, QrCode, X,
@@ -271,7 +272,7 @@ export default function NativeExitPassVerify() {
 
         {scanOpen && <ScanPanel onScanned={onScanned} onClose={() => setScanOpen(false)} />}
 
-        {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+        {error && <ErrorState title="Lookup failed" description={error} />}
         {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div>}
 
         {result && verdict && VerdictIcon && (

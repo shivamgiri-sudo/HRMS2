@@ -44,7 +44,10 @@ type GrnRow = {
   id: string;
   /** NULL until Finance Head approves it — render via grnDisplayNumber(row). */
   grn_number: string | null;
-  grn_type: "vendor" | "imprest";
+  // "salary" is a real, searchable value — grn-type-support.ts blocks it from being newly
+  // created/submitted/approved, but read/list is unaffected, and 39,099 migrated db_bill rows
+  // carry it. The type here just hadn't caught up with the case this component already handles.
+  grn_type: "vendor" | "imprest" | "salary";
   invoice_number?: string | null;
   bill_date?: string | null;
   vendor_name?: string | null;

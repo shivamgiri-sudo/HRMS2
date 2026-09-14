@@ -50,6 +50,11 @@ export const exitController = {
     // Accepts an employee CODE as well as a uuid — see resolveEmployeeRef for why there is no
     // name fallback. Throws a 404 naming the code when it matches nobody.
     const employeeId = await resolveEmployeeRef(input.employeeId, input.employeeCode);
+    // Read off the request, never off the body: the route computed it from the caller's own
+    // roles, and a client must not be able to claim an exit was HR-raised. Same pattern as
+    // resolvedEmployeeId in getExitRequest below. Absent => 'employee', the previous constant.
+    const initiatedBy = (req as unknown as { exitInitiatedBy?: "employee" | "manager" | "hr" })
+      .exitInitiatedBy;
     const data = await exitService.createExitRequest(
       {
         employeeId,
@@ -57,8 +62,10 @@ export const exitController = {
         exitType: input.exitType,
         exitSubType: input.exitSubType,
         exitReasonCategory: input.exitReasonCategory,
+        abscondingSince: input.abscondingSince,
         reason: input.reason,
         noticePeriodDays: input.noticePeriodDays,
+        initiatedBy,
       },
       req.authUser!.id
     );

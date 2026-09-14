@@ -60,7 +60,7 @@ import {
 } from "./bank-manual-review.service.js";
 import {
   generateSalaryTransferBatch,
-  getFilteredEligibleTransferRows,
+  getFilteredEligibleTransferRowsWithNocExclusions,
   rejectTransferItems,
   markItemCorrectedReady,
   rejectionReasonLabel,
@@ -923,7 +923,7 @@ bankPaymentReadinessRouter.get(
     if (!["active", "inactive", "both"].includes(status)) {
       return res.status(400).json({ success: false, message: "status must be active, inactive or both" });
     }
-    const rows = await getFilteredEligibleTransferRows(runId, {
+    const { rows, excludedByNoc } = await getFilteredEligibleTransferRowsWithNocExclusions(runId, {
       branchId: String(req.query.branch_id ?? "").trim() || null,
       processId: String(req.query.process_id ?? "").trim() || null,
       costCentreId: String(req.query.cost_centre_id ?? "").trim() || null,
@@ -949,6 +949,11 @@ bankPaymentReadinessRouter.get(
         cost_centre_name: r.cost_centre_name,
         employee_status: r.active_status === 1 ? "active" : "inactive",
       })),
+      // Owner ruling 2026-09-12: a leaver without a signed NOC must not appear in the bank
+      // file. Reported here rather than silently dropped — the whole point of
+      // nocBlockedEmployeesForRuns (noc-release-gate.service.ts) is that a payable employee
+      // absent from the file is visible, not assumed. Empty when the kill switch is off.
+      excluded_by_noc: excludedByNoc,
     });
   }),
 );
@@ -1148,7 +1153,13 @@ bankPaymentReadinessRouter.patch(
   }),
 );
 
-/** POST /salary-transfer/import/preview — multipart file upload, CSV only. Never writes. */
+/**
+ * POST /salary-transfer/import/preview — multipart file upload, CSV only. Never writes.
+ *
+ * run_id is required: matching is scoped to the run currently open on screen, not to whichever
+ * batch item for that employee happens to be newest across every run (see previewTransferNumberImport
+ * for the real incident this fixes).
+ */
 bankPaymentReadinessRouter.post(
   "/salary-transfer/import/preview",
   requireRole(...MANAGE_ROLES),
@@ -1156,6 +1167,8 @@ bankPaymentReadinessRouter.post(
   h(async (req: any, res) => {
     const file = req.file as { buffer: Buffer; originalname: string } | undefined;
     if (!file) return res.status(400).json({ success: false, message: "file is required" });
+    const runId = String(req.body?.run_id ?? "").trim();
+    if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     const text = file.buffer.toString("utf8");
     let rows;
     try {
@@ -1166,7 +1179,7 @@ bankPaymentReadinessRouter.post(
     if (rows.length === 0) {
       return res.status(400).json({ success: false, message: "No data rows found" });
     }
-    const preview = await previewTransferNumberImport(rows);
+    const preview = await previewTransferNumberImport(rows, runId);
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
     const summary = {
       total: preview.length,

@@ -110,9 +110,54 @@ async function addLobAttributionValidation(grnId: string) {
   );
 }
 
+/**
+ * Vendor GRNs need an invoice/supporting attachment before they can ever become a payable
+ * record — vendor-payment.service.ts's createFromGrn() has always hard-refused to run
+ * without one. Until now that check only fired AFTER Finance Head approval, inside the same
+ * transaction as the status UPDATE — so on a real approval it rolled the whole thing back
+ * (loud, just late), but a one-time backfill script that set status directly via raw SQL
+ * (backfill-vendor-grn-approved-status.cjs) bypassed review() — and therefore this check —
+ * entirely, leaving 58 real, live GRNs (₹11.35L, Aug–Sep 2026) sitting at
+ * 'finance_head_approved' with no payable record and no way for anyone to discover why.
+ * Confirmed live: 0 of those 58 ever produced a vendor_payment_tracking row.
+ *
+ * Moving the same rule here — into the shared validation framework submit() AND review()
+ * both already call — surfaces it at submission (so it can no longer reach approval without
+ * one) and gives it the existing override mechanism (audited, reasoned, revocable) for the
+ * genuine exception, instead of a hard, silent block or an unaudited free pass.
+ */
+async function addVendorAttachmentValidation(grnId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT grn_type, attachment_path, attachment_file_path
+       FROM grn_request WHERE id = ? LIMIT 1`,
+    [grnId],
+  );
+  const grn = rows[0] as any;
+  if (!grn || grn.grn_type !== "vendor") return;
+  const hasAttachment = !!(grn.attachment_path || grn.attachment_file_path);
+  await db.execute(
+    `INSERT INTO grn_validation_result
+      (id, grn_request_id, validation_code, severity, validation_status,
+       is_blocking, message, details_json)
+     VALUES (?, ?, 'VENDOR_INVOICE_ATTACHMENT', ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      grnId,
+      hasAttachment ? "info" : "error",
+      hasAttachment ? "passed" : "failed",
+      hasAttachment ? 0 : 1,
+      hasAttachment
+        ? "Invoice/supporting attachment is on file"
+        : "Vendor GRN has no invoice/supporting attachment — required before it can become payable",
+      JSON.stringify({ hasAttachment }),
+    ],
+  );
+}
+
 async function effectiveValidation(grnId: string) {
   const fresh = await grnSmartService.revalidate(grnId);
   await addLobAttributionValidation(grnId);
+  await addVendorAttachmentValidation(grnId);
   const results = await applyOverridesToLatestResults(grnId);
   const blocking = results.filter(
     (item) => Number(item.is_blocking) === 1 && String(item.validation_status) === "failed"

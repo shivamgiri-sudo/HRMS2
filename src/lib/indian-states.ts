@@ -43,7 +43,10 @@ export const GST_STATE_CODES = [
 
 export type GstStateCode = typeof GST_STATE_CODES[number]["value"];
 
-const STATE_LABEL_BY_CODE = new Map(GST_STATE_CODES.map((s) => [s.value, s.label]));
+// Typed as Map<string, string>, not the narrow GstStateCode key TS would otherwise infer from
+// GST_STATE_CODES — this map's whole purpose is looking up an arbitrary, possibly-unrecognised
+// code from real data (gstStateLabel takes `string | null | undefined`), not just the known set.
+const STATE_LABEL_BY_CODE = new Map<string, string>(GST_STATE_CODES.map((s) => [s.value, s.label]));
 
 /** "07 - Delhi" for a known code, the raw code alone if unrecognised, "—" if empty — never
  *  a blank cell, so a reviewer sees SOMETHING is there even for a code this list doesn't know. */

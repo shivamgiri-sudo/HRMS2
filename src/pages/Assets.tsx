@@ -47,7 +47,9 @@ import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1503,7 +1505,7 @@ const Assets = () => {
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex min-w-0 items-center gap-3">
                           <Avatar className="h-10 w-10 border border-slate-200">
-                            <AvatarImage src={assignment.employee.avatar} />
+                            <AuthedAvatarImage src={normalizeMediaUrl(assignment.employee.avatar)} />
                             <AvatarFallback className="bg-slate-950 text-xs font-semibold text-white">
                               {assignment.employee.name
                                 .split(" ")

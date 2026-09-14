@@ -209,15 +209,20 @@ export async function getRosterView(
     const empIdList = [...employeeIds];
     const placeholders = empIdList.map(() => '?').join(', ');
     const [attRows] = await db.execute<RowDataPacket[]>(
+      // clock_in_time/clock_out_time/raw_minutes/attendance_status are the real
+      // attendance_daily_record columns - first_in/last_out/total_hours/status never existed on
+      // this table at all (confirmed via SHOW COLUMNS live 2026-09-11), so this 500'd every
+      // roster-view call that asked for adherence data. Aliased to the original names so none of
+      // the downstream JS reading att.first_in/att.total_hours needs to change.
       `SELECT employee_id,
-              DATE_FORMAT(attendance_date, '%Y-%m-%d') AS att_date,
-              first_in,
-              last_out,
-              total_hours,
-              status
+              DATE_FORMAT(record_date, '%Y-%m-%d') AS att_date,
+              TIME_FORMAT(clock_in_time, '%H:%i') AS first_in,
+              TIME_FORMAT(clock_out_time, '%H:%i') AS last_out,
+              raw_minutes / 60 AS total_hours,
+              attendance_status AS status
          FROM attendance_daily_record
         WHERE employee_id IN (${placeholders})
-          AND attendance_date BETWEEN ? AND ?`,
+          AND record_date BETWEEN ? AND ?`,
       [...empIdList, filters.fromDate, filters.toDate]
     );
     for (const att of attRows) {
@@ -463,13 +468,15 @@ export async function getEmployeeAdherenceTrend(
     );
 
     // Get attendance for this month
+    // Same real-schema fix as the adherence query above: first_in/total_hours never existed on
+    // attendance_daily_record - clock_in_time (datetime) and raw_minutes (minutes) do.
     const [attRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS att_date,
-              first_in,
-              total_hours
+      `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS att_date,
+              TIME_FORMAT(clock_in_time, '%H:%i') AS first_in,
+              raw_minutes / 60 AS total_hours
          FROM attendance_daily_record
         WHERE employee_id = ?
-          AND attendance_date BETWEEN ? AND ?`,
+          AND record_date BETWEEN ? AND ?`,
       [employeeId, firstDay, lastDay]
     );
 

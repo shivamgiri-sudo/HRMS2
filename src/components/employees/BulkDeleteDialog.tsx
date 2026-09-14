@@ -8,7 +8,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -73,7 +75,7 @@ export function BulkDeleteDialog({
                 className="flex items-center gap-3 p-2 rounded-lg bg-muted/50"
               >
                 <Avatar className="h-9 w-9">
-                  <AvatarImage src={employee.avatar} />
+                  <AuthedAvatarImage src={normalizeMediaUrl(employee.avatar)} />
                   <AvatarFallback className="text-xs">
                     {employee.name.split(" ").map((n) => n[0]).join("")}
                   </AvatarFallback>

@@ -423,6 +423,16 @@ const PT_STATE_JURISDICTION = `COALESCE(
 
 // ---------------------------------------------------------------------------
 // pt-register
+//
+// PT (Professional Tax) removed from active payroll 2026-09-11 by explicit
+// stakeholder decision, company-wide, all states — it is no longer computed
+// or deducted on any payroll run. This executor is left in place, unchanged,
+// so the register stays available for HISTORICAL audit of runs where
+// professional_tax > 0 was already recorded; the `> 0` filter below means it
+// will return zero rows for every run processed after the removal. Not
+// deleted outright: deleting the executor would also require deleting its
+// report-catalog entry and route wiring, which is a bigger structural change
+// than "PT is no longer an active obligation" requires.
 // ---------------------------------------------------------------------------
 export async function ptRegister(
   filters: ExecFilters,
@@ -978,6 +988,11 @@ export async function gratuityLiabilityRegister(
 // Folded in from an inline `case` block, behaviour preserved: professional tax actually
 // deducted per employee for a run month, restricted to lines where PT is non-zero.
 // Gains cost centre, process and branch.
+//
+// PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+// company-wide, all states). Kept unchanged for historical audit only — the
+// `professional_tax > 0` filter means every run processed after the removal
+// returns zero rows here.
 // ---------------------------------------------------------------------------
 export async function ptMonthlyRegister(
   filters: ExecFilters,
