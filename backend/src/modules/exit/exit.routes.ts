@@ -113,9 +113,13 @@ exitRouter.patch(
   "/:id/clearance/:taskId",
   requireRole("admin", "hr", "manager", "finance", "payroll", "wfm"),
   h(async (req, res) => {
-    const status = String(req.body?.status ?? "cleared");
+    // When only attachment_url is sent (no status in body), treat as an attachment-only
+    // update — do not change status, remarks, cleared_by or cleared_at. Bug 1+2 fix:
+    // the old default of "cleared" silently auto-cleared the task on every upload.
+    const statusProvided = req.body?.status != null;
+    const status = statusProvided ? String(req.body.status) : null;
     const allowed = new Set(["pending", "in_progress", "cleared", "blocked", "waived"]);
-    if (!allowed.has(status)) return res.status(400).json({ success: false, message: "Invalid clearance status" });
+    if (status !== null && !allowed.has(status)) return res.status(400).json({ success: false, message: "Invalid clearance status" });
 
     // Same gap as GET /:id/clearance above, on the actual mutating/approval action this
     // time: manager/finance/payroll/wfm could clear or waive any exit's clearance task in
@@ -136,12 +140,20 @@ exitRouter.patch(
     const attachmentUrl = req.body?.attachment_url != null ? String(req.body.attachment_url) : undefined;
     await db.execute(
       `UPDATE exit_clearance_task
-          SET status = ?, remarks = ?,
+          SET status      = COALESCE(?, status),
+              remarks     = COALESCE(?, remarks),
               attachment_url = COALESCE(?, attachment_url),
-              cleared_by = CASE WHEN ? IN ('cleared','waived') THEN ? ELSE cleared_by END,
-              cleared_at = CASE WHEN ? IN ('cleared','waived') THEN NOW() ELSE cleared_at END
+              cleared_by  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by END,
+              cleared_at  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN NOW() ELSE cleared_at END
         WHERE id = ? AND exit_request_id = ?`,
-      [status, req.body?.remarks ?? null, attachmentUrl ?? null, status, req.authUser!.id, status, req.params.taskId, req.params.id]
+      [
+        status,                          // COALESCE(?, status)  — null keeps existing
+        req.body?.remarks ?? null,        // COALESCE(?, remarks) — null keeps existing
+        attachmentUrl ?? null,            // COALESCE(?, attachment_url)
+        status, req.authUser!.id,         // cleared_by CASE
+        status,                           // cleared_at CASE
+        req.params.taskId, req.params.id,
+      ]
     );
     return res.json({ success: true, message: "Clearance updated" });
   })
@@ -386,7 +398,7 @@ exitRouter.get(
 
     // Clearance tasks
     const [clearanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT clearance_area, task_title, status, due_date, remarks, cleared_at
+      `SELECT clearance_area, task_title, status, due_date, remarks, attachment_url, cleared_at
          FROM exit_clearance_task
         WHERE exit_request_id = ?
         ORDER BY clearance_area, created_at`,

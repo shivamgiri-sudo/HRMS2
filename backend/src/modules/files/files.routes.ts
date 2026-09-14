@@ -46,6 +46,8 @@ const MAGIC_BYTES: Record<string, Uint8Array[]> = {
   ".xlsx": [new Uint8Array([0x50, 0x4b, 0x03, 0x04])],
   ".csv": [], // Text file, no magic bytes
   ".txt": [], // Text file, no magic bytes
+  ".eml": [], // MIME text, no fixed magic bytes
+  ".msg": [new Uint8Array([0xd0, 0xcf, 0x11, 0xe0])], // Outlook .msg = OLE compound (same as .doc)
 };
 
 function validateFileMagicBytes(filePath: string, ext: string): boolean {

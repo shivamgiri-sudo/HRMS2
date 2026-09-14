@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, Briefcase, Building2, Calendar, CheckCircle2,
-  Clock, Loader2, MessageSquare, Shield, User, X,
+  Clock, Loader2, MessageSquare, Paperclip, Shield, User, X,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -24,6 +24,7 @@ type ClearanceTask = {
   status: string;
   due_date?: string;
   remarks?: string;
+  attachment_url?: string | null;
   cleared_at?: string;
 };
 
@@ -436,6 +437,12 @@ export function NoticePeriodDrawer({
                           </div>
                           <p className="text-xs text-slate-400 capitalize mt-0.5">{task.clearance_area.replace(/_/g, " ")}</p>
                           {task.remarks && <p className="text-xs text-slate-500 mt-1">{task.remarks}</p>}
+                          {task.attachment_url && (
+                            <a href={task.attachment_url} target="_blank" rel="noopener noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                              <Paperclip className="h-3 w-3" />View attachment
+                            </a>
+                          )}
                         </div>
                         {task.due_date && (
                           <span className="shrink-0 text-xs text-slate-400">{fmtDate(task.due_date)}</span>
