@@ -799,7 +799,11 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
   const isHrOrAdmin   = hasAnyRole("admin", "super_admin", "hr", "ceo", "branch_admin");
 
   function canMoveToStatus(nextStatus: string): boolean {
-    if (["manager_review", "accepted"].includes(nextStatus)) return isManagerRole || hasAnyRole("admin", "super_admin", "ceo");
+    // Manager-stage transitions: show ONLY to users who hold an actual manager role.
+    // HR/admin/super_admin users do NOT see these buttons — their involvement is via
+    // clearance tasks. The backend enforces that the caller must be the actual reporting
+    // manager; this just hides the button for users who clearly cannot pass that check.
+    if (["manager_review", "accepted"].includes(nextStatus)) return isManagerRole;
     if (["notice_serving", "exited"].includes(nextStatus)) return isHrOrAdmin;
     return isHrOrAdmin || isManagerRole; // revoked/withdrawn
   }
