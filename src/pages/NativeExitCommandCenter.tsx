@@ -790,6 +790,7 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
 }) {
   const [status, setStatus] = useState("all");
   const [message, setMessage] = useState("");
+  const [drawerExitId, setDrawerExitId] = useState<string | null>(null);
   const { hasAnyRole } = useWorkforceAccess();
 
   // Manager-stage transitions (submitted→manager_review, manager_review→accepted) are
@@ -909,7 +910,7 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
                 const total = Number(r.clearance_total ?? 0);
                 const cleared = Number(r.clearance_cleared ?? 0);
                 return (
-                  <tr key={r.id} className="border-t hover:bg-slate-50/80 transition-colors">
+                  <tr key={r.id} className="border-t hover:bg-slate-50/80 transition-colors cursor-pointer" onClick={() => setDrawerExitId(r.id)}>
                     <td className="p-4">
                       <div className="font-semibold text-slate-800">{r.employee_name ?? r.employee_id}</div>
                       <div className="font-mono text-xs text-slate-500">{r.employee_code ?? r.employee_id?.slice(0, 8)}</div>
@@ -937,7 +938,7 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
                         </Pill>
                       )}
                     </td>
-                    <td className="p-4">
+                    <td className="p-4" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap gap-2">
                         {nextStatus && canMoveToStatus(nextStatus) && (
                           <button
@@ -973,6 +974,12 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
         </div>
         {!filtered.length && <div className="p-10 text-center text-sm text-slate-500">No exit records found.</div>}
       </div>
+      {drawerExitId && (
+        <NoticePeriodDrawer
+          exitId={drawerExitId}
+          onClose={() => setDrawerExitId(null)}
+        />
+      )}
     </div>
   );
 }
