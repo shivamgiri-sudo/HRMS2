@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, LayoutGrid, Layers3,
+  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Globe, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -65,7 +65,7 @@ type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string
 
 type ViewKey =
   | "overview" | "analyst" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
-  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "live";
+  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "live";
 type Granularity = "daily" | "weekly" | "monthly";
 
 interface VolumeTrendPoint { bucket: string; doc: number; poa: number }
@@ -172,6 +172,11 @@ interface ClientDocOverview {
 interface ClientDocTrendPoint { bucket: string; doc: number; poa: number }
 interface ClientDocBreakdownRow { clientName: string; task: "DOC" | "POA"; taskCount: number; aht: number | null }
 interface ClientDocRecordRow extends RawRecord { source_table: "ONFIDO_DOC_RAW" | "ONFIDO_POA_RAW" }
+
+interface PoaExternalOverview { taskCount: KpiValue; avgAht: KpiValue; errorRate: KpiValue; distinctClients: KpiValue }
+interface PoaExternalTrendPoint { bucket: string; taskCount: number; errorCount: number }
+type PoaExternalDimension = "ims_client_name" | "tl_name" | "am_name" | "location";
+interface PoaExternalBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
 
 interface LiveOverview {
   docLiveTaskCount: KpiValue; docLiveAht: KpiValue; docLiveAuditCount: KpiValue; docLiveErrorCount: KpiValue;
@@ -333,7 +338,7 @@ function ChartLegendRow() {
  *  search box) don't take one, so the Executive Filters TL/AM dropdowns hide there
  *  rather than silently doing nothing when changed. */
 const FILTERABLE_VIEWS = new Set<ViewKey>([
-  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc",
+  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc", "poaexternal",
 ]);
 
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -350,6 +355,7 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "poa", label: "POA", icon: FileText },
   { key: "poatrial", label: "POA Trial", icon: FlaskConical },
   { key: "clientdoc", label: "Client & Document Report", icon: FileBarChart2 },
+  { key: "poaexternal", label: "POA External", icon: Globe },
   { key: "live", label: "Live", icon: Radio },
 ];
 
@@ -2079,6 +2085,127 @@ function ClientDocDrilldownSheet({
 }
 
 /**
+ * Item #7 of the 2026-09-12 client feedback: "I have shared the POA External
+ * Dashboard format kindly update the same. (Required New Format)" — a
+ * standalone table (onfido_poa_external_raw), real headers taken directly
+ * from the owner's own attachment. Single table, so this can use the generic
+ * BreakdownDrilldownSheet/records route the same way DocRawView/PoaView do,
+ * unlike ClientDocView/EscalationsView above which UNION two tables.
+ */
+function PoaExternalView({
+  range, tlFilter, amFilter, onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  const [dimension, setDimension] = useState<PoaExternalDimension>("ims_client_name");
+  const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
+  const qs = tlAmQS(tlFilter, amFilter);
+
+  const overviewQuery = useQuery({
+    queryKey: ["onfido-process", "poa-external-overview", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalOverview }>(`/api/onfido-process/poa-external/overview?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const trendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-external-trend", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalTrendPoint[] }>(`/api/onfido-process/poa-external/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
+  const breakdownQuery = useQuery({
+    queryKey: ["onfido-process", "poa-external-breakdown", range, dimension, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalBreakdownRow[] }>(`/api/onfido-process/poa-external/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
+  });
+
+  const ov = overviewQuery.data?.data;
+  const points = trendQuery.data?.data ?? [];
+  const breakdown = breakdownQuery.data?.data ?? [];
+  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", location: "Location" }[dimension];
+
+  return (
+    <div className="space-y-4">
+      {ov && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+          <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
+          <KpiPlain kpi={ov.avgAht} kc="var(--teal)" />
+          <KpiPlain kpi={ov.errorRate} kc="var(--red)" />
+          <KpiPlain kpi={ov.distinctClients} kc="var(--purple)" />
+        </div>
+      )}
+
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>POA External Volume &amp; Errors</h3>
+          <PillGroup
+            value={granularity} onChange={setGranularity}
+            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+          />
+        </div>
+        <div className="oc-card-sub">onfido_poa_external_raw only.</div>
+        {points.length === 0 ? (
+          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+              <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
+              <Bar dataKey="errorCount" name="Errors" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="errorCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>Breakdown</h3>
+          <PillGroup
+            value={dimension}
+            onChange={setDimension}
+            options={[
+              { key: "ims_client_name", label: "Client Wise" }, { key: "tl_name", label: "TL Wise" },
+              { key: "am_name", label: "AM Wise" }, { key: "location", label: "Location" },
+            ]}
+          />
+        </div>
+        <div className="oc-card-sub">Top 50 by report count. Click a row for the raw POA External reports behind it.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead><tr><th>{dimLabel}</th><th className="oc-right">Reports</th><th className="oc-right">Avg AHT</th><th className="oc-right">Error Rate</th></tr></thead>
+            <tbody>
+              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
+              {breakdown.map((r) => (
+                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
+                  <td>{r.label}</td>
+                  <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
+                  <td className="oc-right">{r.errorRate !== null ? `${r.errorRate}%` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {drilldown && (
+        <BreakdownDrilldownSheet
+          open={!!drilldown}
+          title={`POA External — ${dimLabel}`}
+          tableKey="ONFIDO_POA_EXTERNAL_RAW"
+          filterColumn={dimension}
+          filterValue={drilldown.label}
+          range={range}
+          onOpenChange={(v) => { if (!v) setDrilldown(null); }}
+          onOpenRecord={onOpenRecord}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
  * Live view — deliberately not wired to Executive Filters' date range (see
  * the backend's own comment): it always shows today / this month, the same
  * way the reference dashboard's own Live Dashboard tab does. Every source
@@ -2493,6 +2620,7 @@ export default function OnfidoProcessDashboard() {
           {view === "poa" && <PoaView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poatrial" && <PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "clientdoc" && <ClientDocView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "poaexternal" && <PoaExternalView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
 
           {view === "overview" && (

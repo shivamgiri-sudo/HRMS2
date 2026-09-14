@@ -253,6 +253,25 @@ router.get("/client-doc/records", requireAuth, requireRole(...VIEWER_ROLES), h(a
   res.json({ success: true, data });
 }));
 
+// Item #7: POA External Dashboard (new format, onfido_poa_external_raw). Row
+// drill-down uses the generic /records/ONFIDO_POA_EXTERNAL_RAW route above —
+// no dedicated detail route needed, same as DOC Raw/POA below.
+const POA_EXTERNAL_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name", "location"]);
+router.get("/poa-external/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaExternalOverview(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/poa-external/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaExternalTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
+router.get("/poa-external/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const dim = req.params.dimension;
+  if (!POA_EXTERNAL_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
+  const data = await svc.getPoaExternalBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getPoaExternalBreakdown>[1]);
+  res.json({ success: true, data });
+}));
+
 const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name"]);
 router.get("/doc-raw/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getDocRawOverview(readQueryFilters(req));

@@ -1724,6 +1724,97 @@ export async function getClientDocRecords(
   return { rows: rows as ClientDocRecordRow[], total: Number(countRow.n) };
 }
 
+// ── POA External Dashboard (item #7 of the 2026-09-12 feedback: "I have
+// shared the POA External Dashboard format kindly update the same. (Required
+// New Format)") — a standalone table, onfido_poa_external_raw, real headers
+// read from the owner's attachment. Genuinely new: no prior dashboard covered
+// this data (the existing External Quality dashboard is DOC-only). Drill-down
+// uses the generic /records/:table route (single table, no UNION needed) —
+// ONFIDO_POA_EXTERNAL_RAW is a real upload-type-code registered in
+// ONFIDO_REPORT_CONFIGS, so resolveTable/listRecords/getRecord already work
+// for it with no extra wiring.
+
+const poaExt = "onfido_poa_external_raw";
+
+export interface PoaExternalOverview {
+  taskCount: KpiValue;
+  avgAht: KpiValue;
+  errorRate: KpiValue;
+  distinctClients: KpiValue;
+}
+
+export async function getPoaExternalOverview(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<PoaExternalOverview> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const agg = await scalar<RowDataPacket & { n: number; aht: number | null; errors: number; clients: number }>(
+    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht,
+            COALESCE(SUM(error_flag),0) AS errors, COUNT(DISTINCT ims_client_name) AS clients
+       FROM ${poaExt} WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+    [f.from, f.to, ...params]
+  );
+  const n = Number(agg.n ?? 0);
+  const errors = Number(agg.errors ?? 0);
+  const kpi = (key: string, label: string, value: number | null, unit: KpiValue["unit"], note?: string): KpiValue => ({
+    key, label, value, unit, availability: value === null ? "no_data" : "ok", note,
+  });
+  return {
+    taskCount: kpi("poa_ext_volume", "POA External Reports", n, "count"),
+    avgAht: kpi("poa_ext_aht", "Avg Handling Time", agg.aht !== null ? Math.round(agg.aht) : null, "seconds"),
+    errorRate: kpi("poa_ext_error_rate", "Error Rate", n > 0 ? Math.round((errors / n) * 1000) / 10 : null, "percent",
+      n > 0 ? `${errors} error(s) of ${n}` : undefined),
+    distinctClients: kpi("poa_ext_clients", "Distinct Clients", Number(agg.clients ?? 0), "count"),
+  };
+}
+
+export interface PoaExternalTrendPoint { bucket: string; taskCount: number; errorCount: number }
+
+export async function getPoaExternalTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<PoaExternalTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const expr = bucketExpr("report_completed_date", granularity);
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${expr} AS bucket, COUNT(*) AS n, COALESCE(SUM(error_flag),0) AS errors
+       FROM ${poaExt} WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  return rows
+    .map((r) => ({ bucket: bucketLabel(r.bucket, granularity), taskCount: Number(r.n), errorCount: Number(r.errors) }))
+    .sort((a, b) => a.bucket.localeCompare(b.bucket));
+}
+
+export type PoaExternalDimension = "ims_client_name" | "tl_name" | "am_name" | "location";
+
+export interface PoaExternalBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
+
+export async function getPoaExternalBreakdown(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: PoaExternalDimension
+): Promise<PoaExternalBreakdownRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label,
+            COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, COALESCE(SUM(error_flag),0) AS errors
+       FROM ${poaExt} WHERE report_completed_date BETWEEN ? AND ? ${clause}
+       GROUP BY label ORDER BY n DESC LIMIT 50`,
+    [f.from, f.to, ...params]
+  );
+  return rows.map((r) => {
+    const n = Number(r.n);
+    return {
+      label: r.label,
+      taskCount: n,
+      avgAht: r.aht !== null ? Math.round(Number(r.aht)) : null,
+      errorRate: n > 0 ? Math.round((Number(r.errors) / n) * 1000) / 10 : null,
+    };
+  });
+}
+
 // ── DOC Raw (per-task volume/AHT, onfido_doc_raw) ───────────────────────────
 //
 // Distinct from onfido_doc_external_audit_raw (which only ever carries

@@ -156,6 +156,24 @@ const POA_TRIAL_HEADERS = [
   "Total Task", "Audits", "Error",
 ];
 
+// Item #7 of the 2026-09-12 feedback: "I have shared the POA External Dashboard
+// format kindly update the same. (Required New Format)" — a brand-new report
+// format, real headers read directly from the owner's attachment
+// ("POA External Dashboard Aug'26.xlsx", Raw Data sheet, 16,560 rows). No
+// prior dashboard covered this data — the existing External Quality dashboard
+// (onfido_doc_external_audit_raw) is DOC-only. " Yes/NO" carries a genuine
+// leading space in the source file — verified against the real header row,
+// not a typo here.
+const POA_EXTERNAL_HEADERS = [
+  "Report Completed Month", "Report Completed Week", "Report Completed Date", "Report UUID",
+  "Report ID", "IMS report URL", "IMS Client Name", "Document Type Full Name",
+  "Proof of Address Document Type", "Proof of Address Issuing Country", "Report Result",
+  "Proof of Address Task Analyst Email", "Proof of Address Task Organisation",
+  "Proof of Address Task Manual Processing Time In Sec", " Yes/NO", "Reason", "2nd level",
+  "Comments", "English/Non-English", "Issuer Name (As per QCer)", "Issuer Name (As per analyst)",
+  "Error Yes", "Audit", "Dispute Status", "TL", "AM", "QA Name", "AON", "Location",
+];
+
 const POA_QUALITY_HEADERS = [
   "IDs Check UUID", "Report Report Created Time", "Report Report Completed Time",
   "IDs Report UUID", "Report Report Completed Month", "Report Report Completed Date",
@@ -340,6 +358,53 @@ export const ONFIDO_REPORT_CONFIGS: OnfidoReportConfig[] = [
       { column: "manual_processing_time_secs", header: "Tasks - Information Proof of Address Task Manual Processing Time In Sec", type: "int" },
       { column: "overall_result", header: "Report Report Result", type: "string" },
       { column: "month_label", header: "Month", type: "string" },
+    ],
+  },
+  {
+    uploadTypeCode: "ONFIDO_POA_EXTERNAL_RAW",
+    uploadTypeName: "Onfido - POA External Dashboard",
+    rpcName: "import_onfido_poa_external_batch",
+    table: "onfido_poa_external_raw",
+    description: "Onfido Proof-of-Address external QC audit export — client-facing format (item #7 of the 2026-09-12 feedback).",
+    headers: POA_EXTERNAL_HEADERS,
+    dedupHeader: "IMS report URL",
+    dedupColumn: "ims_report_url",
+    extract: [
+      { column: "ims_report_url", header: "IMS report URL", type: "string" },
+      { column: "report_uuid", header: "Report UUID", type: "string" },
+      { column: "report_id", header: "Report ID", type: "string" },
+      { column: "report_completed_date", header: "Report Completed Date", type: "date" },
+      { column: "ims_client_name", header: "IMS Client Name", type: "string" },
+      { column: "document_type_full_name", header: "Document Type Full Name", type: "string" },
+      { column: "poa_document_type", header: "Proof of Address Document Type", type: "string" },
+      { column: "issuing_country", header: "Proof of Address Issuing Country", type: "string" },
+      { column: "report_result", header: "Report Result", type: "string" },
+      { column: "analyst_email", header: "Proof of Address Task Analyst Email", type: "string" },
+      { column: "task_organisation", header: "Proof of Address Task Organisation", type: "string" },
+      { column: "manual_processing_time_secs", header: "Proof of Address Task Manual Processing Time In Sec", type: "int" },
+      // " Yes/NO" (leading space, real header) and "Error Yes" are the same
+      // signal in two forms — text Yes/No and a 0/1 flag — kept as separate
+      // columns for fidelity, the same way other Onfido tables keep both a
+      // text result and its numeric flag side by side.
+      { column: "error_yes_no", header: " Yes/NO", type: "string" },
+      { column: "error_flag", header: "Error Yes", type: "int" },
+      { column: "reason", header: "Reason", type: "string" },
+      { column: "second_level", header: "2nd level", type: "string" },
+      { column: "comments", header: "Comments", type: "string" },
+      { column: "language", header: "English/Non-English", type: "string" },
+      { column: "issuer_name_qcer", header: "Issuer Name (As per QCer)", type: "string" },
+      { column: "issuer_name_analyst", header: "Issuer Name (As per analyst)", type: "string" },
+      // Always "1" on every row in the file seen so far — this table only ever
+      // carries audited POA reports, so it is not a useful breakdown dimension
+      // on its own, just stored for fidelity.
+      { column: "audit_flag", header: "Audit", type: "int" },
+      { column: "dispute_status", header: "Dispute Status", type: "string" },
+      { column: "tl_name", header: "TL", type: "string" },
+      { column: "am_name", header: "AM", type: "string" },
+      { column: "qa_name", header: "QA Name", type: "string" },
+      { column: "aon_bucket", header: "AON", type: "string" },
+      { column: "location", header: "Location", type: "string" },
+      { column: "month_label", header: "Report Completed Month", type: "string" },
     ],
   },
   {
