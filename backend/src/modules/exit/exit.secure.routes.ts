@@ -274,6 +274,69 @@ async function handleExitStatusUpdate(req: any, res: any) {
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);
+
+  // Per-transition role gate. The scope check above confirms the user CAN see this exit;
+  // this gate enforces WHO is allowed to take each specific transition:
+  //   submitted → manager_review : reporting manager only (they received the resignation)
+  //   manager_review → accepted  : reporting manager only (they acknowledge and accept)
+  //   accepted / notice_serving → further : HR or admin (HR owns the clearance and F&F side)
+  //   exited                              : HR or admin
+  //   revoked / withdrawn                 : HR, admin, or the employee themselves
+  {
+    const isAdminOrHr = await hasAnyRole(req.authUser!.id, "admin", "hr", "ceo", "super_admin", "branch_admin");
+    const isManager   = await hasAnyRole(req.authUser!.id, "manager", "process_manager", "operations_manager", "branch_head");
+
+    // Check if caller IS the employee's actual reporting manager (not just any manager-role user)
+    let isReportingManager = false;
+    if (isManager) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.reporting_manager_id, u.id AS user_id
+           FROM exit_request er
+           JOIN employees e ON e.id = er.employee_id
+           LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+           LEFT JOIN auth_user u ON u.id = (
+             SELECT user_id FROM user_roles ur2
+             JOIN employees e2 ON e2.id = mgr.id
+             WHERE ur2.user_id = (
+               SELECT au.id FROM auth_user au WHERE au.email = e2.official_email LIMIT 1
+             ) LIMIT 1
+           )
+          WHERE er.id = ?`,
+        [req.params.id],
+      );
+      // Simpler: check if any employee linked to authUser is the reporting_manager_id
+      const [mgrRows] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 FROM exit_request er
+           JOIN employees e ON e.id = er.employee_id
+           JOIN employees mgr ON mgr.id = e.reporting_manager_id
+           JOIN auth_user au ON au.email = mgr.official_email
+          WHERE er.id = ? AND au.id = ?
+          LIMIT 1`,
+        [req.params.id, req.authUser!.id],
+      );
+      isReportingManager = (mgrRows as any[]).length > 0;
+    }
+
+    if (["manager_review", "accepted"].includes(nextStatus)) {
+      // Only the employee's actual reporting manager (or pure admin/super_admin/ceo) may move these.
+      // HR role is deliberately excluded: HR's involvement during the notice period happens through
+      // clearance tasks and exit interview, not through advancing the manager-stage statuses.
+      if (!isReportingManager && !await hasAnyRole(req.authUser!.id, "admin", "super_admin", "ceo")) {
+        return res.status(403).json({
+          success: false,
+          message: `Only the employee's reporting manager may move an exit to '${nextStatus}'. HR's role is via clearance tasks and exit interview, not this status gate.`,
+        });
+      }
+    } else if (["notice_serving", "exited"].includes(nextStatus)) {
+      if (!isAdminOrHr) {
+        return res.status(403).json({
+          success: false,
+          message: `Only HR or Admin may move an exit to '${nextStatus}'.`,
+        });
+      }
+    }
+    // revoked / withdrawn: any in-scope user may initiate (employee self-service or HR)
+  }
   // 'rejected' removed (owner ruling 2026-09-12): nobody may refuse a resignation. A manager who
   // disagrees records an objection via POST /:id/objection, which leaves the request active and
   // the notice period running. Refused here as well as in the FSM map so the API answers the

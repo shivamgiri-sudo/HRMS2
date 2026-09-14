@@ -790,6 +790,19 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
 }) {
   const [status, setStatus] = useState("all");
   const [message, setMessage] = useState("");
+  const { hasAnyRole } = useWorkforceAccess();
+
+  // Manager-stage transitions (submitted→manager_review, manager_review→accepted) are
+  // reserved for the employee's reporting manager. HR's role is clearance tasks + exit
+  // interview, not advancing the manager-gate statuses.
+  const isManagerRole = hasAnyRole("manager", "process_manager", "operations_manager", "branch_head");
+  const isHrOrAdmin   = hasAnyRole("admin", "super_admin", "hr", "ceo", "branch_admin");
+
+  function canMoveToStatus(nextStatus: string): boolean {
+    if (["manager_review", "accepted"].includes(nextStatus)) return isManagerRole || hasAnyRole("admin", "super_admin", "ceo");
+    if (["notice_serving", "exited"].includes(nextStatus)) return isHrOrAdmin;
+    return isHrOrAdmin || isManagerRole; // revoked/withdrawn
+  }
 
   const filtered = useMemo(() => {
     const rows = data?.requests ?? [];
@@ -920,7 +933,7 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
                     </td>
                     <td className="p-4">
                       <div className="flex flex-wrap gap-2">
-                        {nextStatus && (
+                        {nextStatus && canMoveToStatus(nextStatus) && (
                           <button
                             onClick={() => moveStatus(r.id, nextStatus)}
                             className="rounded-xl bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition-colors"
