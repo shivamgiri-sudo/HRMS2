@@ -1222,7 +1222,10 @@ export async function regularizationAuditReport(
   const from = dateParam(filters.from, "1900-01-01");
   const to   = dateParam(filters.to,   "9999-12-31");
 
-  const clauses: string[] = ["e.id IS NOT NULL", "arr.session_date >= ?", "arr.session_date <= ?"];
+  // Filter by created_at (submission date) not session_date (attendance date) so that
+  // "show me today's regularizations" matches requests submitted today, not attendance
+  // dates that happen to fall today. session_date remains a visible output column.
+  const clauses: string[] = ["e.id IS NOT NULL", "DATE(arr.created_at) >= ?", "DATE(arr.created_at) <= ?"];
   const params: unknown[]  = [from, to];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);

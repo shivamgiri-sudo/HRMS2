@@ -1558,8 +1558,12 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {rows.map((row, i) => (
-                          <tr key={i} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
+                        {rows.map((row, i) => {
+                          const rowKey = selectedReport.primaryKey?.length
+                            ? selectedReport.primaryKey.map(k => String(row[k] ?? "")).join("|") + `|${i}`
+                            : String(i);
+                          return (
+                          <tr key={rowKey} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
                             {selectedReport.columns.map(col => (
                               <td
                                 key={col.key}
@@ -1577,7 +1581,8 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                               </td>
                             ))}
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

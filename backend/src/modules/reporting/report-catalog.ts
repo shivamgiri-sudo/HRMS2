@@ -1399,7 +1399,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "approved_at", label: "Approved At", format: "datetime", width: 140 },
       { key: "approver_remarks", label: "Approver Remarks", format: "text", width: 200 },
     ],
-    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS, F_APPROVAL_STATUS],
+    filters: [
+      { key: "from", label: "Requested From", type: "date" },
+      { key: "to",   label: "Requested To",   type: "date" },
+      F_BRANCH, F_PROCESS, F_APPROVAL_STATUS,
+    ],
     viewRoles: ROLES_WFM,
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
     sourceTables: ["attendance_regularization", "attendance_reason_master", "employees"],
