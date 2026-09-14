@@ -459,9 +459,9 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
             -- others (e.g. typed on the walk-in form) — same ambiguity already
             -- handled in listPendingApprovals() above; resolve it the same way here
             -- so this list stops printing raw process_master UUIDs to HR.
-            (SELECT p.process_name FROM process_master p
-              WHERE p.id = c.applied_for_process OR p.process_name = c.applied_for_process
-              ORDER BY (p.id = c.applied_for_process) DESC, p.process_name
+            (SELECT proc.process_name FROM process_master proc
+              WHERE proc.id = c.applied_for_process OR proc.process_name = c.applied_for_process
+              ORDER BY (proc.id = c.applied_for_process) DESC, proc.process_name
               LIMIT 1) AS process_name,
             -- The raw label, only when it is not an unresolved id — showing a raw
             -- UUID is worse than showing nothing.
@@ -1203,9 +1203,9 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
             -- returns the candidate once per duplicate and the branch head sees
             -- the same person listed twice. A scalar subquery cannot fan out.
             -- Both tables are ~130 rows, so the OR costs nothing here.
-            (SELECT p.process_name FROM process_master p
-              WHERE p.id = c.applied_for_process OR p.process_name = c.applied_for_process
-              ORDER BY (p.id = c.applied_for_process) DESC, p.process_name
+            (SELECT proc.process_name FROM process_master proc
+              WHERE proc.id = c.applied_for_process OR proc.process_name = c.applied_for_process
+              ORDER BY (proc.id = c.applied_for_process) DESC, proc.process_name
               LIMIT 1) AS process_name,
             -- 93 candidates hold a DESIGNATION in applied_for_process rather
             -- than a process — 'Quality Analyst' (62), 'Team Leader' (26),

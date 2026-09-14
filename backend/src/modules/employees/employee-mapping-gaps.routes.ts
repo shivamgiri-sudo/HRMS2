@@ -21,18 +21,18 @@ router.get(
         e.id,
         e.employee_code,
         CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employee_name,
-        e.status,
+        e.employment_status,
         e.branch_id,
         bm.branch_name,
         e.process_id,
         pm.process_name,
         e.cost_centre_id,
-        cc.display_name AS cost_centre_name
+        cc.cost_centre_name
       FROM employees e
       LEFT JOIN branch_master bm ON bm.id = e.branch_id
       LEFT JOIN process_master pm ON pm.id = e.process_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-      WHERE e.status = 'active'
+      WHERE e.employment_status = 'Active'
         AND (e.process_id IS NULL OR e.cost_centre_id IS NULL)
       ORDER BY e.employee_code
     `);

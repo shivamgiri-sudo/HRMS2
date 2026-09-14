@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1166,
-  "columnCount": 17360,
+  "tableCount": 1168,
+  "columnCount": 17378,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -7215,6 +7215,8 @@
       "box_file_no",
       "appoint_print_date",
       "document_done",
+      "entry_date",
+      "left_reason",
       "account_flag",
       "ac_validation_date",
       "ac_validated_by",
@@ -19694,6 +19696,26 @@
     "zz_vpt_due_date_backup_20260827": [
       "id",
       "due_date"
+    ],
+    "portal_admin_impersonation_log": [
+      "id",
+      "admin_user_id",
+      "portal_user_id",
+      "client_email",
+      "reason",
+      "created_at"
+    ],
+    "portal_sessions": [
+      "id",
+      "portal_user_id",
+      "token_hash",
+      "expires_at",
+      "created_at",
+      "session_family_id",
+      "token",
+      "user_id",
+      "user_type",
+      "absolute_expires_at"
     ]
   }
 }
