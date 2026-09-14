@@ -151,7 +151,7 @@ function normalizeExitStatus(status: unknown): string {
 }
 
 async function exitListScope(userId: string) {
-  if (await hasAnyRole(userId, "admin", "hr", "finance", "payroll", "ceo")) return { sql: "1=1", params: [] as unknown[] };
+  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "finance", "payroll", "ceo")) return { sql: "1=1", params: [] as unknown[] };
   const scoped = await buildScopeWhereClause(
     userId,
     EXIT_SCOPE_ROLES,
@@ -171,7 +171,7 @@ async function exitListScope(userId: string) {
 }
 
 async function canActOnExit(userId: string, exitRequestId: string) {
-  if (await hasAnyRole(userId, "admin", "hr", "ceo")) return true;
+  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "ceo")) return true;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT er.employee_id,
             e.branch_id,
@@ -225,7 +225,7 @@ exitSecureRouter.get("/stats", h(async (req: any, res: any) => {
 }));
 
 exitSecureRouter.get("/", h(async (req: any, res: any) => {
-  const privileged = await hasAnyRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "ceo", ...EXIT_SCOPE_ROLES);
+  const privileged = await hasAnyRole(req.authUser!.id, "admin", "super_admin", "hr", "finance", "payroll", "ceo", ...EXIT_SCOPE_ROLES);
   if (!privileged) {
     const emp = await getEmployeeForUser(req.authUser!.id);
     if (!emp || !req.query.employeeId || String(req.query.employeeId) !== emp.id) {
