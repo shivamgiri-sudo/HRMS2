@@ -797,12 +797,14 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
   // interview, not advancing the manager-gate statuses.
   const isManagerRole = hasAnyRole("manager", "process_manager", "operations_manager", "branch_head");
   const isHrOrAdmin   = hasAnyRole("admin", "super_admin", "hr", "ceo", "branch_admin");
+  const isSuperAdmin  = hasAnyRole("super_admin", "admin", "ceo");
 
   function canMoveToStatus(nextStatus: string): boolean {
+    // super_admin / admin / ceo can override any stage transition (backend also allows this)
+    if (isSuperAdmin) return true;
     // Manager-stage transitions: show ONLY to users who hold an actual manager role.
-    // HR/admin/super_admin users do NOT see these buttons — their involvement is via
-    // clearance tasks. The backend enforces that the caller must be the actual reporting
-    // manager; this just hides the button for users who clearly cannot pass that check.
+    // HR/branch_admin do NOT see these buttons — their involvement is via clearance tasks.
+    // The backend enforces that the caller must be the actual reporting manager.
     if (["manager_review", "accepted"].includes(nextStatus)) return isManagerRole;
     if (["notice_serving", "exited"].includes(nextStatus)) return isHrOrAdmin;
     return isHrOrAdmin || isManagerRole; // revoked/withdrawn
