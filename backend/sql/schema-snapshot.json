@@ -6221,8 +6221,7 @@
       "closed_at",
       "final_decision_by",
       "sla_due_at",
-      "assigned_to",
-      "is_mandatory"
+      "assigned_to"
     ],
     "dpdp_nominee_registry": [
       "id",
@@ -12706,6 +12705,7 @@
       "reminder_count",
       "last_reminder_at",
       "escalated_at",
+      "is_mandatory",
       "created_at",
       "updated_at"
     ],
