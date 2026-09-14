@@ -1219,19 +1219,39 @@ export default function NativeExitCommandCenter() {
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    if (empQuery.trim().length < 2) { setEmpResults([]); return; }
+    const q = empQuery.trim();
+    if (q.length < 2) { setEmpResults([]); setEmpInactiveCount(0); return; }
     let cancelled = false;
-    setEmpSearching(true);
     const t = setTimeout(async () => {
+      setEmpSearching(true);
       try {
-        const res = await hrmsApi.get<{ success: boolean; employees: EmpResult[]; inactive_count?: number }>(
-          `/api/employees/search?q=${encodeURIComponent(empQuery.trim())}&status=active`
-        );
+        const [res, inactive] = await Promise.all([
+          hrmsApi.get<{ data: Array<Record<string, unknown>> }>(
+            `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(q)}`,
+          ),
+          hrmsApi.get<{ total?: number }>(
+            `/api/employees?recordStatus=inactive&limit=1&search=${encodeURIComponent(q)}`,
+          ).catch(() => ({ total: 0 })),
+        ]);
         if (!cancelled) {
-          setEmpResults(res.employees ?? []);
-          setEmpInactiveCount(res.inactive_count ?? 0);
+          setEmpResults(
+            (res?.data ?? []).map((e) => ({
+              id: String(e.id ?? ""),
+              employee_code: String(e.employee_code ?? ""),
+              name: [e.first_name, e.last_name].filter(Boolean).join(" ") || String(e.full_name ?? ""),
+              branch_name: String(e.branch_name ?? ""),
+              process_name: String(e.process_name ?? ""),
+              department_name: String(e.department_name ?? ""),
+              reporting_manager_name: String(e.reporting_manager_name ?? ""),
+            })).filter((e) => e.id),
+          );
+          setEmpInactiveCount(Number(inactive?.total ?? 0));
         }
-      } finally { if (!cancelled) setEmpSearching(false); }
+      } catch {
+        if (!cancelled) { setEmpResults([]); setEmpInactiveCount(0); }
+      } finally {
+        if (!cancelled) setEmpSearching(false);
+      }
     }, 300);
     return () => { cancelled = true; clearTimeout(t); };
   }, [empQuery]);
