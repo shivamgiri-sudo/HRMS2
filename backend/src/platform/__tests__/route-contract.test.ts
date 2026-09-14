@@ -147,10 +147,16 @@ const KNOWN_GAPS: Record<string, string> = {
   // the concurrent-agent commits that carried process-team-roster.service.ts and
   // shift-due.util.ts were merged. The route is now served; no longer a gap.
 
-  // ── ESIC Automation — REMOVED 2026-09-14 ──────────────────────────────────────────────
-  // GET/GET/:p/POST:p/approve removed: the concurrent session's handler implementation
-  // landed after this allow-list entry was written (esic-automation.routes.ts is no
-  // longer a bare stub Router). Routes now resolve cleanly; no longer a gap.
+  // ── ESIC Automation stubs — still empty Router as of 2026-09-14 ──────────────────────
+  // esic-automation.routes.ts exports only a bare Router(). A previous comment claimed
+  // the handlers landed, but the file is still a one-line stub. Re-added 2026-09-14.
+  // Remove once real handlers are implemented.
+  "GET /api/payroll/esic-automation/cases":
+    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:28 calls /cases for the list view. In-progress work; remove once handlers are implemented.",
+  "GET /api/payroll/esic-automation/cases/:p":
+    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:30 calls /cases/:id for the detail view. In-progress work; remove once handlers are implemented.",
+  "POST /api/payroll/esic-automation/cases/:p/approve":
+    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:31 calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
