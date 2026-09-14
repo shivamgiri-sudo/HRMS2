@@ -272,6 +272,22 @@ router.get("/poa-external/breakdown/:dimension", requireAuth, requireRole(...VIE
   res.json({ success: true, data });
 }));
 
+// Item #8: GD MCN SLA APS (day & slot wise, onfido_gd_mcn_sla_raw). Only
+// from/to filters — no TL/AM dimension in this file. Row drill-down uses the
+// generic /records/ONFIDO_GD_MCN_SLA route, same as POA External above.
+router.get("/gd-mcn-sla/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getGdMcnSlaOverview(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/gd-mcn-sla/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getGdMcnSlaTrend(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/gd-mcn-sla/slot-breakdown", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getGdMcnSlaSlotBreakdown(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+
 const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name"]);
 router.get("/doc-raw/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getDocRawOverview(readQueryFilters(req));
