@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1155,
-  "columnCount": 17132,
+  "tableCount": 1158,
+  "columnCount": 17174,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1421,7 +1421,8 @@
       "joining_document_completed_at",
       "employee_code",
       "converted_at",
-      "reminder_sent_at"
+      "reminder_sent_at",
+      "updated_at"
     ],
     "ats_onboarding_request": [
       "id",
@@ -2545,6 +2546,7 @@
       "expires_at",
       "verified_at",
       "status",
+      "pre_auth_challenge_id",
       "created_at",
       "updated_at"
     ],
@@ -6219,7 +6221,8 @@
       "closed_at",
       "final_decision_by",
       "sla_due_at",
-      "assigned_to"
+      "assigned_to",
+      "is_mandatory"
     ],
     "dpdp_nominee_registry": [
       "id",
@@ -8218,6 +8221,7 @@
       "due_date",
       "status",
       "remarks",
+      "attachment_url",
       "cleared_by",
       "cleared_at",
       "created_at",
@@ -8342,6 +8346,7 @@
       "exit_type",
       "exit_sub_type",
       "exit_reason_category",
+      "absconding_since",
       "resignation_reason",
       "last_working_day_proposed",
       "last_working_day_confirmed",
@@ -9058,6 +9063,53 @@
       "is_default",
       "created_at",
       "updated_at"
+    ],
+    "fnf_transfer_batch": [
+      "id",
+      "batch_number",
+      "attempt_kind",
+      "row_count",
+      "total_amount",
+      "debit_account_masked",
+      "file_name",
+      "file_sha256",
+      "filters_snapshot",
+      "created_by",
+      "created_at"
+    ],
+    "fnf_transfer_batch_item": [
+      "id",
+      "batch_id",
+      "full_final_calculation_id",
+      "exit_request_id",
+      "employee_id",
+      "employee_code",
+      "amount",
+      "pay_mod",
+      "account_masked",
+      "status",
+      "rejection_reason",
+      "rejection_note",
+      "rejected_at",
+      "rejected_by",
+      "corrected_from_item_id",
+      "ecs_number",
+      "transfer_date",
+      "confirmed_at",
+      "confirmed_by",
+      "created_at",
+      "updated_at",
+      "open_flag"
+    ],
+    "fnf_transfer_import": [
+      "id",
+      "file_name",
+      "file_sha256",
+      "row_count",
+      "matched_count",
+      "unmatched_count",
+      "uploaded_by",
+      "uploaded_at"
     ],
     "full_final_calculation": [
       "id",
@@ -19038,7 +19090,11 @@
       "roster_date",
       "severity",
       "message",
-      "resolution_status"
+      "resolution_status",
+      "resolution_action",
+      "resolution_remarks",
+      "resolved_at",
+      "resolved_by"
     ],
     "wfm_roster_coverage_matrix": [
       "id",
