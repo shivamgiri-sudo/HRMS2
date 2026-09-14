@@ -255,6 +255,10 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     branchId:       req.query.branchId    as string | undefined,
     processId:      req.query.processId   as string | undefined,
     departmentId:   req.query.departmentId as string | undefined,
+    // Was never forwarded here (or in the preview branch below), so the Employee Status
+    // dropdown (headcount, employee-master, manager-mapping, org-structure-snapshot,
+    // cost-centre-headcount) silently did nothing regardless of what a user picked.
+    employeeStatus: req.query.employeeStatus as string | undefined,
     from:           req.query.from        as string | undefined,
     to:             req.query.to          as string | undefined,
     month:          req.query.month       as string | undefined,
@@ -565,36 +569,25 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
   let sql = "";
 
   switch (code) {
-    case "employee-master":
-      // Was branch-only (addScopedEmployeeFilters); the export path for this same code calls
-      // employeeMaster in executors/employee.executor.ts, which uses the full
-      // appendScopeConditions (branch AND process AND department AND cost centre). A
-      // process-scoped viewer saw more employees on screen than their own export allowed.
-      // See addFullScopedEmployeeFilters in reporting-access.ts.
-      await addFullScopedEmployeeFilters(req, clauses, params);
-      // Had no active predicate at all, so the "Employee Master" export returned all 58,627
-      // employee rows ever created — 57,502 of them inactive. Same 52x overstatement that
-      // cc_headcount had, and it is why employee-master and headcount could never be
-      // reconciled against each other. active_status = 1 is the agreed definition and brings
-      // this to 1,125, matching headcount's population exactly.
-      clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.official_email, e.mobile, e.employment_status, e.date_of_joining, e.date_of_exit,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-               LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
-              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
-              ORDER BY e.employee_code`;
-      break;
+    // "employee-master" now falls through to executeReport(), same as "headcount",
+    // "new-join-export" and "salary-sheet-export" below. This inline case previously
+    // fixed a real scoping bug (see git history) but its own SELECT only ever listed 13
+    // columns, while the catalog (src/lib/report-catalog.ts) declares 74 — every other
+    // column silently rendered blank on screen. The export path (GET /:code/export)
+    // already called executeReport() -> employeeMaster() in executors/employee.executor.ts
+    // and returned the full 74 columns with equivalent-or-stricter scoping
+    // (appendScopeConditions covers branch AND process AND department AND cost centre,
+    // superseding what addFullScopedEmployeeFilters did here), so screen and download now
+    // run the same query and can no longer disagree.
+    //
+    // Behaviour change, deliberate: the inline case unconditionally forced
+    // active_status = 1. The executor only does that when the UI's Employee Status filter
+    // asks for it (default: no filter = both active and inactive), matching the catalog's
+    // own description ("Complete employee directory ... one row per employee"). The
+    // Employee Status dropdown already existed in the UI but did nothing — see the
+    // `employeeStatus` addition to execFilters below, in both this preview branch and the
+    // /export handler above.
+    //
     // "headcount" now falls through to executeReport(). The inline copy kept the
     // superseded definition (active_status AND employment_status) and, because an
     // inline case wins over the executor, it was still serving 1,123 where every other
@@ -3227,6 +3220,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         designationId: req.query.designationId as string | undefined,
         managerId:    req.query.managerId    as string | undefined,
         employeeCode: req.query.employeeCode as string | undefined,
+        employeeStatus: req.query.employeeStatus as string | undefined,
         from:         req.query.from         as string | undefined,
         to:           req.query.to           as string | undefined,
         month:        req.query.month        as string | undefined,
