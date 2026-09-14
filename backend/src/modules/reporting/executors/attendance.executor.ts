@@ -1183,6 +1183,105 @@ export async function attendanceDisputeSummary(
 }
 
 // ---------------------------------------------------------------------------
+// regularization-audit
+//
+// One row per regularization request (plain regularizations AND disputes — no
+// `dispute_type IS NOT NULL` restriction, unlike attendance-dispute-summary), showing the
+// full before/after audit trail: what attendance was actually recorded, what it was
+// changed to, who requested it and when, who reviewed it and when, and their remarks.
+//
+// Built entirely from existing columns on attendance_regularization (migrations 005, 171,
+// 237, 1014) — no schema change. Two known limitations, deliberately not silently
+// papered over:
+//
+//  1. `requested_by_type` only distinguishes 'employee' vs 'manager' as a category. When a
+//     manager submits on an employee's behalf, this report cannot name that manager —
+//     attendance_regularization has no requested_by_user_id column. The exact submitter's
+//     actor_user_id is only recorded in sensitive_action_log (action_type
+//     'REGULARIZATION_SUBMITTED', entity_id = this row's id), a separate join this report
+//     does not attempt. When requested_by_type = 'employee', the subject IS the requester,
+//     so employee_name already answers "who requested it" for the common case.
+//  2. `reviewer_name`/`reviewed_at`/`reviewer_note` reflect only the LATEST reviewer.
+//     wfm.service.ts's reviewRegularization() overwrites reviewed_by/reviewed_at on every
+//     stage transition (manager review, then final WFM review), so a multi-stage approval
+//     shows only its last stage here. The staged columns designed for full per-stage
+//     history (manager_reviewer_user_id, final_wfm_reviewer_user_id, etc. — migration
+//     1014_regularization_spoc_columns.sql) exist but are never populated by any code
+//     path today, so they cannot be surfaced honestly. Full per-stage history would need
+//     a separate join against sensitive_action_log's REGULARIZATION_MANAGER_APPROVED /
+//     REGULARIZATION_APPROVED / REGULARIZATION_REJECTED events instead.
+//
+// Date-ranged (session_date), not month-locked, since an audit lookup usually spans more
+// than one month; defaults to all time when neither from nor to is given.
+// ---------------------------------------------------------------------------
+export async function regularizationAuditReport(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, "1900-01-01");
+  const to   = dateParam(filters.to,   "9999-12-31");
+
+  const clauses: string[] = ["e.id IS NOT NULL", "arr.session_date >= ?", "arr.session_date <= ?"];
+  const params: unknown[]  = [from, to];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("arr.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT arr.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           arr.session_date AS attendance_date,
+           arr.dispute_type,
+           COALESCE(arr.old_status, 'not recorded') AS actual_attendance_status,
+           COALESCE(arr.new_status, arr.requested_status) AS requested_attendance_status,
+           TIME_FORMAT(arr.old_punch_in, '%H:%i') AS actual_punch_in,
+           TIME_FORMAT(arr.old_punch_out, '%H:%i') AS actual_punch_out,
+           TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
+           TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
+           arr.reason,
+           arm.label AS reason_label,
+           arr.requested_by_type,
+           arr.payroll_impact,
+           arr.status AS approval_status,
+           arr.created_at AS requested_at,
+           reviewer.full_name AS approver_name,
+           arr.reviewed_at AS approved_at,
+           arr.reviewer_note AS approver_remarks
+      FROM attendance_regularization arr
+      JOIN employees e ON e.id = arr.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+      LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY arr.session_date DESC, employee_name`;
+
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
 // habitual-absentee-list
 // ---------------------------------------------------------------------------
 export async function habitualAbsenteeList(

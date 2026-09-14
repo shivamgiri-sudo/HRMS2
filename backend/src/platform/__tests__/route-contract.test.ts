@@ -147,16 +147,10 @@ const KNOWN_GAPS: Record<string, string> = {
   // the concurrent-agent commits that carried process-team-roster.service.ts and
   // shift-due.util.ts were merged. The route is now served; no longer a gap.
 
-  // ── ESIC Automation — backend stub not yet implemented (2026-09-14) ──────────────────
-  // esic-automation.routes.ts was committed as an empty stub (just creates a Router with
-  // no handlers). EsicRegistrationBotTab.tsx calls these three endpoints; the backend
-  // implementation is in-progress in a concurrent session and will remove these entries.
-  "GET /api/payroll/esic-automation/cases":
-    "ESIC automation backend is an empty stub committed 2026-09-14. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:28 calls /cases for the list view. In-progress concurrent session work; remove entry once the handler is implemented.",
-  "GET /api/payroll/esic-automation/cases/:p":
-    "ESIC automation backend is an empty stub committed 2026-09-14. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:30 calls /cases/:id for case detail. In-progress concurrent session work; remove entry once the handler is implemented.",
-  "POST /api/payroll/esic-automation/cases/:p/approve":
-    "ESIC automation backend is an empty stub committed 2026-09-14. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:31 calls /cases/:id/approve for approval action. In-progress concurrent session work; remove entry once the handler is implemented.",
+  // ── ESIC Automation — REMOVED 2026-09-14 ──────────────────────────────────────────────
+  // GET/GET/:p/POST:p/approve removed: the concurrent session's handler implementation
+  // landed after this allow-list entry was written (esic-automation.routes.ts is no
+  // longer a bare stub Router). Routes now resolve cleanly; no longer a gap.
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {

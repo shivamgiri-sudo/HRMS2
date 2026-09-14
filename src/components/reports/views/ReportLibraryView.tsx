@@ -296,6 +296,9 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "biometric-reconciliation": [...dateFilters, ...branchProcess],
     "regularization-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
     "attendance-dispute-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
+    // Date-ranged, not month-locked (unlike the two above) — an audit lookup usually spans
+    // more than one month. Defaults to all time when both fields are left blank.
+    "regularization-audit": [...dateFilters, ...branchProcess, STATUS_FILTER],
     "habitual-absentee-list": [...monthFilter, ...branchProcess],
     "daily-shrinkage-report": [...dateFilters, ...branchProcess],
     "monthly-shrinkage-trend": [...dateFilters, ...branchProcess],
