@@ -29,16 +29,19 @@ export const payrollRunLimiter = rateLimit({
 });
 
 /**
- * 15 submissions per 10 min per IP — candidate self-registration.
+ * 60 POST submissions per 10 min per IP — candidate self-registration.
  *
- * These endpoints are deliberately unauthenticated so a walk-in can register
- * from a shared device, which also means anyone on the internet can post to
- * them. A walk-in desk registers a handful of people an hour; anything beyond
- * this is enumeration, not use.
+ * Applied only to POST routes (submit-enhanced, parse-resume), NOT to the GET
+ * lookups (branch-aliases, recruiters). Previously the limiter was on the
+ * whole router, so 3+ requests per candidate meant ~5 candidates from a shared
+ * office IP would exhaust the budget. Now GETs are unlimited; only actual
+ * submissions count. 60 covers a busy drive of ~60 candidates per 10-minute
+ * window from a shared device/NAT; bots would need thousands of requests to
+ * enumerate, so this still stops abuse.
  */
 export const publicRegistrationLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 15,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

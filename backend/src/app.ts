@@ -27,9 +27,11 @@ import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { esiRegDocsRouter } from "./modules/payroll/esi-reg-docs.routes.js";
+import { esicAutomationRouter } from "./modules/payroll/esic-automation.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
 import { payrollCcAttendanceRouter } from "./modules/payroll/payroll-cc-attendance.routes.js";
 import { bankPaymentReadinessRouter } from "./modules/payroll/bank-payment-readiness.routes.js";
+import { fnfTransferRouter } from "./modules/payroll/fnf-transfer.routes.js";
 import { bankPennyDropVerifyRouter } from "./modules/payroll/bank-penny-drop-verify.routes.js";
 import { payrollProcessReadinessRouter } from "./modules/payroll/payroll-process-readiness.routes.js";
 import { payrollReadinessCategoriesRouter } from "./modules/payroll/payroll-readiness-categories.routes.js";
@@ -52,6 +54,7 @@ import { chequeValidationRouter } from "./modules/payroll/cheque-validation.rout
 import { disbursalRouter } from "./modules/payroll/disbursal.routes.js";
 import { payrollWindowCronRouter } from "./modules/payroll/payroll-window.routes.js";
 import { nocRouter } from "./modules/payroll/noc.routes.js";
+import { nocCaseRouter } from "./modules/payroll/noc-case.routes.js";
 import { runningSalaryRouter } from "./modules/payroll/running-salary.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import { requireAuth as requireAuthForDpdpGuard } from "./middleware/authMiddleware.js";
@@ -97,6 +100,7 @@ import { uatPipelineRouter } from "./modules/uat-pipeline/uat-pipeline.routes.js
 import { uatInternalRouter } from "./modules/uat-pipeline/uat-internal.routes.js";
 import { lettersRouter } from "./modules/letters/letters.routes.js";
 import { publicJoiningKitRouter, joiningKitRouter } from "./modules/employees/joiningKit.routes.js";
+import { nocCasePublicRouter } from "./modules/payroll/noc-case-public.routes.js";
 import { appointmentEsignRouter } from "./modules/letters/appointment-esign.routes.js";
 import { dscConfigRouter } from "./modules/letters/dscConfig.routes.js";
 import { notificationRecipientsRouter } from "./modules/it-provisioning/notification-recipients.routes.js";
@@ -241,6 +245,7 @@ import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-pr
 import { salaryRevisionRouter } from "./modules/salary-revision/salary-revision.routes.js";
 import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
+import { employeeCodeReconciliationRouter } from "./modules/ats/employee-code-reconciliation.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
@@ -415,9 +420,13 @@ app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
 app.use("/api/payroll", listEndpointLimiter, esiRegDocsRouter);
+app.use("/api/payroll", listEndpointLimiter, esicAutomationRouter);
 app.use("/api/payroll/branch-readiness", listEndpointLimiter, payrollBranchReadinessRouter);
 app.use("/api/payroll/cc-attendance", listEndpointLimiter, payrollCcAttendanceRouter);
 app.use("/api/payroll/bank-readiness", listEndpointLimiter, bankPaymentReadinessRouter);
+// Full & Final settlement disbursement — owner ruling 2026-09-12: its own bank-transfer batch,
+// separate from monthly salary, same bank-file machinery and approvals. See fnf-transfer.routes.ts.
+app.use("/api/payroll/fnf-transfer", listEndpointLimiter, fnfTransferRouter);
 app.use("/api/payroll/bank-penny-drop", bankPennyDropVerifyRouter);
 app.use("/api/payroll/process-readiness", listEndpointLimiter, payrollProcessReadinessRouter);
 app.use("/api/payroll/readiness-categories", listEndpointLimiter, payrollReadinessCategoriesRouter);
@@ -439,6 +448,10 @@ app.use("/api/payroll/cheque-validation", chequeValidationRouter);
 app.use("/api/payroll", disbursalRouter);
 app.use("/api/payroll", payrollWindowCronRouter);
 app.use("/api/payroll/noc", nocRouter);
+// NOC Certificate (Exit Clearance) authenticated endpoints -- built (router-level
+// requireAuth + per-route hasAnyRole/hasScopedAccess, 13 checks) but never mounted.
+// Distinct path from /api/payroll/noc above (singular) -- no collision.
+app.use("/api/payroll/noc-cases", nocCaseRouter);
 app.use("/api/payroll", runningSalaryRouter);
 // NOTE: /api/payroll-masters is mounted once, below, with payrollMastersRouter.
 // A duplicate `app.use("/api/payroll-masters", salaryPackageRouter)` used to sit here —
@@ -488,9 +501,10 @@ app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
 app.use("/api/ats", atsFormConfigRouter);
-// Unauthenticated by design so a walk-in can self-register; rate limited
-// because that also makes it reachable by anyone.
-app.use("/api/ats/registration", publicRegistrationLimiter, registrationEnhancedRouter);
+// Unauthenticated by design so a walk-in can self-register. Rate limiting is
+// applied per-verb inside registrationEnhancedRouter (POST submissions only) so
+// GET lookups (branch list, recruiter list) don't consume the submission budget.
+app.use("/api/ats/registration", registrationEnhancedRouter);
 app.use("/api/test-report", testDailyReportRouter); // TEMP TEST - REMOVE AFTER TESTING
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
@@ -538,6 +552,14 @@ app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 // token, so it must sit above the catch-all too. Mounted below it, every
 // "Review & Sign All" button in every kit email would answer 401.
 app.use("/api/public/joining-kit", publicJoiningKitRouter);
+// The NOC Certificate employee form is reached from a bearer-less token link
+// (email/WhatsApp/SMS), so it must sit above the "/api" clientRouter mount
+// below that applies requireAuth to every /api/* path -- same load-bearing
+// requirement the router's own file header documents. Its dependency
+// (noc-case.service.ts) is now actually committed to main (confirmed live
+// 2026-09-11), unlike the first mount attempt on 2026-09-10 which broke the
+// build because the module wasn't pushed yet.
+app.use("/api/public/noc", nocCasePublicRouter);
 // The company's public social profile links (website, LinkedIn, Instagram, X,
 // Facebook, YouTube) are rendered on the LOGIN page, which by definition has no
 // session, so this read has to sit above the "/api" clientRouter mount below
@@ -769,6 +791,7 @@ app.use("/api/onfido-process", onfidoProcessDashboardRouter);
 app.use("/api/salary-revision", salaryRevisionRouter);
 app.use("/api/salary-change", salaryChangeRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
+app.use("/api/ats/employee-code", employeeCodeReconciliationRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 app.use("/api/ats/command-centre", commandCentreRouter);

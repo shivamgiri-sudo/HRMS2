@@ -21,6 +21,7 @@ import {
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { privacyService } from "../privacy/privacy.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
+import { publicRegistrationLimiter } from "../../middleware/rateLimiter.js";
 
 export const registrationEnhancedRouter = Router();
 
@@ -181,7 +182,7 @@ const enhancedRegistrationSchema = z.object({
   requisitionId: z.string().uuid().optional(), // set by recruiter drive picker; absent = no change to existing behaviour
 });
 
-registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
+registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, async (req, res) => {
   try {
     const input = enhancedRegistrationSchema.parse(req.body);
 
@@ -630,6 +631,7 @@ const resumeParseUpload = multer({
 
 registrationEnhancedRouter.post(
   "/parse-resume",
+  publicRegistrationLimiter,
   resumeParseUpload.single("file"),
   async (req, res) => {
     try {

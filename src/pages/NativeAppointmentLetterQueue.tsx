@@ -7,9 +7,9 @@
  * are waiting on something — so the reasons are the primary content rather than
  * being hidden behind a failed click.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, BadgeCheck, Ban, CheckCircle2, Download, FileSignature,
+  AlertTriangle, BadgeCheck, Ban, CheckCircle2, Download, Eye, FileSignature,
   Loader2, RefreshCw, Search, ShieldAlert, Users, X, XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -33,6 +33,11 @@ type IssuedRow = {
   employee_esign_status: string | null; status: string; issued_at: string | null; revoked_at: string | null;
 };
 
+type DrawerState =
+  | { mode: "preview"; row: QueueRow }
+  | { mode: "view"; row: IssuedRow }
+  | null;
+
 export default function NativeAppointmentLetterQueue() {
   const [queue, setQueue] = useState<{ eligible: QueueRow[]; blocked: QueueRow[] } | null>(null);
   const [issued, setIssued] = useState<IssuedRow[]>([]);
@@ -44,6 +49,55 @@ export default function NativeAppointmentLetterQueue() {
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [searching, setSearching] = useState(false);
+
+  // Drawer state
+  const [drawer, setDrawer] = useState<DrawerState>(null);
+  const [drawerPdfUrl, setDrawerPdfUrl] = useState<string | null>(null);
+  const [drawerPdfLoading, setDrawerPdfLoading] = useState(false);
+  const [drawerPdfError, setDrawerPdfError] = useState<string | null>(null);
+  const drawerBlobRef = useRef<string | null>(null);
+
+  const closeDrawer = useCallback(() => {
+    setDrawer(null);
+    setDrawerPdfError(null);
+    setDrawerPdfUrl(null);
+    if (drawerBlobRef.current) {
+      URL.revokeObjectURL(drawerBlobRef.current);
+      drawerBlobRef.current = null;
+    }
+  }, []);
+
+  // Fetch PDF whenever the drawer opens
+  useEffect(() => {
+    if (!drawer) return;
+    let cancelled = false;
+    setDrawerPdfLoading(true);
+    setDrawerPdfError(null);
+    if (drawerBlobRef.current) {
+      URL.revokeObjectURL(drawerBlobRef.current);
+      drawerBlobRef.current = null;
+      setDrawerPdfUrl(null);
+    }
+    void (async () => {
+      try {
+        const blob =
+          drawer.mode === "preview"
+            ? await hrmsApi.getBlob(`/api/letters/appointment-letters/preview/${drawer.row.employeeId}`)
+            : await hrmsApi.getBlob(`/api/letters/appointment-letters/${drawer.row.id}/download?inline=1`);
+        if (!cancelled) {
+          const url = URL.createObjectURL(blob);
+          drawerBlobRef.current = url;
+          setDrawerPdfUrl(url);
+        }
+      } catch (err) {
+        if (!cancelled)
+          setDrawerPdfError(err instanceof Error ? err.message : "Unable to load the letter PDF.");
+      } finally {
+        if (!cancelled) setDrawerPdfLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [drawer]);
 
   // Debounced, because the search runs on the server: the queue is capped at 200
   // employees ordered by joining date, so filtering the loaded page would never
@@ -244,8 +298,8 @@ export default function NativeAppointmentLetterQueue() {
           {appliedSearch && !searching && (
             <p className="mt-2 px-1 text-xs text-slate-500">
               {counts.eligible + counts.blocked + counts.issued === 0
-                ? <>Nobody in your branch matches “{appliedSearch}”.</>
-                : <>Showing matches for “{appliedSearch}” — {counts.eligible} eligible, {counts.blocked} blocked, {counts.issued} issued.</>}
+                ? <>Nobody in your branch matches "{appliedSearch}".</>
+                : <>Showing matches for "{appliedSearch}" — {counts.eligible} eligible, {counts.blocked} blocked, {counts.issued} issued.</>}
             </p>
           )}
         </div>
@@ -296,18 +350,19 @@ export default function NativeAppointmentLetterQueue() {
                           </ul>
                         )}
                       </div>
-                      <button
-                        type="button" disabled={busy === row.employeeId}
-                        onClick={() => void issue(row, row.warnings.length > 0)}
-                        className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60 transition-all"
-                      >
-                        {busy === row.employeeId ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSignature className="h-4 w-4" />}
-                        {row.warnings.length > 0 ? "Issue with override" : "Issue letter"}
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDrawer({ mode: "preview", row })}
+                          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors"
+                        >
+                          <Eye className="h-4 w-4" /> Preview & Issue
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
-              ) : <Empty text={appliedSearch ? `No eligible employee matches “${appliedSearch}”.` : "Nobody is ready for an appointment letter yet. Check the Blocked tab to see what each person is waiting on."} />
+              ) : <Empty text={appliedSearch ? `No eligible employee matches "${appliedSearch}".` : "Nobody is ready for an appointment letter yet. Check the Blocked tab to see what each person is waiting on."} />
             )}
 
             {/* Blocked tab */}
@@ -342,7 +397,7 @@ export default function NativeAppointmentLetterQueue() {
                     </div>
                   ))}
                 </div>
-              ) : <Empty text={appliedSearch ? `No blocked employee matches “${appliedSearch}”.` : "Nothing is blocked."} />
+              ) : <Empty text={appliedSearch ? `No blocked employee matches "${appliedSearch}".` : "Nothing is blocked."} />
             )}
 
             {/* Issued tab */}
@@ -377,6 +432,13 @@ export default function NativeAppointmentLetterQueue() {
                       </div>
                       <div className="flex gap-2">
                         <button
+                          type="button"
+                          onClick={() => setDrawer({ mode: "view", row })}
+                          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-indigo-300 bg-white px-4 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-colors"
+                        >
+                          <Eye className="h-4 w-4" /> View
+                        </button>
+                        <button
                           type="button" onClick={() => void download(row)}
                           className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors"
                         >
@@ -394,13 +456,174 @@ export default function NativeAppointmentLetterQueue() {
                     </div>
                   ))}
                 </div>
-              ) : <Empty text={appliedSearch ? `No issued letter matches “${appliedSearch}”.` : "No appointment letters have been issued yet."} />
+              ) : <Empty text={appliedSearch ? `No issued letter matches "${appliedSearch}".` : "No appointment letters have been issued yet."} />
             )}
 
           </div>
         )}
       </div>
     </div>
+
+    {/* ── Letter preview / view drawer ── */}
+    {drawer && (
+      <div className="fixed inset-0 z-50 flex justify-end">
+        {/* Backdrop */}
+        <div
+          className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          onClick={closeDrawer}
+        />
+        {/* Panel */}
+        <div className="relative flex flex-col w-full max-w-2xl bg-white h-full shadow-2xl overflow-hidden">
+
+          {/* Drawer header */}
+          <div className="shrink-0 flex items-start justify-between gap-3 px-6 py-4 border-b border-blue-700/20 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-blue-200">
+                {drawer.mode === "preview" ? "Preview — Not yet issued" : "Issued Appointment Letter"}
+              </p>
+              <p className="mt-1 text-lg font-bold leading-tight">
+                {drawer.mode === "preview"
+                  ? (drawer.row.employeeName ?? drawer.row.employeeCode ?? "Employee")
+                  : drawer.row.letter_number}
+              </p>
+              <p className="text-xs text-blue-200 mt-0.5">
+                {drawer.mode === "preview"
+                  ? drawer.row.employeeCode
+                  : `${drawer.row.employee_name ?? ""} · ${drawer.row.employee_code ?? ""}${drawer.row.branch_name ? ` · ${drawer.row.branch_name}` : ""}`}
+              </p>
+            </div>
+            <button
+              type="button" onClick={closeDrawer}
+              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Drawer meta strip — for issued letters */}
+          {drawer.mode === "view" && (
+            <div className="shrink-0 flex flex-wrap items-center gap-3 px-6 py-3 border-b border-slate-100 bg-slate-50">
+              <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                drawer.row.status === "revoked"
+                  ? "bg-red-100 text-red-700"
+                  : (drawer.row.employee_esign_status === "signed" || drawer.row.employee_esign_status === "accepted")
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700"
+              }`}>
+                {String(drawer.row.employee_esign_status ?? "pending").replace(/_/g, " ")}
+              </span>
+              {!drawer.row.is_ca_issued && drawer.row.status !== "revoked" && (
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Self-signed</span>
+              )}
+              {drawer.row.issued_at && (
+                <span className="text-xs text-slate-500">
+                  Issued {new Date(drawer.row.issued_at).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Preview note for eligible employees */}
+          {drawer.mode === "preview" && (
+            <div className="shrink-0 flex items-start gap-2.5 px-6 py-3 bg-amber-50 border-b border-amber-100">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <p className="text-xs text-amber-800">
+                This is a draft — no signature, no letter number, no DB write. Review the name, designation,
+                joining date and salary carefully before issuing.
+                If anything looks wrong, fix it in the employee profile or salary package first.
+              </p>
+            </div>
+          )}
+
+          {/* PDF viewer */}
+          <div className="flex-1 overflow-hidden bg-slate-200 min-h-0">
+            {drawerPdfLoading ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center space-y-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-500 mx-auto" />
+                  <p className="text-xs text-slate-500">Generating letter…</p>
+                </div>
+              </div>
+            ) : drawerPdfError ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+                <AlertTriangle className="h-10 w-10 text-amber-400" />
+                <p className="text-sm font-semibold text-slate-700">Could not load the letter</p>
+                <p className="text-xs text-slate-500 max-w-xs">{drawerPdfError}</p>
+              </div>
+            ) : drawerPdfUrl ? (
+              <iframe
+                src={drawerPdfUrl}
+                title="Appointment Letter"
+                className="w-full h-full border-0"
+              />
+            ) : null}
+          </div>
+
+          {/* Footer actions */}
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-slate-200 bg-white">
+            {drawer.mode === "preview" && (
+              <>
+                <p className="text-xs text-slate-500">
+                  {drawer.row.warnings.length > 0
+                    ? `${drawer.row.warnings.length} warning(s) present — an override reason will be required.`
+                    : "All checks passed — ready to issue."}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button" onClick={closeDrawer}
+                    className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button" disabled={busy === drawer.row.employeeId}
+                    onClick={async () => {
+                      const row = drawer.row;
+                      await issue(row, row.warnings.length > 0);
+                      closeDrawer();
+                    }}
+                    className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60 transition-all"
+                  >
+                    {busy === drawer.row.employeeId
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <FileSignature className="h-4 w-4" />}
+                    {drawer.row.warnings.length > 0 ? "Issue with override" : "Issue Letter"}
+                  </button>
+                </div>
+              </>
+            )}
+            {drawer.mode === "view" && (
+              <div className="flex flex-wrap gap-2 ml-auto">
+                <button
+                  type="button" onClick={closeDrawer}
+                  className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="button" onClick={() => void download(drawer.row)}
+                  className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors"
+                >
+                  <Download className="h-4 w-4" /> Download PDF
+                </button>
+                {drawer.row.status !== "revoked" && (
+                  <button
+                    type="button" disabled={busy === drawer.row.id}
+                    onClick={() => void revoke(drawer.row)}
+                    className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-red-300 bg-white px-4 text-sm font-semibold text-red-600 hover:bg-red-50 transition-colors disabled:opacity-60"
+                  >
+                    <Ban className="h-4 w-4" /> Revoke
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    )}
+
     </DashboardLayout>
   );
 }

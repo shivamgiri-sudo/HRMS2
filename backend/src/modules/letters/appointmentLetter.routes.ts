@@ -190,8 +190,9 @@ router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES),
       message: `The signed PDF for ${r.letter_number} is not on disk. It may need to be re-issued.`,
     });
   }
+  const inline = req.query.inline === "1" || req.query.inline === "true";
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${r.letter_number}.pdf"`);
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${r.letter_number}.pdf"`);
   return fs.createReadStream(p).pipe(res);
 }));
 
