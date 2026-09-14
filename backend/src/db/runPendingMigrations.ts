@@ -1040,7 +1040,11 @@ const MIGRATION_MANIFEST: string[] = [
   "1763_noc_cases_page_access.sql", // Registered 2026-09-14. Registers NOC Cases page in page_catalog and grants role_page_access.
   "1765_portal_sessions.sql", // Registered 2026-09-14. Creates portal_sessions table used by the HR Admin portal-impersonation endpoint (INSERT was failing at runtime — table did not exist).
   "1766_roster_live_monitoring_branch_head_wfm_only.sql", // Registered 2026-09-14. Owner ruling: Roster Console's Live Monitoring tab (WFM_ROSTER_LIVE_MONITORING) is branch_head + wfm only. Discovered live-checking this: none of 1757's 8 page codes had actually been applied to production (missing from page_catalog entirely, not just role_page_access) despite 1757's own frontend prerequisite already being deployed — so this migration registers the page_catalog row itself (idempotent) rather than assuming 1757 ran, then grants branch_head+wfm and soft-revokes admin/hr if present (active_status=0, same pattern as 1661). Matching backend change: roster-intelligence.routes.ts splits a new LIVE_MONITORING_ROLES constant out of the pre-existing ADMIN_ROLES (which stays untouched — it also gates the unrelated /manager-digest self-service check) and applies it to the 5 endpoints this page code gates, in the same commit — role_page_access alone would leave the tab hidden while the endpoints still answered admin/hr directly. The other 7 tabs' page codes are still unregistered on production; flagged to the owner, not fixed here (out of scope for this ask).
-  "1767_onfido_external_audit_add_total_columns.sql", // Registered 2026-09-14. Adds 6 denominator columns (manual_far_total, manual_frr_total, classification_total, extraction_total, add_extraction_total, raw_extraction_total) to onfido_doc_external_audit_raw in onfido_db. Corrects FAR%/FRR%/error-rate calculations: previously used COUNT(*) as denominator, inflating it; now uses SUM of the matching total column from the source file. Existing rows receive NULL; new uploads populate via updated onfido-report-configs.ts extract map.
+  // 1767_onfido_external_audit_add_total_columns.sql — REMOVED FROM MANIFEST (moved to knownUnlisted).
+  // Targets onfido_db (not mas_hrms). The migration runner connects with shivam_user credentials
+  // which have no ALTER privileges on onfido_db. Migration must be run manually with onfido
+  // credentials from .env (ONFIDO_DB_*). File kept on disk; moved to knownUnlisted so it cannot
+  // be accidentally re-scheduled through the standard runner.
   ];
 
 export type MigrationHealth = {

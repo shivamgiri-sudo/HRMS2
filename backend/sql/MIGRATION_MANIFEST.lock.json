@@ -817,6 +817,11 @@
       "filename": "1214_repair_live_payroll_schema_gaps.sql",
       "reason": "Fully superseded by 1211_salary_prep_run_incentives_applied_at.sql and 1212_payslip_email_tracking_and_missing_indexes.sql, which declare the same four objects (salary_prep_run.incentives_applied_at, salary_prep_line.payslip_emailed / payslip_emailed_at, idx_spl_payslip_gen) with the same information_schema + PREPARE idiom, and applied cleanly on 2026-08-14 11:19 (executor maslms:2882130). 1214 was authored during a window when 8d8f34a5 had accidentally deleted 1211/1212 from the repo, so they could not be found; 9b7fdac7 restored them. It never ran - no schema_migrations row - so nothing is lost by unscheduling it. Kept on disk per the repository rule against deleting migrations, and left in knownUnlisted so it can never be scheduled again by accident. Scheduling both would be two migrations owning one set of columns.",
       "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1767_onfido_external_audit_add_total_columns.sql",
+      "reason": "Removed from manifest because it targets onfido_db (not mas_hrms). The migration runner connects with shivam_user credentials which have no ALTER privilege on onfido_db — production startup failed with 'ALTER command denied'. Migration must be run manually against onfido_db using the ONFIDO_DB_* credentials from .env. File kept on disk and moved to knownUnlisted so it cannot be accidentally re-scheduled through the standard runner.",
+      "approvedBy": "shivam.giri@teammas.in"
     }
   ],
   "knownDangling": [
@@ -1024,6 +1029,7 @@
     "999_create_missing_engagement_tables.sql",
     "999_fix_missing_ceo_metrics_tables.sql",
     "999_password_expiry_policy.sql",
+    "1767_onfido_external_audit_add_total_columns.sql",
     "add_missing_page_catalog_entries.sql",
     "add_missing_report_pages.sql",
     "ats_typing_passages_seed.sql",

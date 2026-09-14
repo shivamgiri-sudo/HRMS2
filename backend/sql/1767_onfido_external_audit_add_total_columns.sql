@@ -22,13 +22,39 @@
 -- Existing rows receive NULL (no historical re-upload needed; the service already
 -- returns null/no_data when denominator is 0). New uploads post-migration populate
 -- these columns via the updated onfido-report-configs.ts extract map.
+--
+-- NOTE: ADD COLUMN IF NOT EXISTS is MariaDB-only syntax rejected by MySQL 8.0.
+-- Each column is guarded individually via INFORMATION_SCHEMA.COLUMNS check.
 
-USE onfido_db;
+SET @db  = 'onfido_db';
+SET @tbl = 'onfido_doc_external_audit_raw';
 
-ALTER TABLE onfido_doc_external_audit_raw
-  ADD COLUMN IF NOT EXISTS manual_far_total     INT NULL COMMENT 'Total Manual FAR audits on this row — denominator for FAR%',
-  ADD COLUMN IF NOT EXISTS manual_frr_total     INT NULL COMMENT 'Total Manual FRR audits on this row — denominator for FRR%',
-  ADD COLUMN IF NOT EXISTS classification_total INT NULL COMMENT 'Total Classification stage audits — denominator for Classification error%',
-  ADD COLUMN IF NOT EXISTS extraction_total     INT NULL COMMENT 'Total Extraction stage audits — denominator for Extraction error%',
-  ADD COLUMN IF NOT EXISTS add_extraction_total INT NULL COMMENT 'Total Add-Extraction stage audits — denominator for Add-Extraction error%',
-  ADD COLUMN IF NOT EXISTS raw_extraction_total INT NULL COMMENT 'Total Raw-Extraction stage audits — denominator for Raw-Extraction error%';
+SET @sql = (SELECT IF(COUNT(*)=0,
+  CONCAT('ALTER TABLE `',@db,'`.`',@tbl,'` ADD COLUMN manual_far_total INT NULL COMMENT ''Total Manual FAR audits on this row — denominator for FAR%'''),
+  'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME=@tbl AND COLUMN_NAME='manual_far_total');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @sql = (SELECT IF(COUNT(*)=0,
+  CONCAT('ALTER TABLE `',@db,'`.`',@tbl,'` ADD COLUMN manual_frr_total INT NULL COMMENT ''Total Manual FRR audits on this row — denominator for FRR%'''),
+  'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME=@tbl AND COLUMN_NAME='manual_frr_total');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @sql = (SELECT IF(COUNT(*)=0,
+  CONCAT('ALTER TABLE `',@db,'`.`',@tbl,'` ADD COLUMN classification_total INT NULL COMMENT ''Total Classification stage audits — denominator for Classification error%'''),
+  'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME=@tbl AND COLUMN_NAME='classification_total');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @sql = (SELECT IF(COUNT(*)=0,
+  CONCAT('ALTER TABLE `',@db,'`.`',@tbl,'` ADD COLUMN extraction_total INT NULL COMMENT ''Total Extraction stage audits — denominator for Extraction error%'''),
+  'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME=@tbl AND COLUMN_NAME='extraction_total');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @sql = (SELECT IF(COUNT(*)=0,
+  CONCAT('ALTER TABLE `',@db,'`.`',@tbl,'` ADD COLUMN add_extraction_total INT NULL COMMENT ''Total Add-Extraction stage audits — denominator for Add-Extraction error%'''),
+  'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME=@tbl AND COLUMN_NAME='add_extraction_total');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+SET @sql = (SELECT IF(COUNT(*)=0,
+  CONCAT('ALTER TABLE `',@db,'`.`',@tbl,'` ADD COLUMN raw_extraction_total INT NULL COMMENT ''Total Raw-Extraction stage audits — denominator for Raw-Extraction error%'''),
+  'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=@db AND TABLE_NAME=@tbl AND COLUMN_NAME='raw_extraction_total');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
