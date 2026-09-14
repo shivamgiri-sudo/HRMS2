@@ -142,9 +142,10 @@ const KNOWN_GAPS: Record<string, string> = {
   // every one of these is now served. Kept as a note rather than silently vanishing because
   // the block above explains why the list must not rot — this is that rule doing its job.
 
-  // ── Roster Command Center — Team Roster panel — 2026-09-14 ─────────────────────────────
-  "GET /api/roster-analytics/process-roster":
-    "ROUTE EXISTS in roster-analytics.routes.ts line 1126 but the test cannot see it because the route file has uncommitted changes that import two untracked service files (process-team-roster.service.ts, shift-due.util.ts). When those imports fail at test-import time the entire router fails silently and the route never appears in the registered-routes walk. This is another concurrent agent's in-flight work (untracked: ProcessTeamRosterPanel.tsx, process-team-roster.service.ts, shift-due.util.ts). Once that session commits and the import chain resolves cleanly this entry must be removed.",
+  // ── Roster Command Center — Team Roster panel — REMOVED 2026-09-14 ────────────────────
+  // GET /api/roster-analytics/process-roster removed: route now resolves cleanly after
+  // the concurrent-agent commits that carried process-team-roster.service.ts and
+  // shift-due.util.ts were merged. The route is now served; no longer a gap.
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
