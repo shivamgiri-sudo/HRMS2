@@ -1266,7 +1266,7 @@ export default function NativeExitCommandCenter() {
   const submitExitRequest = async () => {
     if (!createForm.employeeId.trim()) return setCreateMessage("Select an employee first.");
     if (!createForm.lastWorkingDayProposed) return setCreateMessage("Proposed last working day is required.");
-    if (createForm.exitSubType === "absconding" && !createForm.abscondingSince) return setCreateMessage("Absconding Since date is required.");
+    if (["absconding", "abandonment"].includes(createForm.exitSubType) && !createForm.abscondingSince) return setCreateMessage("Last date actually worked is required for absconding/abandonment exits.");
     setSaving(true);
     try {
       await hrmsApi.post("/api/exit", {
@@ -1276,7 +1276,7 @@ export default function NativeExitCommandCenter() {
         exitReasonCategory: createForm.exitReasonCategory,
         resignationReason: createForm.resignationReason || null,
         lastWorkingDayProposed: createForm.lastWorkingDayProposed,
-        ...(createForm.exitSubType === "absconding" && createForm.abscondingSince ? { abscondingSince: createForm.abscondingSince } : {}),
+        ...(["absconding", "abandonment"].includes(createForm.exitSubType) && createForm.abscondingSince ? { abscondingSince: createForm.abscondingSince } : {}),
       });
       setShowCreate(false);
       setEmpQuery(""); setEmpResults([]);
@@ -1461,15 +1461,13 @@ export default function NativeExitCommandCenter() {
                   <select value={createForm.exitType} onChange={(e) => setCreateForm({ ...createForm, exitType: e.target.value, exitSubType: e.target.value === "voluntary" ? "resignation" : "termination" })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400">
                     <option value="voluntary">Voluntary</option>
                     <option value="involuntary">Involuntary</option>
-                    <option value="absconding">Absconding</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Sub-type</label>
                   <select value={createForm.exitSubType} onChange={(e) => setCreateForm({ ...createForm, exitSubType: e.target.value })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400">
-                    {createForm.exitType === "voluntary" && <><option value="resignation">Resignation</option><option value="retirement">Retirement</option></>}
-                    {createForm.exitType === "involuntary" && <><option value="termination">Termination</option><option value="layoff">Layoff</option><option value="contract_end">Contract End</option></>}
-                    {createForm.exitType === "absconding" && <option value="absconding">Absconding</option>}
+                    {createForm.exitType === "voluntary" && <><option value="resignation">Resignation</option><option value="retirement">Retirement</option><option value="mutual_separation">Mutual Separation</option></>}
+                    {createForm.exitType === "involuntary" && <><option value="termination">Termination</option><option value="absconding">Absconding</option><option value="abandonment">Abandonment</option><option value="contract_end">Contract End</option></>}
                   </select>
                 </div>
               </div>
@@ -1493,9 +1491,9 @@ export default function NativeExitCommandCenter() {
                 <textarea value={createForm.resignationReason} onChange={(e) => setCreateForm({ ...createForm, resignationReason: e.target.value })} rows={2} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none" placeholder="Brief description…" />
               </div>
               {/* Dates */}
-              {createForm.exitSubType === "absconding" && (
+              {["absconding", "abandonment"].includes(createForm.exitSubType) && (
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Absconding Since *</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Last date actually worked *</label>
                   <input type="date" value={createForm.abscondingSince} onChange={(e) => setCreateForm({ ...createForm, abscondingSince: e.target.value })} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
                 </div>
               )}
