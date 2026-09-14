@@ -318,7 +318,7 @@ function TrendChart({ points }: { points: TrendPoint[] }) {
   }
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={points} margin={{ top: 24, right: 12, left: 0, bottom: 0 }}
+      <BarChart data={points} margin={{ top: 32, right: 12, left: 0, bottom: 0 }}
         barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
         <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
         <XAxis dataKey="month" tickLine={false} axisLine={false}
@@ -327,10 +327,10 @@ function TrendChart({ points }: { points: TrendPoint[] }) {
           tick={{ fontSize: 12, fill: "var(--muted)" }} />
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
         <Bar dataKey="doc" name="DOC" fill="var(--blue)" fillOpacity={0.85} radius={[6, 6, 0, 0]} maxBarSize={48}>
-          <LabelList dataKey="doc" position="top" fill="var(--blue)" fontSize={11} fontWeight={700} />
+          <LabelList dataKey="doc" position="top" fill="var(--blue)" fontSize={13} fontWeight={700} />
         </Bar>
         <Bar dataKey="poa" name="POA" fill="var(--teal)" fillOpacity={0.85} radius={[6, 6, 0, 0]} maxBarSize={48}>
-          <LabelList dataKey="poa" position="top" fill="var(--teal)" fontSize={11} fontWeight={700} />
+          <LabelList dataKey="poa" position="top" fill="var(--teal)" fontSize={13} fontWeight={700} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -410,7 +410,7 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
               dataKey="value"
               position="right"
               formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"}
-              style={{ fontSize: 11, fontWeight: 700, fill: "var(--muted-strong)" }}
+              style={{ fontSize: 12, fontWeight: 700, fill: "var(--muted-strong)" }}
             />
           </Bar>
         </BarChart>
@@ -1422,7 +1422,7 @@ function QualityView({
                 dot={{ r: 3, fill: "var(--red)", stroke: "var(--card)", strokeWidth: 2 }}
                 activeDot={{ r: 6 }}
               >
-                <LabelList dataKey="errorRate" position="top" fontSize={10} fill="var(--red)"
+                <LabelList dataKey="errorRate" position="top" fontSize={12} fill="var(--red)"
                   formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"} />
               </Area>
             </AreaChart>

@@ -1087,9 +1087,12 @@ export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const pool = await getOnfidoPool();
 
+  // HC and attrition count: Onfloor rows only (matches reference benchmark SUMIFS…State="Onfloor").
+  // Scheduled / UL / Actual UL: all states (Training rows contribute to shrinkage denominator).
+  const onfloor = `LOWER(COALESCE(state,'onfloor')) = 'onfloor'`;
   const [dayRows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(work_date, '%Y-%m') AS ym, work_date, SUM(hc) AS hc
-       FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ? ${clause}
+       FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ? ${clause} AND ${onfloor}
        GROUP BY ym, work_date ORDER BY ym, work_date`,
     [f.from, f.to, ...params]
   );
@@ -1104,7 +1107,8 @@ export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?
 
   const [aggRows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(work_date, '%Y-%m') AS ym,
-            COALESCE(SUM(attrition_flag),0) AS attrition, COALESCE(SUM(scheduled),0) AS scheduled,
+            COALESCE(SUM(CASE WHEN ${onfloor} THEN attrition_flag ELSE 0 END),0) AS attrition,
+            COALESCE(SUM(scheduled),0) AS scheduled,
             COALESCE(SUM(unplanned_leave),0) AS ul, COALESCE(SUM(actual_ul),0) AS actualUl
        FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ? ${clause}
        GROUP BY ym ORDER BY ym`,
@@ -1191,9 +1195,10 @@ export async function getAttritionBreakdown(
   // (e.g. TL "Training") can carry very few people on any single day while
   // dozens rotate through it across the month, so a two-point average against
   // a whole month's exits produced rates over 3000%.
+  const onfloor = `LOWER(COALESCE(state,'onfloor')) = 'onfloor'`;
   const [dayRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${col}), ''), '(unassigned)') AS label, work_date, SUM(hc) AS hc
-       FROM onfido_agent_daily_raw WHERE DATE_FORMAT(work_date, '%Y-%m') = ? ${clause}
+       FROM onfido_agent_daily_raw WHERE DATE_FORMAT(work_date, '%Y-%m') = ? ${clause} AND ${onfloor}
        GROUP BY label, work_date ORDER BY label, work_date`,
     [targetMonth, ...params]
   );
@@ -1208,7 +1213,8 @@ export async function getAttritionBreakdown(
 
   const [aggRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${col}), ''), '(unassigned)') AS label,
-            COALESCE(SUM(attrition_flag),0) AS attrition, COALESCE(SUM(scheduled),0) AS scheduled,
+            COALESCE(SUM(CASE WHEN ${onfloor} THEN attrition_flag ELSE 0 END),0) AS attrition,
+            COALESCE(SUM(scheduled),0) AS scheduled,
             COALESCE(SUM(unplanned_leave),0) AS ul
        FROM onfido_agent_daily_raw WHERE DATE_FORMAT(work_date, '%Y-%m') = ? ${clause}
        GROUP BY label`,
