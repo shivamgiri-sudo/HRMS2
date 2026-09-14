@@ -1815,6 +1815,112 @@ export async function getPoaExternalBreakdown(
   });
 }
 
+// ── GD MCN SLA APS (item #8 of the 2026-09-12 feedback: "GD MCN SLA APS Day
+// and slot wise performance. (Required New Format)") ───────────────────────
+//
+// A genuinely different shape from every other table in this file: not a
+// per-task record, an hourly staffing/SLA fact table (onfido_gd_mcn_sla_raw)
+// — 24 hourly slot rows per day plus one "Total" daily-summary row (real
+// column values, not an average computed here) tagged by gmt_slot = 'Total'.
+// Day-level KPIs/trend read the file's own Total rows rather than
+// re-averaging the 24 hourly rows, since the file's daily total is not
+// necessarily a naive mean (Commitment/FTE Delivered are summed across the
+// day, not averaged, per the raw data). Slot-wise breakdown (the "slot wise
+// performance" the client explicitly asked for) reads only the real hourly
+// rows, excluding the Total row.
+
+const gdMcnSla = "onfido_gd_mcn_sla_raw";
+
+export interface GdMcnSlaOverview {
+  avgSlaPct: KpiValue;
+  avgGdPct: KpiValue;
+  avgMcnPct: KpiValue;
+  avgOccupancyPct: KpiValue;
+  avgAvailPct: KpiValue;
+}
+
+/** Percent columns are stored as the file's own ratio (e.g. 0.964 = 96.4%) —
+ *  multiplied by 100 and rounded to 1dp for display, same convention as
+ *  every other percent KPI in this file. */
+function pctToDisplay(v: number | null): number | null {
+  return v === null ? null : Math.round(v * 1000) / 10;
+}
+
+export async function getGdMcnSlaOverview(
+  rawFilters: { from?: string; to?: string }
+): Promise<GdMcnSlaOverview> {
+  const f = readFilters(rawFilters);
+  const agg = await scalar<RowDataPacket & {
+    sla: number | null; gd: number | null; mcn: number | null; occ: number | null; avail: number | null;
+  }>(
+    `SELECT AVG(sla_pct) AS sla, AVG(gd_pct) AS gd, AVG(mcn_pct) AS mcn,
+            AVG(occupancy_pct) AS occ, AVG(avail_pct) AS avail
+       FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ? AND gmt_slot = 'Total'`,
+    [f.from, f.to]
+  );
+  const kpi = (key: string, label: string, value: number | null): KpiValue => ({
+    key, label, value, unit: "percent", availability: value === null ? "no_data" : "ok",
+  });
+  return {
+    avgSlaPct: kpi("gd_mcn_sla", "Avg SLA %", pctToDisplay(agg.sla)),
+    avgGdPct: kpi("gd_mcn_gd", "Avg GD %", pctToDisplay(agg.gd)),
+    avgMcnPct: kpi("gd_mcn_mcn", "Avg MCN %", pctToDisplay(agg.mcn)),
+    avgOccupancyPct: kpi("gd_mcn_occ", "Avg Occupancy %", pctToDisplay(agg.occ)),
+    avgAvailPct: kpi("gd_mcn_avail", "Avg Availability %", pctToDisplay(agg.avail)),
+  };
+}
+
+export interface GdMcnSlaTrendPoint {
+  bucket: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null;
+  commitment: number | null; fteDelivered: number | null;
+}
+
+/** Day-wise trend, straight from each day's own Total row. */
+export async function getGdMcnSlaTrend(rawFilters: { from?: string; to?: string }): Promise<GdMcnSlaTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(slot_date, '%Y-%m-%d') AS bucket, sla_pct, gd_pct, mcn_pct, commitment, fte_delivered
+       FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ? AND gmt_slot = 'Total' ORDER BY slot_date`,
+    [f.from, f.to]
+  );
+  return rows.map((r) => ({
+    bucket: r.bucket,
+    slaPct: pctToDisplay(r.sla_pct !== null ? Number(r.sla_pct) : null),
+    gdPct: pctToDisplay(r.gd_pct !== null ? Number(r.gd_pct) : null),
+    mcnPct: pctToDisplay(r.mcn_pct !== null ? Number(r.mcn_pct) : null),
+    commitment: r.commitment !== null ? Math.round(Number(r.commitment) * 10) / 10 : null,
+    fteDelivered: r.fte_delivered !== null ? Math.round(Number(r.fte_delivered) * 10) / 10 : null,
+  }));
+}
+
+export interface GdMcnSlaSlotRow {
+  slot: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null; occupancyPct: number | null;
+}
+
+/** The client's own ask: slot-wise (hour-of-day) performance, averaged across
+ *  every day in range — which hours are weakest, not which day. Excludes the
+ *  daily Total row (gmt_slot = 'Total' is not a real hour). */
+export async function getGdMcnSlaSlotBreakdown(
+  rawFilters: { from?: string; to?: string }
+): Promise<GdMcnSlaSlotRow[]> {
+  const f = readFilters(rawFilters);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT gmt_slot, AVG(sla_pct) AS sla, AVG(gd_pct) AS gd, AVG(mcn_pct) AS mcn, AVG(occupancy_pct) AS occ
+       FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ? AND gmt_slot <> 'Total'
+       GROUP BY gmt_slot ORDER BY MIN(source_row_no)`,
+    [f.from, f.to]
+  );
+  return rows.map((r) => ({
+    slot: r.gmt_slot,
+    slaPct: pctToDisplay(r.sla !== null ? Number(r.sla) : null),
+    gdPct: pctToDisplay(r.gd !== null ? Number(r.gd) : null),
+    mcnPct: pctToDisplay(r.mcn !== null ? Number(r.mcn) : null),
+    occupancyPct: pctToDisplay(r.occ !== null ? Number(r.occ) : null),
+  }));
+}
+
 // ── DOC Raw (per-task volume/AHT, onfido_doc_raw) ───────────────────────────
 //
 // Distinct from onfido_doc_external_audit_raw (which only ever carries

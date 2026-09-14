@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Globe, LayoutGrid, Layers3,
+  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, Globe, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -65,7 +65,7 @@ type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string
 
 type ViewKey =
   | "overview" | "analyst" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
-  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "live";
+  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live";
 type Granularity = "daily" | "weekly" | "monthly";
 
 interface VolumeTrendPoint { bucket: string; doc: number; poa: number }
@@ -177,6 +177,15 @@ interface PoaExternalOverview { taskCount: KpiValue; avgAht: KpiValue; errorRate
 interface PoaExternalTrendPoint { bucket: string; taskCount: number; errorCount: number }
 type PoaExternalDimension = "ims_client_name" | "tl_name" | "am_name" | "location";
 interface PoaExternalBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
+
+interface GdMcnSlaOverview {
+  avgSlaPct: KpiValue; avgGdPct: KpiValue; avgMcnPct: KpiValue; avgOccupancyPct: KpiValue; avgAvailPct: KpiValue;
+}
+interface GdMcnSlaTrendPoint {
+  bucket: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null;
+  commitment: number | null; fteDelivered: number | null;
+}
+interface GdMcnSlaSlotRow { slot: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null; occupancyPct: number | null }
 
 interface LiveOverview {
   docLiveTaskCount: KpiValue; docLiveAht: KpiValue; docLiveAuditCount: KpiValue; docLiveErrorCount: KpiValue;
@@ -356,6 +365,7 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "poatrial", label: "POA Trial", icon: FlaskConical },
   { key: "clientdoc", label: "Client & Document Report", icon: FileBarChart2 },
   { key: "poaexternal", label: "POA External", icon: Globe },
+  { key: "gdmcnsla", label: "GD MCN SLA APS", icon: Gauge },
   { key: "live", label: "Live", icon: Radio },
 ];
 
@@ -2206,6 +2216,113 @@ function PoaExternalView({
 }
 
 /**
+ * Item #8 of the 2026-09-12 client feedback: "GD MCN SLA APS Day and slot
+ * wise performance. (Required New Format)" — a genuinely different data
+ * shape from everything else in this dashboard: not per-task records, an
+ * hourly staffing/SLA fact table (24 hourly slots + 1 daily "Total" row per
+ * day). No TL/AM dimension in this file, so this view is intentionally left
+ * out of FILTERABLE_VIEWS — the Executive Filters TL/AM dropdowns correctly
+ * hide themselves here rather than doing nothing when changed.
+ */
+function GdMcnSlaView({
+  range, onOpenRecord,
+}: { range: { from: string; to: string }; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  const [drilldown, setDrilldown] = useState<{ slot: string } | null>(null);
+
+  const overviewQuery = useQuery({
+    queryKey: ["onfido-process", "gd-mcn-sla-overview", range],
+    queryFn: () => hrmsApi.get<{ data: GdMcnSlaOverview }>(`/api/onfido-process/gd-mcn-sla/overview?from=${range.from}&to=${range.to}`),
+  });
+  const trendQuery = useQuery({
+    queryKey: ["onfido-process", "gd-mcn-sla-trend", range],
+    queryFn: () => hrmsApi.get<{ data: GdMcnSlaTrendPoint[] }>(`/api/onfido-process/gd-mcn-sla/trend?from=${range.from}&to=${range.to}`),
+  });
+  const slotQuery = useQuery({
+    queryKey: ["onfido-process", "gd-mcn-sla-slot-breakdown", range],
+    queryFn: () => hrmsApi.get<{ data: GdMcnSlaSlotRow[] }>(`/api/onfido-process/gd-mcn-sla/slot-breakdown?from=${range.from}&to=${range.to}`),
+  });
+
+  const ov = overviewQuery.data?.data;
+  const points = trendQuery.data?.data ?? [];
+  const slots = slotQuery.data?.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      {ov && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+          <KpiPlain kpi={ov.avgSlaPct} kc="var(--blue)" />
+          <KpiPlain kpi={ov.avgGdPct} kc="var(--teal)" />
+          <KpiPlain kpi={ov.avgMcnPct} kc="var(--purple)" />
+          <KpiPlain kpi={ov.avgOccupancyPct} kc="var(--orange)" />
+          <KpiPlain kpi={ov.avgAvailPct} kc="var(--green)" />
+        </div>
+      )}
+
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <h3>Day-Wise Performance</h3>
+        <div className="oc-card-sub">Each day's own Total row — SLA% / GD% / MCN% straight from the file, not re-averaged here.</div>
+        {points.length === 0 ? (
+          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={40} unit="%" tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+              <Bar dataKey="slaPct" name="SLA %" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={30}>
+                <LabelList dataKey="slaPct" position="top" fontSize={9} fill="var(--muted)" />
+              </Bar>
+              <Bar dataKey="gdPct" name="GD %" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={30}>
+                <LabelList dataKey="gdPct" position="top" fontSize={9} fill="var(--muted)" />
+              </Bar>
+              <Bar dataKey="mcnPct" name="MCN %" fill="var(--purple)" radius={[4, 4, 0, 0]} maxBarSize={30}>
+                <LabelList dataKey="mcnPct" position="top" fontSize={9} fill="var(--muted)" />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <h3>Slot-Wise Performance</h3>
+        <div className="oc-card-sub">Averaged across every day in range — which hour slots are weakest. Click a row for the raw slot records.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead><tr><th>Slot (GMT)</th><th className="oc-right">SLA %</th><th className="oc-right">GD %</th><th className="oc-right">MCN %</th><th className="oc-right">Occupancy %</th></tr></thead>
+            <tbody>
+              {slots.length === 0 && <tr className="oc-empty-row"><td colSpan={5}>No data</td></tr>}
+              {slots.map((r) => (
+                <tr key={r.slot} className="oc-row-click" onClick={() => setDrilldown({ slot: r.slot })}>
+                  <td>{r.slot}</td>
+                  <td className="oc-right">{r.slaPct !== null ? `${r.slaPct}%` : "—"}</td>
+                  <td className="oc-right">{r.gdPct !== null ? `${r.gdPct}%` : "—"}</td>
+                  <td className="oc-right">{r.mcnPct !== null ? `${r.mcnPct}%` : "—"}</td>
+                  <td className="oc-right">{r.occupancyPct !== null ? `${r.occupancyPct}%` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {drilldown && (
+        <BreakdownDrilldownSheet
+          open={!!drilldown}
+          title="GD MCN SLA — Slot"
+          tableKey="ONFIDO_GD_MCN_SLA"
+          filterColumn="gmt_slot"
+          filterValue={drilldown.slot}
+          range={range}
+          onOpenChange={(v) => { if (!v) setDrilldown(null); }}
+          onOpenRecord={onOpenRecord}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
  * Live view — deliberately not wired to Executive Filters' date range (see
  * the backend's own comment): it always shows today / this month, the same
  * way the reference dashboard's own Live Dashboard tab does. Every source
@@ -2621,6 +2738,7 @@ export default function OnfidoProcessDashboard() {
           {view === "poatrial" && <PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "clientdoc" && <ClientDocView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poaexternal" && <PoaExternalView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "gdmcnsla" && <GdMcnSlaView range={range} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
 
           {view === "overview" && (
