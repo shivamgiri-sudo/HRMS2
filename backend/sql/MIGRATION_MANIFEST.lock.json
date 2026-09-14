@@ -798,7 +798,12 @@
     "1760_exit_absconding_since.sql",
     "1762_fnf_transfer_batch.sql",
     "1764_exit_clearance_task_attachment.sql",
-    "1764_noc_signatory_not_mandatory.sql"
+    "1764_noc_signatory_not_mandatory.sql",
+    "1700_noc_case_opened_event.sql",
+    "1759_roster_conflict_resolution_evidence.sql",
+    "1761_esic_registration_automation.sql",
+    "1763_noc_cases_page_access.sql",
+    "1765_portal_sessions.sql"
   ],
   "approvedDeletions": [
     {

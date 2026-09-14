@@ -255,6 +255,10 @@ describe("migration manifest — duplicates", () => {
     // origin/main's manifest section omitted them. Same numbering shape as every jump
     // above — two unrelated concurrent sessions independently picked the same next-available
     // number. Renaming either is the one thing that would break schema_migrations tracking.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(90);
+    //
+    // 90 -> 91 (2026-09-14): 1700_noc_case_opened_event.sql registered alongside the
+    // already-registered 1700_email_ticket_daily_actual.sql — same concurrent-session
+    // number collision pattern as every jump above.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(91);
   });
 });
