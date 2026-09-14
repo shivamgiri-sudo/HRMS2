@@ -1,0 +1,3107 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import * as XLSX from "xlsx";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import {
+  pollBatchJob, isBatchJobStarted, describeProgress,
+  type BatchJobStatus,
+} from "@/lib/bulkBatchJob";
+import { apiUrl } from "@/lib/apiBase";
+import { useAuth } from "@/contexts/AuthContext";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
+import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
+import {
+  ProductivityUpload,
+  canUseProductivityTab,
+} from "@/components/wfm/ProductivityUpload";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+
+type UploadTemplate = {
+  id: string;
+  upload_type_code: string;
+  upload_type_name: string;
+  target_table: string | null;
+  description: string | null;
+  required_columns: string[];
+  optional_columns: string[];
+  sample_row: Record<string, unknown>;
+  validation_rules: Record<string, unknown>;
+  active_status: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type UploadBatch = {
+  id: string;
+  upload_batch_no: string;
+  upload_type_code: string;
+  original_file_name: string;
+  file_path: string | null;
+  file_size_bytes: number | null;
+  total_rows: number;
+  valid_rows: number;
+  error_rows: number;
+  imported_rows: number;
+  batch_status: string;
+  uploaded_by: string | null;
+  /** Server-resolved display name for whoever raised the upload: employee full name, falling
+   *  back to the login email. auth_user carries no name, so this cannot be derived client-side. */
+  uploaded_by_name?: string | null;
+  uploaded_by_code?: string | null;
+  branch_name?: string | null;
+  validated_by: string | null;
+  imported_by: string | null;
+  uploaded_at: string;
+  validated_at: string | null;
+  imported_at: string | null;
+  error_summary: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+type UploadBatchRow = {
+  id: string;
+  upload_batch_id: string;
+  row_no: number;
+  raw_data: Record<string, unknown>;
+  normalized_data: Record<string, unknown>;
+  row_status: string;
+  error_messages: string[];
+  target_record_id: string | null;
+  created_at: string;
+  updated_at: string;
+  // Ground truth, read live from the actual target table (attendance_regularization /
+  // leave_request / the incentive or deduction record) — not just this row's own
+  // bookkeeping status. See backend/.../bulk-approval.service.ts loadRowsWithLiveStatus.
+  entity_created?: boolean;
+  entity_status?: string | null;
+};
+
+type CsvRow = Record<string, string>;
+
+const BULK_UPLOAD_BUCKET = "hrms-bulk-uploads";
+
+// Rows are staged to the server in slices of this size rather than one request for the
+// whole file. High-volume raw-data uploads (Onfido process reports run ~1 lakh rows/day
+// per file, wide-column ones up to 86 columns) blow past both the request body limit and
+// practical request size long before that — one file this size in a single POST is
+// megabytes of JSON and risks the same silent-timeout failure the comment below already
+// worked around once for smaller files.
+//
+// 2000 -> 1000 (2026-09-09): a 2000-row single INSERT holds its locks on
+// upload_batch_row for long enough that several Onfido DOC_RAW files uploaded minutes apart
+// collided and lost the DB's patience — "Lock wait timeout exceeded", the whole chunk's rows
+// never saved, 6 files (~137k rows) silently staged as zero rows despite the batch header
+// claiming otherwise. The backend now retries a lost lock conflict on this exact write (see
+// withDeadlockRetry in bulk-upload.routes.ts), but a smaller chunk means a shorter lock hold
+// in the first place — fewer collisions to need retrying, not just a faster recovery from one.
+const STAGE_CHUNK_SIZE = 1000;
+
+const IMPORT_RPC_BY_TYPE: Record<string, string> = {
+  EMPLOYEE_MASTER: "import_upload_batch",
+  PROCESS_MASTER: "import_process_upload_batch",
+  DEPARTMENT_MASTER: "import_department_upload_batch",
+  ASSET_MASTER: "import_asset_upload_batch",
+  BRANCH_MASTER: "import_branch_upload_batch",
+  LOB_MASTER: "import_lob_upload_batch",
+  DESIGNATION_MASTER: "import_designation_upload_batch",
+  OFFICIAL_EMAIL_UPDATE: "import_official_email_update_batch",
+  REPORTING_MANAGER_UPDATE: "import_reporting_manager_update_batch",
+  ROSTER_ASSIGNMENT_BULK: "import_roster_assignment_batch",
+  WEEK_OFF_PREFERENCE_BULK: "import_weekoff_preference_batch",
+  SHIFT_ROTATION_TYPE_UPDATE: "import_shift_rotation_type_batch",
+  SHIFT_ROSTER_BULK: "import_shift_roster_batch",
+  PF_UAN_UPDATE: "import_pf_uan_batch",
+  // Approval-gated types. Import only STAGES rows — into leave_request,
+  // attendance_regularization, incentive_upload_batch/line and
+  // employee_deduction_entries, each in that table's own pending state — and nothing
+  // reaches payroll until a branch head approves the batch.
+  //
+  // All five were live, selectable templates in the dropdown below with a working
+  // backend import behind them, and no entry here. getImportRpc returned "" for them,
+  // so a user could pick "Leave Application (Bulk)", upload and validate a file, and
+  // then be told at the last step "Import mapping for LEAVE_APPLICATION_BULK is not
+  // enabled yet." Live data agrees: zero batches have ever been created for any of the
+  // five, against nine for the types that are mapped.
+  LEAVE_APPLICATION_BULK: "import_leave_application_batch",
+  ATTENDANCE_REGULARIZATION_BULK: "import_attendance_regularization_batch",
+  INCENTIVE_BULK: "import_incentive_bulk_batch",
+  DEDUCTION_BULK: "import_deduction_bulk_batch",
+  // Onfido process raw-data reports — DOC/POA volume, quality-audit and
+  // client-escalation exports, imported into onfido_db (see backend's
+  // onfido-report-configs.ts, the single source of truth for these seven).
+  ONFIDO_DOC_RAW: "import_onfido_doc_raw_batch",
+  ONFIDO_DOC_QUALITY: "import_onfido_doc_quality_batch",
+  ONFIDO_DOC_ESCALATION_CRE: "import_onfido_cre_batch",
+  ONFIDO_DOC_ESCALATION_CRQ: "import_onfido_crq_batch",
+  ONFIDO_POA_RAW: "import_onfido_poa_raw_batch",
+  ONFIDO_POA_TRIAL_RAW: "import_onfido_poa_trial_batch",
+  ONFIDO_POA_QUALITY: "import_onfido_poa_quality_batch",
+  ONFIDO_DOC_EXTERNAL_AUDIT: "import_onfido_external_audit_batch",
+  ONFIDO_DOC_ETM: "import_onfido_doc_etm_batch",
+  ONFIDO_POA_ETM: "import_onfido_poa_etm_batch",
+  ONFIDO_TASK_SKIP: "import_onfido_task_skip_batch",
+  ONFIDO_AGENT_DAILY: "import_onfido_agent_daily_batch",
+};
+
+function getImportRpc(uploadTypeCode: string) {
+  return IMPORT_RPC_BY_TYPE[String(uploadTypeCode || "").toUpperCase()] || "";
+}
+
+const statusClass: Record<string, string> = {
+  uploaded: "bg-slate-100 text-slate-700 border-slate-200",
+  validating: "bg-sky-50 text-sky-700 border-sky-200",
+  validated: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  validation_failed: "bg-amber-50 text-amber-700 border-amber-200",
+  importing: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  imported: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  imported_with_errors: "bg-amber-50 text-amber-700 border-amber-200",
+  failed: "bg-rose-50 text-rose-700 border-rose-200",
+  cancelled: "bg-slate-100 text-slate-500 border-slate-200",
+};
+
+const rowStatusClass: Record<string, string> = {
+  pending: "bg-slate-100 text-slate-700 border-slate-200",
+  valid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  error: "bg-rose-50 text-rose-700 border-rose-200",
+  imported: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  skipped: "bg-slate-100 text-slate-500 border-slate-200",
+};
+
+function normalizeHeader(value: string) {
+  return value.trim().replace(/^\uFEFF/, "");
+}
+
+function parseCsv(text: string): CsvRow[] {
+  const lines = splitIntoLogicalRows(text).filter((line) => line.trim().length > 0);
+
+  if (lines.length < 2) return [];
+
+  const headers = splitCsvLine(lines[0]).map(normalizeHeader);
+
+  return lines.slice(1).map((line) => {
+    const values = splitCsvLine(line);
+    const row: CsvRow = {};
+
+    headers.forEach((header, index) => {
+      row[header] = values[index]?.trim() || "";
+    });
+
+    return row;
+  });
+}
+
+function splitCsvLine(line: string) {
+  const result: string[] = [];
+  let current = "";
+  let insideQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"' && nextChar === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      insideQuotes = !insideQuotes;
+      continue;
+    }
+
+    if (char === "," && !insideQuotes) {
+      result.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  result.push(current);
+  return result;
+}
+
+function toCsvValue(value: unknown) {
+  const text = String(value ?? "");
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function downloadTextFile(fileName: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+
+  URL.revokeObjectURL(url);
+}
+
+function formatBytes(bytes?: number | null) {
+  if (!bytes) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(value));
+}
+
+
+type CsvParseResult = {
+  headers: string[];
+  rows: CsvRow[];
+  rowWidthWarnings: string[];
+};
+
+type CsvHealth = {
+  headers: string[];
+  expectedHeaders: string[];
+  missingHeaders: string[];
+  unknownHeaders: string[];
+  wrongOrder: boolean;
+  rowCount: number;
+  rowWidthWarnings: string[];
+};
+
+function getTemplateHeaders(template: UploadTemplate) {
+  const seen = new Set<string>();
+  const headers: string[] = [];
+
+  [...(template.required_columns || []), ...(template.optional_columns || [])]
+    .map((column) => String(column || "").trim())
+    .filter(Boolean)
+    .forEach((column) => {
+      if (!seen.has(column)) {
+        seen.add(column);
+        headers.push(column);
+      }
+    });
+
+  return headers;
+}
+
+/**
+ * Drops only TRAILING blank entries (a genuinely blank header/value in the middle stays,
+ * since that is a real structural problem worth surfacing). Excel's used-range can declare
+ * more columns "in use" than actually hold data (same cause as the blank-row artifact
+ * below), and sheet_to_csv emits a trailing comma per phantom column for the header row and
+ * — inconsistently across rows — for data rows too. Confirmed live: "CRE Dashboard" has 50
+ * real columns but a used-range of 54; comparing raw (unequal, inconsistently-padded)
+ * lengths flagged every row as a width mismatch and blocked the whole upload.
+ */
+function trimTrailingBlanks(values: string[]): string[] {
+  let end = values.length;
+  while (end > 0 && values[end - 1].trim() === "") end -= 1;
+  return values.slice(0, end);
+}
+
+/**
+ * Splits raw CSV text into logical rows, respecting quotes — a plain `.split("\n")`
+ * breaks the moment a quoted field contains a literal embedded newline (a multi-line
+ * Excel cell, e.g. a "Comments" field), turning one real record into two garbage
+ * fragments: a truncated first half and an orphaned second half whose leading columns
+ * are actually the tail of the field that got split. Confirmed live: "CRE Dashboard"
+ * had 220 of 730 rows corrupted this way (730 physical lines from 510 real records),
+ * "CRQ Dashboard" had 185 of 2,436 — both files carry free-text columns
+ * ("Reason", "Report List of Consider Sub-Breakdowns") that legitimately contain
+ * newlines. splitCsvLine below already leaves a literal \n inside quotes untouched
+ * once it reaches it as ordinary content, so the only fix needed is not breaking a
+ * row on a newline that is still inside an open quote.
+ */
+function splitIntoLogicalRows(text: string): string[] {
+  const rows: string[] = [];
+  let current = "";
+  let insideQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        current += '""';
+        i += 1;
+        continue;
+      }
+      insideQuotes = !insideQuotes;
+      current += char;
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !insideQuotes) {
+      if (char === "\r" && nextChar === "\n") i += 1;
+      rows.push(current);
+      current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && insideQuotes) {
+      if (char === "\r" && nextChar === "\n") i += 1;
+      current += "\n";
+      continue;
+    }
+
+    current += char;
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+
+function parseCsvDetailed(text: string): CsvParseResult {
+  const lines = splitIntoLogicalRows(text);
+
+  if (lines.length < 1) return { headers: [], rows: [], rowWidthWarnings: [] };
+
+  const headers = trimTrailingBlanks(splitCsvLine(lines[0]).map(normalizeHeader));
+  const rowWidthWarnings: string[] = [];
+
+  const rows: CsvRow[] = [];
+  let rowNumber = 0;
+  for (const line of lines.slice(1)) {
+    if (line.trim().length === 0) continue;
+    const values = splitCsvLine(line);
+    // A row where every cell is blank is a formatting artifact from Excel's used-range
+    // (a workbook can declare far more rows "in use" than actually hold data — e.g. from a
+    // cell-format paste), not real data. sheet_to_csv still emits a comma-only line for it
+    // (",,,,,,,...") and line.trim().length > 0 above does not catch that, since commas are
+    // not whitespace — confirmed live: "DOC Raw Data SQL Format..xlsx" has 20 real rows but
+    // a used-range of 1,048,576, and staged 1,048,575 blank rows before this guard.
+    if (values.every((v) => v.trim() === "")) continue;
+
+    rowNumber += 1;
+    // Only warn when a row has MORE real columns than the header — genuinely misaligned
+    // data (an unescaped comma, a shifted column). FEWER is normal for a wide, sparse
+    // export: which trailing columns are blank varies row to row (row.forEach below
+    // already reads a missing trailing value as "", same as an explicit blank cell), so
+    // comparing for exact equality flagged the majority of real CRE Dashboard rows —
+    // confirmed live, 295 of 730 rows tripped this before the check was narrowed.
+    const trimmedValues = trimTrailingBlanks(values);
+    if (trimmedValues.length > headers.length) {
+      rowWidthWarnings.push(
+        `Row ${rowNumber}: expected at most ${headers.length} column(s), found ${trimmedValues.length}. Keep blank commas for optional columns and wrap comma values in quotes.`
+      );
+    }
+
+    const row: CsvRow = {};
+    headers.forEach((header, headerIndex) => {
+      row[header] = values[headerIndex]?.trim() || "";
+    });
+    rows.push(row);
+  }
+
+  return { headers, rows, rowWidthWarnings };
+}
+
+function buildCsvHealth(
+  template: UploadTemplate,
+  parsed: CsvParseResult
+): CsvHealth {
+  const expectedHeaders = getTemplateHeaders(template);
+  const uploadedHeaderSet = new Set(parsed.headers);
+  const expectedHeaderSet = new Set(expectedHeaders);
+
+  const missingHeaders = expectedHeaders.filter(
+    (header) => !uploadedHeaderSet.has(header)
+  );
+  const unknownHeaders = parsed.headers.filter(
+    (header) => header && !expectedHeaderSet.has(header)
+  );
+  const wrongOrder =
+    expectedHeaders.length === parsed.headers.length &&
+    expectedHeaders.some((header, index) => header !== parsed.headers[index]);
+
+  return {
+    headers: parsed.headers,
+    expectedHeaders,
+    missingHeaders,
+    unknownHeaders,
+    wrongOrder,
+    rowCount: parsed.rows.length,
+    rowWidthWarnings: parsed.rowWidthWarnings,
+  };
+}
+
+function getFallbackSampleValue(
+  uploadTypeCode: string,
+  header: string,
+  required: boolean
+) {
+  const normalizedUploadType = uploadTypeCode.toUpperCase();
+  const normalizedHeader = header.toLowerCase();
+
+  const employeeSamples: Record<string, string> = {
+    employeecode: "TEST001",
+    firstname: "Amit",
+    lastname: "Kumar",
+    email: "amit.test001@example.com",
+    designation: "Executive",
+    hiredate: "16-05-2026",
+    phone: "9876543210",
+    department: "Operations",
+    managercode: "",
+    manageremail: "",
+    dateofbirth: "01-01-1995",
+    gender: "Male",
+    address: "Demo Address",
+    city: "Delhi",
+    country: "India",
+    employmenttype: "full-time",
+    status: "active",
+    workinghoursstart: "09:00",
+    workinghoursend: "18:00",
+    workingdays: "1,2,3,4,5",
+  };
+
+  const processSamples: Record<string, string> = {
+    process_code: "ONF_KYC",
+    process_name: "Onfido KYC",
+    department_name: "Operations",
+    process_type: "BPO",
+    branch_name: "Okaya",
+    location_name: "Noida",
+    active_status: "true",
+    description: "KYC backend process",
+  };
+
+  const departmentSamples: Record<string, string> = {
+    departmentname: "Operations Support",
+    "department name": "Operations Support",
+    name: "Operations Support",
+    description: "Operations support department",
+    managercode: "",
+    manageremail: "",
+  };
+
+  const assetSamples: Record<string, string> = {
+    assetcode: "AST001",
+    assetname: "Dell Laptop",
+    category: "Laptop",
+    status: "available",
+    serialnumber: "SN-DEMO-001",
+    purchasedate: "16-05-2026",
+    purchasecost: "45000",
+    vendor: "Demo Vendor",
+    warrantyenddate: "16-05-2027",
+    notes: "Imported from Bulk Upload Hub",
+  };
+
+  const branchSamples: Record<string, string> = {
+    branchcode: "OKAYA",
+    branchname: "Okaya",
+    city: "Noida",
+    state: "Uttar Pradesh",
+    country: "India",
+    active: "true",
+    activestatus: "true",
+    description: "Imported branch master record",
+  };
+
+  const lobSamples: Record<string, string> = {
+    lobcode: "ONF_KYC",
+    lobname: "KYC",
+    processcode: "ONF_KYC",
+    processname: "Onfido KYC",
+    active: "true",
+    activestatus: "true",
+    description: "Imported LOB master record",
+  };
+
+  const designationSamples: Record<string, string> = {
+    designationcode: "EXEC",
+    designationname: "Executive",
+    departmentname: "Operations",
+    level: "L1",
+    active: "true",
+    activestatus: "true",
+    description: "Imported designation master record",
+  };
+
+  if (normalizedUploadType === "EMPLOYEE_MASTER" && normalizedHeader in employeeSamples) {
+    return employeeSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "PROCESS_MASTER" && normalizedHeader in processSamples) {
+    return processSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "DEPARTMENT_MASTER" && normalizedHeader in departmentSamples) {
+    return departmentSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "ASSET_MASTER" && normalizedHeader in assetSamples) {
+    return assetSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "BRANCH_MASTER" && normalizedHeader in branchSamples) {
+    return branchSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "LOB_MASTER" && normalizedHeader in lobSamples) {
+    return lobSamples[normalizedHeader];
+  }
+
+  if (normalizedUploadType === "DESIGNATION_MASTER" && normalizedHeader in designationSamples) {
+    return designationSamples[normalizedHeader];
+  }
+
+  const officialEmailSamples: Record<string, string> = {
+    employee_code:  "MAS00001",
+    official_email: "firstname.lastname@teammas.in",
+  };
+  if (normalizedUploadType === "OFFICIAL_EMAIL_UPDATE" && normalizedHeader in officialEmailSamples) {
+    return officialEmailSamples[normalizedHeader];
+  }
+
+  const reportingManagerSamples: Record<string, string> = {
+    employee_code: "MAS00001",
+    manager_code:  "MAS00100",
+  };
+  if (normalizedUploadType === "REPORTING_MANAGER_UPDATE" && normalizedHeader in reportingManagerSamples) {
+    return reportingManagerSamples[normalizedHeader];
+  }
+
+  const attendanceRegSamples: Record<string, string> = {
+    employee_code:    "MAS00001",
+    session_date:     "2026-08-05",
+    requested_status: "present",
+    reason:           "Biometric device offline — presence confirmed from dialler report",
+    reason_code:      "BIOMETRIC_MISMATCH",
+    dispute_type:     "missing_punch",
+    new_punch_in:     "09:30",
+    new_punch_out:    "18:30",
+    supporting_note:  "Verified against COSEC outage ticket",
+  };
+  if (normalizedUploadType === "ATTENDANCE_REGULARIZATION_BULK" && normalizedHeader in attendanceRegSamples) {
+    return attendanceRegSamples[normalizedHeader];
+  }
+
+  const leaveAppSamples: Record<string, string> = {
+    employee_code: "MAS00001",
+    leave_code:    "CL",
+    from_date:     "2026-08-11",
+    to_date:       "2026-08-12",
+    total_days:    "2",
+    reason:        "Family function — informed team leader in advance",
+  };
+  if (normalizedUploadType === "LEAVE_APPLICATION_BULK" && normalizedHeader in leaveAppSamples) {
+    return leaveAppSamples[normalizedHeader];
+  }
+
+  const rosterAssignmentSamples: Record<string, string> = {
+    cycle_id:      "CYCLE-UUID-HERE",
+    employee_code: "MAS00001",
+    roster_date:   "2026-08-18",
+    shift_code:    "GEN",
+    is_week_off:   "0",
+    notes:         "Manual override",
+  };
+  if (normalizedUploadType === "ROSTER_ASSIGNMENT_BULK" && normalizedHeader in rosterAssignmentSamples) {
+    return rosterAssignmentSamples[normalizedHeader];
+  }
+
+  const shiftRosterSamples: Record<string, string> = {
+    employee_code:   "MAS00001",
+    week_start_date: "2026-08-18",
+    mon_shift: "GEN",
+    tue_shift: "GEN",
+    wed_shift: "NGT",
+    thu_shift: "NGT",
+    fri_shift: "GEN",
+    sat_shift: "WO",
+    sun_shift: "WO",
+    notes:     "Standard week",
+  };
+  if (normalizedUploadType === "SHIFT_ROSTER_BULK" && normalizedHeader in shiftRosterSamples) {
+    return shiftRosterSamples[normalizedHeader];
+  }
+
+  if (normalizedHeader.includes("date")) return "16-05-2026";
+  if (normalizedHeader.includes("email")) return "sample@example.com";
+  if (normalizedHeader.includes("phone") || normalizedHeader.includes("mobile")) return "9876543210";
+  if (normalizedHeader.includes("status")) return "active";
+  if (normalizedHeader.includes("name")) return "Sample Name";
+  if (normalizedHeader.includes("code")) return "SAMPLE001";
+  if (normalizedHeader.includes("time") || normalizedHeader.includes("start")) return "09:00";
+  if (normalizedHeader.includes("end")) return "18:00";
+  if (normalizedHeader.includes("days")) return "1,2,3,4,5";
+  if (normalizedHeader.includes("amount") || normalizedHeader.includes("salary")) return "10000";
+  if (normalizedHeader.includes("count") || normalizedHeader.includes("qty")) return "1";
+
+  return required ? "Sample" : "";
+}
+
+function buildTemplateRow(template: UploadTemplate, includeSampleValues: boolean) {
+  const sample = template.sample_row || {};
+  const required = new Set(template.required_columns || []);
+  const uploadTypeCode = String(template.upload_type_code || "").toUpperCase();
+  const isEmployeeMaster = uploadTypeCode === "EMPLOYEE_MASTER";
+  const isProcessMaster = uploadTypeCode === "PROCESS_MASTER";
+  const isDepartmentMaster = uploadTypeCode === "DEPARTMENT_MASTER";
+  const isAssetMaster = uploadTypeCode === "ASSET_MASTER";
+  const isBranchMaster = uploadTypeCode === "BRANCH_MASTER";
+  const isLobMaster = uploadTypeCode === "LOB_MASTER";
+  const isDesignationMaster = uploadTypeCode === "DESIGNATION_MASTER";
+  const isOfficialEmailUpdate = uploadTypeCode === "OFFICIAL_EMAIL_UPDATE";
+  const isReportingManagerUpdate = uploadTypeCode === "REPORTING_MANAGER_UPDATE";
+
+  return getTemplateHeaders(template).map((header) => {
+    if (!includeSampleValues) return "";
+
+    if (isOfficialEmailUpdate) {
+      const samples: Record<string, string> = { employee_code: "MAS00001", official_email: "firstname.lastname@teammas.in" };
+      return samples[header.toLowerCase()] ?? "";
+    }
+
+    if (isReportingManagerUpdate) {
+      const samples: Record<string, string> = { employee_code: "MAS00001", manager_code: "MAS00100" };
+      return samples[header.toLowerCase()] ?? "";
+    }
+
+    // Core HRMS master imports must always use frontend-safe sample values first.
+    // This prevents unsafe database sample values from causing avoidable upload errors when the sample is uploaded directly.
+    if (isEmployeeMaster || isProcessMaster || isDepartmentMaster || isAssetMaster || isBranchMaster || isLobMaster || isDesignationMaster) {
+      return getFallbackSampleValue(
+        template.upload_type_code,
+        header,
+        required.has(header)
+      );
+    }
+
+    const dbSampleValue = sample[header];
+    const dbSampleText = String(dbSampleValue ?? "").trim();
+    if (dbSampleText) return dbSampleText;
+
+    return getFallbackSampleValue(
+      template.upload_type_code,
+      header,
+      required.has(header)
+    );
+  });
+}
+
+function buildTemplateCsv(template: UploadTemplate, includeSampleValues: boolean) {
+  const headers = getTemplateHeaders(template);
+  const row = buildTemplateRow(template, includeSampleValues);
+
+  return [
+    headers.map(toCsvValue).join(","),
+    row.map(toCsvValue).join(","),
+  ].join("\n");
+}
+
+function getUploadTypeAllowedValues(uploadTypeCode: string): string[] {
+  const code = uploadTypeCode.toUpperCase();
+  switch (code) {
+    case "ATTENDANCE_REGULARIZATION_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "requested_status  (what you want the day changed to):",
+        "  present        = Full day present (≥ 480 min APR / ≥ 540 min biometric)",
+        "  half_day       = Half day (≥ 240 min). Also accepted: half-day, Half_Day, Half Day",
+        "  absent         = Absent / Leave Without Pay",
+        "  missing_punch  = No punch recorded — pending WFM review (no LWP deducted yet)",
+        "",
+        "dispute_type  (why the record is wrong):",
+        "  missing_punch      = No biometric punch found",
+        "  wrong_shift        = Employee was on a different shift",
+        "  biometric_mismatch = Biometric showed less time than APR/dialler",
+        "  other              = Any other reason (explain in supporting_note)",
+        "",
+        "reason_code  (system reason tag):",
+        "  BIOMETRIC_MISMATCH   = Device or sync issue",
+        "  MANUAL_ENTRY         = HR manually confirmed",
+        "  SHIFT_CHANGE         = Shift was swapped",
+        "  OTHER                = Catch-all",
+        "",
+        "Date format: YYYY-MM-DD  (e.g. 2026-08-05)",
+        "Time format: HH:MM       (e.g. 09:30)",
+      ];
+    case "LEAVE_APPLICATION_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "leave_code  (which leave type to apply):",
+        "  CL    = Casual Leave",
+        "  EL    = Earned Leave",
+        "  ML    = Medical Leave",
+        "  LWP   = Leave Without Pay",
+        "  MTRL  = Maternity Leave",
+        "  PTRL  = Paternity Leave",
+        "",
+        "total_days: number of calendar days between from_date and to_date inclusive",
+        "  Example: from_date = 2026-08-11, to_date = 2026-08-12 → total_days = 2",
+        "  Half day: use total_days = 0.5",
+        "",
+        "Date format: YYYY-MM-DD  (e.g. 2026-08-11)",
+      ];
+    case "ROSTER_ASSIGNMENT_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "shift_code  (which shift to assign):",
+        "  GEN  = General Shift   09:00 – 18:00",
+        "  EVE  = Evening Shift   14:00 – 23:00",
+        "  NGT  = Night Shift     22:00 – 07:00 (next day)",
+        "  WO   = Week Off        (no hours)",
+        "",
+        "is_week_off:",
+        "  0 = Working day (default)",
+        "  1 = Week off — employee should not work this day",
+        "",
+        "cycle_id: UUID of the WFM roster cycle — copy from the Roster Builder page.",
+        "Date format: YYYY-MM-DD  (e.g. 2026-08-18)",
+      ];
+    case "SHIFT_ROSTER_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "Shift codes for mon_shift / tue_shift / wed_shift / thu_shift / fri_shift / sat_shift / sun_shift:",
+        "  GEN  = General Shift   09:00 – 18:00",
+        "  EVE  = Evening Shift   14:00 – 23:00",
+        "  NGT  = Night Shift     22:00 – 07:00 (next day)",
+        "  WO   = Week Off        (leave blank or use WO for week-off days)",
+        "",
+        "week_start_date: must be a Monday. Format YYYY-MM-DD  (e.g. 2026-08-18)",
+        "Example row: MAS00001, 2026-08-18, GEN, GEN, NGT, NGT, GEN, WO, WO",
+      ];
+    case "DEDUCTION_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "deduction_type_code: must match an existing deduction master code, e.g. CANTEEN, ADVANCE",
+        "run_month: YYYY-MM format  (e.g. 2026-08)",
+        "amount: numeric with up to 2 decimal places  (e.g. 850.00)",
+        "is_prorated:  0 = fixed amount,  1 = prorate against working days",
+      ];
+    case "INCENTIVE_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "incentive_code: must match an existing incentive master code, e.g. PERF, QTR",
+        "pay_month: YYYY-MM format  (e.g. 2026-08)",
+        "amount: numeric with up to 2 decimal places  (e.g. 2500.00)",
+      ];
+    case "EMPLOYEE_MASTER":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "employment_type:    full-time | part-time | contract | intern",
+        "employment_status:  Active | Inactive",
+        "gender:             Male | Female | Other",
+        "shift_rotation_type: frozen | rotating",
+        "working_days:       comma-separated day numbers — 1=Mon … 7=Sun  (e.g. 1,2,3,4,5)",
+        "Date format: DD-MM-YYYY  (e.g. 16-05-2026)",
+      ];
+    case "ASSET_MASTER":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "status:  available | assigned | maintenance | retired | lost",
+        "Date format: DD-MM-YYYY  (e.g. 16-05-2026)",
+      ];
+    case "SHIFT_ROTATION_TYPE_UPDATE":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "shift_rotation_type:  frozen | rotating",
+      ];
+    case "WEEK_OFF_PREFERENCE_BULK":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "preferred_day_1 / preferred_day_2:  0=Sun  1=Mon  2=Tue  3=Wed  4=Thu  5=Fri  6=Sat",
+        "week_start_date: Date format YYYY-MM-DD  (e.g. 2026-08-18)",
+      ];
+    default:
+      return [];
+  }
+}
+
+function buildTemplateGuide(template: UploadTemplate) {
+  const headers = getTemplateHeaders(template);
+  const required = new Set(template.required_columns || []);
+  const allowedValues = getUploadTypeAllowedValues(template.upload_type_code);
+
+  return [
+    `Bulk Upload Template Guide - ${template.upload_type_name}`,
+    `Upload Type Code: ${template.upload_type_code}`,
+    `Target Table: ${template.target_table || "-"}`,
+    "",
+    "Important rules:",
+    "1. Do not rename headers.",
+    "2. Do not delete optional columns. Keep blank commas if you do not have a value.",
+    "3. Date fields must use DD-MM-YYYY format unless specified otherwise, for example 16-05-2026.",
+    "4. Time fields must use HH:mm format, for example 09:00.",
+    "5. Values containing commas must stay inside double quotes, for example \"1,2,3,4,5\".",
+    "6. For manager fields, keep ManagerCode and ManagerEmail blank unless the manager already exists in HRMS.",
+    "7. For Process Master, Department Name must exactly match an existing HRMS department, for example Operations.",
+    "8. For Department Master, keep ManagerCode and ManagerEmail blank unless that manager already exists in Employee Master.",
+    "9. For Asset Master, Status should be a valid HRMS asset status such as available, assigned, maintenance, retired, or lost.",
+    "10. For Branch Master, BranchCode must be unique, for example OKAYA or TPZ.",
+    "11. For LOB Master, ProcessCode or ProcessName should match an existing Process Master record.",
+    "12. For Designation Master, DepartmentName should exactly match an existing HRMS department, for example Operations.",
+    "",
+    ...(allowedValues.length > 0 ? [...allowedValues, ""] : []),
+    "Column order:",
+    ...headers.map((header, index) => `${index + 1}. ${header}${required.has(header) ? "  [Required]" : "  [Optional]"}`),
+  ].join("\n");
+}
+
+function csvHealthHasBlockingError(health: CsvHealth | null) {
+  if (!health) return false;
+  // rowWidthWarnings is deliberately informational only, not blocking: a wide export
+  // with many optional trailing columns (Onfido's process reports run up to 86 columns,
+  // ~1 lakh rows/day/file) legitimately varies row to row in how many trailing columns
+  // carry a value versus sit beyond the last labelled header. Confirmed live on the CRE
+  // Dashboard export — 2 rows out of 730 carry real data in unlabelled trailing cells
+  // beyond the 50 declared columns. Blocking the whole file on that would mean a single
+  // odd row loses an entire day's upload; the row itself still stages and imports
+  // correctly (headers.forEach only ever reads the columns it knows about).
+  return health.missingHeaders.length > 0 || health.unknownHeaders.length > 0;
+}
+
+// ── Deduction Types Management ────────────────────────────────────────────────
+
+interface DeductionType {
+  id: string;
+  deduction_code: string;
+  deduction_name: string;
+  description: string | null;
+  is_prorated: 0 | 1;
+  active_status: 0 | 1;
+}
+
+function emptyDedForm() {
+  return { deduction_code: "", deduction_name: "", description: "", is_prorated: false as boolean };
+}
+
+function DeductionTypesTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: typesData, isLoading } = useQuery<{ success: boolean; data: DeductionType[] }>({
+    queryKey: ["deduction-types-all"],
+    queryFn: () => hrmsApi.get("/api/payroll/deduction-types"),
+  });
+  const types: DeductionType[] = (typesData as any)?.data ?? [];
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm, setAddForm] = useState(emptyDedForm());
+  const [editOpen, setEditOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState(emptyDedForm());
+
+  const inv = () => qc.invalidateQueries({ queryKey: ["deduction-types-all"] });
+
+  const addMutation = useMutation({
+    mutationFn: (body: ReturnType<typeof emptyDedForm>) =>
+      hrmsApi.post("/api/payroll/deduction-types", { ...body, is_prorated: body.is_prorated ? 1 : 0 }),
+    onSuccess: () => { void inv(); setAddOpen(false); setAddForm(emptyDedForm()); toast({ title: "Deduction type added" }); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const editMutation = useMutation({
+    mutationFn: (body: ReturnType<typeof emptyDedForm>) =>
+      hrmsApi.patch(`/api/payroll/deduction-types/${editId}`, { ...body, is_prorated: body.is_prorated ? 1 : 0 }),
+    onSuccess: () => { void inv(); setEditOpen(false); toast({ title: "Deduction type updated" }); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      hrmsApi.patch(`/api/payroll/deduction-types/${id}`, { active }),
+    onSuccess: () => void inv(),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function openEdit(t: DeductionType) {
+    setEditId(t.id);
+    setEditForm({
+      deduction_code: t.deduction_code,
+      deduction_name: t.deduction_name,
+      description: t.description ?? "",
+      is_prorated: t.is_prorated === 1,
+    });
+    setEditOpen(true);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">Deduction Types</h2>
+          <p className="text-sm text-slate-500 mt-0.5">Manage deduction codes used in payroll deduction uploads.</p>
+        </div>
+        <Button onClick={() => { setAddForm(emptyDedForm()); setAddOpen(true); }}>
+          + Add Deduction Type
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Code</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Prorated</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">Loading…</TableCell>
+                </TableRow>
+              )}
+              {!isLoading && types.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No deduction types found.</TableCell>
+                </TableRow>
+              )}
+              {types.map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-mono text-sm">{t.deduction_code}</TableCell>
+                  <TableCell>{t.deduction_name}</TableCell>
+                  <TableCell className="text-slate-500 text-sm">{t.description || "—"}</TableCell>
+                  <TableCell>{t.is_prorated ? "Yes" : "No"}</TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={t.active_status ? "default" : "secondary"}
+                      className={t.active_status ? "bg-green-600 text-white" : ""}
+                    >
+                      {t.active_status ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="space-x-2">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(t)}>Edit</Button>
+                    <Button
+                      size="sm"
+                      variant={t.active_status ? "destructive" : "outline"}
+                      onClick={() => toggleMutation.mutate({ id: t.id, active: !t.active_status })}
+                      disabled={toggleMutation.isPending}
+                    >
+                      {t.active_status ? "Deactivate" : "Activate"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Add Deduction Type</DialogTitle></DialogHeader>
+          <DeductionTypeForm form={addForm} onChange={setAddForm} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button onClick={() => addMutation.mutate(addForm)} disabled={addMutation.isPending}>
+              {addMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Edit Deduction Type</DialogTitle></DialogHeader>
+          <DeductionTypeForm form={editForm} onChange={setEditForm} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={() => editMutation.mutate(editForm)} disabled={editMutation.isPending}>
+              {editMutation.isPending ? "Saving…" : "Update"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+interface DeductionTypeFormProps {
+  form: ReturnType<typeof emptyDedForm>;
+  onChange: (f: ReturnType<typeof emptyDedForm>) => void;
+}
+
+function DeductionTypeForm({ form, onChange }: DeductionTypeFormProps) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label>Code *</Label>
+          <Input
+            value={form.deduction_code}
+            onChange={(e) => onChange({ ...form, deduction_code: e.target.value.toUpperCase() })}
+            placeholder="e.g. SHORT_COLL"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label>Name *</Label>
+          <Input
+            value={form.deduction_name}
+            onChange={(e) => onChange({ ...form, deduction_name: e.target.value })}
+            placeholder="e.g. Short Collection"
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label>Description</Label>
+        <Textarea
+          value={form.description ?? ""}
+          onChange={(e) => onChange({ ...form, description: e.target.value })}
+          rows={2}
+        />
+      </div>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={!!form.is_prorated}
+          onChange={(e) => onChange({ ...form, is_prorated: e.target.checked })}
+        />
+        Prorated by payable days
+      </label>
+    </div>
+  );
+}
+
+// ── TDS Upload ─────────────────────────────────────────────────────────────────
+
+function TdsUploadTab() {
+  const [runs, setRuns] = useState<any[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const tdsFileRef = useRef<HTMLInputElement | null>(null);
+
+  async function handleDownloadTemplate() {
+    if (!selectedRunId) return;
+    setDownloading(true);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/payroll/runs/${selectedRunId}/tds-upload-template`);
+      const run = runs.find((r) => String(r.id) === String(selectedRunId));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tds_upload_${run?.run_month ?? selectedRunId}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setMsg({ text: "Failed to download template", ok: false });
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  useEffect(() => {
+    hrmsApi.get<any>("/api/payroll/runs?limit=24")
+      .then((r) => setRuns((r as any)?.data ?? []))
+      .catch(() => {});
+  }, []);
+
+  async function handleTdsUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !selectedRunId) return;
+    const text = await file.text();
+    const lines = text.split("\n").slice(1).filter(Boolean);
+    const entries: { employee_code: string; tds_amount: number }[] = [];
+    for (const line of lines) {
+      const sep = line.includes("\t") ? "\t" : ",";
+      const cols = line.split(sep);
+      const empCode = cols[0]?.trim();
+      const taxAmt = Number(cols[3]?.trim());
+      if (empCode && Number.isFinite(taxAmt) && taxAmt >= 0) {
+        entries.push({ employee_code: empCode, tds_amount: taxAmt });
+      }
+    }
+    if (!entries.length) {
+      setMsg({ text: "No valid rows found in CSV", ok: false });
+      if (tdsFileRef.current) tdsFileRef.current.value = "";
+      return;
+    }
+    setUploading(true);
+    setMsg(null);
+    try {
+      const res = await hrmsApi.post<any>(`/api/payroll/runs/${selectedRunId}/manual-tds`, entries);
+      setMsg({ text: (res as any)?.message ?? "TDS entries saved. Recalculate the run to apply.", ok: true });
+    } catch (err: any) {
+      setMsg({ text: (err as Error)?.message ?? "Upload failed", ok: false });
+    } finally {
+      setUploading(false);
+      if (tdsFileRef.current) tdsFileRef.current.value = "";
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-slate-950">TDS Upload</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Upload manual TDS amounts per employee for a payroll run. Format:{" "}
+          <span className="font-mono bg-slate-100 px-1 rounded text-slate-700 text-xs">
+            Emp Code, Employee Name, Branch, Tax Amount
+          </span>
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-xs font-medium text-slate-700 whitespace-nowrap">Payroll Run</label>
+        <select
+          value={selectedRunId}
+          onChange={(e) => { setSelectedRunId(e.target.value); setMsg(null); }}
+          className="h-9 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 w-64"
+        >
+          <option value="">Select a run…</option>
+          {runs.map((r: any) => (
+            <option key={r.id} value={r.id}>{r.run_month} — {r.status}</option>
+          ))}
+        </select>
+      </div>
+
+      {selectedRunId && (
+        <div className="flex flex-wrap gap-3 items-center">
+          <button
+            onClick={handleDownloadTemplate}
+            disabled={downloading}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-50"
+          >
+            ↓ {downloading ? "Downloading…" : "Download Template"}
+          </button>
+          <label className={`h-9 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-xs font-medium text-slate-600 inline-flex items-center gap-1.5 cursor-pointer hover:border-[#073f78] hover:bg-blue-50 hover:text-[#073f78] ${uploading ? "opacity-50 pointer-events-none" : ""}`}>
+            ↑ {uploading ? "Uploading…" : "Upload CSV"}
+            <input ref={tdsFileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleTdsUpload} />
+          </label>
+        </div>
+      )}
+
+      {msg && (
+        <div className={`rounded-xl border p-3 text-sm ${msg.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+          {msg.text}
+        </div>
+      )}
+
+      {!selectedRunId && (
+        <p className="text-xs text-slate-400">Select a payroll run to enable template download and upload.</p>
+      )}
+    </section>
+  );
+}
+
+// ── Main BulkUploadHub ─────────────────────────────────────────────────────────
+
+type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload";
+
+export default function BulkUploadHub() {
+  const { user } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Lets a caller deep-link straight to one template, e.g. /bulk-upload?type=BB_SALE_MASMIS
+  // from the Process Performance V2 uploader cards, instead of landing on the bare hub
+  // and having to find it in the dropdown.
+  const [searchParams] = useSearchParams();
+
+  const [activeTab, setActiveTab] = useState<HubTab>("master");
+
+  // WFM_PRODUCTIVITY_UPLOAD is a section-level grant inside this page, not a page of its own
+  // (backend/sql/1639_wfm_productivity_upload_page_access.sql). A viewer who holds /bulk-upload
+  // does not necessarily hold it, so the third tab is decided separately from the route's own
+  // roles — which are left untouched.
+  const workforceAccess = useWorkforceAccess();
+  const canUploadProductivity = canUseProductivityTab(workforceAccess);
+  const roleKeys: string[] = (workforceAccess as any)?.roleKeys ?? [];
+  const canManageDeductionTypes = roleKeys.some((r) =>
+    ["super_admin", "hr_admin", "payroll", "payroll_head", "finance"].includes(r)
+  );
+  const canUploadTds = roleKeys.some((r) => ["payroll_head", "super_admin"].includes(r));
+
+  const effectiveTab: HubTab =
+    activeTab === "productivity" && !canUploadProductivity ? "master" :
+    activeTab === "deduction-types" && !canManageDeductionTypes ? "master" :
+    activeTab === "tds-upload" && !canUploadTds ? "master" :
+    activeTab;
+
+  const [templates, setTemplates] = useState<UploadTemplate[]>([]);
+  const [batches, setBatches] = useState<UploadBatch[]>([]);
+  const [selectedTemplateCode, setSelectedTemplateCode] = useState("");
+  const [selectedBatch, setSelectedBatch] = useState<UploadBatch | null>(null);
+  const [selectedBatchRows, setSelectedBatchRows] = useState<UploadBatchRow[]>(
+    []
+  );
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewRows, setPreviewRows] = useState<CsvRow[]>([]);
+  const [csvHealth, setCsvHealth] = useState<CsvHealth | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [activeImportBatchId, setActiveImportBatchId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  // Live progress of an import running on the server. The POST that started it
+  // returns immediately now, so this is what the uploader watches.
+  const [importProgress, setImportProgress] = useState<BatchJobStatus | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const selectedTemplate = useMemo(
+    () =>
+      templates.find(
+        (template) => template.upload_type_code === selectedTemplateCode
+      ) || null,
+    [templates, selectedTemplateCode]
+  );
+
+  const stats = useMemo(() => {
+    return {
+      templates: templates.length,
+      batches: batches.length,
+      validated: batches.filter((batch) => batch.batch_status === "validated")
+        .length,
+      imported: batches.filter((batch) =>
+        ["imported", "imported_with_errors"].includes(batch.batch_status)
+      ).length,
+      errors: batches.reduce((total, batch) => total + batch.error_rows, 0),
+    };
+  }, [templates, batches]);
+
+  /*
+   * History filters. Held here rather than filtering the loaded array so the scope and the filter
+   * are applied by the same query: a client-side filter over a server-scoped list would look
+   * identical while quietly paging past rows the user is entitled to.
+   */
+  const [historyFilters, setHistoryFilters] = useState({
+    uploadType: "", status: "", uploadedBy: "", from: "", to: "", search: "",
+  });
+  const [filterOptions, setFilterOptions] = useState<{
+    types: Array<{ value: string; n: number }>;
+    statuses: Array<{ value: string; n: number }>;
+    uploaders: Array<{ value: string; label: string; n: number }>;
+  }>({ types: [], statuses: [], uploaders: [] });
+
+  /** Only non-empty filters are sent, so an untouched control never narrows the result. */
+  function historyQueryString() {
+    const p = new URLSearchParams();
+    Object.entries(historyFilters).forEach(([k, v]) => { if (v) p.set(k, v); });
+    const qs = p.toString();
+    return qs ? `?${qs}` : "";
+  }
+
+  async function loadFilterOptions() {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: typeof filterOptions }>(
+        "/api/bulk-upload/batches/filter-options",
+      );
+      if (res?.data) setFilterOptions(res.data);
+    } catch {
+      /* options are a convenience; the list still loads unfiltered without them */
+    }
+  }
+
+  async function loadData() {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const [templatesResult, batchesResult] = await Promise.all([
+        hrmsApi.get<{ success: boolean; data: UploadTemplate[] }>("/api/bulk-upload/templates").catch(() => ({ success: true, data: [] as UploadTemplate[] })),
+        hrmsApi.get<{ success: boolean; data: UploadBatch[] }>(`/api/bulk-upload/batches${historyQueryString()}`).catch(() => ({ success: true, data: [] as UploadBatch[] })),
+      ]);
+
+      // EMAIL_TEMPLATE_IMPORT is active in upload_template_master, so /templates returns it
+      // and it appeared in this dropdown — but it has no entry in IMPORT_RPC_BY_TYPE above,
+      // and the backend does not accept an rpc_name for it either. A user could therefore
+      // pick "Email Template Import", upload a file, watch it validate, and only then be
+      // stopped with "Import mapping for EMAIL_TEMPLATE_IMPORT is not enabled yet" — the
+      // whole upload wasted at the last step.
+      //
+      // It is not missing a mapping; it belongs somewhere else. Email templates are imported
+      // through NativeEmailTemplateBulkImport.tsx, which has its own preview/confirm flow
+      // against /api/admin/email-templates/import/*. Offering a second, broken door to the
+      // same feature is worse than offering one, so this hub hides it rather than mapping it.
+      const loadedTemplates = (templatesResult.data || []).filter(
+        (template) =>
+          String(template.upload_type_code || "").toUpperCase() !== "EMAIL_TEMPLATE_IMPORT",
+      );
+      setTemplates(loadedTemplates);
+      setBatches(batchesResult.data || []);
+
+      if (!selectedTemplateCode && loadedTemplates.length > 0) {
+        const requestedType = searchParams.get("type")?.toUpperCase();
+        const requested = requestedType
+          ? loadedTemplates.find(
+              (t) => String(t.upload_type_code || "").toUpperCase() === requestedType,
+            )
+          : undefined;
+        setSelectedTemplateCode((requested ?? loadedTemplates[0]).upload_type_code);
+        if (requested) setActiveTab("master");
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to load data");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function loadBatchRows(batch: UploadBatch) {
+    setSelectedBatch(batch);
+    setSelectedBatchRows([]);
+
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: UploadBatchRow[] }>(`/api/bulk-upload/batches/${batch.id}/rows`);
+      setSelectedBatchRows(res.data || []);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to load batch rows");
+    }
+  }
+
+  /**
+   * Heals a batch left with rows that never reached a final outcome — the
+   * "row_status still pending after the batch is already decided" bug (see
+   * reconcileStuckRows on the backend). Force-resolves only rows that are already
+   * stuck; never touches a row with a real outcome. Safe to run on any batch, even
+   * one this bug never touched — it will simply report 0 recovered.
+   */
+  async function reconcileBatch(batch: UploadBatch) {
+    setMessage(null);
+    setErrorMessage(null);
+    try {
+      const res = await hrmsApi.post<{
+        success: boolean;
+        data?: { recoveredRows: number; totalRows: number; importedRows: number; errorRows: number };
+      }>(`/api/bulk-upload/batches/${batch.id}/reconcile`, {});
+      const r = res.data;
+      setMessage(
+        r && r.recoveredRows > 0
+          ? `Recovered ${r.recoveredRows} stuck row(s) on ${batch.upload_batch_no}. ` +
+            `Now: ${r.importedRows} imported / ${r.errorRows} error out of ${r.totalRows} total.`
+          : `${batch.upload_batch_no} had no stuck rows — nothing to recover.`,
+      );
+      await loadData();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to reconcile batch");
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+    loadFilterOptions();
+
+    // Reconnect to any import that was running when the user navigated away.
+    // Without this, closing and reopening the page during a large import leaves
+    // no progress bar and the user does not know whether to wait or retry.
+    hrmsApi.get<{ success: boolean; data: Array<{ id: string; total_rows: number }> }>(
+      "/api/bulk-upload/batches/active",
+    ).then((res) => {
+      const active = res.data ?? [];
+      if (active.length === 0) return;
+      const batch = active[0]!;
+      setActiveImportBatchId(batch.id);
+      setImportProgress({
+        phase: "running",
+        progress: { total: batch.total_rows ?? null, processed: null, succeeded: null, failed: null },
+      });
+      pollBatchJob(
+        `/api/bulk-upload/batches/${batch.id}/import-status`,
+        { onProgress: setImportProgress },
+      ).then((final) => {
+        if (final.phase === "done") {
+          setMessage(`Import finished for batch. See batch list for details.`);
+        } else if (final.phase === "failed") {
+          setErrorMessage(final.error ?? final.message ?? "Import ended with an error.");
+        }
+        void loadData();
+      }).catch(() => {
+        // Network hiccup — not a reason to show an error; the batch list will reflect the real state.
+        void loadData();
+      }).finally(() => {
+        setActiveImportBatchId(null);
+        setImportProgress(null);
+      });
+    }).catch(() => { /* active-batches endpoint not critical — ignore */ });
+  }, []);
+
+  async function handleFileChange(file: File | null) {
+    setSelectedFile(file);
+    setPreviewRows([]);
+    setCsvHealth(null);
+    setMessage(null);
+    setErrorMessage(null);
+
+    if (!file) return;
+
+    if (file.name.toLowerCase().endsWith(".csv")) {
+      const text = await file.text();
+      const parsed = parseCsvDetailed(text);
+      setPreviewRows(parsed.rows.slice(0, 10));
+
+      if (selectedTemplate) {
+        const health = buildCsvHealth(selectedTemplate, parsed);
+        setCsvHealth(health);
+
+        if (csvHealthHasBlockingError(health)) {
+          setErrorMessage(
+            "CSV structure issue found. Download the safe template for this upload type and keep every column in the same order."
+          );
+        } else if (health.wrongOrder) {
+          setMessage(
+            "CSV headers are valid, but column order is different from the recommended template. Import can continue, but using the downloaded template is safer."
+          );
+        }
+      }
+      return;
+    }
+
+    setMessage(
+      "Excel file selected. File can be uploaded and tracked. Row preview is available for CSV files only in this handover build. For safest import, download and use the CSV template."
+    );
+  }
+
+  function downloadTemplate(template: UploadTemplate) {
+    const csv = buildTemplateCsv(template, true);
+
+    downloadTextFile(
+      `${template.upload_type_code.toLowerCase()}_sample_template.csv`,
+      csv,
+      "text/csv;charset=utf-8"
+    );
+  }
+
+  function downloadBlankTemplate(template: UploadTemplate) {
+    const csv = buildTemplateCsv(template, false);
+
+    downloadTextFile(
+      `${template.upload_type_code.toLowerCase()}_blank_template.csv`,
+      csv,
+      "text/csv;charset=utf-8"
+    );
+  }
+
+  function downloadTemplateGuide(template: UploadTemplate) {
+    downloadTextFile(
+      `${template.upload_type_code.toLowerCase()}_upload_guide.txt`,
+      buildTemplateGuide(template),
+      "text/plain;charset=utf-8"
+    );
+  }
+
+  function validateRows(template: UploadTemplate, rows: CsvRow[]) {
+    const requiredColumns = template.required_columns || [];
+    const allowedColumns = new Set([
+      ...(template.required_columns || []),
+      ...(template.optional_columns || []),
+    ]);
+
+    return rows.map((row, index) => {
+      const errors: string[] = [];
+
+      requiredColumns.forEach((column) => {
+        const value = row[column];
+
+        if (value === undefined || value === null || String(value).trim() === "") {
+          errors.push(`${column} is required`);
+        }
+      });
+
+      Object.keys(row).forEach((column) => {
+        if (column && !allowedColumns.has(column)) {
+          errors.push(`Unknown column: ${column}`);
+        }
+      });
+
+      ["HireDate", "DateOfBirth", "AttendanceDate", "RosterDate", "EffectiveDate", "PayrollMonth"].forEach((column) => {
+        const value = String(row[column] || "").trim();
+        if (value && !/^\d{2}-\d{2}-\d{4}$/.test(value)) {
+          errors.push(`${column} must be DD-MM-YYYY`);
+        }
+      });
+
+      ["WorkingHoursStart", "WorkingHoursEnd", "ShiftStart", "ShiftEnd"].forEach((column) => {
+        const value = String(row[column] || "").trim();
+        if (value && !/^\d{2}:\d{2}$/.test(value)) {
+          errors.push(`${column} must be HH:mm`);
+        }
+      });
+
+      return {
+        rowNo: index + 1,
+        rawData: row,
+        normalizedData: row,
+        status: errors.length > 0 ? "error" : "valid",
+        errors,
+      };
+    });
+  }
+
+  /**
+   * The staging path below is CSV-only: it reads the file as text, runs
+   * `parseCsvDetailed` over it and validates the rows against the selected
+   * template. The file picker has always advertised `.xls/.xlsx` too, but an
+   * Excel file fell straight through that `endsWith(".csv")` branch and staged
+   * nothing — producing a batch with `total_rows: 0` that the import endpoint
+   * (which works off staged rows) can never import, and a detail dialog reading
+   * "No staged rows found for this batch".
+   *
+   * Converting the first sheet to CSV text here puts Excel back on the exact
+   * same code path as a CSV, so template validation, the CSV health check and
+   * the row-level error report all behave identically for both. `sheet_to_csv`
+   * emits each cell's *formatted* value, so a date shows up as the sheet
+   * displayed it rather than as an Excel serial number.
+   */
+  async function excelFileToCsvText(file: File, template: UploadTemplate | null): Promise<string> {
+    const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
+    if (workbook.SheetNames.length === 0) throw new Error("The workbook has no sheets.");
+
+    // Pick the sheet whose header row best matches this template's expected columns,
+    // rather than always the first — a workbook can ship its real data sheet anywhere
+    // in the tab order. Confirmed live: Onfido's "External Dashboard" file lists the
+    // real "Audit Data" sheet LAST, after six person-specific pivot/scratch tabs
+    // ("Extraction Only", "AM TL Wise", "Rohit Only", ...) — blindly reading
+    // SheetNames[0] would have staged one of those instead.
+    const expected = new Set([
+      ...(template?.required_columns || []), ...(template?.optional_columns || []),
+    ].map((c) => c.trim()));
+    let bestSheetName = workbook.SheetNames[0]!;
+    let bestScore = -1;
+    // Tie-break on fewest extra/unknown columns, not just first-sheet-wins: two
+    // sheets in the same workbook can share every header of a smaller template
+    // (one a strict superset of the other's columns) and tie on raw match count —
+    // confirmed live with the ETM Tracker workbook's "DOC ETM" (32 cols) and
+    // "POA ETM" (28 cols) sheets, where DOC ETM's headers are POA ETM's plus 4
+    // more: both score 28/28 against the POA ETM template, and DOC ETM (appearing
+    // first in the workbook) always won under a bare `score > bestScore` check —
+    // silently staging the wrong sheet regardless of which template was selected.
+    let bestExtra = Infinity;
+    if (expected.size > 0) {
+      for (const name of workbook.SheetNames) {
+        const sheet = workbook.Sheets[name];
+        if (!sheet) continue;
+        const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
+        if (!firstRow) continue;
+        const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
+        const score = headerCells.filter((c) => expected.has(c)).length;
+        const extra = headerCells.filter((c) => !expected.has(c)).length;
+        if (score > bestScore || (score === bestScore && extra < bestExtra)) {
+          bestScore = score;
+          bestExtra = extra;
+          bestSheetName = name;
+        }
+      }
+    }
+    return XLSX.utils.sheet_to_csv(workbook.Sheets[bestSheetName]!, { blankrows: false });
+  }
+
+  async function createUploadBatch() {
+    setMessage(null);
+    setErrorMessage(null);
+
+    if (!selectedTemplate) {
+      setErrorMessage("Please select an upload template.");
+      return;
+    }
+
+    if (!selectedFile) {
+      setErrorMessage("Please select a CSV or Excel file.");
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      const batchNo = `BATCH-${Date.now()}`;
+
+      const token = getAuthToken();
+
+      // Upload file to local storage
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      const uploadResponse = await fetch(
+        apiUrl('/api/files/upload?category=bulk-uploads'),
+        { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData }
+      );
+      if (!uploadResponse.ok) throw new Error("File upload failed");
+      const uploadData = await uploadResponse.json();
+      const filePath = uploadData.url; // "/api/files/bulk-uploads/uuid.csv"
+
+      let parsedRows: CsvRow[] = [];
+      let stagedRows: ReturnType<typeof validateRows> = [];
+
+      const lowerName = selectedFile.name.toLowerCase();
+      // .xlsb (Excel binary) included alongside .xlsx/.xls — SheetJS reads it the same
+      // way, and Onfido's DOC quality-audit export ("Internal Dashboard Format") ships
+      // in this format. Previously only .xlsx/.xls matched, so an .xlsb file fell through
+      // to "nothing to stage" with no hint that the format itself was the problem.
+      const isExcel = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || lowerName.endsWith(".xlsb");
+
+      if (lowerName.endsWith(".csv") || isExcel) {
+        const text = isExcel
+          ? await excelFileToCsvText(selectedFile, selectedTemplate)
+          : await selectedFile.text();
+        const parsed = parseCsvDetailed(text);
+        const health = buildCsvHealth(selectedTemplate, parsed);
+        setCsvHealth(health);
+
+        if (csvHealthHasBlockingError(health)) {
+          throw new Error(
+            "CSV structure issue found. Please download the safe template for this upload type and keep every column/blank comma position intact."
+          );
+        }
+
+        parsedRows = parsed.rows;
+        stagedRows = validateRows(selectedTemplate, parsedRows);
+      }
+
+      // Nothing to stage means nothing this batch could ever import — the import
+      // endpoint dispatches over the staged rows, so recording the batch anyway
+      // just parks a permanently empty entry in the list ("0 Total", and a detail
+      // dialog saying no staged rows were found) with no hint of what went wrong.
+      // The two ways to get here are a template saved without any data filled in
+      // below the header, and a file type this hub cannot read; say which.
+      if (stagedRows.length === 0) {
+        throw new Error(
+          lowerName.endsWith(".csv") || isExcel
+            ? "This file has no data rows below the header — nothing would be uploaded. Fill in the template under the header row and try again."
+            : "Only .csv, .xlsx, .xls and .xlsb files can be read here. Save the file in one of those formats and upload it again."
+        );
+      }
+
+      const validRows = stagedRows.filter((row) => row.status === "valid").length;
+      const errorRows = stagedRows.filter((row) => row.status === "error").length;
+
+      const batchStatus =
+        stagedRows.length === 0
+          ? "uploaded"
+          : errorRows > 0
+            ? "validation_failed"
+            : "validated";
+
+      const batchRes = await hrmsApi.post<{ data: any }>("/api/bulk-upload/batches", {
+        upload_batch_no: batchNo,
+        upload_type_code: selectedTemplate.upload_type_code,
+        original_file_name: selectedFile.name,
+        file_path: filePath,
+        file_size_bytes: selectedFile.size,
+        total_rows: stagedRows.length,
+        valid_rows: validRows,
+        error_rows: errorRows,
+        batch_status: batchStatus,
+        error_summary: errorRows > 0 ? `${errorRows} row(s) have validation errors` : null,
+        metadata: {
+          source: "frontend_bulk_upload_hub",
+          csv_preview_available: selectedFile.name.toLowerCase().endsWith(".csv"),
+        },
+      });
+      const batch = batchRes.data;
+
+      if (stagedRows.length > 0) {
+        // Staging is a bulk INSERT server-side per call, but a whole file in one request
+        // does not scale to high-volume raw-data uploads (Onfido process reports run
+        // ~1 lakh rows/day/file) — the request body limit and plain request size both
+        // give out first. Slice into STAGE_CHUNK_SIZE-row requests instead, same as the
+        // 30s-default fix below already reasons about for a single large request.
+        for (let offset = 0; offset < stagedRows.length; offset += STAGE_CHUNK_SIZE) {
+          const slice = stagedRows.slice(offset, offset + STAGE_CHUNK_SIZE);
+          await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`,
+            slice.map((row) => ({
+              row_no: row.rowNo,
+              raw_data: row.rawData,
+              normalized_data: row.normalizedData,
+              row_status: row.status,
+              error_messages: row.errors,
+            })),
+            180000
+          );
+        }
+      }
+
+      setMessage("Upload batch created successfully.");
+      setSelectedFile(null);
+      setPreviewRows([]);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+
+      await loadData();
+      await loadBatchRows(batch as UploadBatch);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function importBatchToTarget(batch: UploadBatch) {
+    setMessage(null);
+    setErrorMessage(null);
+
+    const rpcName = getImportRpc(batch.upload_type_code);
+    if (!rpcName) {
+      const msg = `Import mapping for ${batch.upload_type_code} is not enabled yet.`;
+      setErrorMessage(msg);
+      window.alert(msg);
+      return;
+    }
+
+    if (Number(batch.valid_rows || 0) <= Number(batch.imported_rows || 0)) {
+      const msg = "There are no pending valid rows to import for this batch.";
+      setErrorMessage(msg);
+      window.alert(msg);
+      return;
+    }
+
+    setIsProcessing(true);
+    setActiveImportBatchId(batch.id);
+    setImportProgress(null);
+    setMessage(`Import started for ${batch.upload_batch_no}. Please wait...`);
+
+    try {
+      // The server no longer imports the rows inside this request: it claims the
+      // batch, answers 202 and keeps working. Waiting for the whole import used to
+      // hit nginx's 60s proxy timeout on any sizeable file, so the uploader saw a
+      // 502 while the import was still running — and had no way to learn how it
+      // ended. The outcome is collected by polling instead.
+      const res = await hrmsApi.post<{
+        success: boolean;
+        processing?: boolean;
+        total_rows?: number | null;
+        data?: any;
+        error?: string;
+      }>(`/api/bulk-upload/batches/${batch.id}/import`, {
+        rpc_name: rpcName,
+      }, 60000);
+
+      if (!res.success) {
+        throw new Error(res.error || "Import action failed.");
+      }
+
+      let result: any = res.data || {};
+
+      if (isBatchJobStarted(res)) {
+        setImportProgress({
+          phase: "running",
+          progress: { total: res.total_rows ?? null, processed: 0, succeeded: 0, failed: 0 },
+        });
+        const final = await pollBatchJob(
+          `/api/bulk-upload/batches/${batch.id}/import-status`,
+          { onProgress: setImportProgress },
+        );
+        if (final.phase === "failed") {
+          throw new Error(final.error || final.message || "Import action failed.");
+        }
+        result = (final.result as { data?: any })?.data ?? {
+          importedRows: final.progress?.succeeded ?? 0,
+          errorRows: final.progress?.failed ?? 0,
+        };
+      }
+
+      if (result.ok === false) {
+        throw new Error(result.message || "Import action failed.");
+      }
+
+      // The approval-gated importers report `staged`, the rest `importedRows` /
+      // `imported_rows`. Reading only the last two made every leave, regularization,
+      // incentive and deduction import announce "Imported 0 row(s)" however many it
+      // had actually staged.
+      const importedRows = Number(
+        result.importedRows ?? result.imported_rows ?? result.staged ?? 0,
+      );
+      const errorRows = Number(result.errorRows ?? result.error_rows ?? result.failed ?? 0);
+      const successMsg = `Import completed for ${batch.upload_batch_no}. Imported ${importedRows} row(s).${
+        errorRows ? ` ${errorRows} row(s) failed and are visible in View Rows.` : ""
+      }`;
+
+      setMessage(successMsg);
+      window.alert(successMsg);
+
+      await loadData();
+      await loadBatchRows(batch);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Import action failed.";
+      setErrorMessage(msg);
+      window.alert(`Import failed: ${msg}`);
+      await loadData();
+    } finally {
+      setIsProcessing(false);
+      setActiveImportBatchId(null);
+      setImportProgress(null);
+    }
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
+        <div className="mx-auto max-w-7xl space-y-5">
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  Admin Operations
+                </p>
+                <h1 className="mt-2 text-2xl font-semibold text-slate-950">
+                  Bulk Upload Hub
+                </h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+                  Manage upload templates, upload CSV/Excel files, stage rows,
+                  validate required columns, and import validated Employee, Process, Department, Asset, Branch, LOB, Designation, and APR/Dialler Attendance records directly into HRMS.
+                </p>
+              </div>
+
+              {effectiveTab === "master" && (
+                <button
+                  onClick={loadData}
+                  className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
+              )}
+            </div>
+
+            {/* Tab switcher */}
+            <div className="mt-4 flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit">
+              <button
+                onClick={() => setActiveTab("master")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  effectiveTab === "master"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Master Data Upload
+              </button>
+              <button
+                onClick={() => setActiveTab("apr")}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  effectiveTab === "apr"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                APR / Dialler Attendance
+              </button>
+              {canUploadProductivity && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("productivity")}
+                  aria-pressed={effectiveTab === "productivity"}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "productivity"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  WFM Productivity Upload
+                </button>
+              )}
+              {canManageDeductionTypes && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("deduction-types")}
+                  aria-pressed={effectiveTab === "deduction-types"}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "deduction-types"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Deduction Types
+                </button>
+              )}
+              {canUploadTds && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("tds-upload")}
+                  aria-pressed={effectiveTab === "tds-upload"}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "tds-upload"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  TDS Upload
+                </button>
+              )}
+            </div>
+          </section>
+
+          {effectiveTab === "apr" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <AprBulkUpload />
+            </section>
+          )}
+
+          {canUploadProductivity && effectiveTab === "productivity" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <ProductivityUpload />
+            </section>
+          )}
+
+          {canManageDeductionTypes && effectiveTab === "deduction-types" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <DeductionTypesTab />
+            </section>
+          )}
+
+          {canUploadTds && effectiveTab === "tds-upload" && (
+            <TdsUploadTab />
+          )}
+
+          {effectiveTab === "master" && activeImportBatchId && (
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-indigo-900">
+                  {describeProgress(importProgress?.progress, "Importing")}
+                </p>
+                {(importProgress?.progress?.failed ?? 0) > 0 && (
+                  <span className="text-xs font-semibold text-rose-600">
+                    {importProgress?.progress?.failed} row(s) failed
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-indigo-100">
+                <div
+                  className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                  style={{
+                    width: `${
+                      importProgress?.progress?.total
+                        ? Math.min(100, Math.round(((importProgress.progress.processed ?? 0) / importProgress.progress.total) * 100))
+                        : 15
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-indigo-700/80">
+                Each row runs through the same validation the single-employee screen uses,
+                so a large file takes a few minutes. The import continues on the server even
+                if you leave this page.
+              </p>
+            </div>
+          )}
+
+          {effectiveTab === "master" && (message || errorMessage) && (
+            <div
+              className={`rounded-2xl border p-4 text-sm ${
+                errorMessage
+                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700"
+              }`}
+            >
+              {errorMessage || message}
+            </div>
+          )}
+
+          {effectiveTab === "master" && (
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <StatCard label="Templates" value={stats.templates} />
+            <StatCard label="Upload Batches" value={stats.batches} />
+            <StatCard label="Validated" value={stats.validated} />
+            <StatCard label="Imported" value={stats.imported} />
+            <StatCard label="Error Rows" value={stats.errors} />
+          </section>
+          )}
+
+          {effectiveTab === "master" && <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-base font-semibold text-slate-950">
+                New Upload
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Choose upload type, download sample template, then upload a CSV
+                or Excel file.
+              </p>
+
+              <div className="mt-5 space-y-4">
+                <Field label="Upload Type">
+                  <select
+                    value={selectedTemplateCode}
+                    onChange={(event) => {
+                      setSelectedTemplateCode(event.target.value);
+                      setSelectedFile(null);
+                      setPreviewRows([]);
+                      setCsvHealth(null);
+                      setMessage(null);
+                      setErrorMessage(null);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                    className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400"
+                  >
+                    {templates.map((template) => (
+                      <option
+                        key={template.id}
+                        value={template.upload_type_code}
+                      >
+                        {template.upload_type_name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                {selectedTemplate && (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">
+                          {selectedTemplate.upload_type_code}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          {selectedTemplate.description || "-"}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Target table:{" "}
+                          <span className="font-semibold text-slate-800">
+                            {selectedTemplate.target_table || "-"}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => downloadTemplate(selectedTemplate)}
+                          className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                          Download Sample CSV
+                        </button>
+                        <button
+                          onClick={() => downloadBlankTemplate(selectedTemplate)}
+                          className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                          Download Blank CSV
+                        </button>
+                        <button
+                          onClick={() => downloadTemplateGuide(selectedTemplate)}
+                          className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                          Download Guide
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      <ColumnList
+                        title="Required Columns"
+                        columns={selectedTemplate.required_columns || []}
+                      />
+                      <ColumnList
+                        title="Optional Columns"
+                        columns={selectedTemplate.optional_columns || []}
+                      />
+                    </div>
+
+                    {getUploadTypeAllowedValues(selectedTemplate.upload_type_code).length > 0 && (
+                      <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-3">
+                        <p className="text-xs font-semibold text-blue-900 mb-2">Allowed values for this upload type</p>
+                        <pre className="text-xs leading-5 text-blue-800 whitespace-pre-wrap font-mono">
+                          {getUploadTypeAllowedValues(selectedTemplate.upload_type_code)
+                            .filter(l => !l.startsWith("──"))
+                            .join("\n")}
+                        </pre>
+                      </div>
+                    )}
+
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+                      <p className="font-semibold">Safe upload rule</p>
+                      <p className="mt-1">
+                        Always use the downloaded CSV. Do not delete optional columns; keep them blank if not needed. Date format must be DD-MM-YYYY (or YYYY-MM-DD for attendance/leave/roster). Comma values like WorkingDays must stay inside quotes. Status and code fields must exactly match the allowed values shown above.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <Field label="Upload File">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,.xls,.xlsx,.xlsb,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={(event) =>
+                      handleFileChange(event.target.files?.[0] || null)
+                    }
+                    className="block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-950 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"
+                  />
+                </Field>
+
+                {selectedFile && (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+                    <p className="font-semibold text-slate-950">
+                      Selected File
+                    </p>
+                    <div className="mt-2 grid gap-2 text-slate-600 sm:grid-cols-3">
+                      <span>Name: {selectedFile.name}</span>
+                      <span>Size: {formatBytes(selectedFile.size)}</span>
+                      <span>Type: {selectedFile.type || "Unknown"}</span>
+                    </div>
+                  </div>
+                )}
+
+                {csvHealth && (
+                  <CsvHealthCard health={csvHealth} />
+                )}
+
+                {previewRows.length > 0 && (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-950">
+                      CSV Preview
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Showing first {previewRows.length} row(s). Full staging
+                      happens after creating upload batch.
+                    </p>
+
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full divide-y divide-slate-200 text-xs">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            {Object.keys(previewRows[0] || {}).map((key) => (
+                              <th
+                                key={key}
+                                className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-500"
+                              >
+                                {key}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {previewRows.map((row, index) => (
+                            <tr key={`prev-${row["employee_id"] ?? row["id"] ?? row["Employee ID"] ?? index}`}>
+                              {Object.keys(previewRows[0] || {}).map((key) => (
+                                <td
+                                  key={key}
+                                  className="whitespace-nowrap px-3 py-2 text-slate-600"
+                                >
+                                  {row[key] || "-"}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={createUploadBatch}
+                    disabled={isProcessing || csvHealthHasBlockingError(csvHealth)}
+                    className="h-10 rounded-xl bg-slate-950 px-5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isProcessing ? "Processing..." : "Create Upload Batch"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-base font-semibold text-slate-950">
+                Upload Templates
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Templates define required columns, optional columns and sample
+                format.
+              </p>
+
+              <div className="mt-5 max-h-[610px] space-y-3 overflow-y-auto pr-1">
+                {templates.map((template) => (
+                  <button
+                    key={template.id}
+                    onClick={() =>
+                      setSelectedTemplateCode(template.upload_type_code)
+                    }
+                    className={`w-full rounded-2xl border p-4 text-left transition ${
+                      selectedTemplateCode === template.upload_type_code
+                        ? "border-slate-950 bg-slate-50"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">
+                          {template.upload_type_name}
+                        </p>
+                        <p className="mt-1 text-xs font-medium text-slate-400">
+                          {template.upload_type_code}
+                        </p>
+                      </div>
+
+                      <StatusBadge status={template.active_status ? "active" : "inactive"} />
+                    </div>
+
+                    <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
+                      {template.description || "-"}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>}
+
+          {effectiveTab === "master" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">
+                  Upload Batch History
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Your uploads, plus any your role's branch scope covers. Other users' uploads are
+                  not shown.
+                </p>
+              </div>
+            </div>
+
+            {/* Closed sets are dropdowns built from what this user can actually see, per the
+                Form Input Rule; the options come from the server so they can never hint at
+                another branch's uploads. */}
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <select
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.uploadType}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, uploadType: e.target.value }))}
+              >
+                <option value="">All upload types</option>
+                {filterOptions.types.map((t) => (
+                  <option key={t.value} value={t.value}>{t.value} ({t.n})</option>
+                ))}
+              </select>
+
+              <select
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.status}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, status: e.target.value }))}
+              >
+                <option value="">All statuses</option>
+                {filterOptions.statuses.map((t) => (
+                  <option key={t.value} value={t.value}>{t.value} ({t.n})</option>
+                ))}
+              </select>
+
+              {/* Only offered when more than one uploader is visible — for a user who can see
+                  only their own uploads this control would have exactly one option. */}
+              {filterOptions.uploaders.length > 1 && (
+                <select
+                  className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                  value={historyFilters.uploadedBy}
+                  onChange={(e) => setHistoryFilters((f) => ({ ...f, uploadedBy: e.target.value }))}
+                >
+                  <option value="">All uploaders</option>
+                  {filterOptions.uploaders.map((u) => (
+                    <option key={u.value} value={u.value}>{u.label} ({u.n})</option>
+                  ))}
+                </select>
+              )}
+
+              <input
+                type="date"
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.from}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, from: e.target.value }))}
+                title="Uploaded on or after"
+              />
+              <input
+                type="date"
+                className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm"
+                value={historyFilters.to}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, to: e.target.value }))}
+                title="Uploaded on or before"
+              />
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="Search batch no or file name"
+                className="h-9 flex-1 min-w-[220px] rounded-xl border border-slate-200 bg-white px-3 text-sm"
+                value={historyFilters.search}
+                onChange={(e) => setHistoryFilters((f) => ({ ...f, search: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") loadData(); }}
+              />
+              <button
+                type="button"
+                onClick={() => loadData()}
+                className="h-9 cursor-pointer rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition-colors duration-200 hover:bg-slate-800"
+              >
+                Apply
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setHistoryFilters({ uploadType: "", status: "", uploadedBy: "", from: "", to: "", search: "" });
+                  setTimeout(() => loadData(), 0);
+                }}
+                className="h-9 cursor-pointer rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition-colors duration-200 hover:bg-slate-50"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+              {isLoading ? (
+                <div className="p-6 text-sm text-slate-500">
+                  Loading upload batches...
+                </div>
+              ) : batches.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No upload batches found.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <Th>Batch No</Th>
+                        <Th>Upload Type</Th>
+                        <Th>File</Th>
+                        <Th>Rows</Th>
+                        <Th>Status</Th>
+                        <Th>Raised by</Th>
+                        <Th>Uploaded</Th>
+                        <Th className="sticky right-0 bg-slate-50 shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]">Actions</Th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {batches.map((batch) => (
+                        <tr key={batch.id} className="group hover:bg-slate-50">
+                          <Td>
+                            <div className="font-semibold text-slate-950">
+                              {batch.upload_batch_no}
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-400">
+                              {batch.id.slice(0, 8)}
+                            </div>
+                          </Td>
+                          <Td>{batch.upload_type_code}</Td>
+                          <Td>
+                            <div className="max-w-[260px] truncate font-medium text-slate-800">
+                              {batch.original_file_name}
+                            </div>
+                            <div className="text-xs text-slate-400">
+                              {formatBytes(batch.file_size_bytes)}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div>Total: {batch.total_rows}</div>
+                            <div className="text-xs text-slate-400">
+                              Valid {batch.valid_rows} / Error{" "}
+                              {batch.error_rows} / Imported{" "}
+                              {batch.imported_rows}
+                            </div>
+                          </Td>
+                          <Td>
+                            <StatusBadge status={batch.batch_status} />
+                          </Td>
+                          <Td>
+                            <div className="font-medium text-slate-800">
+                              {batch.uploaded_by_name || "-"}
+                            </div>
+                            {(batch.uploaded_by_code || batch.branch_name) && (
+                              <div className="mt-0.5 text-xs text-slate-400">
+                                {[batch.uploaded_by_code, batch.branch_name].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
+                          </Td>
+                          <Td>{formatDateTime(batch.uploaded_at)}</Td>
+                          <Td className="sticky right-0 bg-white shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] group-hover:bg-slate-50">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => loadBatchRows(batch)}
+                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                              >
+                                View Rows
+                              </button>
+
+                              {batch.valid_rows > batch.imported_rows && (
+                                <button
+                                  onClick={() => importBatchToTarget(batch)}
+                                  disabled={isProcessing || activeImportBatchId === batch.id}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer shadow-[0_2px_6px_rgba(16,185,129,0.15)]"
+                                >
+                                  {activeImportBatchId === batch.id ? "Importing..." : "Import to HRMS"}
+                                </button>
+                              )}
+
+                              {/* Visible only when the row counts don't add up to the
+                                  total, or the batch is sitting in the legacy 'approved'
+                                  state — both mean this batch has rows that never
+                                  reached a final outcome. See reconcileBatch above. */}
+                              {(batch.batch_status === "approved" ||
+                                batch.imported_rows + batch.error_rows < batch.total_rows) && (
+                                <button
+                                  onClick={() => reconcileBatch(batch)}
+                                  disabled={isProcessing}
+                                  title="Force-resolve any rows still stuck without a final outcome"
+                                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                                >
+                                  Reconcile
+                                </button>
+                              )}
+                            </div>
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>}
+        </div>
+
+        {effectiveTab === "master" && selectedBatch && (
+          <BatchRowsDialog
+            batch={selectedBatch}
+            rows={selectedBatchRows}
+            onClose={() => {
+              setSelectedBatch(null);
+              setSelectedBatchRows([]);
+            }}
+            onBatchListRefresh={loadData}
+          />
+        )}
+      </div>
+    </DashboardLayout>
+  );
+}
+
+function CsvHealthCard({ health }: { health: CsvHealth }) {
+  const hasBlockingError = csvHealthHasBlockingError(health);
+
+  return (
+    <div
+      className={`rounded-2xl border p-4 text-sm ${
+        hasBlockingError
+          ? "border-rose-200 bg-rose-50 text-rose-800"
+          : health.wrongOrder
+            ? "border-amber-200 bg-amber-50 text-amber-800"
+            : "border-emerald-200 bg-emerald-50 text-emerald-800"
+      }`}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="font-semibold">
+            {hasBlockingError
+              ? "CSV structure needs correction"
+              : health.wrongOrder
+                ? "CSV headers are valid, but order is different"
+                : "CSV structure looks correct"}
+          </p>
+          <p className="mt-1 text-xs leading-5 opacity-90">
+            Uploaded rows: {health.rowCount}. Expected columns: {health.expectedHeaders.length}. Uploaded columns: {health.headers.length}.
+          </p>
+        </div>
+      </div>
+
+      {(health.missingHeaders.length > 0 || health.unknownHeaders.length > 0) && (
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {health.missingHeaders.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.08em]">Missing headers</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {health.missingHeaders.map((header) => (
+                  <span key={header} className="rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-700">
+                    {header}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {health.unknownHeaders.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.08em]">Unknown headers</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {health.unknownHeaders.map((header) => (
+                  <span key={header} className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs font-medium text-amber-700">
+                    {header}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {health.rowWidthWarnings.length > 0 && (
+        <div className="mt-3 rounded-xl border border-rose-200 bg-white p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-rose-700">Row column mismatch</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-rose-700">
+            {health.rowWidthWarnings.slice(0, 5).map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+          {health.rowWidthWarnings.length > 5 && (
+            <p className="mt-2 text-xs text-rose-700">+{health.rowWidthWarnings.length - 5} more row(s).</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ResubmitResult = { importedRows: number; errorRows: number; newBatchNo: string };
+
+function BatchRowsDialog({
+  batch,
+  rows,
+  onClose,
+  onBatchListRefresh,
+}: {
+  batch: UploadBatch;
+  rows: UploadBatchRow[];
+  onClose: () => void;
+  onBatchListRefresh?: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<"success" | "failed">("success");
+  const [editMode, setEditMode] = useState(false);
+  // edits[rowId][fieldKey] = edited value
+  const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [resubmitResult, setResubmitResult] = useState<ResubmitResult | null>(null);
+  const [resubmitError, setResubmitError] = useState<string | null>(null);
+
+  const successRows = rows.filter((r) => r.row_status === "imported" || r.row_status === "success");
+  const failedRows = rows.filter(
+    (r) => r.row_status === "error" || r.row_status === "failed" || (r.error_messages && r.error_messages.length > 0)
+  );
+
+  const dataKeys = useMemo(() => {
+    const keySet = new Set<string>();
+    rows.forEach((r) => Object.keys(r.raw_data || {}).forEach((k) => keySet.add(k)));
+    return Array.from(keySet);
+  }, [rows]);
+
+  function getCellValue(row: UploadBatchRow, key: string) {
+    return edits[row.id]?.[key] ?? String(row.raw_data?.[key] ?? "");
+  }
+
+  function setCellValue(rowId: string, key: string, value: string) {
+    setEdits((prev) => ({ ...prev, [rowId]: { ...(prev[rowId] ?? {}), [key]: value } }));
+  }
+
+  function downloadFailedCsv() {
+    if (!failedRows.length) return;
+    const headers = ["Row No", ...dataKeys, "Errors"];
+    const csvLines = [
+      headers.map((h) => `"${h}"`).join(","),
+      ...failedRows.map((row) => {
+        const cells = [
+          row.row_no,
+          ...dataKeys.map((k) => {
+            const val = getCellValue(row, k);
+            return `"${val.replace(/"/g, '""')}"`;
+          }),
+          `"${(row.error_messages || []).join("; ").replace(/"/g, '""')}"`,
+        ];
+        return cells.join(",");
+      }),
+    ];
+    const blob = new Blob([csvLines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `failed_rows_${batch.upload_batch_no}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleResubmit() {
+    if (!failedRows.length) return;
+    const rpcName = getImportRpc(batch.upload_type_code);
+    if (!rpcName) {
+      setResubmitError("This upload type does not support direct resubmit. Use Download Failed CSV instead.");
+      return;
+    }
+    setSubmitting(true);
+    setResubmitResult(null);
+    setResubmitError(null);
+    try {
+      // 1. Create a new batch
+      const newBatchNo = `${batch.upload_batch_no}-R${Date.now().toString().slice(-4)}`;
+      const batchRes = await hrmsApi.post<{ success: boolean; data: UploadBatch }>("/api/bulk-upload/batches", {
+        upload_batch_no: newBatchNo,
+        upload_type_code: batch.upload_type_code,
+        original_file_name: batch.original_file_name,
+        total_rows: failedRows.length,
+        valid_rows: failedRows.length,
+        error_rows: 0,
+        batch_status: "validated",
+      });
+      const newBatchId = batchRes.data.id;
+
+      // 2. Stage the (edited) failed rows. This is the exact call that silently lost
+      // BATCH-1788948395588-R6909's 14 resubmitted rows: the batch header (step 1, just
+      // above) had already been created and shown "14 valid" by the time this INSERT hit
+      // a database deadlock, and the default 30s timeout meant the browser gave up and
+      // moved on before the server even finished failing — so no error ever surfaced,
+      // and the batch was left claiming rows it never actually saved. The server now
+      // retries a lost deadlock on this write automatically (see withDeadlockRetry in
+      // bulk-upload.routes.ts), but that retry needs headroom to run before the browser
+      // gives up on it — 60s matches the import call's own timeout just below.
+      const stagingPayload = failedRows.map((row) => ({
+        row_no: row.row_no,
+        raw_data: Object.fromEntries(dataKeys.map((k) => [k, getCellValue(row, k)])),
+        row_status: "pending",
+        error_messages: [],
+      }));
+      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload, 60000);
+
+      // 3. Run import. It answers 202 and keeps working, so wait it out by polling
+      // rather than by holding the request open past the proxy timeout.
+      const importRes = await hrmsApi.post<{
+        success: boolean;
+        processing?: boolean;
+        data?: { importedRows?: number; errorRows?: number; staged?: number; failed?: number };
+      }>(
+        `/api/bulk-upload/batches/${newBatchId}/import`,
+        { rpc_name: rpcName },
+        60000,
+      );
+
+      let outcome: Record<string, unknown> = importRes.data ?? {};
+      if (isBatchJobStarted(importRes)) {
+        const final = await pollBatchJob(`/api/bulk-upload/batches/${newBatchId}/import-status`);
+        if (final.phase === "failed") {
+          throw new Error(final.error || final.message || "Import action failed.");
+        }
+        outcome = ((final.result as { data?: Record<string, unknown> })?.data) ?? {
+          importedRows: final.progress?.succeeded ?? 0,
+          errorRows: final.progress?.failed ?? 0,
+        };
+      }
+
+      setResubmitResult({
+        // Gated types report `staged`/`failed`, the rest `importedRows`/`errorRows`.
+        importedRows: Number(outcome.importedRows ?? outcome.staged ?? 0),
+        errorRows: Number(outcome.errorRows ?? outcome.failed ?? 0),
+        newBatchNo,
+      });
+      setEditMode(false);
+      onBatchListRefresh?.();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResubmitError(`Resubmit failed: ${msg}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const displayRows = activeTab === "success" ? successRows : failedRows;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">Upload Batch</p>
+            <h3 className="mt-0.5 text-xl font-semibold text-slate-950">{batch.upload_batch_no}</h3>
+            <p className="mt-0.5 text-sm text-slate-500">{batch.original_file_name}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeTab === "failed" && failedRows.length > 0 && !resubmitResult && (
+              <>
+                <button
+                  onClick={downloadFailedCsv}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Download CSV
+                </button>
+                {!editMode ? (
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                  >
+                    Edit & Resubmit
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setEditMode(false); setEdits({}); }}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      disabled={submitting}
+                    >
+                      Cancel Edit
+                    </button>
+                    <button
+                      onClick={handleResubmit}
+                      disabled={submitting}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {submitting ? "Submitting…" : `Submit ${failedRows.length} Fixed Row${failedRows.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        {/* Summary pills */}
+        <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-3">
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+            {successRows.length} Successful
+          </span>
+          <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
+            {failedRows.length} Failed
+          </span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+            {rows.length} Total
+          </span>
+          {editMode && (
+            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+              Edit mode — fix cells, then Submit
+            </span>
+          )}
+        </div>
+
+        {/* Resubmit result banner */}
+        {resubmitResult && (
+          <div className="mx-6 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-800">
+              Resubmit complete — batch {resubmitResult.newBatchNo}
+            </p>
+            <p className="mt-0.5 text-xs text-emerald-700">
+              {resubmitResult.importedRows} imported successfully
+              {resubmitResult.errorRows > 0 && `, ${resubmitResult.errorRows} still failed — check the new batch in the list`}
+            </p>
+          </div>
+        )}
+        {resubmitError && (
+          <div className="mx-6 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <p className="text-xs text-rose-700">{resubmitError}</p>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex gap-0 border-b border-slate-200 px-6">
+          <button
+            onClick={() => setActiveTab("success")}
+            className={`border-b-2 px-4 py-3 text-sm font-semibold transition-colors ${
+              activeTab === "success"
+                ? "border-emerald-500 text-emerald-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Successful ({successRows.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("failed")}
+            className={`border-b-2 px-4 py-3 text-sm font-semibold transition-colors ${
+              activeTab === "failed"
+                ? "border-rose-500 text-rose-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Failed ({failedRows.length})
+            {failedRows.length > 0 && activeTab !== "failed" && (
+              <span className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white">
+                !
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {rows.length === 0 ? (
+            <div className="py-12 text-center text-sm text-slate-500">No staged rows found for this batch.</div>
+          ) : displayRows.length === 0 ? (
+            <div className="py-12 text-center text-sm text-slate-500">
+              {activeTab === "success" ? "No successful rows." : "No failed rows — all rows imported successfully."}
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-xs">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr>
+                    <Th>#</Th>
+                    <Th>DB Status</Th>
+                    {dataKeys.map((k) => <Th key={k}>{k}</Th>)}
+                    {activeTab === "failed" && (
+                      <Th><span className="text-rose-600">Errors</span></Th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {displayRows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={
+                        activeTab === "failed"
+                          ? editMode ? "bg-amber-50/40 hover:bg-amber-50" : "bg-rose-50/40 hover:bg-rose-50"
+                          : "hover:bg-emerald-50/30"
+                      }
+                    >
+                      <Td>
+                        <span className="font-mono text-slate-500">{row.row_no}</span>
+                      </Td>
+                      <Td>
+                        <DbStatusBadge row={row} />
+                      </Td>
+                      {dataKeys.map((k) => (
+                        <Td key={k}>
+                          {activeTab === "failed" && editMode ? (
+                            <input
+                              type="text"
+                              value={getCellValue(row, k)}
+                              onChange={(e) => setCellValue(row.id, k, e.target.value)}
+                              className="w-full min-w-[100px] rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                            />
+                          ) : (
+                            <span className="block max-w-[180px] truncate" title={String(row.raw_data?.[k] ?? "")}>
+                              {String(row.raw_data?.[k] ?? "")}
+                            </span>
+                          )}
+                        </Td>
+                      ))}
+                      {activeTab === "failed" && (
+                        <Td>
+                          {row.error_messages?.length ? (
+                            <ul className="space-y-1">
+                              {row.error_messages.map((error, idx) => (
+                                <li key={idx} className="flex items-start gap-1.5 text-rose-700">
+                                  <span className="mt-0.5 shrink-0 text-rose-400">•</span>
+                                  {error}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </Td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {activeTab === "failed" && failedRows.length > 0 && !editMode && !resubmitResult && (
+          <div className="border-t border-slate-100 bg-slate-50 px-6 py-3">
+            <p className="text-xs text-slate-500">
+              Click <span className="font-semibold text-indigo-700">Edit & Resubmit</span> to fix values inline and resubmit directly, or <span className="font-semibold">Download CSV</span> to fix offline and re-upload as a new batch.
+            </p>
+          </div>
+        )}
+        {activeTab === "failed" && editMode && (
+          <div className="border-t border-indigo-100 bg-indigo-50/60 px-6 py-3">
+            <p className="text-xs text-indigo-700">
+              Edit the cells above, then click <span className="font-semibold">Submit Fixed Rows</span>. A new batch will be created and imported automatically.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs font-semibold text-slate-600">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function ColumnList({
+  title,
+  columns,
+}: {
+  title: string;
+  columns: string[];
+}) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
+        {title}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {columns.length === 0 ? (
+          <span className="text-xs text-slate-400">No columns defined.</span>
+        ) : (
+          columns.map((column) => (
+            <span
+              key={column}
+              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600"
+            >
+              {column}
+            </span>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th className={`whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500 ${className ?? ""}`}>
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <td className={`whitespace-nowrap px-4 py-3 text-slate-600 ${className ?? ""}`}>{children}</td>;
+}
+
+/**
+ * The honest per-row answer to "is this entry actually recorded in the database".
+ * Reads entity_created / entity_status straight from the live target table (see
+ * backend loadRowsWithLiveStatus) — never from this row's own row_status, which can
+ * say "imported" for a row whose approval never actually landed (that gap is what
+ * verifyRowsActuallyApplied on the backend now catches, but this badge is the
+ * belt-and-suspenders view: it shows the ground truth directly, not a status word).
+ */
+const APPLIED_ENTITY_STATUSES = new Set(["approved", "active"]);
+const PENDING_ENTITY_STATUSES = new Set(["pending", "pending_approval", "pending_branch_head"]);
+
+function DbStatusBadge({ row }: { row: UploadBatchRow }) {
+  if (row.entity_created === undefined) {
+    return <span className="text-slate-300">—</span>;
+  }
+  if (!row.entity_created) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+        ✕ Not recorded
+      </span>
+    );
+  }
+  const status = row.entity_status;
+  if (status && APPLIED_ENTITY_STATUSES.has(status)) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+        ✓ Applied ({status})
+      </span>
+    );
+  }
+  if (status && PENDING_ENTITY_STATUSES.has(status)) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+        ● Awaiting approval
+      </span>
+    );
+  }
+  if (status === "rejected" || status === "discarded") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+        {status === "rejected" ? "Rejected" : "Discarded"}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500" title="Record exists but its status could not be classified">
+      Created ({status ?? "unknown"})
+    </span>
+  );
+}
+
+function StatusBadge({
+  status,
+  small = false,
+}: {
+  status: string;
+  small?: boolean;
+}) {
+  const label = status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+  const statusMap: Record<string, string> = {
+    uploaded: "pending",
+    validating: "in_progress",
+    validated: "success",
+    validation_failed: "warning",
+    importing: "in_progress",
+    imported: "success",
+    imported_with_errors: "warning",
+    failed: "failed",
+    cancelled: "cancelled",
+    pending: "pending",
+    pending_approval: "pending",
+    approving: "in_progress",
+    rejected: "failed",
+    partially_applied: "warning",
+    valid: "success",
+    error: "failed",
+    skipped: "cancelled",
+    active: "success",
+    inactive: "cancelled",
+    // NOT a normal terminal value — see reconcileStuckRows / lockEntity comments in
+    // backend/.../bulk-approval.service.ts. A batch can only ever land here from data
+    // written before that fix, where rows were left unresolved. Flagged as a warning,
+    // not success, so it reads as "needs a look" rather than "done".
+    approved: "warning",
+  };
+
+  // 'approved' alone reads as a clean success — override the label so a batch stuck
+  // in this legacy state doesn't look identical to a normal completed one.
+  const displayLabel = status === "approved" ? "Approved — Needs Reconcile" : label;
+
+  return (
+    <SmartHRStatusBadge
+      status={normalizeStatus(statusMap[status] || status)}
+      label={displayLabel}
+      className={small ? "text-[11px] px-2 py-0.5" : ""}
+    />
+  );
+}

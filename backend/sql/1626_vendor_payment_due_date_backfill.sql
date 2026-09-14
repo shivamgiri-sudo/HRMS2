@@ -1,0 +1,79 @@
+-- 1626_vendor_payment_due_date_backfill.sql
+--
+-- ✅ APPLIED TO PRODUCTION 2026-08-27 with explicit user authorisation ("apply it"), run
+--    under a controlled script rather than left to the migration runner so a restore point
+--    and before/after evidence were captured in the same pass.
+--
+--    Result: 14,369 rows matched, 14,369 changed, 0 left NULL. The Overdue figure moved from
+--    ₹0 (structurally impossible to be anything else) to ₹4,83,13,763 across 2,431 rows, and
+--    the Aging report went from 0 rows to 2,431. Integrity guards after the write: money
+--    totals byte-identical to the pre-write audit (₹43,16,71,269 paid / ₹4,83,13,763
+--    pending), 0 rows dated in the future, 0 rows whose due_date disagrees with its own GRN.
+--
+--    Restore point: `zz_vpt_due_date_backup_20260827` (id, due_date for all 14,369 rows,
+--    taken immediately before the write). To roll back:
+--      UPDATE vendor_payment_tracking vpt
+--        JOIN zz_vpt_due_date_backup_20260827 b ON b.id = vpt.id
+--         SET vpt.due_date = b.due_date;
+--    Drop that table once the new ageing has been reviewed and accepted.
+--
+--    It is registered in MIGRATION_MANIFEST so a rebuilt database reaches the same state.
+--    Re-running is a no-op: the UPDATE is guarded on `due_date IS NULL`, so it can only ever
+--    fill a gap, never overwrite a date the live service has since written.
+--
+-- WHAT IS BROKEN
+--
+-- `vendor_payment_tracking.due_date` is NULL on 100% of 14,369 rows (verified live
+-- 2026-08-27). Three things on the Vendor Payment Dispatch page depend on it:
+--
+--   1. The "Overdue" KPI tile sums balances where due_date < CURDATE(). With every due_date
+--      NULL it can only ever render ₹0 — which reads as "nothing is overdue", the opposite
+--      of the truth.
+--   2. The Aging report (vendor-payment.service.ts) filters `AND vpt.due_date IS NOT NULL`,
+--      so it returns an empty set for all 2,431 pending rows. There is no ageing at all.
+--   3. The list orders by `vpt.due_date ASC, vpt.created_at ASC`. All-NULL collapses it to
+--      created_at, so the queue opens on 2017 GRNs instead of what is actually due.
+--
+-- Net effect: ₹4,83,13,763 of pending vendor dues carries no prioritisation signal whatever.
+--
+-- WHY THE ROWS ARE NULL, AND WHY THIS IS RECOVERY RATHER THAN INVENTION
+--
+-- The live writer already sets this column as `grn.due_date ?? grn.bill_date`
+-- (vendor-payment.service.ts, the INSERT INTO vendor_payment_tracking). These 14,369 rows
+-- predate that path — created_at runs from 2017-02-28, i.e. they were bulk-loaded from
+-- history rather than inserted through the service.
+--
+-- So this backfill applies the SERVICE'S OWN existing rule to the rows that bypassed it. It
+-- does not invent a due-date policy. Verified live before writing:
+--   - 14,369 of 14,369 rows resolve to a date (0 would remain NULL)
+--   - grn_request.due_date is NULL on 84,767 of 84,793 GRNs, so bill_date carries it in
+--     practice; COALESCE keeps due_date first exactly as the service does
+--   - 0 rows would receive a future date; range 2017-02-28 .. 2026-08-02
+--
+-- WHAT THE RESULT WILL SHOW, so nobody reads it as a regression
+--
+-- After this runs, all 2,431 pending rows land in the 365+ day ageing bucket — the entire
+-- ₹4.83 crore pending balance is more than a year old. That is the pre-existing reality this
+-- column's NULLs were hiding, not something the backfill creates. Expect the Overdue tile to
+-- jump from ₹0 to ₹4.83 crore on first load, and treat that as the bug being fixed.
+--
+-- SAFETY
+--
+-- Touches one nullable column on one table. Guarded on `due_date IS NULL`, so it never
+-- overwrites a date the service legitimately wrote, and re-running is a no-op. No amount,
+-- status, balance or payment record is modified.
+--
+-- Rollback:
+--   UPDATE vendor_payment_tracking SET due_date = NULL WHERE due_date IS NOT NULL;
+--   -- NOTE: that also clears any due_date the live service has written since. Prefer
+--   -- restoring from the pre-run snapshot below if any time has passed.
+--
+-- Take a snapshot before applying:
+--   CREATE TABLE zz_vpt_due_date_backup_20260827 AS
+--     SELECT id, due_date FROM vendor_payment_tracking;
+
+UPDATE vendor_payment_tracking vpt
+  JOIN grn_request g ON g.id = vpt.grn_request_id
+   SET vpt.due_date = COALESCE(g.due_date, g.bill_date)
+ WHERE vpt.due_date IS NULL
+   AND COALESCE(g.due_date, g.bill_date) IS NOT NULL;

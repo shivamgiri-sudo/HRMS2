@@ -1,0 +1,14 @@
+{
+  // Scoped typecheck for the D-SLA-01 helpdesk SLA cron fix. Full `tsc -p tsconfig.json`
+  // over the backend has pre-existing orphan errors unrelated to this change (see
+  // hrms2-backend-typecheck-orphans memory), so check just the touched files instead:
+  //
+  //     npx tsc -p tsconfig.helpdesksla-check.json
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/helpdesk/helpdesk-sla.cron.ts",
+    "src/modules/helpdesk/helpdesk-sla.service.ts",
+    "src/server.ts",
+    "src/workers/all-workers.ts"
+  ]
+}

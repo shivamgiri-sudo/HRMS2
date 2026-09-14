@@ -1,0 +1,285 @@
+import { Route, Navigate } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { lazy } from "./lazy";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import { AttendanceIntegrityRedirect } from "./AttendanceIntegrityRedirect";
+
+const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
+  <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
+
+const Attendance                   = lazy(() => import("@/pages/Attendance"));
+const BiometricPunchLogs           = lazy(() => import("@/pages/BiometricPunchLogs"));
+const AttendanceRegularization     = lazy(() => import("@/pages/AttendanceRegularization"));
+const AdminAttendanceView          = lazy(() => import("@/pages/AdminAttendanceView"));
+const TeamAttendanceMonth          = lazy(() => import("@/pages/wfm/TeamAttendanceMonth"));
+const NativeAttendanceDisputes     = lazy(() => import("@/pages/NativeAttendanceDisputes"));
+const NativeDiscardCenter          = lazy(() => import("@/pages/NativeDiscardCenter"));
+// Exceptions / Mismatch Queue / Billing Config / COSEC Monitoring merged into one tabbed
+// console (Task 6) — see AttendanceIntegrityConsole below. The four old paths still exist
+// as query-string-preserving redirects into it (AttendanceIntegrityRedirect).
+const AttendanceIntegrityConsole   = lazy(() => import("@/pages/wfm/AttendanceIntegrityConsole"));
+const NativeAttendanceRulesMaster  = lazy(() => import("@/pages/NativeAttendanceRulesMaster"));
+const Leaves                       = lazy(() => import("@/pages/Leaves"));
+const NativeLeaveTypeConfig        = lazy(() => import("@/pages/NativeLeaveTypeConfig"));
+const NativeMaternityLeave         = lazy(() => import("@/pages/NativeMaternityLeave"));
+const NativeWFMRoster              = lazy(() => import("@/pages/NativeWFMRoster"));
+const NativeWFMExtensions          = lazy(() => import("@/pages/NativeWFMExtensions"));
+const NativeWFMManagerApproval     = lazy(() => import("@/pages/NativeWFMManagerApproval"));
+const NativeWFMAutoRoster          = lazy(() => import("@/pages/NativeWFMAutoRoster"));
+const NativeWFMPlanningRules       = lazy(() => import("@/pages/NativeWFMPlanningRules"));
+const NativeSlotRequirementBuilder = lazy(() => import("@/pages/NativeSlotRequirementBuilder"));
+const NativeWeekOffDayRuleConfig   = lazy(() => import("@/pages/NativeWeekOffDayRuleConfig"));
+const NativeWFMRestPolicyConfig    = lazy(() => import("@/pages/NativeWFMRestPolicyConfig"));
+const NativeWeekOffDefaultConfig   = lazy(() => import("@/pages/NativeWeekOffDefaultConfig"));
+const NativeWeekOffPreferences     = lazy(() => import("@/pages/NativeWeekOffPreferences"));
+const NativeRosterPreference       = lazy(() => import("@/pages/NativeRosterPreference"));
+const NativeMyRoster               = lazy(() => import("@/pages/NativeMyRoster"));
+const NativeRosterManagerQueue     = lazy(() => import("@/pages/NativeRosterManagerQueue"));
+const NativeRosterMasterBuilder    = lazy(() => import("@/pages/NativeRosterMasterBuilder"));
+const NativeRosterCapacityConfig   = lazy(() => import("@/pages/NativeRosterCapacityConfig"));
+const NativeBiometricCommandCenter = lazy(() => import("@/pages/NativeBiometricCommandCenter"));
+const AonAnalyticsPage             = lazy(() => import("@/pages/AonAnalyticsPage"));
+const NativeWorkforcePlanning      = lazy(() => import("@/pages/NativeWorkforcePlanning"));
+const NativeRTABoard               = lazy(() => import("@/pages/NativeRTABoard"));
+const NativeBusinessCommandCenter  = lazy(() => import("@/pages/NativeBusinessCommandCenter"));
+const NativeBusinessActionQueue    = lazy(() => import("@/pages/NativeBusinessActionQueue"));
+const BreakDeskDevices             = lazy(() => import("@/pages/BreakDeskDevices"));
+// BreakReports moved into ReportsHub — route redirects to hub
+const WeekoffFairness              = lazy(() => import("@/pages/wfm/WeekoffFairness"));
+const NativeBranchWFMSpocConfig    = lazy(() => import("@/pages/NativeBranchWFMSpocConfig"));
+const RosterWorkspace              = lazy(() => import("@/pages/wfm/RosterWorkspace"));
+const RosterPipelinePage           = lazy(() => import("@/pages/wfm/RosterPipelinePage"));
+const RosterImportPage             = lazy(() => import("@/pages/wfm/RosterImportPage"));
+const RosterRulesPage              = lazy(() => import("@/pages/wfm/RosterRulesPage"));
+const RosterViewPage               = lazy(() => import("@/pages/wfm/RosterViewPage"));
+const RosterInsightsPage           = lazy(() => import("@/pages/wfm/RosterInsightsPage"));
+const RosterRequestsPage           = lazy(() => import("@/pages/wfm/RosterRequestsPage"));
+const RosterBuilderPage            = lazy(() => import("@/pages/wfm/RosterBuilderPage"));
+const RosterAnalyticsDashboard     = lazy(() => import("@/pages/wfm/RosterAnalyticsDashboard"));
+const RosterAnalyticsPanel         = lazy(() => import("@/pages/wfm/RosterAnalyticsPanel"));
+const NativeTNIAnalysis            = lazy(() => import("@/pages/NativeTNIAnalysis"));
+const RosterCommandCenter          = lazy(() => import("@/pages/wfm/RosterCommandCenter"));
+const RosterInterventionDashboard  = lazy(() => import("@/pages/wfm/RosterInterventionDashboard"));
+const EmployeeRosterProfile        = lazy(() => import("@/pages/wfm/EmployeeRosterProfile"));
+const RosterComplianceMonitor      = lazy(() => import("@/pages/wfm/RosterComplianceMonitor"));
+const ShiftEffectivenessDashboard  = lazy(() => import("@/pages/wfm/ShiftEffectivenessDashboard"));
+const WFMCapacityDashboard         = lazy(() => import("@/pages/wfm/WFMCapacityDashboard"));
+const TeamRosterComparison         = lazy(() => import("@/pages/wfm/TeamRosterComparison"));
+const RosterAuditTrail             = lazy(() => import("@/pages/wfm/RosterAuditTrail"));
+const RosterNotificationHub        = lazy(() => import("@/pages/wfm/RosterNotificationHub"));
+const MobileRosterDashboard        = lazy(() => import("@/pages/wfm/MobileRosterDashboard"));
+const MobileTeamAttendance         = lazy(() => import("@/pages/wfm/MobileTeamAttendance"));
+
+export const workforceRouteElements = (
+  <>
+      {/* Attendance */}
+      <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
+      <Route path="/attendance/biometric-logs" element={<ProtectedRoute><BiometricPunchLogs /></ProtectedRoute>} />
+      <Route path="/attendance/biometric-logs/:employeeId" element={<ProtectedRoute><BiometricPunchLogs /></ProtectedRoute>} />
+      {/* CANONICAL regularization route: /attendance-regularization */}
+      <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
+      {/* Duplicate eliminated — redirect to canonical */}
+      <Route path="/attendance/regularizations" element={<Navigate to="/attendance-regularization" replace />} />
+      <Route path="/attendance/disputes"        element={<ProtectedRoute><Gate pageCode="ATTENDANCE_DISPUTES"><NativeAttendanceDisputes /></Gate></ProtectedRoute>} />
+      {/* Audit surface for reversed approvals. Discards themselves are performed
+          inline on the Leaves / Regularization / Disputes pages. */}
+      <Route path="/admin/discard-center"       element={<ProtectedRoute roles={['super_admin','wfm','payroll_hr']}><Gate pageCode="DISCARD_CENTER"><NativeDiscardCenter /></Gate></ProtectedRoute>} />
+      {/*
+        Attendance Integrity console — Exceptions, Mismatches, Biometric Sync and Billing
+        Rules merged into one tabbed page (Task 6 of the WFM attendance-page merge plan).
+        No Gate wrapper here: one page code cannot express the union of all four panels'
+        audiences, so the console does its own per-tab canViewPage() gating internally
+        (see AttendanceIntegrityConsole.tsx) — ProtectedRoute + DashboardLayout is the only
+        wrapper the route itself provides, and it is the one and only wrapper now that the
+        four original pages (which were inconsistent about self-wrapping) are gone.
+      */}
+      <Route path="/wfm/attendance-integrity"   element={<ProtectedRoute><DashboardLayout><AttendanceIntegrityConsole /></DashboardLayout></ProtectedRoute>} />
+      {/*
+        The four pre-merge paths, kept resolvable as query-string-preserving redirects
+        rather than deleted outright — bookmarks, the reference dashboards' deep links
+        (?issueType=..., ?status=..., ?severity=...) and external references still use
+        them. See AttendanceIntegrityRedirect.tsx. Deliberately unwrapped (no ProtectedRoute
+        / Gate here), matching every other redirect-only route in this file (e.g.
+        /wfm/auto-roster, /roster-master-builder below) — the redirect itself renders
+        nothing sensitive, and the destination route enforces auth and page access.
+      */}
+      <Route path="/attendance/billing-config"  element={<AttendanceIntegrityRedirect toTab="billing" />} />
+      <Route path="/wfm/mismatch-queue"         element={<AttendanceIntegrityRedirect toTab="mismatches" />} />
+      <Route path="/wfm/attendance-exceptions"  element={<AttendanceIntegrityRedirect toTab="exceptions" />} />
+      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr','payroll_hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
+      <Route path="/hr/attendance-lookup"       element={
+        <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm','branch_hr','branch_payroll','branch_wfm','payroll']}>
+          <Gate pageCode="ATTENDANCE_LOOKUP"><AdminAttendanceView /></Gate>
+        </ProtectedRoute>
+      } />
+      {/* Manager closure screen: whole team, whole month, one page. The backend
+          scopes rows to direct reports on its own — these roles gate who may ask,
+          not whose data comes back. pageCode must stay identical here, in
+          pageRoutePageCodes.ts and in navConfig.tsx or nav and access disagree. */}
+      <Route path="/wfm/team-attendance"        element={
+        /* No roles prop: TEAM_ATTENDANCE follows the reporting line, not a role.
+           access.service.ts grants the page code to anyone holding at least one active direct
+           report, and 1662 revoked the role grants that used to stand in for that. A roles list
+           here gates ahead of the Gate and undoes it - measured 2026-09-03, 39 of the 65
+           reporting managers hold only the `employee` role, so the previous list admitted 26 of
+           them and refused the rest at the URL before the page code was ever consulted.
+           The page code is the single gate, and it is strictly narrower than the old list. */
+        <ProtectedRoute>
+          {/* TEAM_ATTENDANCE, not TEAM_ATTENDANCE_MONTH: the latter exists in no migration, so
+              the page gate denied everyone. TEAM_ATTENDANCE is the code the grants were
+              actually issued against (102_role_page_access_seed, 309, and tq_head in the RBAC
+              matrix). See 1101_team_attendance_page_path_fix.sql. */}
+          <Gate pageCode="TEAM_ATTENDANCE"><DashboardLayout><TeamAttendanceMonth /></DashboardLayout></Gate>
+        </ProtectedRoute>
+      } />
+
+      {/* Leave */}
+      <Route path="/leaves"       element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
+      <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />
+      <Route path="/leave/requests"  element={<Navigate to="/leaves" replace />} />
+      <Route path="/leave-types"  element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
+      <Route path="/maternity-leave" element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="MATERNITY_LEAVE"><NativeMaternityLeave /></Gate></ProtectedRoute>} />
+
+      {/* WFM / Roster */}
+      <Route path="/wfm/roster"        element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
+      <Route path="/wfm-roster"        element={<Navigate to="/wfm/roster" replace />} />
+      <Route path="/wfm/roster-workspace" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterWorkspace /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-import"    element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterImportPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-builder"    element={<ProtectedRoute><Gate pageCode="WFM_ROSTER_BUILDER"><RosterBuilderPage /></Gate></ProtectedRoute>} />
+      {/* Superseded by RosterImportPage — redirect */}
+      <Route path="/wfm/roster-pipeline"   element={<Navigate to="/wfm/roster-import" replace />} />
+      {/*
+        Roster Requests — the approval/exception inbox.
+
+        NativeRosterManagerQueue has been lazy-imported since it was written but no <Route> ever
+        rendered it, so it was unreachable in the running app. That broke a real loop, not just a
+        page: NativeMyRoster lets an employee reject an assigned week-off
+        (POST /api/wfm/my-weekoff/:id/reject), and this queue is the only UI that reviews those
+        rejections (GET /api/wfm/manager/weekoff-review). With no route, an employee could reject
+        and nobody could ever action it. It is the same story for roster disputes
+        (GET /api/roster-gov/manager-review-queue). All four backend endpoints exist and are
+        requireAuth + requireRole gated, so this exposes nothing new server-side — it just gives
+        the working page a door.
+
+        Deliberately mounted at /wfm/roster-requests rather than a name matching the component:
+        this is the URL the consolidated Requests inbox will keep once swaps and post-publish
+        change requests join it as sibling tabs, so the link never has to move.
+
+        Gated on the existing WFM_ROSTER page code on purpose — no new migration, and no role
+        gains a capability it did not already have through the roster nav.
+      */}
+      <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRequestsPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-insights"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInsightsPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-analytics"  element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-analytics-panel" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsPanel /></Gate></ProtectedRoute>} />
+      {/* Own page code (TNI_ANALYSIS) as of 2026-09-09, not WFM_ROSTER: that code
+          gates a whole roster-planning module and carried no grant for trainer/qa,
+          the two roles this training-needs view exists for -- see 1711_tni_analysis_page.sql. */}
+      <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager','branch_wfm','manager','process_manager','team_leader','tl','trainer','qa']}><Gate pageCode="TNI_ANALYSIS"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-command-center" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterCommandCenter /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-interventions" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInterventionDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-compliance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterComplianceMonitor /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/shift-effectiveness" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><ShiftEffectivenessDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_CAPACITY_DASHBOARD"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/team-comparison" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><TeamRosterComparison /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-audit" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAuditTrail /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterNotificationHub /></Gate></ProtectedRoute>} />
+      {/* Mobile PWA optimized views for managers */}
+      <Route path="/wfm/mobile-roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileRosterDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/mobile-attendance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileTeamAttendance /></Gate></ProtectedRoute>} />
+      {/*
+        Roster Rules — the seven roster configuration screens as one tabbed page.
+
+        Composition, not replacement: each tab renders the existing page component unchanged, and
+        every original route below stays registered so deep links and bookmarks keep working. That
+        is deliberate — nothing is deleted until the consolidated page is proven in use.
+
+        Gated on WFM_ROSTER, the code the majority of the absorbed screens already sit behind, so no
+        role gains access to a screen it could not already open. The four that are role-gated only
+        (rest policy, week-off default, planning rules, slot requirements) keep their own route
+        guards untouched.
+      */}
+      <Route path="/wfm/roster-rules"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRulesPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
+      <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
+      {/* Superseded by RosterBuilderPage — redirect */}
+      <Route path="/wfm/auto-roster"   element={<Navigate to="/wfm/roster-builder" replace />} />
+      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
+      {/* No Gate pageCode here (unlike siblings above): canViewPage() fails closed for any
+          pageCode absent from the page-access catalog, and adding one is a production data
+          seed outside what a code change should do unreviewed. roles={...} is the live
+          enforcement for these two routes; the real security boundary is the backend RBAC.
+          Deliberately DIFFERENT role lists on the two routes below, not copy-pasted — a
+          same-day self-audit found nav had promised both pages to hr/manager while both
+          routes actually gated to admin/wfm only, so any hr/manager user clicking the nav
+          link landed on "Access Denied". Fixed by matching each route's roles to what its
+          OWN backend genuinely allows to read (they differ):
+            - /api/wfm/rest-policy GET is requireRole(admin,super_admin,wfm,hr) — no manager.
+            - /api/roster-gov/week-off-policy-default GET has no role check beyond requireAuth
+              (roster.governance.routes.ts — a different session's already-shipped CRUD for
+              the same week_off_policy_default table, reused here rather than duplicated) —
+              open to hr and manager too. Both pages' writes stay admin/wfm-only regardless;
+              a hr/manager viewer just can't submit the form, same as any other read-only role
+              here. A pageCode can be added later by whoever administers the access catalog. */}
+      <Route path="/wfm/rest-policy"       element={<ProtectedRoute roles={['super_admin','admin','wfm','hr']}><NativeWFMRestPolicyConfig /></ProtectedRoute>} />
+      <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm','hr','manager']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
+      <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
+
+      {/* AON & Attrition analytics — the same view the Reports hub serves as its `aon` tab,
+          given its own address because a tab inside /reports is invisible to anyone not
+          already in the report library.
+
+          Gated by REPORTS_CENTER through PAGE_CODE_BY_ROUTE, i.e. the Reports hub's own page
+          code, so the audience is identical and no new entry is needed in rbacPageMatrix.
+          No `roles={...}` prop here on purpose: ProtectedRoute ignores the role list on any
+          route the map covers, so writing one would read like a restriction and enforce
+          nothing. The inner Gate names the same code as the map to avoid the
+          two-different-codes drift that once required users to hold both grants. */}
+      <Route path="/workforce/aon-analytics" element={<ProtectedRoute><Gate pageCode="REPORTS_CENTER"><AonAnalyticsPage /></Gate></ProtectedRoute>} />
+
+      {/* Roster self-service */}
+      <Route path="/my-roster"              element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />
+      <Route path="/roster-preference"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
+      <Route path="/week-off-preferences"   element={<ProtectedRoute><NativeWeekOffPreferences /></ProtectedRoute>} />
+      {/* Superseded by RosterBuilderPage — redirect */}
+      <Route path="/roster-master-builder"  element={<Navigate to="/wfm/roster-builder" replace />} />
+      <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
+
+      {/* Live tracker / biometric */}
+      <Route path="/wfm/live-tracker"              element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeBiometricCommandCenter /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/adherence-command-center"  element={<Navigate to="/wfm/live-tracker" replace />} />
+      <Route path="/wfm/agent-attendance-view"     element={<Navigate to="/wfm/live-tracker" replace />} />
+      <Route path="/wfm/cosec-monitoring"          element={<AttendanceIntegrityRedirect toTab="biometric" />} />
+
+      {/* RTA */}
+      <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
+
+      {/* Business command */}
+      <Route path="/business-command-center" element={
+        <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager','ceo','coo','hr','manager','process_manager']}>
+          <Gate pageCode="BUSINESS_COMMAND_CENTER"><NativeBusinessCommandCenter /></Gate>
+        </ProtectedRoute>
+      } />
+      <Route path="/business-actions" element={
+        <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager','ceo','coo','hr','manager','process_manager','team_leader','tl']}>
+          <Gate pageCode="BUSINESS_ACTION_QUEUE"><NativeBusinessActionQueue /></Gate>
+        </ProtectedRoute>
+      } />
+
+      {/* WFM SPOC Config — admin only */}
+      <Route path="/wfm/branch-spoc-config" element={<ProtectedRoute roles={['super_admin','admin']}><Gate pageCode="WFM_BRANCH_SPOC_CONFIG"><NativeBranchWFMSpocConfig /></Gate></ProtectedRoute>} />
+
+      {/* Break management — CANONICAL device route: /wfm/break-desk-devices */}
+      <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_BREAK_DESK_DEVICES"><BreakDeskDevices /></Gate></ProtectedRoute>} />
+      {/* Duplicate eliminated — redirect to canonical */}
+      <Route path="/break-management/devices" element={<Navigate to="/wfm/break-desk-devices" replace />} />
+      <Route path="/break-reports" element={<Navigate to="/reports?view=library&report=break-daily-summary" replace />} />
+      <Route path="/break-session-log" element={<Navigate to="/reports?view=library&report=break-session-log" replace />} />
+  </>
+);

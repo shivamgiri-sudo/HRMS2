@@ -1,0 +1,1633 @@
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
+import { computeScheduledMinutes } from "./shift-scheduling.util.js";
+import { applyRestDecision, isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
+import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
+import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
+import { triggerRosterPublishPending } from "../work-inbox/work-inbox.triggers.js";
+
+type AnyRow = Record<string, any>;
+
+const CORE_TABLES = [
+  "employees",
+  "process_master",
+  "branch_master",
+  "wfm_shift",
+  "wfm_roster_plan",
+  "wfm_roster_assignment",
+  "roster_template",
+  "week_off_preference",
+  "process_weekoff_capacity",
+  "weekoff_allocation_log",
+  "leave_request",
+];
+
+const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Pinned to UTC construction/increment (Date.UTC + setUTCDate), not the local-timezone
+// constructor this used to use. `new Date(\`${startDate}T00:00:00\`)` builds midnight in
+// the HOST's timezone, and toISOString() converts that back to UTC — on a host running
+// IST (UTC+5:30, confirmed the case here; see hrms2-host-timezone-date-bugs and the
+// identical bug fixed in roster-generation.service.ts's getDatesInRange), midnight IST
+// is 18:30 the PREVIOUS day in UTC, so every date this returned was one day earlier
+// than the startDate/endDate strings it was given — for generateDraft(), the plan's
+// entire live-engine roster generation range. Date.UTC is timezone-independent
+// regardless of what the host's OS timezone is set to.
+export function dateRange(startDate: string, endDate: string): string[] {
+  const out: string[] = [];
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const [ey, em, ed] = endDate.split("-").map(Number);
+  const start = new Date(Date.UTC(sy, sm - 1, sd));
+  const end = new Date(Date.UTC(ey, em - 1, ed));
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+function toTime(value: any): string | null {
+  if (!value) return null;
+  const s = String(value);
+  return s.length >= 5 ? s.slice(0, 5) : s;
+}
+
+function safePct(num: number, den: number): number {
+  if (!den) return 0;
+  return Math.round((num / den) * 10000) / 100;
+}
+
+function plannedWithShrinkage(required: number, shrinkagePct: number): number {
+  const denominator = Math.max(0.01, 1 - (shrinkagePct / 100));
+  return Math.ceil(required / denominator);
+}
+
+class SchemaMap {
+  private cache = new Map<string, Set<string>>();
+  async columns(table: string): Promise<Set<string>> {
+    if (this.cache.has(table)) return this.cache.get(table)!;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+      [table]
+    );
+    const set = new Set((rows as AnyRow[]).map((r) => String(r.COLUMN_NAME)));
+    this.cache.set(table, set);
+    return set;
+  }
+
+  async hasTable(table: string): Promise<boolean> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1`,
+      [table]
+    );
+    return rows.length > 0;
+  }
+
+  async hasColumn(table: string, column: string): Promise<boolean> {
+    return (await this.columns(table)).has(column);
+  }
+
+  async pick(table: string, candidates: string[], fallback?: string): Promise<string | null> {
+    const cols = await this.columns(table);
+    for (const c of candidates) if (cols.has(c)) return c;
+    return fallback ?? null;
+  }
+}
+
+const schema = new SchemaMap();
+
+export interface SlotRequirementInput {
+  process_id?: string | null;
+  branch_id?: string | null;
+  requirement_date?: string | null;
+  day_of_week?: number | null;
+  slot_start: string;
+  slot_end: string;
+  required_hc: number;
+  shrinkage_pct?: number | null;
+}
+
+export interface CreateAutoRosterPlanInput {
+  plan_name: string;
+  process_id?: string | null;
+  branch_id?: string | null;
+  from_date: string;
+  to_date: string;
+  required_headcount?: number;
+  shrinkage_pct?: number;
+}
+
+async function getPlan(planId: string): Promise<AnyRow> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_plan WHERE id = ? LIMIT 1`,
+    [planId]
+  );
+  const plan = rows[0] as AnyRow | undefined;
+  if (!plan) throw Object.assign(new Error("Roster plan not found"), { statusCode: 404 });
+  return plan;
+}
+
+async function getPlanControl(planId: string): Promise<AnyRow> {
+  await db.execute(
+    `INSERT IGNORE INTO wfm_roster_plan_control (plan_id, planning_mode, approval_status)
+     VALUES (?, 'auto', 'draft')`,
+    [planId]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_plan_control WHERE plan_id = ? LIMIT 1`,
+    [planId]
+  );
+  return rows[0] as AnyRow;
+}
+
+async function getProcessName(processId?: string | null): Promise<string | null> {
+  if (!processId || !(await schema.hasTable("process_master"))) return null;
+  const cols = await schema.columns("process_master");
+  const nameCol = cols.has("process_name") ? "process_name" : cols.has("name") ? "name" : null;
+  if (!nameCol) return null;
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT ${nameCol} AS name FROM process_master WHERE id = ? LIMIT 1`, [processId]);
+  return (rows[0] as AnyRow | undefined)?.name ?? null;
+}
+
+async function getBranchName(branchId?: string | null): Promise<string | null> {
+  if (!branchId || !(await schema.hasTable("branch_master"))) return null;
+  const cols = await schema.columns("branch_master");
+  const nameCol = cols.has("branch_name") ? "branch_name" : cols.has("name") ? "name" : null;
+  if (!nameCol) return null;
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT ${nameCol} AS name FROM branch_master WHERE id = ? LIMIT 1`, [branchId]);
+  return (rows[0] as AnyRow | undefined)?.name ?? null;
+}
+
+async function logEvent(input: {
+  plan_id?: string | null;
+  assignment_id?: string | null;
+  event_type: string;
+  event_title: string;
+  event_message: string;
+  severity?: "info" | "medium" | "high" | "critical";
+  target_role?: string | null;
+  target_employee_id?: string | null;
+  process_id?: string | null;
+  branch_id?: string | null;
+}) {
+  await db.execute(
+    `INSERT INTO wfm_roster_event_log
+     (id, plan_id, assignment_id, event_type, event_title, event_message, severity, target_role, target_employee_id, process_id, branch_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      input.plan_id ?? null,
+      input.assignment_id ?? null,
+      input.event_type,
+      input.event_title,
+      input.event_message,
+      input.severity ?? "info",
+      input.target_role ?? null,
+      input.target_employee_id ?? null,
+      input.process_id ?? null,
+      input.branch_id ?? null,
+    ]
+  );
+}
+
+async function queueLockedNotification(input: {
+  plan_id?: string | null;
+  assignment_id?: string | null;
+  change_request_id?: string | null;
+  employee_id?: string | null;
+  recipient_email?: string | null;
+  notification_type: string;
+  subject: string;
+  body_preview: string;
+}) {
+  await db.execute(
+    `INSERT INTO wfm_roster_notification_log
+     (id, plan_id, assignment_id, change_request_id, employee_id, recipient_email, notification_type, subject, body_preview, status, locked)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1)`,
+    [
+      randomUUID(),
+      input.plan_id ?? null,
+      input.assignment_id ?? null,
+      input.change_request_id ?? null,
+      input.employee_id ?? null,
+      input.recipient_email ?? null,
+      input.notification_type,
+      input.subject,
+      input.body_preview.slice(0, 1000),
+    ]
+  );
+}
+
+async function insertConflict(input: {
+  plan_id: string;
+  assignment_id?: string | null;
+  employee_id?: string | null;
+  roster_date?: string | null;
+  conflict_type: string;
+  severity?: "info" | "medium" | "high" | "critical";
+  message: string;
+}) {
+  await db.execute(
+    `INSERT INTO wfm_roster_conflict_log
+     (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      input.plan_id,
+      input.assignment_id ?? null,
+      input.employee_id ?? null,
+      input.roster_date ?? null,
+      input.conflict_type,
+      input.severity ?? "medium",
+      input.message,
+    ]
+  );
+}
+
+async function getEmployeePool(plan: AnyRow, rosterDate: string): Promise<AnyRow[]> {
+  const cols = await schema.columns("employees");
+  const select: string[] = ["id"];
+  if (cols.has("employee_code")) select.push("employee_code");
+  if (cols.has("email")) select.push("email");
+  if (cols.has("process_id")) select.push("process_id");
+  if (cols.has("branch_id")) select.push("branch_id");
+  if (cols.has("manager_employee_id")) select.push("manager_employee_id");
+  if (cols.has("reporting_manager_id")) select.push("reporting_manager_id");
+  if (cols.has("designation")) select.push("designation");
+  if (cols.has("designation_name")) select.push("designation_name");
+  if (cols.has("department")) select.push("department");
+  if (cols.has("department_id")) select.push("department_id");
+
+  if (cols.has("full_name")) {
+    select.push("full_name");
+  } else if (cols.has("first_name")) {
+    select.push(`TRIM(CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,''))) AS full_name`);
+  } else {
+    select.push("employee_code AS full_name");
+  }
+
+  const conds: string[] = [];
+  const params: unknown[] = [];
+
+  if (cols.has("active_status")) conds.push("active_status = 1");
+  if (cols.has("process_id") && plan.process_id) { conds.push("process_id = ?"); params.push(plan.process_id); }
+  if (cols.has("branch_id") && plan.branch_id) { conds.push("branch_id = ?"); params.push(plan.branch_id); }
+
+  if (cols.has("employment_status")) conds.push("(employment_status IS NULL OR LOWER(employment_status) IN ('active','probation','confirmed'))");
+  else if (cols.has("employee_status")) conds.push("(employee_status IS NULL OR LOWER(employee_status) IN ('active','probation','confirmed'))");
+  else if (cols.has("status")) conds.push("(status IS NULL OR LOWER(status) IN ('active','probation','confirmed'))");
+
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT ${select.join(", ")} FROM employees ${where} ORDER BY employee_code ASC`, params);
+  const employees = rows as AnyRow[];
+
+  if (!(await schema.hasTable("leave_request"))) return employees;
+  const leaveCols = await schema.columns("leave_request");
+  if (!leaveCols.has("employee_id") || !leaveCols.has("from_date") || !leaveCols.has("to_date")) return employees;
+
+  const statusCol = leaveCols.has("status") ? "status" : null;
+  const leaveSql = `SELECT employee_id FROM leave_request WHERE from_date <= ? AND to_date >= ?${statusCol ? " AND LOWER(status) IN ('approved','accepted')" : ""}`;
+  const [leaveRows] = await db.execute<RowDataPacket[]>(leaveSql, [rosterDate, rosterDate]);
+  const leaveSet = new Set((leaveRows as AnyRow[]).map((r) => String(r.employee_id)));
+  return employees.filter((e) => !leaveSet.has(String(e.id)));
+}
+
+/**
+ * Area 1 gap (2026-08-13): a concurrent session's audit found
+ * week_off_preference — the only table this function read — holds 0 rows in
+ * production; every real submission goes through employee_roster_preference
+ * instead (fed by both live frontend pages), which this engine never
+ * consulted. That session already fixed the identical gap in
+ * roster-generation.service.ts's loadApprovedWeekoffs() (the governance
+ * engine); this closes the same hole for THIS engine — the one
+ * auto-roster-synced.service.ts, whose generateDraft() Area 2 already wires
+ * rest-policy validation into as the primary write path this program treats
+ * as live/reachable.
+ *
+ * Same documented precedence as their fix: week_off_preference wins on
+ * conflict (it carries the FCFS/capacity columns
+ * rosterCapacityService/weekoffAllocationService depend on);
+ * employee_roster_preference fills in only for employees week_off_preference
+ * has no row for. Read-only merge — neither table is written here.
+ *
+ * Deliberately NOT included: roster_template.pattern_json (tier 2 in the
+ * governance engine's hierarchy). That tier is indexed by cycle DATE
+ * POSITION (day_number 1 = the cycle's first date), not day-of-week — this
+ * engine's `prefs` map is keyed by day-of-week throughout
+ * (getEmployeePool/HC-floor-gate/etc. all compare against `dow`), so
+ * reusing it here would need restructuring this engine's date-iteration
+ * shape, not just adding a lookup. Flagged as a residual gap, not silently
+ * worked around with a guess at what the semantics should be.
+ */
+const EMP_PREF_DAY_TO_INT: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
+async function getWeekOffPreferences(processId: string | null | undefined): Promise<Map<string, number>> {
+  if (!(await schema.hasTable("week_off_preference"))) return new Map();
+  const cols = await schema.columns("week_off_preference");
+  if (!cols.has("employee_id") || !cols.has("preferred_day")) return new Map();
+
+  let sql = `SELECT wp.employee_id, wp.preferred_day FROM week_off_preference wp`;
+  const params: unknown[] = [];
+  const conds: string[] = [];
+  if (cols.has("approved")) conds.push("wp.approved = 1");
+
+  const empCols = await schema.columns("employees");
+  if (processId && empCols.has("process_id")) {
+    sql += ` JOIN employees e ON e.id = wp.employee_id`;
+    conds.push("e.process_id = ?");
+    params.push(processId);
+  }
+
+  if (conds.length) sql += ` WHERE ${conds.join(" AND ")}`;
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  const map = new Map<string, number>();
+  for (const r of rows as AnyRow[]) map.set(String(r.employee_id), Number(r.preferred_day));
+
+  // employee_roster_preference fallback — only for employees week_off_preference
+  // didn't resolve. Filtered by process here too (this engine's own pool is
+  // already process-scoped by the time prefs.get() is consulted, but the SQL
+  // itself should not hand back a cross-process employee's preference).
+  if (await schema.hasTable("employee_roster_preference")) {
+    try {
+      let empPrefSql = `SELECT erp.employee_id, erp.preferred_week_off
+                           FROM employee_roster_preference erp`;
+      const empPrefParams: unknown[] = [];
+      const empPrefConds = ["erp.status = 'approved'"];
+      if (processId && empCols.has("process_id")) {
+        empPrefSql += ` JOIN employees e2 ON e2.id = erp.employee_id`;
+        empPrefConds.push("e2.process_id = ?");
+        empPrefParams.push(processId);
+      }
+      empPrefSql += ` WHERE ${empPrefConds.join(" AND ")} ORDER BY erp.updated_at DESC`;
+      const [empPrefRows] = await db.execute<RowDataPacket[]>(empPrefSql, empPrefParams);
+      const seen = new Set<string>();
+      for (const r of empPrefRows as AnyRow[]) {
+        const empId = String(r.employee_id);
+        if (map.has(empId) || seen.has(empId)) continue; // week_off_preference wins; first (most recent) approved row wins otherwise
+        seen.add(empId);
+        const dayIdx = EMP_PREF_DAY_TO_INT[String(r.preferred_week_off ?? "").toLowerCase()];
+        if (dayIdx === undefined) continue;
+        map.set(empId, dayIdx);
+      }
+    } catch (error) {
+      console.error("[auto-roster] employee_roster_preference fallback lookup unavailable:", (error as Error)?.message);
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Was reading from `wfm_shift` — a third, undocumented shift table (no CREATE TABLE
+ * for it exists in backend/sql/ at all) that nothing writes to. It happened to match
+ * wfm_shift_master's 3 rows only because both were seeded once with the same
+ * hand-picked ids (shift-gen-001/eve-001/ngt-001); wfm.service.ts's shift CRUD has
+ * always written to wfm_shift_master only, so wfm_shift silently stops reflecting
+ * reality the moment anyone adds or edits a shift through the normal admin flow, with
+ * nothing to catch the drift. Redirected to wfm_shift_master, the table that is
+ * actually maintained and the one wfm_roster_assignment.shift_id's own FK constraint
+ * already points at.
+ *
+ * forDate additionally scopes to the version that was actually effective on that
+ * date (migration 1200_shift_versioning.sql) — never a superseded historical
+ * version — degrading to "any active row" on a DB that hasn't had that migration
+ * applied yet.
+ */
+async function getShiftForSlot(slotStart: string, slotEnd: string, forDate?: string): Promise<AnyRow | null> {
+  if (!(await schema.hasTable("wfm_shift_master"))) return null;
+  const cols = await schema.columns("wfm_shift_master");
+  const startCol = cols.has("start_time") ? "start_time" : null;
+  const endCol = cols.has("end_time") ? "end_time" : null;
+  if (!startCol || !endCol) return null;
+
+  const select = ["id"];
+  if (cols.has("shift_code")) select.push("shift_code");
+  if (cols.has("shift_name")) select.push("shift_name");
+  select.push(`${startCol} AS start_time`, `${endCol} AS end_time`);
+  if (cols.has("required_minutes")) select.push("required_minutes");
+
+  const hasVersionCols = cols.has("effective_from") && cols.has("effective_to");
+  const dateFilter = hasVersionCols && forDate
+    ? `AND (effective_from IS NULL OR effective_from <= ?) AND (effective_to IS NULL OR effective_to >= ?)`
+    : "";
+  const dateParams = dateFilter ? [forDate, forDate] : [];
+  const orderByVersion = cols.has("version") ? "version DESC, " : "";
+
+  const [exact] = await db.execute<RowDataPacket[]>(
+    `SELECT ${select.join(", ")} FROM wfm_shift_master
+      WHERE ${startCol} = ? AND ${endCol} = ? AND active_status = 1 ${dateFilter}
+      ORDER BY ${orderByVersion}start_time ASC
+      LIMIT 1`,
+    [`${slotStart}:00`.slice(0, 8), `${slotEnd}:00`.slice(0, 8), ...dateParams]
+  );
+  if (exact[0]) return exact[0] as AnyRow;
+
+  const [fallback] = await db.execute<RowDataPacket[]>(
+    `SELECT ${select.join(", ")} FROM wfm_shift_master WHERE active_status = 1 ${dateFilter}
+      ORDER BY ${orderByVersion}start_time ASC
+      LIMIT 1`,
+    dateParams
+  );
+  return (fallback[0] as AnyRow | undefined) ?? null;
+}
+
+
+async function getRequirementsForPlan(plan: AnyRow, rosterDate?: string): Promise<AnyRow[]> {
+  const params: unknown[] = [plan.process_id ?? "", plan.branch_id ?? ""];
+  let sql = `SELECT * FROM wfm_client_slot_requirement WHERE active_status = 1
+             AND (process_id = ? OR process_id IS NULL)
+             AND (branch_id = ? OR branch_id IS NULL)`;
+
+  if (rosterDate) {
+    const dow = new Date(`${rosterDate}T00:00:00`).getDay();
+    sql += ` AND (requirement_date = ? OR (requirement_date IS NULL AND day_of_week = ?))`;
+    params.push(rosterDate, dow);
+  }
+
+  sql += ` ORDER BY COALESCE(requirement_date, '9999-12-31'), day_of_week, slot_start`;
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  return rows as AnyRow[];
+}
+
+/**
+ * Returns the total required_planned_hc for a process on a specific date
+ * (sum across all slots). Returns null if no slot requirement data exists.
+ * Used to enforce SLA HC floor before granting week-offs.
+ */
+async function getHcFloorForDate(processId: string, date: string): Promise<number | null> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(required_planned_hc), 0) AS hc_floor
+         FROM wfm_slot_requirement
+        WHERE process_id = ? AND requirement_date = ? AND required_planned_hc IS NOT NULL`,
+      [processId, date]
+    );
+    const floor = Number((rows[0] as AnyRow).hc_floor ?? 0);
+    return floor > 0 ? floor : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recomputeCoverage(planId: string): Promise<{ rows: AnyRow[]; score: number; openCriticalGaps: number }> {
+  const plan = await getPlan(planId);
+  await db.execute(`DELETE FROM wfm_roster_coverage_matrix WHERE plan_id = ?`, [planId]);
+  await db.execute(`DELETE FROM wfm_roster_conflict_log WHERE plan_id = ? AND conflict_type IN ('slot_shortage','no_requirement','low_coverage')`, [planId]);
+
+  const dates = dateRange(String(plan.from_date).slice(0, 10), String(plan.to_date).slice(0, 10));
+  const coverageRows: AnyRow[] = [];
+  let requiredTotal = 0;
+  let plannedTotal = 0;
+  let openCriticalGaps = 0;
+
+  const control = await getPlanControl(planId);
+  const shrinkagePct = Number(control.shrinkage_pct ?? 15);
+
+  for (const rosterDate of dates) {
+    const reqs = await getRequirementsForPlan(plan, rosterDate);
+    if (reqs.length === 0) {
+      await insertConflict({
+        plan_id: planId,
+        roster_date: rosterDate,
+        conflict_type: "no_requirement",
+        severity: "high",
+        message: `No client slot requirement configured for ${rosterDate}.`,
+      });
+      continue;
+    }
+
+    for (const req of reqs) {
+      const effectiveShrink = Number(req.shrinkage_pct ?? shrinkagePct);
+      const plannedTarget = plannedWithShrinkage(Number(req.required_hc ?? 0), effectiveShrink);
+      const slotStart = toTime(req.slot_start)!;
+      const slotEnd = toTime(req.slot_end)!;
+      const [countRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS c
+         FROM wfm_roster_assignment
+         WHERE plan_id = ?
+           AND roster_date = ?
+           AND publish_status IN ('draft','published')
+           AND is_week_off = 0
+           AND roster_status NOT IN ('Week Off','Leave','Absent')
+           AND (
+             (shift_start_time IS NULL AND shift_end_time IS NULL)
+             OR (shift_start_time <= ? AND shift_end_time >= ?)
+             OR (shift_start_time = ? AND shift_end_time = ?)
+           )`,
+        [planId, rosterDate, `${slotStart}:00`.slice(0, 8), `${slotEnd}:00`.slice(0, 8), `${slotStart}:00`.slice(0, 8), `${slotEnd}:00`.slice(0, 8)]
+      );
+      const planned = Number((countRows[0] as AnyRow)?.c ?? 0);
+      const gap = Math.max(0, plannedTarget - planned);
+      const coveragePct = safePct(planned, plannedTarget);
+      const bufferHc = Math.max(0, plannedTarget - Number(req.required_hc ?? 0));
+      requiredTotal += plannedTarget;
+      plannedTotal += planned;
+      if (gap > 0) openCriticalGaps++;
+
+      const row = {
+        id: randomUUID(),
+        plan_id: planId,
+        roster_date: rosterDate,
+        slot_start: `${slotStart}:00`.slice(0, 8),
+        slot_end: `${slotEnd}:00`.slice(0, 8),
+        required_hc: Number(req.required_hc ?? 0),
+        planned_hc: planned,
+        buffer_hc: bufferHc,
+        gap_hc: gap,
+        coverage_pct: coveragePct,
+        shrinkage_pct: effectiveShrink,
+      };
+      coverageRows.push(row);
+      await db.execute(
+        `INSERT INTO wfm_roster_coverage_matrix
+         (id, plan_id, roster_date, slot_start, slot_end, required_hc, planned_hc, buffer_hc, gap_hc, coverage_pct, shrinkage_pct)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [row.id, row.plan_id, row.roster_date, row.slot_start, row.slot_end, row.required_hc, row.planned_hc, row.buffer_hc, row.gap_hc, row.coverage_pct, row.shrinkage_pct]
+      );
+
+      if (gap > 0) {
+        await insertConflict({
+          plan_id: planId,
+          roster_date: rosterDate,
+          conflict_type: "slot_shortage",
+          severity: gap >= 3 ? "critical" : "high",
+          message: `${rosterDate} ${slotStart}-${slotEnd}: planned ${planned}, target ${plannedTarget}, gap ${gap}.`,
+        });
+      }
+    }
+  }
+
+  const score = Math.min(100, safePct(Math.min(plannedTotal, requiredTotal), requiredTotal));
+  await db.execute(`UPDATE wfm_roster_plan_control SET last_coverage_score = ?, updated_at = NOW() WHERE plan_id = ?`, [score, planId]);
+  return { rows: coverageRows, score, openCriticalGaps };
+}
+
+export const autoRosterSyncedService = {
+  async introspect() {
+    const tables: Array<{ table: string; exists: boolean; mode: string; columns: string[] }> = [];
+    for (const table of CORE_TABLES) {
+      const exists = await schema.hasTable(table);
+      tables.push({
+        table,
+        exists,
+        mode: exists ? "reuse_existing" : "missing",
+        columns: exists ? Array.from(await schema.columns(table)) : [],
+      });
+    }
+    const newTables = [
+      "wfm_client_slot_requirement",
+      "wfm_roster_plan_control",
+      "wfm_roster_assignment_control",
+      "wfm_roster_coverage_matrix",
+      "wfm_roster_conflict_log",
+      "wfm_roster_change_request",
+      "wfm_roster_event_log",
+      "wfm_roster_approval_log",
+      "wfm_roster_notification_log",
+      "wfm_roster_manager_task",
+      "wfm_roster_acknowledgement",
+    ];
+    for (const table of newTables) {
+      const exists = await schema.hasTable(table);
+      tables.push({
+        table,
+        exists,
+        mode: exists ? "available" : "run_migration_052",
+        columns: exists ? Array.from(await schema.columns(table)) : [],
+      });
+    }
+    return { tables };
+  },
+
+  async masters() {
+    const [processes] = await db.execute<RowDataPacket[]>(
+      await schema.hasTable("process_master")
+        ? `SELECT id, ${((await schema.columns("process_master")).has("process_name") ? "process_name" : "id")} AS process_name FROM process_master ORDER BY process_name`
+        : `SELECT NULL AS id, 'No process_master table found' AS process_name`
+    );
+    const [branches] = await db.execute<RowDataPacket[]>(
+      await schema.hasTable("branch_master")
+        ? `SELECT id, ${((await schema.columns("branch_master")).has("branch_name") ? "branch_name" : "id")} AS branch_name FROM branch_master ORDER BY branch_name`
+        : `SELECT NULL AS id, 'No branch_master table found' AS branch_name`
+    );
+    const [shifts] = await db.execute<RowDataPacket[]>(
+      await schema.hasTable("wfm_shift")
+        ? `SELECT * FROM wfm_shift ORDER BY active_status DESC, start_time ASC`
+        : `SELECT NULL AS id, 'No wfm_shift table found' AS shift_name`
+    );
+    return { processes, branches, shifts };
+  },
+
+  async upsertRequirement(input: SlotRequirementInput, actorId: string) {
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO wfm_client_slot_requirement
+       (id, process_id, branch_id, requirement_date, day_of_week, slot_start, slot_end, required_hc, shrinkage_pct, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.process_id ?? null,
+        input.branch_id ?? null,
+        input.requirement_date ?? null,
+        input.day_of_week ?? null,
+        `${input.slot_start}:00`.slice(0, 8),
+        `${input.slot_end}:00`.slice(0, 8),
+        input.required_hc,
+        input.shrinkage_pct ?? null,
+        actorId,
+      ]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM wfm_client_slot_requirement WHERE id = ?`, [id]);
+    return rows[0] as AnyRow;
+  },
+
+  async listRequirements(
+    filters: { process_id?: string; branch_id?: string },
+    scope?: { sql: string; params: unknown[] }
+  ) {
+    const conds = ["active_status = 1"];
+    const params: unknown[] = [];
+    if (filters.process_id) { conds.push("(process_id = ? OR process_id IS NULL)"); params.push(filters.process_id); }
+    if (filters.branch_id) { conds.push("(branch_id = ? OR branch_id IS NULL)"); params.push(filters.branch_id); }
+    // Apply scope filter if provided (branch_head/process_manager/operations_manager see only their assigned scope)
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM wfm_client_slot_requirement WHERE ${conds.join(" AND ")} ORDER BY requirement_date, day_of_week, slot_start`,
+      params
+    );
+    return rows as AnyRow[];
+  },
+
+  async createPlan(input: CreateAutoRosterPlanInput, actorId: string) {
+    const id = randomUUID();
+    const processName = await getProcessName(input.process_id);
+    const branchName = await getBranchName(input.branch_id);
+    await db.execute(
+      `INSERT INTO wfm_roster_plan
+       (id, plan_name, process_id, branch_id, shift_id, from_date, to_date, required_headcount, created_by)
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+      [
+        id,
+        input.plan_name,
+        input.process_id ?? null,
+        input.branch_id ?? null,
+        input.from_date,
+        input.to_date,
+        input.required_headcount ?? 0,
+        actorId,
+      ]
+    );
+    await db.execute(
+      `INSERT INTO wfm_roster_plan_control
+       (plan_id, planning_mode, shrinkage_pct, approval_status)
+       VALUES (?, 'auto', ?, 'draft')`,
+      [id, input.shrinkage_pct ?? 15]
+    );
+    await logEvent({
+      plan_id: id,
+      event_type: "plan_created",
+      event_title: "Auto roster cycle created",
+      event_message: `${input.plan_name} created for ${processName ?? "selected process"} / ${branchName ?? "selected branch"}.`,
+      target_role: "wfm",
+      process_id: input.process_id ?? null,
+      branch_id: input.branch_id ?? null,
+    });
+    return { ...(await getPlan(id)), control: await getPlanControl(id) };
+  },
+
+  async listPlans(
+    filters: { process_id?: string; branch_id?: string; from_date?: string; to_date?: string },
+    scope?: { sql: string; params: unknown[] }
+  ) {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (filters.process_id) { conds.push("p.process_id = ?"); params.push(filters.process_id); }
+    if (filters.branch_id) { conds.push("p.branch_id = ?"); params.push(filters.branch_id); }
+    if (filters.from_date) { conds.push("p.to_date >= ?"); params.push(filters.from_date); }
+    if (filters.to_date) { conds.push("p.from_date <= ?"); params.push(filters.to_date); }
+    // Apply scope filter if provided (branch_head/process_manager/operations_manager see only their assigned scope)
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT p.*, c.approval_status, c.shrinkage_pct, c.publish_lock_status, c.last_coverage_score, c.notification_status
+       FROM wfm_roster_plan p
+       LEFT JOIN wfm_roster_plan_control c ON c.plan_id = p.id
+       ${where}
+       ORDER BY p.from_date DESC, p.created_at DESC
+       LIMIT 100`,
+      params
+    );
+    return rows as AnyRow[];
+  },
+
+  async generateDraft(planId: string, actorId: string) {
+    const plan = await getPlan(planId);
+    const control = await getPlanControl(planId);
+    if (["published", "locked"].includes(String(control.approval_status))) {
+      throw Object.assign(new Error("Published/locked roster cannot be regenerated."), { statusCode: 409 });
+    }
+
+    // Checked once per run, not once per row: whether migration 1200_shift_versioning.sql
+    // has been applied to this database yet. Degrades to the pre-migration column set
+    // when it hasn't, rather than failing every insert with an unknown-column error.
+    const hasShiftVersionCols = await schema.hasColumn("wfm_roster_assignment", "shift_version_id");
+
+    // Area 2 (minimum rest between shifts) fail-fast: checked BEFORE the destructive
+    // DELETE below, so a config-missing refusal never wipes existing draft data.
+    // isRestPolicyFeatureActive() distinguishes "migration 1210 not applied yet"
+    // (preserve current behavior — no validation at all) from "applied, but nothing
+    // configured at any scope for this process/branch/org" (the fail-closed state the
+    // business explicitly asked for: refuse to generate rather than silently treat the
+    // minimum as zero). Checked once per run against the plan's own process/branch,
+    // not per employee — a wholly-unconfigured policy is a single clear error, not 200
+    // identical per-employee errors buried in the conflict log.
+    const restPolicyFeatureActive = await isRestPolicyFeatureActive();
+    if (restPolicyFeatureActive) {
+      const anyPolicyConfigured = await hasAnyRestPolicyConfigured({
+        processId: plan.process_id, branchId: plan.branch_id, forDate: String(plan.from_date).slice(0, 10),
+      });
+      if (!anyPolicyConfigured) {
+        throw Object.assign(
+          new Error(
+            "No minimum-rest policy is configured for this process, branch, or organization. " +
+            "Configure one in Admin > Roster Controls > Minimum Rest before generating this roster."
+          ),
+          { statusCode: 422, code: "REST_POLICY_MISSING" }
+        );
+      }
+    }
+
+    // This DELETE previously wiped every non-published assignment in the plan
+    // unconditionally, with no check of wfm_roster_assignment_control.change_lock_status
+    // — the column the schema defines specifically so a manual per-employee override
+    // inside a draft plan survives the next "generate". A manager's manual edit was
+    // silently destroyed the moment someone (re)ran generation. 'locked' is not
+    // currently set by any write path, so that clause is a no-op against today's data
+    // — it closes the gap for when it is, without changing current behavior.
+    //
+    // Silent-failure sweep, 2026-08-13 (later same day): this DELETE ran completely
+    // outside roster-lock-guard.ts's reach even though the per-employee
+    // checkEmployeeDateNotLocked call below (in the assignment loop) creates the
+    // appearance that the whole regeneration flow is protected. A payroll-locked
+    // date's existing assignment row could be silently destroyed here — the later
+    // per-employee check only refuses to *recreate* it, which reads as "skipped"
+    // in the conflict log, not "an existing locked record was deleted". Added the
+    // same attendance_daily_record.is_locked signal roster-lock-guard.ts's own
+    // isRosterDateLocked() checks, via NOT EXISTS so a locked row is excluded from
+    // the DELETE outright rather than merely refused re-insertion afterward.
+    await db.execute(
+      `DELETE wra FROM wfm_roster_assignment wra
+        LEFT JOIN wfm_roster_assignment_control wrac ON wrac.assignment_id = wra.id
+        WHERE wra.plan_id = ?
+          AND wra.publish_status <> 'published'
+          AND (wrac.change_lock_status IS NULL OR wrac.change_lock_status <> 'locked')
+          AND NOT EXISTS (
+            SELECT 1 FROM attendance_daily_record adr
+             WHERE adr.employee_id = wra.employee_id
+               AND adr.record_date = wra.roster_date
+               AND adr.is_locked = 1
+          )`,
+      [planId],
+    );
+    await db.execute(
+      `DELETE FROM wfm_roster_assignment_control
+        WHERE plan_id = ? AND change_lock_status <> 'locked'`,
+      [planId],
+    );
+    await db.execute(`DELETE FROM wfm_roster_conflict_log WHERE plan_id = ?`, [planId]);
+
+    const processName = await getProcessName(plan.process_id);
+    const branchName = await getBranchName(plan.branch_id);
+    const dates = dateRange(String(plan.from_date).slice(0, 10), String(plan.to_date).slice(0, 10));
+    const prefs = await getWeekOffPreferences(plan.process_id);
+    // Governance-engine convergence (round 2, 2026-08-13): tier 3-5 of Part
+    // A.1's week-off hierarchy (process/branch/org default) is a single
+    // day-of-week value, so — unlike tier 2's roster_template, which is
+    // indexed by cycle date-position and would need restructuring this
+    // engine's day-of-week-keyed shape to consume — it drops in directly as
+    // a fallback for any employee neither week_off_preference nor
+    // employee_roster_preference resolved. Resolved once per plan, not per
+    // employee. Never a hard block on lookup failure, matching every other
+    // non-critical lookup in this function.
+    const scopeDefault = await resolveWeekOffScopeDefault(plan.process_id, plan.branch_id ?? null).catch((error) => {
+      console.error("[auto-roster] week_off_policy_default lookup unavailable; unresolved employees stay unresolved:", (error as Error)?.message);
+      return null;
+    });
+    const preferredDayFor = (empId: string): number | null => {
+      const explicit = prefs.get(empId);
+      return explicit !== undefined ? explicit : (scopeDefault?.day ?? null);
+    };
+    const shrinkagePct = Number(control.shrinkage_pct ?? 15);
+    const weekoffRules = await loadWeekoffRules(plan.process_id).catch(() => [] as Awaited<ReturnType<typeof loadWeekoffRules>>);
+    const blackoutDates = new Set(
+      weekoffRules
+        .filter((r) => r.rule_type === "blackout_date")
+        .map((r) => {
+          try { return (typeof r.rule_params === "string" ? JSON.parse(r.rule_params) : r.rule_params).blackout as string; }
+          catch { return null; }
+        })
+        .filter(Boolean) as string[]
+    );
+    let created = 0;
+    let skipped = 0;
+
+    for (const rosterDate of dates) {
+      // Skip entirely if this date is a blackout date
+      if (blackoutDates.has(rosterDate)) {
+        await insertConflict({
+          plan_id: planId,
+          roster_date: rosterDate,
+          conflict_type: "blackout_date",
+          severity: "high",
+          message: `${rosterDate} is a blackout date per process week-off rules. No assignments generated.`,
+        });
+        continue;
+      }
+      const dow = new Date(`${rosterDate}T00:00:00`).getDay();
+      const reqs = await getRequirementsForPlan(plan, rosterDate);
+      const pool = await getEmployeePool(plan, rosterDate);
+      const assignedToday = new Set<string>();
+
+      if (reqs.length === 0) {
+        await insertConflict({
+          plan_id: planId,
+          roster_date: rosterDate,
+          conflict_type: "no_requirement",
+          severity: "high",
+          message: `No client slot requirement configured for ${rosterDate} (${dayNames[dow]}).`,
+        });
+        continue;
+      }
+
+      for (const req of reqs) {
+        const effectiveShrink = Number(req.shrinkage_pct ?? shrinkagePct);
+        const target = plannedWithShrinkage(Number(req.required_hc ?? 0), effectiveShrink);
+        const slotStart = toTime(req.slot_start)!;
+        const slotEnd = toTime(req.slot_end)!;
+        const shift = await getShiftForSlot(slotStart, slotEnd, rosterDate);
+        const scheduledMinutes = computeScheduledMinutes(slotStart, slotEnd);
+
+        const candidates = pool
+          .filter((e) => !assignedToday.has(String(e.id)))
+          .sort((a, b) => {
+            const prefA = preferredDayFor(String(a.id)) === dow ? 1 : 0;
+            const prefB = preferredDayFor(String(b.id)) === dow ? 1 : 0;
+            return prefA - prefB || String(a.employee_code ?? a.id).localeCompare(String(b.employee_code ?? b.id));
+          });
+
+        const selected = candidates.slice(0, target);
+        if (selected.length < target) {
+          await insertConflict({
+            plan_id: planId,
+            roster_date: rosterDate,
+            conflict_type: "slot_shortage",
+            severity: "critical",
+            message: `${rosterDate} ${slotStart}-${slotEnd}: eligible pool shortage. Required with shrinkage ${target}, available ${selected.length}.`,
+          });
+        }
+
+        for (const emp of selected) {
+          // Area 3 (2026-08-13): generateDraft() was one of three write paths
+          // to wfm_roster_assignment still missing the shared attendance/
+          // payroll-lock check (roster-lock-guard.ts) — already wired into
+          // manual assignment, manager realignment, and shift-swap apply, but
+          // not here. (This comment previously also claimed the PM
+          // post-publish correction endpoint — changePublishedAssignment(),
+          // below in this file — was already covered; a same-day
+          // silent-failure sweep found no such call actually existed there.
+          // Fixed directly in that function, not by broadening this loop.)
+          // Regeneration already refuses outright once the PLAN itself is
+          // published/locked (the guard at the top of generateDraft), but
+          // that doesn't cover a plan still in draft whose date range has
+          // since had attendance locked for payroll independently (e.g. a
+          // stale unpublished draft regenerated weeks later). Per-employee,
+          // not per-plan, since a plan can span a date range straddling the
+          // lock boundary.
+          const dateLockResult = await checkEmployeeDateNotLocked(db, String(emp.id), rosterDate);
+          if (dateLockResult.blocked) {
+            await insertConflict({
+              plan_id: planId,
+              employee_id: String(emp.id),
+              roster_date: rosterDate,
+              conflict_type: "attendance_payroll_locked",
+              severity: "critical",
+              message: `Employee ${(emp as AnyRow).employee_code ?? emp.id}: ${dateLockResult.error}`,
+            });
+            continue; // not assigned to this slot; the date is off-limits to ordinary regeneration
+          }
+
+          // Area 2: normal automated assignment BLOCKS on insufficient rest — no
+          // silent override path here. restPolicyFeatureActive is false whenever
+          // migration 1210 hasn't been applied, in which case this is a no-op and
+          // behavior is unchanged from before Area 2 existed.
+          if (restPolicyFeatureActive) {
+            const restCheck = await validateMinimumRest(
+              { employeeId: String(emp.id), processId: plan.process_id, branchId: plan.branch_id, forDate: rosterDate },
+              { startTime: slotStart, endTime: slotEnd }
+            );
+            // Shared decision, same as generation and bulk upload. In WARN the employee IS
+            // assigned and a REST_GAP_WARNING is recorded instead of leaving the slot
+            // understaffed; in BLOCK the existing critical conflict is raised and the slot is
+            // skipped exactly as before.
+            const restDecision = await applyRestDecision(restCheck, {
+              employeeId: String(emp.id),
+              rosterDate,
+              planId,
+            });
+            if (!restCheck.ok && !restDecision.allowed) {
+              await insertConflict({
+                plan_id: planId,
+                employee_id: String(emp.id),
+                roster_date: rosterDate,
+                conflict_type: restCheck.reason === "REST_POLICY_MISSING" ? "rest_policy_missing" : "insufficient_rest",
+                severity: "critical",
+                message: restCheck.reason === "REST_POLICY_MISSING"
+                  ? `Employee ${(emp as AnyRow).employee_code ?? emp.id}: no minimum-rest policy resolved for ${rosterDate}. Assignment blocked.`
+                  : `Employee ${(emp as AnyRow).employee_code ?? emp.id}: only ${restCheck.actualRestMinutes}min rest against ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min). Automated assignment blocked${restCheck.canOverride ? " — eligible for manager emergency override." : "."}`,
+              });
+              continue; // not assigned to this slot; leaves the slot understaffed rather than silently violating rest
+            }
+          }
+
+          assignedToday.add(String(emp.id));
+          const assignmentId = randomUUID();
+          // shift_version_id is the SAME id as shift_id here — getShiftForSlot now
+          // resolves against wfm_shift_master, the versioned table, so whatever row
+          // it returned already IS a specific version. Stored under both column
+          // names for backward compatibility: existing joins keep using shift_id
+          // unchanged, new payroll-facing code should prefer shift_version_id.
+          const versionCols = hasShiftVersionCols ? ", shift_version_id, scheduled_minutes" : "";
+          const versionPlaceholders = hasShiftVersionCols ? ", ?, ?" : "";
+          const versionUpdateClause = hasShiftVersionCols
+            ? ", shift_version_id = VALUES(shift_version_id), scheduled_minutes = VALUES(scheduled_minutes)"
+            : "";
+          const versionParams = hasShiftVersionCols ? [shift?.id ?? null, scheduledMinutes] : [];
+          await db.execute(
+            `INSERT INTO wfm_roster_assignment
+             (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status${versionCols})
+             VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft'${versionPlaceholders})
+             ON DUPLICATE KEY UPDATE
+               shift_id = VALUES(shift_id),
+               shift_start_time = VALUES(shift_start_time),
+               shift_end_time = VALUES(shift_end_time),
+               roster_status = VALUES(roster_status),
+               publish_status = 'draft'${versionUpdateClause}`,
+            [
+              assignmentId,
+              emp.id,
+              shift?.id ?? null,
+              planId,
+              rosterDate,
+              `${slotStart}:00`.slice(0, 8),
+              `${slotEnd}:00`.slice(0, 8),
+              branchName,
+              processName,
+              ...versionParams,
+            ]
+          );
+          await db.execute(
+            `INSERT IGNORE INTO wfm_roster_assignment_control
+             (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status)
+             VALUES (?, ?, 'draft_editable', 0, 'not_required')`,
+            [assignmentId, planId]
+          );
+          created++;
+        }
+      }
+
+      // ── HC floor gate: check SLA floor before granting week-offs ────────────
+      const hcFloor = await getHcFloorForDate(plan.process_id, rosterDate);
+      const currentlyRostered = assignedToday.size;
+
+      for (const emp of pool.filter((e) => !assignedToday.has(String(e.id)) && preferredDayFor(String(e.id)) === dow)) {
+        const weekoffGranted = skipped; // already granted week-offs on this date so far
+
+        // If floor is set and granting one more would leave us below floor → deny
+        if (hcFloor !== null && (currentlyRostered - weekoffGranted - 1) < hcFloor) {
+          await insertConflict({
+            plan_id: planId,
+            employee_id: String(emp.id),
+            roster_date: rosterDate,
+            conflict_type: "hc_floor_weekoff_denied",
+            severity: "high",
+            message: `Week-off denied for employee ${(emp as AnyRow).employee_code ?? emp.id} on ${rosterDate}: SLA floor requires ${hcFloor} agents, granting would leave ${currentlyRostered - weekoffGranted - 1}.`,
+          });
+          // Re-assign this employee to default shift to maintain coverage
+          const anyShift = await getShiftForSlot("00:00", "23:59", rosterDate).catch(() => null);
+          const deniedAssignmentId = randomUUID();
+          await db.execute(
+            `INSERT INTO wfm_roster_assignment
+             (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status)
+             VALUES (?, ?, ?, ?, ?, 'Rostered', NULL, NULL, ?, ?, 'draft')
+             ON DUPLICATE KEY UPDATE roster_status = 'Rostered', publish_status = 'draft'`,
+            [deniedAssignmentId, emp.id, anyShift?.id ?? null, planId, rosterDate, branchName, processName]
+          );
+          await db.execute(
+            `INSERT IGNORE INTO wfm_roster_assignment_control
+             (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status)
+             VALUES (?, ?, 'draft_editable', 0, 'not_required')`,
+            [deniedAssignmentId, planId]
+          );
+          created++;
+          continue;
+        }
+
+        const assignmentId = randomUUID();
+        await db.execute(
+          `INSERT INTO wfm_roster_assignment
+           (id, employee_id, shift_id, plan_id, roster_date, roster_status, is_week_off, shift_start_time, shift_end_time, branch_name, process_name, publish_status)
+           VALUES (?, ?, NULL, ?, ?, 'Week Off', 1, NULL, NULL, ?, ?, 'draft')
+           ON DUPLICATE KEY UPDATE roster_status = 'Week Off', is_week_off = 1, shift_id = NULL, shift_start_time = NULL, shift_end_time = NULL, publish_status = 'draft'`,
+          [assignmentId, emp.id, planId, rosterDate, branchName, processName]
+        );
+        await db.execute(
+          `INSERT IGNORE INTO wfm_roster_assignment_control
+           (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status)
+           VALUES (?, ?, 'draft_editable', 0, 'not_required')`,
+          [assignmentId, planId]
+        );
+        skipped++;
+      }
+    }
+
+    const coverage = await recomputeCoverage(planId);
+    await db.execute(
+      `UPDATE wfm_roster_plan_control SET approval_status = 'generated', generated_at = NOW(), last_coverage_score = ?, updated_at = NOW() WHERE plan_id = ?`,
+      [coverage.score, planId]
+    );
+    await logEvent({
+      plan_id: planId,
+      event_type: "draft_generated",
+      event_title: "Auto roster draft generated",
+      event_message: `Draft generated with ${created} shift assignments. Coverage score ${coverage.score}%.`,
+      target_role: "wfm",
+      process_id: plan.process_id,
+      branch_id: plan.branch_id,
+    });
+    return { created, week_off_rows: skipped, coverage_score: coverage.score, open_critical_gaps: coverage.openCriticalGaps };
+  },
+
+  async getCoverage(planId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM wfm_roster_coverage_matrix WHERE plan_id = ? ORDER BY roster_date, slot_start`,
+      [planId]
+    );
+    return rows as AnyRow[];
+  },
+
+  async getConflicts(planId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      // the timestamp column on this table is detected_at; created_at does not
+      // exist, and this query is not wrapped, so it 500'd the conflicts panel
+      `SELECT * FROM wfm_roster_conflict_log WHERE plan_id = ? ORDER BY FIELD(severity,'critical','high','medium','info'), detected_at DESC`,
+      [planId]
+    );
+    return rows as AnyRow[];
+  },
+
+  async getAssignments(planId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.*, ac.change_lock_status, ac.acknowledgement_required, ac.acknowledgement_status, e.employee_code,
+              COALESCE(e.full_name, TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')))) AS employee_name
+       FROM wfm_roster_assignment a
+       LEFT JOIN wfm_roster_assignment_control ac ON ac.assignment_id = a.id
+       LEFT JOIN employees e ON e.id = a.employee_id
+       WHERE a.plan_id = ?
+       ORDER BY a.roster_date, a.shift_start_time, e.employee_code`,
+      [planId]
+    );
+    return rows as AnyRow[];
+  },
+
+  async submitForApproval(planId: string, actorId: string) {
+    const coverage = await recomputeCoverage(planId);
+    await db.execute(
+      `UPDATE wfm_roster_plan_control SET approval_status = 'submitted', submitted_by = ?, submitted_at = NOW(), last_coverage_score = ? WHERE plan_id = ?`,
+      [actorId, coverage.score, planId]
+    );
+    await db.execute(
+      `INSERT INTO wfm_roster_approval_log (id, plan_id, action, action_by, action_role, remarks, coverage_snapshot_json)
+       VALUES (?, ?, 'submitted', ?, 'wfm', 'Submitted to Process Manager for approval', ?)`,
+      [randomUUID(), planId, actorId, JSON.stringify({ score: coverage.score, openCriticalGaps: coverage.openCriticalGaps })]
+    );
+    await logEvent({
+      plan_id: planId,
+      event_type: "submitted_for_pm_approval",
+      event_title: "Roster submitted for Process Manager approval",
+      event_message: `Coverage score ${coverage.score}%, open critical gaps ${coverage.openCriticalGaps}.`,
+      severity: coverage.openCriticalGaps ? "high" : "info",
+      target_role: "process_manager",
+    });
+    return { approval_status: "submitted", ...coverage };
+  },
+
+  async approve(planId: string, actorId: string, remarks?: string) {
+    const coverage = await recomputeCoverage(planId);
+    if (coverage.openCriticalGaps > 0) {
+      throw Object.assign(new Error("Cannot approve roster while critical coverage gaps are open."), { statusCode: 409 });
+    }
+    await db.execute(
+      `UPDATE wfm_roster_plan_control SET approval_status = 'approved', approved_by = ?, approved_at = NOW(), last_coverage_score = ? WHERE plan_id = ?`,
+      [actorId, coverage.score, planId]
+    );
+    await db.execute(
+      `INSERT INTO wfm_roster_approval_log (id, plan_id, action, action_by, action_role, remarks, coverage_snapshot_json)
+       VALUES (?, ?, 'approved', ?, 'process_manager', ?, ?)`,
+      [randomUUID(), planId, actorId, remarks ?? "Approved by Process Manager", JSON.stringify({ score: coverage.score })]
+    );
+    await logEvent({
+      plan_id: planId,
+      event_type: "pm_approved",
+      event_title: "Process Manager approved roster",
+      event_message: remarks ?? "Roster approved for publish.",
+      target_role: "wfm",
+    });
+    // Work Inbox: the roster is now approved but not yet published — publish() is a
+    // separate action/role step, so surface it as an action item. Fired only here, at the
+    // exact moment approval_status becomes 'approved'; never a periodic backfill scan. See
+    // triggerRosterPublishPending's doc comment for the live-data verification behind this.
+    try {
+      const approvedPlan = await getPlan(planId);
+      await triggerRosterPublishPending(planId, String(approvedPlan.plan_name), approvedPlan.branch_id ?? undefined);
+    } catch {
+      // Non-fatal — work item creation failure should not block roster approval
+    }
+    return { approval_status: "approved", coverage_score: coverage.score };
+  },
+
+  async reject(planId: string, actorId: string, remarks: string) {
+    await db.execute(
+      `UPDATE wfm_roster_plan_control SET approval_status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_remarks = ? WHERE plan_id = ?`,
+      [actorId, remarks, planId]
+    );
+    await db.execute(
+      `INSERT INTO wfm_roster_approval_log (id, plan_id, action, action_by, action_role, remarks)
+       VALUES (?, ?, 'rejected', ?, 'process_manager', ?)`,
+      [randomUUID(), planId, actorId, remarks]
+    );
+    await logEvent({
+      plan_id: planId,
+      event_type: "pm_rejected",
+      event_title: "Process Manager returned roster",
+      event_message: remarks,
+      severity: "medium",
+      target_role: "wfm",
+    });
+    return { approval_status: "rejected" };
+  },
+
+  async publish(planId: string, actorId: string) {
+    const plan = await getPlan(planId);
+    const control = await getPlanControl(planId);
+    if (control.approval_status !== "approved") {
+      throw Object.assign(new Error("Only Process Manager approved roster can be published."), { statusCode: 409 });
+    }
+    const coverage = await recomputeCoverage(planId);
+    if (coverage.openCriticalGaps > 0) {
+      throw Object.assign(new Error("Cannot publish roster while critical coverage gaps are open."), { statusCode: 409 });
+    }
+    await db.execute(`UPDATE wfm_roster_plan SET plan_status = 'published' WHERE id = ?`, [planId]);
+    await db.execute(`UPDATE wfm_roster_assignment SET publish_status = 'published' WHERE plan_id = ?`, [planId]);
+    await db.execute(
+      `UPDATE wfm_roster_plan_control
+       SET approval_status = 'published', publish_lock_status = 'published_locked', notification_status = 'pending', updated_at = NOW()
+       WHERE plan_id = ?`,
+      [planId]
+    );
+    await db.execute(
+      `UPDATE wfm_roster_assignment_control
+       SET change_lock_status = 'pm_change_only', acknowledgement_required = 1, acknowledgement_status = 'pending', last_notification_status = 'pending'
+       WHERE plan_id = ?`,
+      [planId]
+    );
+    await db.execute(
+      `INSERT INTO wfm_roster_approval_log (id, plan_id, action, action_by, action_role, remarks, coverage_snapshot_json)
+       VALUES (?, ?, 'published', ?, 'process_manager', 'Published with locked notifications', ?)`,
+      [randomUUID(), planId, actorId, JSON.stringify({ score: coverage.score })]
+    );
+
+    const assignments = await this.getAssignments(planId);
+    for (const a of assignments) {
+      await queueLockedNotification({
+        plan_id: planId,
+        assignment_id: a.id,
+        employee_id: a.employee_id,
+        recipient_email: a.email ?? null,
+        notification_type: "roster_published",
+        subject: `Roster published: ${String(plan.from_date).slice(0, 10)} to ${String(plan.to_date).slice(0, 10)}`,
+        body_preview: `Your roster for ${a.roster_date} is ${a.roster_status}${a.shift_start_time ? ` (${toTime(a.shift_start_time)}-${toTime(a.shift_end_time)})` : ""}. Acknowledgement is required.`,
+      });
+    }
+    await logEvent({
+      plan_id: planId,
+      event_type: "published_locked",
+      event_title: "Roster published and locked",
+      event_message: `Roster published. ${assignments.length} locked employee notifications queued.`,
+      target_role: "employee",
+      process_id: plan.process_id,
+      branch_id: plan.branch_id,
+    });
+    return { approval_status: "published", notifications_queued: assignments.length, coverage_score: coverage.score };
+  },
+
+  async changePublishedAssignment(input: {
+    assignment_id: string;
+    new_shift_id?: string | null;
+    new_shift_start_time?: string | null;
+    new_shift_end_time?: string | null;
+    new_roster_status?: string;
+    change_category?: "shift_change" | "weekoff_change" | "leave_adjustment" | "emergency" | "support_staff_update";
+    change_reason: string;
+    /** Round 2 (2026-08-13): only meaningful when the resolved rest policy's
+     *  allows_emergency_override=1 — otherwise insufficient rest blocks the
+     *  change regardless. Callers reaching this function are already
+     *  route-gated to admin/process_manager, so unlike bulk-upload this path
+     *  does support an override rather than a hard block. */
+    restOverrideReason?: string | null;
+  }, actorId: string) {
+    if (!input.change_reason || input.change_reason.trim().length < 8) {
+      throw Object.assign(new Error("Change reason is mandatory and must be meaningful."), { statusCode: 400 });
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM wfm_roster_assignment WHERE id = ? LIMIT 1`, [input.assignment_id]);
+    const old = rows[0] as AnyRow | undefined;
+    if (!old) throw Object.assign(new Error("Assignment not found"), { statusCode: 404 });
+    const control = await getPlanControl(old.plan_id);
+    if (control.approval_status !== "published") {
+      throw Object.assign(new Error("PM-only change control applies only after roster is published. Draft changes should use draft edit."), { statusCode: 409 });
+    }
+
+    // Silent-failure sweep, 2026-08-13 (later same day): this is the one place in the
+    // codebase that can rewrite a LIVE, PUBLISHED assignment's shift/times — a stale
+    // comment a few lines below already claimed roster-lock-guard.ts was "already wired
+    // into ... the PM post-publish correction endpoint", but no call existed anywhere in
+    // this function. A payroll-locked date's shift/time could be silently overwritten via
+    // this endpoint with the change fully queued as a normal, sanctioned notification.
+    // Added the same guard every other schedule-mutating write path in this program uses.
+    const dateLockResult = await checkEmployeeDateNotLocked(db, String(old.employee_id), String(old.roster_date).slice(0, 10));
+    if (dateLockResult.blocked) {
+      throw Object.assign(new Error(dateLockResult.error), { statusCode: 409, code: "ROSTER_DATE_LOCKED" });
+    }
+
+    const changeId = randomUUID();
+    const impactBefore = await recomputeCoverage(old.plan_id);
+    const newStatus = input.new_roster_status ?? old.roster_status;
+    const newStart = input.new_shift_start_time ? `${input.new_shift_start_time}:00`.slice(0, 8) : old.shift_start_time;
+    const newEnd = input.new_shift_end_time ? `${input.new_shift_end_time}:00`.slice(0, 8) : old.shift_end_time;
+
+    // Round 2 (2026-08-13) minimum-rest audit finding: this endpoint is the
+    // one place in the codebase that can change a LIVE, PUBLISHED
+    // assignment's shift/times — the same category of write generateDraft()
+    // (this file's own initial-generation path, a few hundred lines above)
+    // already validates — but it never called into rest-policy.service.ts at
+    // all. Only runs when the shift/time is actually changing (a pure
+    // status/category change reuses the already-scheduled, already-
+    // validated times) and the feature is active (migration 1210 applied).
+    const shiftIsChanging = Boolean(input.new_shift_id || input.new_shift_start_time || input.new_shift_end_time);
+    if (shiftIsChanging && newStart && newEnd && (await isRestPolicyFeatureActive())) {
+      // Employee's own process_id/branch_id, not just employeeId/org — without
+      // this, a process- or branch-scoped policy could never resolve here
+      // even though every other Area 2 write path (generateDraft, manual
+      // assignment, both bulk-upload paths, the governance sync bridge) does
+      // pass it, silently falling back to organization-only for this one
+      // endpoint. wfm_roster_assignment only carries denormalized
+      // branch_name/process_name strings, not the ids resolveRestPolicy needs.
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1", [old.employee_id]
+      );
+      const emp = empRows[0] as { process_id?: string | null; branch_id?: string | null } | undefined;
+      const restCheck = await validateMinimumRest(
+        { employeeId: String(old.employee_id), processId: emp?.process_id ?? null, branchId: emp?.branch_id ?? null, forDate: String(old.roster_date).slice(0, 10) },
+        { startTime: String(newStart).slice(0, 5), endTime: String(newEnd).slice(0, 5) },
+        input.assignment_id
+      );
+      if (!restCheck.ok) {
+        if (restCheck.reason === "REST_POLICY_MISSING" || !restCheck.canOverride || !input.restOverrideReason) {
+          throw Object.assign(
+            new Error(
+              restCheck.reason === "REST_POLICY_MISSING"
+                ? "No minimum-rest policy is configured for this employee/process/branch/organization — cannot verify this change is safe."
+                : `This change leaves only ${restCheck.actualRestMinutes} minute(s) of rest against the ${restCheck.against} shift (minimum required: ${restCheck.requiredRestMinutes}).`
+            ),
+            { statusCode: 409, code: restCheck.reason }
+          );
+        }
+        const neighbor = restCheck.neighborShift!;
+        const candidateStartAt = `${String(old.roster_date).slice(0, 10)} ${String(newStart).slice(0, 5)}:00`;
+        const candidateEndAt = `${String(old.roster_date).slice(0, 10)} ${String(newEnd).slice(0, 5)}:00`;
+        const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
+        await logRestOverride({
+          employeeId: String(old.employee_id),
+          rosterDate: String(old.roster_date).slice(0, 10),
+          previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
+          nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
+          actualRestMinutes: restCheck.actualRestMinutes!,
+          requiredRestMinutes: restCheck.requiredRestMinutes!,
+          policyId: restCheck.policy?.id ?? null,
+          source: "manual_assignment",
+          reason: input.restOverrideReason!,
+          requestedBy: actorId,
+          approvedBy: actorId,
+        });
+      }
+    }
+
+    await db.execute(
+      `UPDATE wfm_roster_assignment
+       SET shift_id = ?, shift_start_time = ?, shift_end_time = ?, roster_status = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [input.new_shift_id ?? old.shift_id ?? null, newStart, newEnd, newStatus, input.assignment_id]
+    );
+
+    const impactAfter = await recomputeCoverage(old.plan_id);
+    const impact = {
+      beforeScore: impactBefore.score,
+      afterScore: impactAfter.score,
+      beforeCriticalGaps: impactBefore.openCriticalGaps,
+      afterCriticalGaps: impactAfter.openCriticalGaps,
+    };
+
+    await db.execute(
+      `INSERT INTO wfm_roster_change_request
+       (id, plan_id, assignment_id, employee_id, roster_date, old_shift_id, new_shift_id,
+        old_shift_start_time, old_shift_end_time, new_shift_start_time, new_shift_end_time,
+        old_roster_status, new_roster_status, change_category, change_reason,
+        impact_summary_json, requested_by, approved_by, status, notification_locked, notification_status, approved_at, applied_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied', 1, 'pending', NOW(), NOW())`,
+      [
+        changeId,
+        old.plan_id,
+        old.id,
+        old.employee_id,
+        String(old.roster_date).slice(0, 10),
+        old.shift_id,
+        input.new_shift_id ?? old.shift_id ?? null,
+        old.shift_start_time,
+        old.shift_end_time,
+        newStart,
+        newEnd,
+        old.roster_status,
+        newStatus,
+        input.change_category ?? "shift_change",
+        input.change_reason,
+        JSON.stringify(impact),
+        actorId,
+        actorId,
+      ]
+    );
+
+    await db.execute(
+      `UPDATE wfm_roster_assignment_control
+       SET last_change_request_id = ?, acknowledgement_required = 1, acknowledgement_status = 'pending', last_notification_status = 'pending'
+       WHERE assignment_id = ?`,
+      [changeId, input.assignment_id]
+    );
+
+    await queueLockedNotification({
+      plan_id: old.plan_id,
+      assignment_id: old.id,
+      change_request_id: changeId,
+      employee_id: old.employee_id,
+      notification_type: "roster_changed",
+      subject: "Roster changed - acknowledgement required",
+      body_preview: `Roster for ${String(old.roster_date).slice(0, 10)} changed from ${old.roster_status} ${toTime(old.shift_start_time) ?? ""}-${toTime(old.shift_end_time) ?? ""} to ${newStatus} ${toTime(newStart) ?? ""}-${toTime(newEnd) ?? ""}. Reason: ${input.change_reason}`,
+    });
+    await logEvent({
+      plan_id: old.plan_id,
+      assignment_id: old.id,
+      event_type: "published_roster_changed",
+      event_title: "Published roster changed by Process Manager",
+      event_message: `Roster changed with locked notification. Reason: ${input.change_reason}`,
+      severity: impactAfter.openCriticalGaps > impactBefore.openCriticalGaps ? "high" : "medium",
+      target_employee_id: old.employee_id,
+    });
+    return { change_id: changeId, impact };
+  },
+
+  async queueManagerTasks(planId: string, actorId: string) {
+    const plan = await getPlan(planId);
+    const empCols = await schema.columns("employees");
+    const managerCol = empCols.has("manager_employee_id") ? "manager_employee_id" : empCols.has("reporting_manager_id") ? "reporting_manager_id" : null;
+    const designationCol = empCols.has("designation_name") ? "designation_name" : empCols.has("designation") ? "designation" : null;
+
+    if (!managerCol) {
+      await insertConflict({
+        plan_id: planId,
+        conflict_type: "manager_mapping_missing",
+        severity: "high",
+        message: "Support staff manager mapping column not found in employees table.",
+      });
+      return { created: 0, reason: "manager_mapping_missing" };
+    }
+
+    const conds: string[] = [`${managerCol} IS NOT NULL`];
+    const params: unknown[] = [];
+    if (empCols.has("process_id") && plan.process_id) { conds.push("process_id = ?"); params.push(plan.process_id); }
+    if (empCols.has("branch_id") && plan.branch_id) { conds.push("branch_id = ?"); params.push(plan.branch_id); }
+    if (empCols.has("active_status")) conds.push("active_status = 1");
+    if (designationCol) {
+      conds.push(`LOWER(COALESCE(${designationCol},'')) REGEXP 'support|qa|trainer|wfm|mis|hr|admin|tl|team lead|manager'`);
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${managerCol} AS manager_employee_id, COUNT(*) AS support_staff_count
+       FROM employees
+       WHERE ${conds.join(" AND ")}
+       GROUP BY ${managerCol}`,
+      params
+    );
+
+    let created = 0;
+    for (const r of rows as AnyRow[]) {
+      const taskId = randomUUID();
+      await db.execute(
+        `INSERT INTO wfm_roster_manager_task
+         (id, plan_id, manager_employee_id, support_staff_count, due_at, status, notes)
+         VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR), 'email_queued', 'Manager must update support staff roster.')
+         ON DUPLICATE KEY UPDATE support_staff_count = VALUES(support_staff_count), status = 'email_queued', last_email_sent_at = NOW()`,
+        [taskId, planId, r.manager_employee_id, Number(r.support_staff_count ?? 0)]
+      );
+      await queueLockedNotification({
+        plan_id: planId,
+        employee_id: r.manager_employee_id,
+        notification_type: "support_roster_update_required",
+        subject: "Support staff roster update required",
+        body_preview: `Please update support staff roster for plan ${plan.plan_name}. Due within 24 hours.`,
+      });
+      created++;
+    }
+
+    await logEvent({
+      plan_id: planId,
+      event_type: "support_manager_tasks_queued",
+      event_title: "Support staff manager tasks queued",
+      event_message: `${created} manager task(s) queued by ${actorId}.`,
+      target_role: "process_manager",
+    });
+    return { created };
+  },
+
+  async listEvents(planId?: string, since?: string) {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (planId) { conds.push("plan_id = ?"); params.push(planId); }
+    if (since) { conds.push("created_at > ?"); params.push(since); }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM wfm_roster_event_log ${where} ORDER BY created_at DESC LIMIT 100`,
+      params
+    );
+    return rows as AnyRow[];
+  },
+
+  async listApprovalLog(planId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM wfm_roster_approval_log WHERE plan_id = ? ORDER BY created_at DESC`,
+      [planId]
+    );
+    return rows as AnyRow[];
+  },
+
+  async listChangeRequests(planId: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM wfm_roster_change_request WHERE plan_id = ? ORDER BY created_at DESC`,
+      [planId]
+    );
+    return rows as AnyRow[];
+  },
+
+  async myRoster(employeeId: string | null, fromDate?: string, toDate?: string) {
+    if (!employeeId) throw Object.assign(new Error("No employee record mapped to this user."), { statusCode: 403 });
+    const conds = ["a.employee_id = ?"];
+    const params: unknown[] = [employeeId];
+    if (fromDate) { conds.push("a.roster_date >= ?"); params.push(fromDate); }
+    if (toDate) { conds.push("a.roster_date <= ?"); params.push(toDate); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.*, ac.acknowledgement_required, ac.acknowledgement_status
+       FROM wfm_roster_assignment a
+       LEFT JOIN wfm_roster_assignment_control ac ON ac.assignment_id = a.id
+       WHERE ${conds.join(" AND ")}
+       ORDER BY a.roster_date ASC`,
+      params
+    );
+    return rows as AnyRow[];
+  },
+
+  async acknowledge(assignmentId: string, employeeId: string | null, remarks?: string) {
+    if (!employeeId) throw Object.assign(new Error("No employee record mapped to this user."), { statusCode: 403 });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM wfm_roster_assignment WHERE id = ? AND employee_id = ? LIMIT 1`,
+      [assignmentId, employeeId]
+    );
+    if (!rows[0]) throw Object.assign(new Error("Roster assignment not found for logged-in employee."), { statusCode: 404 });
+
+    const [controlRows] = await db.execute<RowDataPacket[]>(
+      `SELECT last_change_request_id FROM wfm_roster_assignment_control WHERE assignment_id = ? LIMIT 1`,
+      [assignmentId]
+    );
+    const changeRequestId = (controlRows[0] as AnyRow | undefined)?.last_change_request_id ?? null;
+
+    await db.execute(
+      `INSERT INTO wfm_roster_acknowledgement (id, assignment_id, change_request_id, employee_id, acknowledgement_type, remarks)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE acknowledged_at = NOW(), remarks = VALUES(remarks)`,
+      [randomUUID(), assignmentId, changeRequestId, employeeId, changeRequestId ? "change" : "publish", remarks ?? null]
+    );
+    await db.execute(
+      `UPDATE wfm_roster_assignment_control SET acknowledgement_status = 'acknowledged', updated_at = NOW() WHERE assignment_id = ?`,
+      [assignmentId]
+    );
+    return { acknowledged: true };
+  },
+
+  // Helper methods for scope resolution
+  async getPlanById(planId: string) {
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, process_id, branch_id FROM wfm_roster_plan WHERE id = ? LIMIT 1`,
+      [planId]
+    );
+    return (rows[0] as AnyRow | undefined) ?? null;
+  },
+
+  async getAssignmentById(assignmentId: string) {
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ra.id, rp.process_id, rp.branch_id
+       FROM wfm_roster_assignment ra
+       JOIN wfm_roster_plan rp ON rp.id = ra.plan_id
+       WHERE ra.id = ? LIMIT 1`,
+      [assignmentId]
+    );
+    return (rows[0] as AnyRow | undefined) ?? null;
+  },
+
+  async getScheduleConfig(): Promise<{ process_id: string; auto_schedule_enabled: number; auto_schedule_day_of_week: number }[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT process_id, auto_schedule_enabled, auto_schedule_day_of_week
+       FROM wfm_process_planning_rule WHERE is_active = 1`
+    ).catch(() => [[]] as any);
+    return (rows as RowDataPacket[]).map((r) => ({
+      process_id: r.process_id as string,
+      auto_schedule_enabled: Number(r.auto_schedule_enabled ?? 0),
+      auto_schedule_day_of_week: Number(r.auto_schedule_day_of_week ?? 0),
+    }));
+  },
+
+  async setScheduleConfig(processId: string, enabled: boolean, dayOfWeek: number): Promise<void> {
+    const dow = Math.max(0, Math.min(6, Math.floor(dayOfWeek)));
+    await db.execute(
+      `UPDATE wfm_process_planning_rule
+       SET auto_schedule_enabled = ?, auto_schedule_day_of_week = ?
+       WHERE process_id = ? AND is_active = 1`,
+      [enabled ? 1 : 0, dow, processId]
+    );
+  },
+
+  async getHealthSummary(scope?: { sql: string; params: unknown[] }): Promise<{ total_plans: number; pending_approval: number; best_coverage_score: number | null; open_critical_gaps: number }> {
+    // Build scope condition for branch_head/process_manager/operations_manager
+    const scopeCond = scope && scope.sql !== "1=1" ? `AND (${scope.sql})` : "";
+    const scopeParams = scope && scope.sql !== "1=1" ? scope.params : [];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT p.id)                                                      AS total_plans,
+         SUM(CASE WHEN c.approval_status IN ('generated','submitted') THEN 1 ELSE 0 END) AS pending_approval,
+         MAX(c.last_coverage_score)                                                AS best_coverage_score,
+         SUM(CASE WHEN cl.severity = 'critical' AND cl.resolution_status = 'open' THEN 1 ELSE 0 END) AS open_critical_gaps
+       FROM wfm_roster_plan p
+       LEFT JOIN wfm_roster_plan_control c  ON c.plan_id  = p.id
+       LEFT JOIN wfm_roster_conflict_log cl ON cl.plan_id = p.id
+       WHERE p.from_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) ${scopeCond}`,
+      scopeParams
+      // open_critical_gaps falls back to null, not 0. The query works today,
+      // but if it ever stops, "0 open critical gaps" asserts that roster
+      // coverage is sound at exactly the moment nothing is known about it.
+    ).catch(() => [[{ total_plans: null, pending_approval: null, best_coverage_score: null, open_critical_gaps: null }]] as any);
+    const r = rows[0] as AnyRow;
+    return {
+      total_plans: Number(r.total_plans ?? 0),
+      pending_approval: Number(r.pending_approval ?? 0),
+      best_coverage_score: r.best_coverage_score != null ? Number(r.best_coverage_score) : null,
+      open_critical_gaps: Number(r.open_critical_gaps ?? 0),
+    };
+  },
+};
+
+export async function logAutoScheduleEvent(input: {
+  plan_id?: string | null;
+  process_id?: string | null;
+  event_type: string;
+  event_title: string;
+  event_message: string;
+  severity?: "info" | "medium" | "high" | "critical";
+}): Promise<void> {
+  await logEvent({ ...input });
+}

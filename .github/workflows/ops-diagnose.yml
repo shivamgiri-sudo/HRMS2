@@ -1,0 +1,64 @@
+name: Ops Diagnose (manual, read-only)
+
+# One-off, read-only diagnostic for a live incident. Runs entirely on the self-hosted
+# production runner so it can be checked when a developer machine cannot reach the
+# server directly (network path issue unrelated to the app). Reads pm2 status and the
+# tail of the backend logs, and probes the auth endpoint over localhost — writes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-diagnose-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose production backend
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+
+    steps:
+      - name: pm2 status
+        shell: bash
+        run: pm2 jlist | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const j=JSON.parse(d);for(const p of j){console.log(p.name, p.pm2_env.status, 'restarts='+p.pm2_env.restart_time, 'uptime='+new Date(p.pm2_env.pm_uptime).toISOString())}})"
+
+      - name: Backend error log tail (last 80 lines)
+        shell: bash
+        run: |
+          tail -n 80 /var/www/HRMS2/backend/logs/backend-err.log || echo "no err log found"
+
+      - name: Backend out log tail (last 40 lines)
+        shell: bash
+        run: |
+          tail -n 40 /var/www/HRMS2/backend/logs/backend-out.log || echo "no out log found"
+
+      - name: Probe /api/health over localhost
+        shell: bash
+        run: |
+          curl -sS -H "Host: mcnhrms.teammas.in" https://127.0.0.1/api/health -k -w "\nHTTP_STATUS:%{http_code}\n" || true
+
+      - name: Probe /api/auth/login over localhost (expect a clean 400/401 JSON, not HTML)
+        shell: bash
+        run: |
+          curl -sS -H "Host: mcnhrms.teammas.in" -H "Content-Type: application/json" \
+            -X POST https://127.0.0.1/api/auth/login -d '{}' -k -w "\nHTTP_STATUS:%{http_code}\n" || true
+
+      - name: Frontend deploy history — what is actually live and when did it land
+        shell: bash
+        run: |
+          echo "--- live frontend dir ---"
+          ls -la /var/www/HRMS2/frontend/dist 2>&1 | head -5 || ls -la /var/www/HRMS2/dist 2>&1 | head -5 || true
+          echo "--- recent deploy backups (name = swap timestamp) ---"
+          ls -1t /var/www/HRMS2/.deploy-backups 2>&1 | head -10 || true
+          echo "--- git HEAD actually checked out under the app tree ---"
+          cd /var/www/HRMS2 && git log -1 --format="%H %ci %s" 2>&1 || true
+          echo "--- chunk actually present in the live frontend index.html ---"
+          grep -oE 'assets/index-[a-zA-Z0-9_-]+\.js' /var/www/HRMS2/frontend/dist/index.html 2>&1 \
+            || grep -oE 'assets/index-[a-zA-Z0-9_-]+\.js' /var/www/HRMS2/dist/index.html 2>&1 || true
+          echo "--- does the on-disk chunk contain 'Change Branch'? ---"
+          find /var/www/HRMS2 -name "NativeHROnboardingRequests-*.js" -exec grep -l "Change Branch" {} \; 2>&1 || echo "not found on disk"

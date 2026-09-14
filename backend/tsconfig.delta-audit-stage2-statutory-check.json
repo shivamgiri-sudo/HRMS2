@@ -1,0 +1,11 @@
+{
+  // Typecheck for Stage 2's statutory-register fixes (2026-08-14 delta-audit):
+  // pf-ecr-format EPS mislabeling + ONROLL filter parity.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/reporting/executors/statutory.executor.ts"
+  ]
+}

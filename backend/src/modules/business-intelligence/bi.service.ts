@@ -1,0 +1,869 @@
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { querySource } from '../../db/sourceDb.js';
+import { getLegacyPool } from '../../db/legacyDb.js';
+import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
+import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
+import { logger } from '../../lib/logger.js';
+import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from '../../shared/attendanceStatus.js';
+
+export interface InterventionFlag {
+  type: string;
+  severity: 'critical' | 'warning' | 'info';
+  detail: string;
+  action: string;
+}
+
+// ─── 3a: Daily Operations Pulse ──────────────────────────────────────────────
+
+export interface DailyOpsPulse {
+  date: string;
+  agents_scheduled: number;
+  agents_logged_in: number;
+  login_adherence_pct: number | null;
+  avg_calls_per_agent: number;
+  total_calls: number;
+  avg_aht_seconds: number;
+  avg_shrinkage_pct: number;
+  shrinkage_breakdown: { lunch: number; bio: number; training: number; qa: number; idle: number };
+  // Org-wide weighted figure above is the capacity/forecasting number.
+  // Per-agent-average variant kept for coaching use ("is the typical agent
+  // over-using breaks") — a different question, deliberately not conflated
+  // into the primary field. See DECIDED comment in getDailyOpsPulse.
+  avg_shrinkage_pct_per_agent: number;
+  shrinkage_breakdown_per_agent: { lunch: number; bio: number; training: number; qa: number; idle: number };
+  top_process: { name: string; calls: number; agent_count: number } | null;
+  intervention_flags: InterventionFlag[];
+}
+
+export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[], processIds?: string[]): Promise<DailyOpsPulse> {
+  const date = targetDate || getIstDateString(0);
+  // branchIds/processIds accepted for future scoped queries; currently the apr table
+  // does not carry branch_id so the main APR aggregation remains org-wide.
+
+  // Query synced apr table for the given date.
+  //
+  // avg_lunch_pct/avg_bio_pct/avg_training_pct/avg_qa_pct divided an aggregate
+  // (AVG(...)) by a bare per-row column (a.Login_Time) in the same expression
+  // — illegal under ONLY_FULL_GROUP_BY (which this DB runs) in a query with no
+  // GROUP BY: "expression #4 of SELECT list contains nonaggregated column
+  // 'mas_hrms.a.Login_Time'". Verified live by running the exact query
+  // outside this .catch(). Every request errored and was silently turned
+  // into confident zeros — agents_logged_in: 0, total_calls: 0 — even though
+  // apr rows for the day existed the whole time (proven by topProcRows below,
+  // querying the identical table/date, always having succeeded). Rewrote to
+  // match avg_shrinkage_pct's already-correct shape just below it: the whole
+  // per-row ratio inside a single AVG(CASE ...), which is what "average of
+  // each agent's lunch % of their login time" actually means anyway — the
+  // original form (AVG(lunch time) / one arbitrary row's login time) was
+  // never a meaningful percentage even before the SQL mode rejected it.
+  //
+  // DECIDED (was an open question, resolved 2026-08-05): this tile sits next
+  // to capacity metrics (avg_aht_seconds, total_calls), and standard WFM
+  // practice defines "shrinkage" as an org-wide *weighted* figure —
+  // SUM(unavailable time)/SUM(login time) — because it's a capacity/
+  // forecasting number, not a per-agent fairness one. avg_shrinkage_pct and
+  // shrinkage_breakdown below are now weighted (SUM/SUM), matching that
+  // convention and the threshold/intervention-flag logic further down, which
+  // is itself a capacity-risk check. The previous per-agent-average shape
+  // (AVG of each agent's own ratio) is kept as *_per_agent — useful for
+  // coaching ("is the typical agent taking too much break"), a different
+  // question from "how much org capacity is lost." Verified live the two
+  // definitions actually diverge (2026-06-12, a date with real shrinkage
+  // data — apr's BIO/LUNCH/QA/TRAINING columns have been all-zero since
+  // ~2026-06-12, a separate live data-feed gap unrelated to this fix, worth
+  // its own investigation): per-agent 2.69% vs weighted 2.39% on the same
+  // 220 agents — different enough to matter for a capacity call.
+  const [aprRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(DISTINCT a.UserID) AS agents_logged_in,
+       SUM(a.Calls) AS total_calls,
+       ROUND(AVG(TIME_TO_SEC(a.AHT)), 0) AS avg_aht_seconds,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_lunch_pct,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_bio_pct,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_training_pct,
+       ROUND(SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00')))
+             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_qa_pct,
+       ROUND(
+         (SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00'))) +
+          SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00'))))
+         / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100
+       , 2) AS avg_shrinkage_pct,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS lunch_pct_per_agent,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS bio_pct_per_agent,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS training_pct_per_agent,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS qa_pct_per_agent,
+       ROUND(AVG(
+         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+           (TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) +
+            TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) + TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
+           / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+         ELSE 0 END
+       ), 2) AS shrinkage_pct_per_agent
+     FROM apr a
+     WHERE DATE(a.ReportDate) = ?`,
+    [date]
+  ).catch((err) => {
+    logger.error({ err, date }, "[bi.service] getDailyOpsPulse apr aggregate query failed");
+    return [[null]] as any;
+  });
+
+  // Scheduled agents from attendance records — scoped to branch/process when provided
+  const attendScopeClause = branchIds && branchIds.length > 0
+    ? ` AND employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}) AND active_status = 1)`
+    : processIds && processIds.length > 0
+    ? ` AND employee_id IN (SELECT id FROM employees WHERE process_id IN (${processIds.map(() => "?").join(",")}) AND active_status = 1)`
+    : "";
+  const attendScopeParams = branchIds && branchIds.length > 0 ? branchIds : processIds && processIds.length > 0 ? processIds : [];
+  // Fetched alongside `scheduled`, not sequentially — see scheduledDataReliable
+  // below for why a baseline from the latest fully-processed day is needed.
+  const [[attendRows], [baselineRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) AS scheduled
+       FROM attendance_daily_record
+       WHERE record_date = ?${attendScopeClause}`,
+      [date, ...attendScopeParams]
+    ).catch(() => [[{ scheduled: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) AS baseline
+       FROM attendance_daily_record
+       WHERE record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}${attendScopeClause}`,
+      [...attendScopeParams]
+    ).catch(() => [[{ baseline: 0 }]] as any),
+  ]);
+
+  const aprRow = (aprRows as any[])[0] ?? {};
+  const totalCalls = Number(aprRow.total_calls ?? 0);
+  const agentsLoggedIn = Number(aprRow.agents_logged_in ?? 0);
+  const agentsScheduled = Number((attendRows as any[])[0]?.scheduled ?? agentsLoggedIn);
+  // agentsScheduled is a same-day count from attendance_daily_record, which
+  // (documented extensively elsewhere in this codebase — see
+  // LATEST_COMPLETE_ATTENDANCE_DATE_SQL and its usages) is incomplete for
+  // "today": processing lags 1-2 days behind. agentsLoggedIn, by contrast,
+  // comes from apr, a genuinely real-time source. Comparing an incomplete
+  // same-day denominator against a complete same-day numerator produces
+  // impossible ratios — verified live on an ordinary (non-anomalous) day:
+  // 194 logged in against only 22 "scheduled" (881.8% adherence). Checked
+  // wfm_roster_assignment and wfm_slot_requirement as alternative same-day
+  // "scheduled" sources — both were empty for today too, so there is
+  // currently no reliable same-day denominator to substitute. Rather than
+  // report a number that is definitionally impossible (more agents logged
+  // in than scheduled), report adherence as unavailable — the same "never
+  // fabricate, report unavailable instead of a wrong number" doctrine
+  // already used elsewhere in this codebase (e.g. noAttendanceSource,
+  // zeroAttendanceRisk).
+  // The `>= agentsLoggedIn` check alone only catches the extreme case (the
+  // 881.8% symptom above). It does not catch attendance_daily_record having
+  // *partially* caught up for today — say 20 of an eventual ~1100 rows
+  // processed, with agentsLoggedIn happening to be <= 20 too — which would
+  // pass that check and produce a plausible-looking but still-wrong
+  // adherence figure. Added a second, independent signal: compare today's
+  // count against the latest fully-processed day's count (same
+  // LATEST_COMPLETE_ATTENDANCE_DATE_SQL anchor used for attendance tiles
+  // elsewhere). If today is under 30% of that baseline, today's count isn't
+  // representative of real same-day staffing yet, regardless of how it
+  // compares to agentsLoggedIn. Skipped when there's no baseline at all
+  // (baseline 0) rather than treating an org/scope with no recent history as
+  // unreliable — that's a different, unrelated condition.
+  const baselineScheduled = Number((baselineRows as any[])[0]?.baseline ?? 0);
+  const scheduledDataReliable = agentsScheduled >= agentsLoggedIn
+    && (baselineScheduled === 0 || agentsScheduled >= baselineScheduled * 0.3);
+  const loginAdherence = scheduledDataReliable && agentsScheduled > 0
+    ? parseFloat(((agentsLoggedIn / agentsScheduled) * 100).toFixed(1))
+    : null;
+  const avgCalls = agentsLoggedIn > 0 ? Math.round(totalCalls / agentsLoggedIn) : 0;
+  const avgAht = Number(aprRow.avg_aht_seconds ?? 0);
+  const avgShrinkage = parseFloat(String(aprRow.avg_shrinkage_pct ?? 0));
+  const lunchPct = parseFloat(String(aprRow.avg_lunch_pct ?? 0));
+  const bioPct = parseFloat(String(aprRow.avg_bio_pct ?? 0));
+  const trainingPct = parseFloat(String(aprRow.avg_training_pct ?? 0));
+  const qaPct = parseFloat(String(aprRow.avg_qa_pct ?? 0));
+  const idlePct = Math.max(0, parseFloat((avgShrinkage - lunchPct - bioPct - trainingPct - qaPct).toFixed(2)));
+  const avgShrinkagePerAgent = parseFloat(String(aprRow.shrinkage_pct_per_agent ?? 0));
+  const lunchPctPerAgent = parseFloat(String(aprRow.lunch_pct_per_agent ?? 0));
+  const bioPctPerAgent = parseFloat(String(aprRow.bio_pct_per_agent ?? 0));
+  const trainingPctPerAgent = parseFloat(String(aprRow.training_pct_per_agent ?? 0));
+  const qaPctPerAgent = parseFloat(String(aprRow.qa_pct_per_agent ?? 0));
+  const idlePctPerAgent = Math.max(0, parseFloat((avgShrinkagePerAgent - lunchPctPerAgent - bioPctPerAgent - trainingPctPerAgent - qaPctPerAgent).toFixed(2)));
+
+  // Top process by calls
+  const [topProcRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(pm.process_name, a.campaign_id) AS name,
+            SUM(a.Calls) AS calls,
+            COUNT(DISTINCT a.UserID) AS agent_count
+     FROM apr a
+     LEFT JOIN process_master pm ON pm.process_code = a.campaign_id
+     WHERE DATE(a.ReportDate) = ?
+     GROUP BY a.campaign_id
+     ORDER BY calls DESC
+     LIMIT 1`,
+    [date]
+  ).catch(() => [[null]] as any);
+  const topProc = (topProcRows as any[])[0] ?? null;
+
+  // Load thresholds from policy engine
+  const [loginCrit, loginWarn, shrinkCrit, shrinkWarn, ahtBench] = await Promise.all([
+    getPolicyValue('rta',        'login_adherence', 'critical_threshold_pct', '50'),
+    getPolicyValue('rta',        'login_adherence', 'warning_threshold_pct',  '70'),
+    getPolicyValue('operations', 'shrinkage',       'critical_threshold_pct', '25'),
+    getPolicyValue('operations', 'shrinkage',       'warning_threshold_pct',  '18'),
+    getPolicyValue('operations', 'call_quality',    'aht_benchmark_seconds',  '400'),
+  ]);
+  const T = {
+    loginCritical:  Number(loginCrit),
+    loginWarning:   Number(loginWarn),
+    shrinkCritical: Number(shrinkCrit),
+    shrinkWarning:  Number(shrinkWarn),
+    ahtBenchmark:   Number(ahtBench),
+  };
+
+  // Build intervention flags
+  const flags: InterventionFlag[] = [];
+  if (loginAdherence !== null && loginAdherence < T.loginCritical && agentsScheduled > 0) {
+    flags.push({
+      type: 'LOW_LOGIN_ADHERENCE', severity: 'critical',
+      detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents scheduled but not logged in`,
+      action: 'Floor check required — contact team leads immediately',
+    });
+  } else if (loginAdherence !== null && loginAdherence < T.loginWarning && agentsScheduled > 0) {
+    flags.push({
+      type: 'LOW_LOGIN_ADHERENCE', severity: 'warning',
+      detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents below expected`,
+      action: 'Send login reminders to late arrivals',
+    });
+  }
+  if (avgShrinkage > T.shrinkCritical) {
+    flags.push({
+      type: 'HIGH_SHRINKAGE', severity: 'critical',
+      detail: `Avg shrinkage at ${avgShrinkage}% — exceeds ${T.shrinkCritical}% org threshold`,
+      action: 'Review break schedules and bio patterns immediately',
+    });
+  } else if (avgShrinkage > T.shrinkWarning) {
+    flags.push({
+      type: 'HIGH_SHRINKAGE', severity: 'warning',
+      detail: `Avg shrinkage at ${avgShrinkage}% — above ${T.shrinkWarning}% advisory limit`,
+      action: 'Monitor floor — check DISMX/DSTBY codes by campaign',
+    });
+  }
+  if (avgAht > T.ahtBenchmark) {
+    flags.push({
+      type: 'HIGH_AHT', severity: 'warning',
+      detail: `Avg AHT at ${Math.round(avgAht)}s — above ${T.ahtBenchmark}s benchmark`,
+      action: 'Pull agent-level AHT breakdown and run QA check',
+    });
+  }
+
+  return {
+    date, agents_scheduled: agentsScheduled, agents_logged_in: agentsLoggedIn,
+    login_adherence_pct: loginAdherence, avg_calls_per_agent: avgCalls,
+    total_calls: totalCalls, avg_aht_seconds: avgAht, avg_shrinkage_pct: avgShrinkage,
+    shrinkage_breakdown: { lunch: lunchPct, bio: bioPct, training: trainingPct, qa: qaPct, idle: idlePct },
+    avg_shrinkage_pct_per_agent: avgShrinkagePerAgent,
+    shrinkage_breakdown_per_agent: { lunch: lunchPctPerAgent, bio: bioPctPerAgent, training: trainingPctPerAgent, qa: qaPctPerAgent, idle: idlePctPerAgent },
+    top_process: topProc ? { name: String(topProc.name), calls: Number(topProc.calls), agent_count: Number(topProc.agent_count) } : null,
+    intervention_flags: flags,
+  };
+}
+
+// ─── 3b: Attrition Risk Signal ────────────────────────────────────────────────
+
+export interface AttritionRiskSignal {
+  summary: { total_at_risk: number; consecutive_absent: number; pending_resignations: number; high_lms_risk: number; churn_rate_30d: number };
+  top_risk_employees: Array<{ employee_code: string; employee_name: string; risk_reasons: string[]; branch?: string; process?: string }>;
+  intervention_flags: InterventionFlag[];
+}
+
+export async function getAttritionRiskSignal(branchId?: string, processId?: string): Promise<AttritionRiskSignal> {
+  const whereParts: string[] = ['e.active_status = 1'];
+  const params: unknown[] = [];
+  if (branchId) { whereParts.push('e.branch_id = ?'); params.push(branchId); }
+  if (processId) { whereParts.push('e.process_id = ?'); params.push(processId); }
+  const empWhere = whereParts.join(' AND ');
+
+  const fromDate = getIstDateString(30);
+  const toDate = getIstDateString(0);
+
+  // Consecutive 3+ day absentees
+  const [absRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
+            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+            COUNT(*) AS absent_days,
+            bm.branch_name, pm.process_name
+     FROM attendance_daily_record adr
+     JOIN employees e ON e.id = adr.employee_id
+     LEFT JOIN branch_master bm ON bm.id = e.branch_id
+     LEFT JOIN process_master pm ON pm.id = e.process_id
+     WHERE adr.attendance_status = 'absent'
+       AND adr.record_date BETWEEN ? AND ?
+       AND ${empWhere}
+     GROUP BY e.id, e.employee_code, employee_name, bm.branch_name, pm.process_name
+     HAVING absent_days >= 3
+     ORDER BY absent_days DESC
+     LIMIT 20`,
+    [fromDate, toDate, ...params]
+  ).catch(() => [[] as any]);
+
+  // Pending resignations
+  const [resignRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
+     WHERE LOWER(er.status) NOT IN ('completed','cancelled','exited')
+       AND ${empWhere}`,
+    params
+  ).catch(() => [[{ cnt: 0 }]] as any);
+
+  // LMS high risk
+  const [lmsRiskRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM lms_learner_progress lp
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
+     WHERE lp.attrition_risk_signal = 'red' AND lp.ops_handover_ready = 0
+       AND ${empWhere}`,
+    params
+  ).catch(() => [[{ cnt: 0 }]] as any);
+
+  // Churn rate last 30 days
+  const [churnRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS exits FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
+     WHERE LOWER(er.status) IN ('completed','exited')
+       AND er.updated_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+       AND ${empWhere}`,
+    params
+  ).catch(() => [[{ exits: 0 }]] as any);
+
+  const [totalEmpRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM employees e WHERE ${empWhere}`,
+    params
+  ).catch(() => [[{ total: 1 }]] as any);
+
+  const consecutiveAbsent = (absRows as any[]).length;
+  const pendingResignations = Number((resignRows as any[])[0]?.cnt ?? 0);
+  const highLmsRisk = Number((lmsRiskRows as any[])[0]?.cnt ?? 0);
+  const exits = Number((churnRows as any[])[0]?.exits ?? 0);
+  const totalEmp = Math.max(Number((totalEmpRows as any[])[0]?.total ?? 1), 1);
+  const churnRate30d = parseFloat(((exits / totalEmp) * 100).toFixed(2));
+  const totalAtRisk = new Set([
+    ...(absRows as any[]).map((r: any) => r.employee_code),
+  ]).size + pendingResignations + highLmsRisk;
+
+  // Build top risk list
+  const topRisk = (absRows as any[]).slice(0, 10).map((r: any) => ({
+    employee_code: r.employee_code,
+    employee_name: r.employee_name,
+    risk_reasons: [`${r.absent_days} absences in last 30 days`],
+    branch: r.branch_name,
+    process: r.process_name,
+  }));
+
+  const flags: InterventionFlag[] = [];
+  if (churnRate30d > 5) {
+    flags.push({
+      type: 'HIGH_CHURN', severity: 'critical',
+      detail: `${churnRate30d}% churn in last 30 days (${exits} exits)`,
+      action: 'Escalate to HR head — retention interviews required',
+    });
+  }
+  if (consecutiveAbsent > 10) {
+    flags.push({
+      type: 'MASS_ABSENTEEISM', severity: 'warning',
+      detail: `${consecutiveAbsent} employees with 3+ consecutive absences`,
+      action: 'Team leads to conduct 1-on-1 check-ins this week',
+    });
+  }
+  if (pendingResignations > 5) {
+    flags.push({
+      type: 'HIGH_RESIGNATION', severity: 'warning',
+      detail: `${pendingResignations} active resignations pending discussion`,
+      action: 'HR to prioritize exit interviews and counter-offer review',
+    });
+  }
+
+  return {
+    summary: { total_at_risk: totalAtRisk, consecutive_absent: consecutiveAbsent, pending_resignations: pendingResignations, high_lms_risk: highLmsRisk, churn_rate_30d: churnRate30d },
+    top_risk_employees: topRisk,
+    intervention_flags: flags,
+  };
+}
+
+// ─── 3c: Payroll Exposure Summary ────────────────────────────────────────────
+
+export interface PayrollExposureSummary {
+  period: string;
+  gross_liability: number;
+  net_disbursable: number;
+  pending_runs: number;
+  outstanding_loan_recovery: number;
+  unclaimed_incentives: number;
+  ff_pending_amount: number;
+  intervention_flags: InterventionFlag[];
+}
+
+export async function getPayrollExposureSummary(): Promise<PayrollExposureSummary> {
+  const monthStart = getIstMonthStart();
+
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    // salary_prep_line has no gross_pay/net_pay; the computed finals are gross_salary and
+    // net_salary. base_gross_pay/base_net_pay exist too but are pre-adjustment and base_net_pay
+    // is all zeros, so they are not the liability figure.
+    `SELECT COALESCE(SUM(gross_salary),0) AS gross_liability,
+            COALESCE(SUM(net_salary),0) AS net_disbursable,
+            COUNT(DISTINCT run_id) AS run_count
+     FROM salary_prep_line spl
+     JOIN salary_prep_run spr ON spr.id = spl.run_id
+     WHERE spr.run_month >= ? AND spr.status != 'cancelled'`,
+    [monthStart]
+  ).catch(() => [[{ gross_liability: 0, net_disbursable: 0, run_count: 0 }]] as any);
+
+  const [incentiveRows] = await db.execute<RowDataPacket[]>(
+    // FIXED 2026-08-14: this named two columns incentive_upload_batch does not have —
+    // `batch_status` (the column is `status`) and `disbursed_at` (there is no such column at
+    // all). Every execution raised ER_BAD_FIELD_ERROR into the .catch below and the tile has
+    // always reported 0, which is indistinguishable from "nothing unclaimed".
+    //
+    // 'approved' is the unclaimed state: applyToRun moves a consumed batch to 'applied', so a
+    // batch still sitting at 'approved' is money authorised and not yet taken into a payroll run.
+    `SELECT COALESCE(SUM(total_amount),0) AS unclaimed FROM incentive_upload_batch WHERE status = 'approved'`
+  ).catch((err: unknown) => {
+    // Still non-fatal — one broken tile must not take down the BI dashboard — but no longer
+    // silent. A swallowed error here is exactly how the wrong column survived unnoticed.
+    console.error(`[bi] unclaimed-incentive tile failed, reporting 0: ${(err as Error).message}`);
+    return [[{ unclaimed: 0 }]] as any;
+  });
+
+  const [ffRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(net_payable_to_employee),0) AS ff_pending FROM ff_settlement WHERE status NOT IN ('paid','cancelled')`
+  ).catch(() => [[{ ff_pending: 0 }]] as any);
+
+  // Loan recovery from legacy db_bill (best-effort)
+  let loanRecovery = 0;
+  try {
+    const legacyPool = await getLegacyPool();
+    const [loanRows] = await legacyPool.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(PendingAmount),0) AS outstanding FROM LoanMaster WHERE LoanStatus = 'Active'`
+    );
+    loanRecovery = Number((loanRows as any[])[0]?.outstanding ?? 0);
+  } catch { /* legacy DB unavailable */ }
+
+  const rRow = (runRows as any[])[0] ?? {};
+  const grossLiability = Number(rRow.gross_liability ?? 0);
+  const netDisbursable = Number(rRow.net_disbursable ?? 0);
+  const pendingRuns = Number(rRow.run_count ?? 0);
+  const unclaimedIncentives = Number((incentiveRows as any[])[0]?.unclaimed ?? 0);
+  const ffPending = Number((ffRows as any[])[0]?.ff_pending ?? 0);
+
+  const flags: InterventionFlag[] = [];
+  if (pendingRuns === 0) {
+    flags.push({
+      type: 'NO_PAYROLL_RUN', severity: 'warning',
+      detail: 'No payroll runs found for current month',
+      action: 'Verify payroll calendar — initiate run if not scheduled',
+    });
+  }
+  if (ffPending > 0) {
+    flags.push({
+      type: 'FF_PENDING', severity: 'info',
+      detail: `₹${ffPending.toLocaleString('en-IN')} in F&F settlements pending disbursement`,
+      action: 'Finance to process pending F&F payments',
+    });
+  }
+
+  return {
+    period: monthStart.slice(0, 7),
+    gross_liability: grossLiability,
+    net_disbursable: netDisbursable,
+    pending_runs: pendingRuns,
+    outstanding_loan_recovery: loanRecovery,
+    unclaimed_incentives: unclaimedIncentives,
+    ff_pending_amount: ffPending,
+    intervention_flags: flags,
+  };
+}
+
+// ─── 3d: Training Readiness Pulse ────────────────────────────────────────────
+
+export interface TrainingReadinessPulse {
+  summary: { total_learners: number; certified_pct: number; at_risk_count: number; avg_completion_pct: number | null; avg_score: number; overdue_count: number };
+  by_process: Array<{ process: string; total: number; certified: number; certified_pct: number; at_risk: number; avg_score: number }>;
+  critical_agents: Array<{ employee_code: string; employee_name: string; risk_level: string; completion_pct: number | null; last_active?: string }>;
+  intervention_flags: InterventionFlag[];
+}
+
+export async function getTrainingReadinessPulse(branchId?: string, processId?: string): Promise<TrainingReadinessPulse> {
+  const whereParts: string[] = ['e.active_status = 1'];
+  const params: unknown[] = [];
+  if (branchId) { whereParts.push('e.branch_id = ?'); params.push(branchId); }
+  if (processId) { whereParts.push('e.process_id = ?'); params.push(processId); }
+  const empWhere = whereParts.join(' AND ');
+
+  const [summaryRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(DISTINCT lp.employee_id) AS total_learners,
+       ROUND(SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
+       SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk_count,
+       NULL AS avg_completion_pct,
+       ROUND(AVG(lp.mcq_best_score), 1) AS avg_score,
+       SUM(CASE WHEN lp.updated_at < DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS overdue_count
+     FROM lms_learner_progress lp
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
+     WHERE ${empWhere}`,
+    params
+  ).catch(() => [[null]] as any);
+
+  const [byProcessRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(pm.process_name, 'Unknown') AS process,
+            COUNT(DISTINCT lp.employee_id) AS total,
+            SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) AS certified,
+            ROUND(SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
+            SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk,
+            ROUND(AVG(lp.mcq_best_score), 1) AS avg_score
+     FROM lms_learner_progress lp
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
+     LEFT JOIN process_master pm ON pm.id = e.process_id
+     WHERE ${empWhere}
+     GROUP BY e.process_id
+     ORDER BY total DESC
+     LIMIT 20`,
+    params
+  ).catch(() => [[] as any]);
+
+  const [criticalRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
+            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+            lp.attrition_risk_signal AS risk_level,
+            NULL AS completion_pct,
+            DATE_FORMAT(lp.updated_at, '%Y-%m-%d') AS last_active
+     FROM lms_learner_progress lp
+     JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
+     WHERE lp.attrition_risk_signal IN ('red','yellow')
+       AND lp.ops_handover_ready = 0
+       AND ${empWhere}
+     ORDER BY lp.attrition_risk_signal DESC, lp.readiness_score ASC
+     LIMIT 15`,
+    params
+  ).catch(() => [[] as any]);
+
+  const s = (summaryRows as any[])[0] ?? {};
+  const certifiedPct = Number(s.certified_pct ?? 0);
+  const atRisk = Number(s.at_risk_count ?? 0);
+
+  const flags: InterventionFlag[] = [];
+  if (certifiedPct < 60) {
+    flags.push({
+      type: 'LOW_CERTIFICATION', severity: 'critical',
+      detail: `Only ${certifiedPct}% of learners certified — below 60% threshold`,
+      action: 'Trainer to review curriculum bottleneck and MCQ pass rates',
+    });
+  }
+  if (atRisk > 5) {
+    flags.push({
+      type: 'HIGH_LMS_RISK', severity: 'warning',
+      detail: `${atRisk} learners flagged red attrition risk by LMS`,
+      action: 'Assign dedicated trainer support to flagged learners',
+    });
+  }
+
+  return {
+    summary: {
+      total_learners: Number(s.total_learners ?? 0),
+      certified_pct: certifiedPct,
+      at_risk_count: atRisk,
+      // null, not 0: the LMS sync computes no completion figure at all, and 0 would read
+      // as "nobody has completed anything" rather than "not measured".
+      avg_completion_pct: null,
+      avg_score: Number(s.avg_score ?? 0),
+      overdue_count: Number(s.overdue_count ?? 0),
+    },
+    by_process: (byProcessRows as any[]).map((r: any) => ({
+      process: r.process, total: Number(r.total), certified: Number(r.certified),
+      certified_pct: Number(r.certified_pct), at_risk: Number(r.at_risk), avg_score: Number(r.avg_score),
+    })),
+    critical_agents: (criticalRows as any[]).map((r: any) => ({
+      employee_code: r.employee_code, employee_name: r.employee_name,
+      risk_level: r.risk_level, completion_pct: null, last_active: r.last_active,
+    })),
+    intervention_flags: flags,
+  };
+}
+
+// ─── 3e: Revenue at Risk ──────────────────────────────────────────────────────
+
+export interface RevenueAtRisk {
+  period: string;
+  target: number;
+  actual: number;
+  gap: number;
+  gap_pct: number;
+  days_elapsed: number;
+  days_remaining: number;
+  daily_run_rate: number;
+  projected_eom: number;
+  by_process: Array<{ process: string; target: number; actual: number; gap: number; gap_pct: number }>;
+  intervention_flags: InterventionFlag[];
+}
+
+export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
+  const today = getIstDateString(0);
+  const monthStart = getIstMonthStart();
+  const [y, m] = monthStart.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const dayOfMonth = parseInt(today.slice(8), 10);
+  const daysElapsed = dayOfMonth;
+  const daysRemaining = daysInMonth - dayOfMonth;
+
+  let target = 0, actual = 0;
+  const byProcess: RevenueAtRisk['by_process'] = [];
+
+  try {
+    // Monthly target — read from snapshot table (synced from db_bill)
+    const [targetRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(target_revenue),0) AS total_target
+       FROM bill_revenue_target_snapshot
+       WHERE YEAR(target_month) = ? AND MONTH(target_month) = ?`,
+      [y, m]
+    );
+    target = Number((targetRows as any[])[0]?.total_target ?? 0);
+
+    // MTD actual — read from snapshot table
+    const [actualRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(actual_revenue),0) AS total_actual
+       FROM bill_revenue_actual_snapshot
+       WHERE revenue_date BETWEEN ? AND ?`,
+      [monthStart, today]
+    );
+    actual = Number((actualRows as any[])[0]?.total_actual ?? 0);
+
+    // By process
+    const [processRows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.process_name AS process,
+              COALESCE(SUM(t.target_revenue),0) AS target,
+              COALESCE(SUM(a.actual_revenue),0) AS actual
+       FROM bill_revenue_target_snapshot t
+       LEFT JOIN bill_revenue_actual_snapshot a
+         ON a.process_name = t.process_name
+         AND a.revenue_date BETWEEN ? AND ?
+       WHERE YEAR(t.target_month) = ? AND MONTH(t.target_month) = ?
+       GROUP BY t.process_name
+       ORDER BY target DESC
+       LIMIT 10`,
+      [monthStart, today, y, m]
+    );
+    for (const r of processRows as any[]) {
+      const tgt = Number(r.target), act = Number(r.actual);
+      const gap = act - tgt;
+      byProcess.push({ process: r.process, target: tgt, actual: act, gap, gap_pct: tgt > 0 ? parseFloat(((gap / tgt) * 100).toFixed(1)) : 0 });
+    }
+  } catch { /* snapshot unavailable — return zeroes */ }
+
+  const gap = actual - target;
+  const gapPct = target > 0 ? parseFloat(((gap / target) * 100).toFixed(1)) : 0;
+  const dailyRunRate = daysElapsed > 0 ? Math.round(actual / daysElapsed) : 0;
+  const projectedEom = dailyRunRate * daysInMonth;
+
+  const flags: InterventionFlag[] = [];
+  if (gapPct < -15) {
+    flags.push({
+      type: 'REVENUE_DEFICIT', severity: 'critical',
+      detail: `${Math.abs(gapPct)}% below MTD target — projected shortfall ${((projectedEom - target) / 1000).toFixed(0)}K`,
+      action: 'Ops + Sales review required — escalate high-gap processes',
+    });
+  } else if (gapPct < -5) {
+    flags.push({
+      type: 'REVENUE_BELOW_TARGET', severity: 'warning',
+      detail: `MTD revenue ${Math.abs(gapPct)}% below target`,
+      action: 'Focus on high-revenue processes to recover gap this week',
+    });
+  }
+
+  return {
+    period: monthStart.slice(0, 7), target, actual, gap, gap_pct: gapPct,
+    days_elapsed: daysElapsed, days_remaining: daysRemaining,
+    daily_run_rate: dailyRunRate, projected_eom: projectedEom,
+    by_process: byProcess, intervention_flags: flags,
+  };
+}
+
+// ─── 3f: Quality Intervention ────────────────────────────────────────────────
+
+export interface QualityIntervention {
+  summary: { avg_quality_score: number; agents_below_threshold: number; processes_declining: number };
+  critical_agents: Array<{ agent_code: string; agent_name: string; call_count: number; quality_score: number; campaign: string }>;
+  process_rag: Array<{ process: string; avg_score: number; rag: 'red' | 'amber' | 'green'; wow_change: number }>;
+  intervention_flags: InterventionFlag[];
+}
+
+function auditRag(score: number): 'red' | 'amber' | 'green' {
+  if (score >= 90) return 'green';
+  if (score >= 85) return 'amber';
+  return 'red';
+}
+
+export async function getQualityIntervention(branchId?: string, processId?: string): Promise<QualityIntervention> {
+  const fromDate = getIstDateString(7);
+  const toDate = getIstDateString(0);
+  const prevFromDate = getIstDateString(14);
+  const prevToDate = getIstDateString(8);
+
+  // ── Overall summary from db_audit.call_quality_assessment ────────────────
+  //
+  // The outer SELECT referenced quality_percentage and User bare — but the
+  // outer query's FROM is `(...) t CROSS JOIN (...) g`, and neither column
+  // exists at that scope, only t.agent/t.avg_per_agent/g.avg_score do.
+  // Verified live: "Unknown column 'quality_percentage' in 'field list'" —
+  // not a missing-column issue (it exists on the base table), a scope bug.
+  // Every request errored and was silently turned into avg_score: 0, which
+  // is impossible given every agent/process actually scores 25-84% (see
+  // agentRows/processRag below, on the same table/date, which have always
+  // worked) — a real average of 0 cannot coexist with those numbers.
+  // MAX(g.avg_score) rather than bare g.avg_score: g is a single-row
+  // derived table so the value is the same either way, but MAX() keeps
+  // this valid under ONLY_FULL_GROUP_BY without relying on MySQL's
+  // functional-dependency detection for a cross-joined single row.
+  interface SummaryRow { avg_score: number; total_agents: number; below_threshold: number }
+  const summaryRows = await querySource<SummaryRow>(`
+    SELECT
+      MAX(g.avg_score)                                                     AS avg_score,
+      COUNT(DISTINCT t.agent)                                              AS total_agents,
+      COUNT(DISTINCT CASE WHEN t.avg_per_agent < 85 THEN t.agent END)      AS below_threshold
+    FROM (
+      SELECT User AS agent, ROUND(AVG(quality_percentage), 1) AS avg_per_agent
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND quality_percentage IS NOT NULL
+      GROUP BY User
+      HAVING COUNT(*) >= 2
+    ) t
+    CROSS JOIN (
+      SELECT ROUND(AVG(quality_percentage), 1) AS avg_score
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND quality_percentage IS NOT NULL
+    ) g
+  `, [fromDate, toDate, fromDate, toDate]).catch((err) => {
+    logger.error({ err, fromDate, toDate }, "[bi.service] getQualityIntervention summary query failed");
+    return [] as SummaryRow[];
+  });
+
+  const avgScore = Number(summaryRows[0]?.avg_score ?? 0);
+  const belowThreshold = Number(summaryRows[0]?.below_threshold ?? 0);
+
+  // ── Bottom agents (min 3 audits, ordered by lowest quality_percentage) ───
+  interface AgentRow { agent_code: string; agent_name: string; call_count: number; avg_score: number; client_id: string }
+  const agentRows = await querySource<AgentRow>(`
+    SELECT
+      q.User                                                 AS agent_code,
+      COALESCE(am.AgentName, q.User)                        AS agent_name,
+      COUNT(*)                                               AS call_count,
+      ROUND(AVG(q.quality_percentage), 1)                   AS avg_score,
+      q.ClientId                                             AS client_id
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      AND q.User IS NOT NULL AND TRIM(q.User) != ''
+    GROUP BY q.User, am.AgentName, q.ClientId
+    HAVING call_count >= 3
+    ORDER BY avg_score ASC
+    LIMIT 10
+  `, [fromDate, toDate]).catch(() => [] as AgentRow[]);
+
+  // ── Per-client/process RAG with WoW change ────────────────────────────────
+  interface ProcRow { process: string; avg_score: number }
+  const [currProcRows, prevProcRows] = await Promise.all([
+    querySource<ProcRow>(`
+      SELECT
+        q.ClientId                           AS process,
+        ROUND(AVG(q.quality_percentage), 1)  AS avg_score
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY q.ClientId
+      ORDER BY avg_score ASC
+      LIMIT 15
+    `, [fromDate, toDate]).catch(() => [] as ProcRow[]),
+    querySource<ProcRow>(`
+      SELECT
+        q.ClientId                           AS process,
+        ROUND(AVG(q.quality_percentage), 1)  AS avg_score
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY q.ClientId
+      ORDER BY avg_score ASC
+      LIMIT 15
+    `, [prevFromDate, prevToDate]).catch(() => [] as ProcRow[]),
+  ]);
+
+  const prevMap = new Map(prevProcRows.map(r => [String(r.process), Number(r.avg_score)]));
+  const processRag = currProcRows.map(r => {
+    const score = Number(r.avg_score);
+    const prev = prevMap.get(String(r.process)) ?? score;
+    return {
+      process: String(r.process),
+      avg_score: score,
+      rag: auditRag(score),
+      wow_change: parseFloat((score - prev).toFixed(1)),
+    };
+  });
+
+  const redProcesses = processRag.filter(p => p.rag === 'red').length;
+  const decliningProcesses = processRag.filter(p => p.wow_change < -2).length;
+
+  const flags: InterventionFlag[] = [];
+  if (avgScore > 0 && avgScore < 85) {
+    flags.push({
+      type: 'LOW_ORG_QUALITY', severity: 'critical',
+      detail: `Org-wide quality at ${avgScore}% — below 85% threshold`,
+      action: 'QA team to prioritise coaching queue immediately',
+    });
+  }
+  if (redProcesses > 2) {
+    flags.push({
+      type: 'MULTI_PROCESS_QUALITY_DROP', severity: 'critical',
+      detail: `${redProcesses} client processes in RED quality zone (<85%)`,
+      action: 'QA review call — assign TL coaching this week',
+    });
+  }
+  if (belowThreshold > 5) {
+    flags.push({
+      type: 'AGENTS_BELOW_THRESHOLD', severity: 'warning',
+      detail: `${belowThreshold} agents with avg quality below 85%`,
+      action: 'Schedule targeted coaching sessions for flagged agents',
+    });
+  }
+
+  return {
+    summary: {
+      avg_quality_score: avgScore,
+      agents_below_threshold: belowThreshold,
+      processes_declining: decliningProcesses,
+    },
+    critical_agents: agentRows.map(r => ({
+      agent_code: String(r.agent_code),
+      agent_name: String(r.agent_name),
+      call_count: Number(r.call_count),
+      quality_score: Number(r.avg_score),
+      campaign: String(r.client_id),
+    })),
+    process_rag: processRag,
+    intervention_flags: flags,
+  };
+}

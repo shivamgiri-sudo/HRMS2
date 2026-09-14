@@ -1,0 +1,5244 @@
+/**
+ * HRMS Report Catalog — Complete Source of Truth
+ *
+ * This file defines ALL 137 reports with:
+ * - Column schemas (key, label, format, alignment)
+ * - Row grain (what constitutes one unique row)
+ * - Primary key (for duplicate detection)
+ * - RBAC (view roles, export roles)
+ * - Source tables
+ * - Filters
+ * - Calculation notes
+ *
+ * Generated: 2026-07-22
+ */
+
+export type ColumnFormat =
+  | "text" | "number" | "currency" | "percentage"
+  | "date" | "datetime" | "time" | "duration" | "minutes"
+  | "boolean" | "status" | "masked" | "email" | "phone";
+
+export interface ColumnDef {
+  key: string;
+  label: string;
+  format: ColumnFormat;
+  align?: "left" | "center" | "right";
+  width?: number;
+  sensitive?: boolean;
+  aggregate?: "sum" | "avg" | "count" | "max" | "min";
+}
+
+export interface FilterDef {
+  key: string;
+  label: string;
+  type: "date" | "month" | "year" | "text" | "select" | "number";
+  placeholder?: string;
+  options?: Array<{ value: string; label: string }>;
+  required?: boolean;
+}
+
+// Classification policy: docs/dashboard-audit/REPORT_DATA_CLASSIFICATION_POLICY.md
+// (2026-08-05). Every entry's sensitivityLevel/containsPII/containsFinancialData
+// was assigned by eyeballing each report's columns — salary/bank/PAN/UAN/ESIC/TDS
+// -> highly_restricted, individual-identifiable non-financial -> confidential,
+// aggregates -> internal — now written up as the 4-rule policy in that doc so
+// classifying the *next* report doesn't require a fresh ad hoc judgment call.
+// Still needs compliance/security sign-off to be authoritative, not just
+// internally consistent — see that doc's status line and
+// OPEN_POLICY_QUESTIONS_2026-08-05.md item 3.
+export type SensitivityLevel =
+  | 'internal'          // aggregate/summary, no PII, no financial values
+  | 'confidential'      // employee-level non-financial (names, attendance, leave)
+  | 'restricted'        // financial data or identity docs
+  | 'highly_restricted';// salary, bank, PAN, UAN, TDS — payroll/statutory
+
+export type ReportAvailabilityStatus =
+  | 'draft'               // not yet implemented
+  | 'under_validation'    // implemented but not validated against real data
+  | 'validated'           // all validation checks passed
+  | 'validated_with_limitations' // minor known issues documented
+  | 'blocked'             // depends on table/data not yet available
+  | 'deprecated'          // superseded, removing soon
+  | 'disabled';           // feature-flagged off
+
+export interface ReportDefinition {
+  code: string;
+  name: string;
+  category: string;
+  subcategory: string;
+  description: string;
+  rowGrain: string;
+  primaryKey: string[];
+  columns: ColumnDef[];
+  /**
+   * Optional grouped header row rendered ABOVE the normal column header row.
+   * Spans must sum to columns.length. Reports that omit this keep their existing
+   * single-row header, so this is fully backward compatible.
+   */
+  headerGroups?: Array<{ label: string; colSpan: number }>;
+  /** Render empty text cells blank instead of the default em dash. Opt-in per report. */
+  blankInsteadOfDash?: boolean;
+  /** Numeric column keys whose zero value renders as an empty cell. */
+  blankWhenZero?: string[];
+  filters: FilterDef[];
+  viewRoles: string[];
+  exportRoles: string[];
+  sourceTables: string[];
+  calculationNotes?: string;
+  branchScoped?: boolean;
+  processScoped?: boolean;
+  requiresRunSelector?: boolean;
+  directDownload?: boolean;
+  // Security classification (required on every entry before status can pass under_validation)
+  sensitivityLevel?: SensitivityLevel;
+  containsPII?: boolean;          // true if rows contain identifiable employee-level data
+  containsFinancialData?: boolean;// true if rows contain salary, bank, statutory, or payroll values
+  availabilityStatus?: ReportAvailabilityStatus; // default: 'under_validation'
+}
+
+// ─── Common Filters ────────────────────────────────────────────────────────────
+
+const F_BRANCH: FilterDef = { key: "branchId", label: "Branch", type: "select" };
+const F_PROCESS: FilterDef = { key: "processId", label: "Process", type: "select" };
+const F_DEPT: FilterDef = { key: "departmentId", label: "Department", type: "select" };
+const F_COST_CENTRE: FilterDef = { key: "costCentreId", label: "Cost Centre", type: "select" };
+/**
+ * The slice for attrition-deep-dive. The values here are the keys of the allow-list in
+ * executors/aon.executor.ts — they select an entry there and are never interpolated into
+ * SQL. An unrecognised value falls back to `source` rather than erroring.
+ *
+ * Process is offered but is last on purpose: process_id is populated on only 272 of 2,796
+ * recent exits, so that slice is ~90% UNASSIGNED, unlike the same field on active employees.
+ */
+const F_AON_DIMENSION: FilterDef = {
+  key: "dimension", label: "Slice By", type: "select",
+  options: [
+    { value: "source", label: "Source of Hire" },
+    { value: "branch", label: "Branch" },
+    { value: "cost_centre", label: "Cost Centre" },
+    { value: "department", label: "Department" },
+    { value: "designation", label: "Designation" },
+    { value: "reporting_manager", label: "Reporting Manager" },
+    { value: "age_band", label: "Age Band" },
+    { value: "gender", label: "Gender" },
+    { value: "ctc_band", label: "CTC Band" },
+    { value: "exit_type_proxy", label: "Exit Type (proxy)" },
+    { value: "process", label: "Process (9.7% coverage on exits)" },
+  ],
+};
+const F_MONTH: FilterDef = { key: "month", label: "Month", type: "month", required: true };
+const F_YEAR: FilterDef = { key: "year", label: "Year", type: "year" };
+const F_DATE_FROM: FilterDef = { key: "from", label: "From Date", type: "date" };
+const F_DATE_TO: FilterDef = { key: "to", label: "To Date", type: "date" };
+const F_STATUS: FilterDef = {
+  key: "status", label: "Status", type: "select",
+  options: [
+    { value: "active", label: "Active" },
+    { value: "inactive", label: "Inactive" },
+    { value: "pending", label: "Pending" },
+    { value: "approved", label: "Approved" },
+    { value: "rejected", label: "Rejected" },
+  ]
+};
+// Break session lifecycle — these are the literal status values on break_sessions,
+// not the generic approval states in F_STATUS.
+const F_BREAK_STATUS: FilterDef = {
+  key: "status", label: "Break Status", type: "select",
+  options: [
+    { value: "ACTIVE", label: "Active (on break now)" },
+    { value: "COMPLETED", label: "Completed" },
+    { value: "AUTO_CLOSED", label: "Auto-closed" },
+    { value: "EXCEPTION", label: "Exception" },
+  ]
+};
+const F_APPROVAL_STATUS: FilterDef = {
+  key: "status", label: "Approval Status", type: "select",
+  options: [
+    { value: "pending", label: "Pending" },
+    { value: "approved", label: "Approved" },
+    { value: "rejected", label: "Rejected" },
+  ]
+};
+
+// ─── Common Role Sets ──────────────────────────────────────────────────────────
+
+const ROLES_HR_ADMIN = ["super_admin", "admin", "hr", "hr_head"];
+const ROLES_HR_MANAGER = ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"];
+const ROLES_PAYROLL = ["super_admin", "admin", "finance", "payroll", "hr_head"];
+const ROLES_WFM = ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"];
+const ROLES_COMPLIANCE = ["super_admin", "admin", "hr", "hr_head", "finance", "payroll"];
+const ROLES_ATS = ["super_admin", "admin", "hr", "hr_head", "recruiter", "recruitment_head"];
+const ROLES_OPERATIONS = ["super_admin", "admin", "operations", "quality", "manager", "process_manager"];
+const ROLES_ALL_MANAGEMENT = ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"];
+
+// ─── Report Definitions ────────────────────────────────────────────────────────
+
+export const REPORT_CATALOG: ReportDefinition[] = [
+  {
+    // The feedback loop for the notification system. Building this immediately corrected a
+    // figure the project had been repeating: the catalogue said 156 active employees could
+    // not receive a payslip, counting only those whose official_email was EMPTY. The
+    // resolver also requires a company domain, and by that rule 725 of 1,152 (62.9%) are
+    // blocked — 519 have a gmail.com address sitting in the official_email column, plus 31
+    // example.com test rows and several hand-typed typos. This report is the worklist for
+    // fixing that, and no `fin` event can sensibly go live until it has been worked through.
+    code: "notification-undeliverable-recipients",
+    name: "Undeliverable Notification Recipients",
+    category: "HR & Workforce",
+    subcategory: "Data Quality",
+    description: "Active employees who cannot receive notifications, and why",
+    rowGrain: "One row per active employee with at least one delivery gap",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "official_email", label: "Official Email", format: "text", width: 200 },
+      { key: "personal_email", label: "Personal Email", format: "text", width: 200 },
+      { key: "reporting_manager", label: "Reporting Manager", format: "text", width: 180 },
+      { key: "gap_reason", label: "Why Undeliverable", format: "text", width: 260 },
+      { key: "blocks_financial_mail", label: "Blocks Payslip", format: "text", width: 110 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    // Validated against production 2026-07-31: 774 rows; counts cross-checked against
+    // independent queries (155 with no official email, 156 with no manager).
+    availabilityStatus: "validated",
+  },
+
+  {
+    // Every employee-grain report renders UNASSIGNED for an unmapped cost centre or
+    // process rather than dropping the row — dropping them would silently shrink
+    // headcount from 1,125 to 1,061. This report is where those UNASSIGNED cells become
+    // a work list, so the convention informs rather than hides.
+    code: "org-mapping-gaps",
+    name: "Org Mapping Gaps",
+    category: "HR & Workforce",
+    subcategory: "Data Quality",
+    description: "Active employees missing a cost centre, process, designation, department, branch or reporting manager",
+    rowGrain: "One row per active employee with at least one unmapped org attribute",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "department_name", label: "Department", format: "text", width: 130 },
+      { key: "designation_name", label: "Designation", format: "text", width: 150 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "employment_status", label: "Employment Status", format: "status", width: 130 },
+      { key: "employee_state", label: "Active / Inactive", format: "status", width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+      { key: "reporting_manager_code", label: "Manager Code", format: "text", width: 120 },
+      { key: "reporting_manager_name", label: "Reporting Manager", format: "text", width: 180 },
+      { key: "missing_attributes", label: "Missing", format: "text", width: 260 },
+      { key: "missing_count", label: "Gaps", format: "number", width: 70, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_DEPT],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "department_master", "designation_master", "process_master", "cost_centre_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    // Verified against live mas_hrms 2026-08-07: 200 of 1,125 active employees have a
+    // gap — 64 no cost centre, 143 no process, 119 no designation, 153 no manager,
+    // 13 no department, 10 no branch.
+    availabilityStatus: "validated",
+  },
+  {
+    code: "payroll-population-reconciliation",
+    name: "Payroll Population Reconciliation",
+    category: "Payroll",
+    subcategory: "Data Quality",
+    description:
+      "Reconciles the three populations that disagree for the same month — HR active employees, employees with a payroll line, and employees with attendance — naming the gap on each row. For 2026-07 these were 1,125, 1,464 and 1,549, and 350 of the payroll lines belonged to employees whose active_status is 0.",
+    rowGrain: "One row per employee present in at least one of the three populations",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "department_name", label: "Department", format: "text", width: 130 },
+      { key: "employment_status", label: "Employment Status", format: "status", width: 130 },
+      { key: "employee_state", label: "State", format: "status", width: 100 },
+      { key: "in_hr_active", label: "In HR Active", format: "text", width: 100, align: "center" },
+      { key: "in_payroll_run", label: "In Payroll Run", format: "text", width: 110, align: "center" },
+      { key: "in_attendance", label: "In Attendance", format: "text", width: 110, align: "center" },
+      { key: "gross_salary", label: "Gross", format: "currency", width: 120, align: "right" },
+      { key: "attendance_days", label: "Attendance Days", format: "number", width: 120, align: "right" },
+      { key: "population_gap", label: "Population Gap", format: "status", width: 210 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["employees", "salary_prep_line", "salary_prep_run", "attendance_daily_record", "branch_master", "process_master", "department_master", "cost_centre_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    // Reports the discrepancy; recomputes no payroll figure.
+    availabilityStatus: "validated",
+  },
+  {
+    code: "leave-ledger-vs-requests-reconciliation",
+    name: "Leave Ledger vs Requests Reconciliation",
+    category: "HR & Workforce",
+    subcategory: "Data Quality",
+    description:
+      "Per employee, the used days recorded in leave_balance_ledger against the days in approved leave requests for the same year. The two disagreed by roughly 40x for 2026 (3,594.0 ledger days against 88.5 approved-request days) while agreeing exactly for 2025, which points at the sync path rather than the formula.",
+    rowGrain: "One row per active employee per balance year",
+    primaryKey: ["employee_code", "balance_year"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "balance_year", label: "Year", format: "number", width: 80, align: "right" },
+      { key: "ledger_used_days", label: "Ledger Used Days", format: "number", width: 130, align: "right" },
+      { key: "approved_request_days", label: "Approved Request Days", format: "number", width: 150, align: "right" },
+      { key: "variance_days", label: "Variance (Days)", format: "number", width: 120, align: "right" },
+      { key: "reconciliation_status", label: "Status", format: "status", width: 190 },
+    ],
+    filters: [F_YEAR, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "leave_balance_ledger", "leave_request", "branch_master", "process_master", "cost_centre_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "validated",
+  },
+  {
+    code: "cost-centre-vs-billing-reconciliation",
+    name: "Cost Centre vs Billing Reconciliation",
+    category: "Headcount & Org",
+    subcategory: "Data Quality",
+    description:
+      "The process name a cost centre is billed under (cost_centre_master.process_name_bill) against the process its people actually sit under. Where these disagree, a cost-per-process figure differs depending on which system is asked. distinct_processes flags cost centres spanning more than one process, so a match can be read with the right caution.",
+    rowGrain: "One row per cost centre",
+    primaryKey: ["cost_centre_code"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "client_name", label: "Client", format: "text", width: 160 },
+      { key: "billing_process_name", label: "Billing Process Name", format: "text", width: 190 },
+      { key: "operational_process_name", label: "Operational Process", format: "text", width: 190 },
+      { key: "active_headcount", label: "Active Headcount", format: "number", width: 130, align: "right" },
+      { key: "distinct_processes", label: "Distinct Processes", format: "number", width: 130, align: "right" },
+      { key: "reconciliation_status", label: "Status", format: "status", width: 180 },
+    ],
+    filters: [F_BRANCH],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["cost_centre_master", "employees", "process_master", "branch_master", "client_master"],
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: "confidential",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "validated",
+  },
+  {
+    code: "attendance-enrollment-gap",
+    name: "Attendance Enrolment Gap",
+    category: "Attendance",
+    subcategory: "Data Quality",
+    description:
+      "Separates missing attendance caused by an unenrolled biometric from missing attendance caused by a processing failure. The two are indistinguishable on an attendance report, and the difference decides whether the fix is enrolment or investigation — one branch was found with 0 of 51 employees enrolled.",
+    rowGrain: "One row per active employee for the month",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "biometric_enrolled", label: "Biometric Enrolled", format: "text", width: 130, align: "center" },
+      { key: "biometric_code", label: "Biometric Code", format: "text", width: 130 },
+      { key: "days_with_record", label: "Days With Record", format: "number", width: 130, align: "right" },
+      { key: "days_with_punch", label: "Days With Punch", format: "number", width: 130, align: "right" },
+      { key: "enrollment_gap", label: "Enrolment Gap", format: "status", width: 220 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "attendance_daily_record", "branch_master", "process_master", "cost_centre_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "validated",
+  },
+
+  {
+    // Cost centre had 927 rows (573 active) carrying 1,061 of 1,125 active employees, and
+    // no report on it. You could see a cost centre code on an employee row and had no way
+    // to ask what it was, whose client it served, or how many people it carried.
+    code: "cost-centre-master-report",
+    name: "Cost Centre Master",
+    category: "HR & Workforce",
+    subcategory: "Organisation Masters",
+    description: "Every cost centre with its client, branch, approval state and live headcount",
+    rowGrain: "One row per cost centre",
+    primaryKey: ["cost_centre_code"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 200 },
+      { key: "client_name", label: "Client", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 140 },
+      { key: "cc_category", label: "Category", format: "text", width: 120 },
+      { key: "cc_type", label: "Type", format: "text", width: 110 },
+      { key: "tower", label: "Tower", format: "text", width: 110 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 130 },
+      { key: "cost_centre_state", label: "Active / Inactive", format: "status", width: 120 },
+      { key: "active_headcount", label: "Active Headcount", format: "number", width: 130, align: "right" },
+      { key: "distinct_processes", label: "Processes", format: "number", width: 100, align: "right" },
+      { key: "billing_process_name", label: "Billing Name", format: "text", width: 200 },
+      { key: "mapped_process", label: "Mapped Process", format: "text", width: 180 },
+      { key: "go_live_date", label: "Go Live", format: "date", width: 110 },
+      { key: "close_date", label: "Closed", format: "date", width: 110 },
+    ],
+    filters: [F_BRANCH, F_COST_CENTRE, F_STATUS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["cost_centre_master", "branch_master", "department_master", "process_master", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    // Verified against live 2026-08-07: 927 rows, headcount summing to 1,061 — exactly the
+    // active employees who resolve to a cost centre. Mapped Process is empty on every row
+    // because cost_centre_master.process_id is NULL on all 927; shown rather than hidden,
+    // since a column that should be populated and is not is itself the finding.
+    availabilityStatus: "validated_with_limitations",
+  },
+
+  {
+    // 131 processes (66 active) carrying 982 of 1,125 active employees, likewise unreported.
+    code: "process-master-report",
+    name: "Process Master",
+    category: "HR & Workforce",
+    subcategory: "Organisation Masters",
+    description: "Every process with its client, branch, workload type, SLA and live headcount",
+    rowGrain: "One row per process",
+    primaryKey: ["process_code"],
+    columns: [
+      { key: "process_code", label: "Process Code", format: "text", width: 150 },
+      { key: "process_name", label: "Process", format: "text", width: 200 },
+      { key: "client_name", label: "Client", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_type", label: "Type", format: "text", width: 130 },
+      { key: "workload_type", label: "Workload", format: "text", width: 140 },
+      { key: "business_lob", label: "LOB", format: "text", width: 130 },
+      { key: "process_state", label: "Active / Inactive", format: "status", width: 120 },
+      { key: "active_headcount", label: "Active Headcount", format: "number", width: 130, align: "right" },
+      { key: "distinct_cost_centres", label: "Cost Centres", format: "number", width: 120, align: "right" },
+      { key: "process_owner_name", label: "Process Owner", format: "text", width: 160 },
+      { key: "sla_response_hours", label: "SLA Response (h)", format: "number", width: 130, align: "right" },
+      { key: "sla_resolution_hours", label: "SLA Resolution (h)", format: "number", width: 140, align: "right" },
+      { key: "close_date", label: "Closed", format: "date", width: 110 },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_STATUS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["process_master", "branch_master", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    // Verified against live 2026-08-07: 131 rows, headcount summing to 982 — exactly the
+    // active employees who resolve to a process.
+    availabilityStatus: "validated",
+  },
+
+  {
+    // The pairing the mandate implies. Driven from employees, not from either master,
+    // because cost_centre_master.process_id is empty on all 927 rows — where people
+    // actually sit is the only honest way to pair the two dimensions.
+    code: "headcount-by-cost-centre-and-process",
+    name: "Headcount by Cost Centre and Process",
+    category: "HR & Workforce",
+    subcategory: "Organisation Masters",
+    description: "Active headcount for every cost centre and process pairing, including unmapped",
+    rowGrain: "One row per cost centre and process pairing",
+    primaryKey: ["cost_centre_code", "process_name"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 200 },
+      { key: "process_name", label: "Process", format: "text", width: 180 },
+      { key: "client_name", label: "Client", format: "text", width: 200 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 140 },
+      { key: "headcount", label: "Headcount", format: "number", width: 110, align: "right" },
+      { key: "unmapped_in_group", label: "Unmapped in Group", format: "number", width: 140, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_COST_CENTRE, F_DEPT],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "cost_centre_master", "process_master", "branch_master", "department_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    // Verified against live 2026-08-07: 86 groups summing to 1,125 — every active
+    // employee, including the 64 with no cost centre and 143 with no process, which show
+    // as UNASSIGNED rather than being dropped. A version that totalled 1,061 would look
+    // tidier and be wrong.
+    availabilityStatus: "validated",
+  },
+
+  {
+    // The safety net for standardising every report on active_status = 1. A row flagged
+    // active_status = 1 with employment_status 'resigned' is now counted as a current
+    // employee; that is the right call for consistency between reports, and this is where
+    // the contradiction gets seen and resolved instead of quietly changing a headcount.
+    code: "employee-status-conflicts",
+    name: "Employee Status Conflicts",
+    category: "HR & Workforce",
+    subcategory: "Data Quality",
+    description: "Employees whose active_status and employment_status contradict each other",
+    rowGrain: "One row per employee with contradictory status flags",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "department_name", label: "Department", format: "text", width: 130 },
+      { key: "designation_name", label: "Designation", format: "text", width: 150 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "employment_status", label: "Employment Status", format: "status", width: 130 },
+      { key: "employee_state", label: "Active Flag", format: "status", width: 110 },
+      { key: "conflict_type", label: "Conflict", format: "status", width: 240 },
+      { key: "date_of_exit", label: "Date of Exit", format: "date", width: 110 },
+      { key: "date_of_leaving", label: "Date of Leaving", format: "date", width: 120 },
+      { key: "resignation_date", label: "Resignation Date", format: "date", width: 130 },
+      { key: "reporting_manager_name", label: "Reporting Manager", format: "text", width: 180 },
+      { key: "reporting_impact", label: "Reporting Impact", format: "text", width: 320 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "department_master", "designation_master", "process_master", "cost_centre_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    // Verified against live mas_hrms 2026-08-07: exactly 2 rows, both
+    // ACTIVE_FLAG_BUT_INACTIVE_STATUS ('inactive' and 'resigned'). These are the two
+    // employees behind headcount reading 1,123 where employee-master read 1,125.
+    availabilityStatus: "validated",
+  },
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 1: HR & WORKFORCE
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "headcount",
+    name: "Headcount Summary",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    description: "Headcount grouped by branch, department, process and employee status",
+    // Status is part of the grain now: the report reports BOTH populations and splits each
+    // combination into an Active row and an Inactive row.
+    rowGrain: "One row per branch/department/process/employee-status combination",
+    primaryKey: ["branch_name", "department_name", "process_name", "employee_status"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      // Labelled "Headcount", not "Active Headcount". The key stays active_headcount because
+      // that is the executor's alias, but the value is no longer an active-only count: on an
+      // Inactive row it counts inactive employees, so the old label stated the opposite of
+      // what the cell contains.
+      { key: "active_headcount", label: "Headcount", format: "number", width: 120, align: "right", aggregate: "sum" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_DEPT],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "department_master", "process_master"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "employee-master",
+    name: "Employee Master Export",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    description: "Complete employee directory in the legacy ExportEmployeeDetails column order/labels: identity, family, nominee, org mapping, education, address, salary, bank, UAN/PAN/Aadhaar and PF/ESI eligibility — one row per employee",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    // Column order and labels below deliberately mirror the legacy "ExportEmployeeDetails"
+    // download (74 columns) header-for-header, per user request 2026-09-11 — not the earlier
+    // 33-column HRMS-native layout. See employee.executor.ts employeeMaster() for the field
+    // source mapping and the fields left NULL because no HRMS2 table ever captured them
+    // (Home Branch, TMobNo, EntryDate, LeftRmks, Work Status, Manual Update Date).
+    columns: [
+      { key: "employee_code", label: "EmpCode", format: "text", width: 90 },
+      { key: "biometric_code", label: "BioMetricCode", format: "text", width: 110 },
+      { key: "employment_type", label: "EmpType", format: "text", width: 80 },
+      { key: "employee_name", label: "EmpName", format: "text", width: 220 },
+      { key: "father_husband_name", label: "F/H Name", format: "text", width: 200, sensitive: true },
+      { key: "father_husband_relation", label: "F/H Relation", format: "text", width: 100 },
+      { key: "gender", label: "Gender", format: "text", width: 80 },
+      { key: "nominee_name", label: "NomineeName", format: "text", width: 190, sensitive: true },
+      { key: "nominee_relation", label: "NomineeRelation", format: "text", width: 120 },
+      { key: "nominee_dob", label: "NomineeDob", format: "date", width: 100, sensitive: true },
+      { key: "date_of_birth", label: "DOB", format: "date", width: 100, sensitive: true },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "designation_name", label: "Desig", format: "text", width: 110 },
+      { key: "billable_status", label: "Billable", format: "text", width: 80 },
+      { key: "department_name", label: "Depart", format: "text", width: 140 },
+      { key: "emp_for", label: "EmpFor", format: "text", width: 90 },
+      { key: "profile_type", label: "Profile", format: "text", width: 100 },
+      { key: "branch_name", label: "Location", format: "text", width: 100 },
+      { key: "cost_centre_name", label: "CostCenter", format: "text", width: 140 },
+      { key: "qualification", label: "Qualification", format: "text", width: 130 },
+      { key: "qualification_details", label: "QualificationDetails", format: "text", width: 220 },
+      { key: "passed_out_year", label: "PassedOutYear", format: "number", width: 100 },
+      { key: "passed_out_state", label: "PassedOutState", format: "text", width: 130 },
+      { key: "passed_out_city", label: "PassedOutCity", format: "text", width: 130 },
+      { key: "passed_out_percentage", label: "PassedOutPercent", format: "number", width: 120 },
+      { key: "working_experience", label: "WorkingExperience", format: "text", width: 130 },
+      { key: "experience_years", label: "ExperienceYear", format: "number", width: 100 },
+      { key: "marital_status", label: "MaritalStatus", format: "text", width: 100 },
+      { key: "family_annual_income", label: "FamilyAnnualIncome", format: "number", width: 140, sensitive: true },
+      { key: "count_of_dependents", label: "CountOfDependents", format: "number", width: 130 },
+      { key: "reporting_manager", label: "ReportingManagerName", format: "text", width: 180 },
+      { key: "reporting_manager_mobile", label: "ReportingManagerMobileNo", format: "phone", width: 160, sensitive: true },
+      { key: "blood_group", label: "BloodG", format: "text", width: 80 },
+      { key: "permanent_address_line1", label: "PAddress", format: "text", width: 220, sensitive: true },
+      { key: "permanent_city", label: "PCity", format: "text", width: 110 },
+      { key: "permanent_state", label: "PState", format: "text", width: 140 },
+      { key: "permanent_pincode", label: "PpinCode", format: "text", width: 90 },
+      { key: "current_address_line1", label: "TAddress", format: "text", width: 220, sensitive: true },
+      { key: "current_city", label: "TCity", format: "text", width: 140 },
+      { key: "current_state", label: "TState", format: "text", width: 140 },
+      { key: "current_pincode", label: "TPinCode", format: "text", width: 90 },
+      { key: "contact_number", label: "PMobNo", format: "phone", width: 110, sensitive: true },
+      { key: "permanent_landline", label: "PLandLine", format: "text", width: 100, sensitive: true },
+      { key: "temporary_mobile", label: "TMobNo", format: "phone", width: 110, sensitive: true },
+      { key: "temporary_landline", label: "TLandLine", format: "text", width: 100, sensitive: true },
+      { key: "email", label: "EmailId", format: "email", width: 220 },
+      { key: "document_done", label: "documentDone", format: "text", width: 120 },
+      { key: "gross", label: "Gross", format: "number", width: 90, align: "right", sensitive: true },
+      { key: "ctc_offered", label: "CTCOffered", format: "number", width: 110, align: "right", sensitive: true },
+      { key: "net_in_hand", label: "NetInHand", format: "number", width: 100, align: "right", sensitive: true },
+      { key: "bank_account_number", label: "AcNo", format: "text", width: 160, sensitive: true },
+      { key: "ifsc_code", label: "IFSCCode", format: "text", width: 130, sensitive: true },
+      { key: "bank_name", label: "AcBank", format: "text", width: 220, sensitive: true },
+      { key: "bank_branch", label: "AcBranch", format: "text", width: 220, sensitive: true },
+      { key: "passport_no", label: "PassPortNo", format: "text", width: 130, sensitive: true },
+      { key: "dl_no", label: "dlNo", format: "text", width: 90, sensitive: true },
+      { key: "uan_number", label: "UAN", format: "text", width: 130, sensitive: true },
+      { key: "epf_number", label: "EpfNo", format: "text", width: 140, sensitive: true },
+      { key: "pf_eligible", label: "EpfEleg", format: "text", width: 90, align: "center" },
+      { key: "esi_number", label: "EsiNo", format: "text", width: 110, sensitive: true },
+      { key: "esi_eligible", label: "EsiEleg", format: "text", width: 90, align: "center" },
+      { key: "entry_date", label: "EntryDate", format: "date", width: 90 },
+      { key: "status", label: "Status", format: "status", width: 90 },
+      { key: "date_of_leaving", label: "LeftDate", format: "date", width: 90 },
+      { key: "left_remarks", label: "LeftRmks", format: "text", width: 220 },
+      { key: "source_type", label: "SourceType", format: "text", width: 130 },
+      { key: "source", label: "Source", format: "text", width: 200 },
+      { key: "box_file_no", label: "BoxFileNo", format: "text", width: 100 },
+      { key: "aadhaar_number", label: "AadharID", format: "text", width: 150 },
+      { key: "pan_number", label: "PanNo", format: "text", width: 150 },
+      { key: "work_status", label: "Work Status", format: "text", width: 100 },
+      { key: "manual_update_by", label: "Manual Update By", format: "text", width: 140 },
+      { key: "manual_update_date", label: "Manual Update Date", format: "date", width: 130 },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_DEPT, F_STATUS, F_DATE_FROM, F_DATE_TO],
+    // Narrowed from the plain-directory version: this row now carries bank account numbers,
+    // PAN and Aadhaar in full, plus CTC. ROLES_PAYROLL (super_admin/admin/finance/payroll/
+    // hr_head) — not the wider ROLES_HR_ADMIN — matches how every other PII+financial report
+    // in this catalog is gated.
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: [
+      "employees", "branch_master", "department_master", "process_master", "designation_master",
+      "cost_centre_master", "employee_address", "employee_bank_detail", "employee_uan",
+      "employee_statutory_info", "employee_statutory_override", "employee_salary_assignment",
+      "salary_structure_master", "employee_legacy_meta", "employee_nominee", "employee_education",
+      "employee_experience", "employee_client_mapping", "employee_salary_snapshot",
+    ],
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "manager-mapping",
+    name: "Manager Mapping Report",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    description: "Employee to reporting manager mapping",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "reporting_manager_code", label: "Manager Code", format: "text", width: 100 },
+      { key: "reporting_manager", label: "Reporting Manager", format: "text", width: 180 },
+      { key: "manager_designation", label: "Manager Designation", format: "text", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "org-structure-snapshot",
+    name: "Org Structure Snapshot",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    description: "Organization hierarchy snapshot",
+    rowGrain: "One row per organizational unit",
+    primaryKey: ["branch_name", "department_name"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_head", label: "Department Head", format: "text", width: 180 },
+      { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "department_master"],
+    branchScoped: true,
+  },
+
+  {
+    code: "cost-centre-headcount",
+    name: "Cost Centre Headcount",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    description: "Headcount distribution by cost centre and employee status",
+    // Grain includes cost centre CODE and status. Name alone is not unique — 927 cost centres
+    // carry 913 distinct names, so a name-only key merged six different "Snapdeal" cost
+    // centres into one row.
+    rowGrain: "One row per cost centre code/branch/employee-status combination",
+    primaryKey: ["cost_centre_code", "branch_name", "employee_status"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
+      { key: "cost_centre_name", label: "Cost Centre Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      // Key is active_headcount, matching the executor's alias and the frontend catalog. This
+      // was declared as `headcount`, a name nothing returns, so the Headcount column rendered
+      // an em-dash for every row in Decision Center while the Library showed the value.
+      { key: "active_headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_COST_CENTRE, F_BRANCH],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "cost_centre_master"],
+    branchScoped: true,
+  },
+
+  {
+    code: "employee-movement",
+    name: "New Joiners & Exits",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "Employees who joined or exited within the date range",
+    rowGrain: "One row per employee movement event",
+    primaryKey: ["employee_code", "movement_type"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "movement_type", label: "Movement", format: "status", width: 100 },
+      { key: "movement_date", label: "Date", format: "date", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "confirmation-due-list",
+    name: "Confirmation Due List",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "Employees with confirmation due in the specified period",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "probation_end_date", label: "Probation End", format: "date", width: 100 },
+      { key: "days_to_confirmation", label: "Days to Confirmation", format: "number", width: 120, align: "right" },
+      { key: "confirmation_status", label: "Status", format: "status", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, { key: "daysAhead", label: "Due in Next (days)", type: "number", placeholder: "30" }],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    // employee_probation is the driving table and it is INNER joined, so it decides the row
+    // count entirely. It holds 0 rows today — this report returns nothing until probation
+    // records are written, which is a data gap rather than a query fault.
+    sourceTables: ["employee_probation", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "contract-expiry-list",
+    name: "Contract Expiry List",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "Contract employees with contracts expiring soon",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "contract_start_date", label: "Contract Start", format: "date", width: 100 },
+      { key: "contract_end_date", label: "Contract End", format: "date", width: 100 },
+      { key: "days_to_expiry", label: "Days to Expiry", format: "number", width: 100, align: "right" },
+      { key: "contract_type", label: "Contract Type", format: "text", width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, { key: "daysAhead", label: "Due in Next (days)", type: "number", placeholder: "30" }],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    // employee_contract is the driving table and is INNER joined, so it decides the row count.
+    // 0 rows today — nothing to expire until contracts are recorded.
+    sourceTables: ["employee_contract", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "lifecycle-events",
+    name: "Employee Lifecycle Events",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "All lifecycle events (promotion, transfer, exit, etc.)",
+    rowGrain: "One row per event",
+    primaryKey: ["employee_code", "event_date", "event_type"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "event_type", label: "Event Type", format: "status", width: 120 },
+      { key: "event_date", label: "Event Date", format: "date", width: 100 },
+      { key: "old_value", label: "From", format: "text", width: 140 },
+      { key: "new_value", label: "To", format: "text", width: 140 },
+      { key: "actor_name", label: "Actioned By", format: "text", width: 160 },
+      { key: "remarks", label: "Remarks", format: "text", width: 200 },
+    ],
+    filters: [F_BRANCH, { key: "eventType", label: "Event Type", type: "text" }, F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    // employee_lifecycle_event is what the SQL reads; employee_job_history was never queried
+    // by this report. The table holds 0 rows today, so the report correctly returns nothing —
+    // an unused feature, not a broken query.
+    sourceTables: ["employee_lifecycle_event", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "increment-promotion-history",
+    name: "Increment / Promotion History",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "Historical record of salary increments and promotions",
+    rowGrain: "One row per increment/promotion event",
+    primaryKey: ["employee_code", "effective_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "change_type", label: "Change Type", format: "status", width: 100 },
+      { key: "effective_date", label: "Effective Date", format: "date", width: 100 },
+      { key: "old_designation", label: "Old Designation", format: "text", width: 140 },
+      { key: "new_designation", label: "New Designation", format: "text", width: 140 },
+      { key: "old_ctc", label: "Old CTC", format: "currency", width: 100, align: "right", sensitive: true },
+      { key: "new_ctc", label: "New CTC", format: "currency", width: 100, align: "right", sensitive: true },
+      { key: "increment_pct", label: "Increment %", format: "percentage", width: 100, align: "right" },
+    ],
+    filters: [F_BRANCH, F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employee_job_history", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "birthday-list",
+    name: "Birthday List",
+    category: "HR & Workforce",
+    subcategory: "HR Calendar",
+    description: "Employees with birthdays in the selected month",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "date_of_birth", label: "Date of Birth", format: "date", width: 100 },
+      { key: "birthday_date", label: "Birthday This Year", format: "date", width: 120 },
+      { key: "age", label: "Age", format: "number", width: 60, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_MONTH],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "anniversary-list",
+    name: "Work Anniversary List",
+    category: "HR & Workforce",
+    subcategory: "HR Calendar",
+    description: "Employees with work anniversaries in the selected month",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "anniversary_date", label: "Anniversary Date", format: "date", width: 120 },
+      { key: "years_of_service", label: "Years of Service", format: "number", width: 100, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_MONTH, { key: "yearsMin", label: "Min Years", type: "number", placeholder: "1" }],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    branchScoped: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 2: ATTENDANCE
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "attendance-daily",
+    name: "Daily Attendance Report",
+    category: "Attendance",
+    subcategory: "Daily",
+    description: "Day-wise attendance with punch times, productive minutes, and status",
+    rowGrain: "One row per employee per attendance date",
+    primaryKey: ["employee_code", "record_date"],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "shift_name", label: "Roster Shift", format: "text", width: 120 },
+      { key: "shift_start", label: "Shift Start", format: "time", width: 80 },
+      { key: "shift_end", label: "Shift End", format: "time", width: 80 },
+      { key: "punch_in", label: "Punch In", format: "time", width: 80 },
+      { key: "punch_out", label: "Punch Out", format: "time", width: 80 },
+      { key: "total_login_duration", label: "Total Login Hours", format: "duration", width: 100 },
+      { key: "productive_minutes", label: "Productive Minutes", format: "minutes", width: 120 },
+      { key: "attendance_status", label: "Status", format: "status", width: 100 },
+      { key: "late_by_minutes", label: "Late (mins)", format: "number", width: 80, align: "right" },
+      { key: "attendance_source", label: "Source", format: "text", width: 80 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
+    sourceTables: ["attendance_daily_record", "wfm_attendance_session", "wfm_roster_assignment", "wfm_shift_master", "employees"],
+    calculationNotes: "Punch times from wfm_attendance_session. Productive minutes from attendance_daily_record.raw_minutes. Status reflects regularization if applied.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "daily-hc-shift",
+    name: "Daily Headcount by Shift",
+    category: "Attendance",
+    subcategory: "Daily",
+    description: "Scheduled vs actual headcount per shift per day",
+    rowGrain: "One row per date per branch per process per shift",
+    primaryKey: ["record_date", "branch_name", "process_name", "shift_name"],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Shift", format: "text", width: 120 },
+      { key: "shift_start", label: "Shift Start", format: "time", width: 80 },
+      { key: "shift_end", label: "Shift End", format: "time", width: 80 },
+      { key: "scheduled_hc", label: "Scheduled HC", format: "number", width: 100, align: "right" },
+      { key: "present_hc", label: "Present HC", format: "number", width: 100, align: "right" },
+      { key: "absent_hc", label: "Absent HC", format: "number", width: 100, align: "right" },
+      { key: "leave_hc", label: "Leave HC", format: "number", width: 100, align: "right" },
+      { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 100, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "wfm_roster_assignment", "wfm_shift_master", "employees"],
+    calculationNotes: "Shift from date-specific roster (template, shift master, or the roster row's own imported start/end time). 'Roster Not Assigned' shown only when no roster row exists for that employee/date.",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "shift-adherence-detail",
+    name: "Shift Adherence Detail",
+    category: "Attendance",
+    subcategory: "Daily",
+    description: "Detailed shift adherence with scheduled vs actual times",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "record_date"],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Roster Shift", format: "text", width: 120 },
+      { key: "scheduled_start", label: "Scheduled Start", format: "time", width: 100 },
+      { key: "scheduled_end", label: "Scheduled End", format: "time", width: 100 },
+      { key: "punch_in", label: "Punch In", format: "time", width: 80 },
+      { key: "punch_out", label: "Punch Out", format: "time", width: 80 },
+      { key: "total_login_duration", label: "Total Login", format: "duration", width: 100 },
+      { key: "scheduled_minutes", label: "Scheduled (mins)", format: "number", width: 100, align: "right" },
+      { key: "actual_minutes", label: "Actual (mins)", format: "number", width: 100, align: "right" },
+      { key: "late_minutes", label: "Late (mins)", format: "number", width: 80, align: "right" },
+      { key: "early_logout_minutes", label: "Early Logout (mins)", format: "number", width: 100, align: "right" },
+      { key: "adherence_pct", label: "Adherence %", format: "percentage", width: 100, align: "right" },
+      { key: "adherence_status", label: "Status", format: "status", width: 100 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "wfm_attendance_session", "wfm_roster_assignment", "wfm_shift_master"],
+    calculationNotes: "Adherence % = (Actual minutes worked within shift / Scheduled minutes) * 100",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "attendance-summary",
+    name: "Monthly Attendance Summary",
+    category: "Attendance",
+    subcategory: "Monthly",
+    description: "Monthly attendance summary per employee",
+    rowGrain: "One row per employee per month",
+    primaryKey: ["employee_code", "month"],
+    columns: [
+      { key: "employee_code",   label: "Emp Code",        format: "text",   width: 100 },
+      { key: "employee_name",   label: "Employee Name",   format: "text",   width: 180 },
+      { key: "cost_centre_code",label: "Cost Centre Code",format: "text",   width: 140 },
+      { key: "cost_centre_name",label: "Cost Centre",     format: "text",   width: 180 },
+      { key: "branch_name",     label: "Branch",          format: "text",   width: 120 },
+      { key: "process_name",    label: "Process",         format: "text",   width: 140 },
+      { key: "department_name", label: "Department",      format: "text",   width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text",   width: 110, align: "center" },
+      { key: "total_days", label: "Total Days", format: "number", width: 80, align: "right" },
+      { key: "present_days", label: "Present", format: "number", width: 80, align: "right" },
+      { key: "absent_days", label: "Absent", format: "number", width: 80, align: "right" },
+      { key: "half_days", label: "Half Day", format: "number", width: 80, align: "right" },
+      { key: "leave_days", label: "Leave", format: "number", width: 80, align: "right" },
+      { key: "week_off_days", label: "Week Off", format: "number", width: 80, align: "right" },
+      { key: "holiday_days", label: "Holiday", format: "number", width: 80, align: "right" },
+      // Named, not absorbed. missing_punch is 23.8% of July 2026's rows and sits in the
+      // attendance_pct denominator without ever reaching the numerator, so without this
+      // column the percentage cannot be explained from the row it appears on.
+      { key: "missing_punch_days", label: "Missing Punch", format: "number", width: 110, align: "right" },
+      { key: "unreconciled_days", label: "Unreconciled", format: "number", width: 110, align: "right" },
+      { key: "lwp_days", label: "LWP", format: "number", width: 80, align: "right" },
+      { key: "late_days", label: "Late Marks", format: "number", width: 90, align: "right" },
+      { key: "total_productive_hours", label: "Productive Hours", format: "duration", width: 120 },
+      { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 100, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS, F_DEPT],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
+    // payable_days was declared here but no attendance source produces it — payable days
+    // are a payroll output (salary_prep_line.final_payable_days), not an attendance one,
+    // so the column rendered permanently blank. Dropped rather than faked; use the
+    // payroll register for payable days.
+    sourceTables: ["attendance_daily_record", "employees", "department_master"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "attendance-register-grid",
+    name: "Monthly Attendance Summary (per Employee)",
+    category: "Attendance",
+    subcategory: "Monthly",
+    description:
+      "One row per employee for the month with present, absent, half, LWP, late and working day totals. Despite the previous name this returns no per-day columns — the day-by-day grid is attendance-register-monthly, and the two were labelled the wrong way round.",
+    rowGrain: "One row per employee per month with day-wise columns",
+    primaryKey: ["employee_code", "month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      // Days 1-31 added dynamically
+      { key: "present_count", label: "P", format: "number", width: 40, align: "center" },
+      { key: "absent_count", label: "A", format: "number", width: 40, align: "center" },
+      { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
+      { key: "week_off_count", label: "WO", format: "number", width: 40, align: "center" },
+      { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "employees"],
+    calculationNotes: "Grid format with day numbers 1-31 as columns. Status codes: P=Present, A=Absent, L=Leave, WO=Week Off, H=Holiday, HD=Half Day",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "late-arrival-summary",
+    name: "Late Arrival Summary",
+    category: "Attendance",
+    subcategory: "Monthly",
+    description: "Employees who arrived late with details of late minutes",
+    rowGrain: "One row per employee per date with late arrival",
+    primaryKey: ["employee_code", "record_date"],
+    columns: [
+      { key: "record_date",     label: "Date",            format: "date",   width: 100 },
+      { key: "employee_code",   label: "Emp Code",        format: "text",   width: 100 },
+      { key: "employee_name",   label: "Employee Name",   format: "text",   width: 180 },
+      { key: "branch_name",     label: "Branch",          format: "text",   width: 120 },
+      { key: "process_name",    label: "Process",         format: "text",   width: 140 },
+      { key: "cost_centre_code",label: "Cost Centre Code",format: "text",   width: 140 },
+      { key: "cost_centre_name",label: "Cost Centre",     format: "text",   width: 180 },
+      { key: "department_name", label: "Department",      format: "text",   width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text",   width: 110, align: "center" },
+      { key: "shift_name",      label: "Shift",           format: "text",   width: 120 },
+      { key: "shift_start",     label: "Shift Start",     format: "time",   width: 80 },
+      { key: "punch_in",        label: "Punch In",        format: "time",   width: 80 },
+      { key: "grace_minutes",   label: "Grace (mins)",    format: "number", width: 80,  align: "right" },
+      { key: "late_by_minutes", label: "Late By (mins)",  format: "number", width: 100, align: "right" },
+      { key: "attendance_status",label: "Status",         format: "status", width: 100 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "wfm_attendance_session", "wfm_roster_assignment", "wfm_shift_master", "attendance_rule_config"],
+    calculationNotes: "Late = Punch In > (Shift Start + Grace). Only includes records with late_by_minutes > 0.",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "overtime-summary",
+    name: "Overtime Summary",
+    category: "Attendance",
+    subcategory: "Monthly",
+    description: "Monthly overtime hours and pay per employee",
+    rowGrain: "One row per employee with overtime in the month",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code",   label: "Emp Code",        format: "text",   width: 100 },
+      { key: "employee_name",   label: "Employee Name",   format: "text",   width: 180 },
+      { key: "branch_name",     label: "Branch",          format: "text",   width: 120 },
+      { key: "process_name",    label: "Process",         format: "text",   width: 140 },
+      { key: "cost_centre_code",label: "Cost Centre Code",format: "text",   width: 140 },
+      { key: "cost_centre_name",label: "Cost Centre",     format: "text",   width: 180 },
+      { key: "department_name", label: "Department",      format: "text",   width: 120 },
+      { key: "employee_status", label: "Employee Status", format: "text",   width: 110, align: "center" },
+      { key: "designation_name",label: "Designation",     format: "text",   width: 140 },
+      { key: "days_attended", label: "Days Attended", format: "number", width: 100, align: "right" },
+      { key: "total_worked_hours", label: "Total Worked (hrs)", format: "number", width: 120, align: "right" },
+      { key: "total_scheduled_hours", label: "Scheduled (hrs)", format: "number", width: 120, align: "right" },
+      { key: "overtime_hours", label: "Overtime (hrs)", format: "number", width: 100, align: "right" },
+      { key: "overtime_duration", label: "Overtime", format: "duration", width: 100 },
+      { key: "overtime_pay", label: "Overtime Pay", format: "currency", width: 120, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: [...ROLES_WFM, "payroll", "finance"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm", "payroll"],
+    sourceTables: ["attendance_daily_record", "attendance_rule_config", "wfm_roster_assignment", "wfm_shift_master", "salary_prep_line"],
+    calculationNotes: "Overtime = Total worked minutes - Scheduled shift minutes (when positive). Only employees with overtime > 0 included.",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "biometric-reconciliation",
+    name: "Biometric Reconciliation",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    description: "Comparison of processed attendance vs raw biometric data",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "record_date"],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "attendance_status", label: "Attendance Status", format: "status", width: 120 },
+      { key: "processed_biometric_minutes", label: "Processed (mins)", format: "number", width: 100, align: "right" },
+      { key: "processed_biometric_duration", label: "Processed Duration", format: "duration", width: 120 },
+      { key: "biometric_punch_in", label: "Biometric Punch In", format: "time", width: 120 },
+      { key: "biometric_punch_out", label: "Biometric Punch Out", format: "time", width: 120 },
+      { key: "raw_biometric_minutes", label: "Raw Biometric (mins)", format: "number", width: 120, align: "right" },
+      { key: "raw_biometric_duration", label: "Raw Duration", format: "duration", width: 100 },
+      { key: "reconciliation_status", label: "Reconciliation", format: "status", width: 140 },
+      { key: "reconciliation_description", label: "Description", format: "text", width: 200 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "integration_biometric_daily", "employees"],
+    calculationNotes: "Reconciliation statuses: OK, NO_BIOMETRIC_FOR_PRESENT (present but no punch), PUNCHED_BUT_ABSENT (punch exists but marked absent)",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "regularization-summary",
+    name: "Regularization Summary",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    description: "Attendance regularization requests and their approval status",
+    rowGrain: "One row per regularization request",
+    primaryKey: ["employee_code", "attendance_date", "submitted_at"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "attendance_date", label: "Attendance Date", format: "date", width: 100 },
+      { key: "requested_status", label: "Requested Status", format: "status", width: 120 },
+      { key: "reason", label: "Reason", format: "text", width: 200 },
+      { key: "reason_code", label: "Reason Code", format: "text", width: 100 },
+      { key: "reason_label", label: "Reason Type", format: "text", width: 160 },
+      { key: "requested_by_type", label: "Requested By", format: "status", width: 100 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 120 },
+      { key: "submitted_at", label: "Submitted At", format: "datetime", width: 140 },
+      { key: "reviewer_name", label: "Reviewed By", format: "text", width: 140 },
+      { key: "approved_at", label: "Approved At", format: "datetime", width: 140 },
+      { key: "reviewer_note", label: "Reviewer Note", format: "text", width: 200 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS, F_APPROVAL_STATUS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
+    sourceTables: ["attendance_regularization", "attendance_reason_master", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "attendance-dispute-summary",
+    name: "Attendance Dispute Summary",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    description: "Formal attendance disputes with punch corrections",
+    rowGrain: "One row per dispute request",
+    primaryKey: ["employee_code", "dispute_date", "submitted_at"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "dispute_date", label: "Dispute Date", format: "date", width: 100 },
+      { key: "dispute_type", label: "Dispute Type", format: "status", width: 140 },
+      { key: "description", label: "Description", format: "text", width: 200 },
+      { key: "old_status", label: "Original Status", format: "status", width: 120 },
+      { key: "requested_status", label: "Requested Status", format: "status", width: 120 },
+      { key: "original_punch_in", label: "Original Punch In", format: "time", width: 100 },
+      { key: "original_punch_out", label: "Original Punch Out", format: "time", width: 100 },
+      { key: "requested_punch_in", label: "Requested Punch In", format: "time", width: 100 },
+      { key: "requested_punch_out", label: "Requested Punch Out", format: "time", width: 100 },
+      { key: "payroll_impact", label: "Payroll Impact", format: "boolean", width: 100 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 120 },
+      { key: "submitted_at", label: "Submitted At", format: "datetime", width: 140 },
+      { key: "reviewer_name", label: "Reviewed By", format: "text", width: 140 },
+      { key: "reviewed_at", label: "Reviewed At", format: "datetime", width: 140 },
+      { key: "resolution", label: "Resolution", format: "text", width: 200 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS, F_APPROVAL_STATUS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_regularization", "attendance_reason_master", "employees"],
+    calculationNotes: "Disputes are regularizations where dispute_type IS NOT NULL",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "habitual-absentee-list",
+    name: "Habitual Absentee / Late List",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    description: "Employees exceeding absence threshold with day-wise details",
+    rowGrain: "One row per employee meeting threshold",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code",   label: "Emp Code",        format: "text",   width: 100 },
+      { key: "employee_name",   label: "Employee Name",   format: "text",   width: 180 },
+      { key: "branch_name",     label: "Branch",          format: "text",   width: 120 },
+      { key: "process_name",    label: "Process",         format: "text",   width: 140 },
+      { key: "cost_centre_code",label: "Cost Centre Code",format: "text",   width: 140 },
+      { key: "cost_centre_name",label: "Cost Centre",     format: "text",   width: 180 },
+      { key: "department_name", label: "Department",      format: "text",   width: 120 },
+      { key: "designation_name",label: "Designation",     format: "text",   width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text",   width: 110, align: "center" },
+      { key: "absent_days",     label: "Absent Days",     format: "number", width: 100, align: "right" },
+      { key: "late_days", label: "Late Days", format: "number", width: 100, align: "right" },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 100, align: "right" },
+      { key: "total_working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "absent_pct", label: "Absent %", format: "percentage", width: 100, align: "right" },
+      { key: "absent_dates", label: "Absent Dates (Day)", format: "text", width: 200 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS, { key: "threshold", label: "Min Absent Days", type: "number", placeholder: "3" }],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "employees"],
+    calculationNotes: "Shows comma-separated list of day numbers when employee was absent",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "daily-shrinkage-report",
+    name: "Daily Shrinkage Report",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Daily shrinkage analysis by branch and process",
+    rowGrain: "One row per date per branch per process",
+    primaryKey: ["record_date", "branch_name", "process_name"],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "total_scheduled", label: "Scheduled HC", format: "number", width: 100, align: "right" },
+      { key: "present_hc", label: "Present HC", format: "number", width: 100, align: "right" },
+      { key: "absent_hc", label: "Absent HC", format: "number", width: 100, align: "right" },
+      { key: "leave_hc", label: "Leave HC", format: "number", width: 100, align: "right" },
+      { key: "week_off_hc", label: "Week Off HC", format: "number", width: 100, align: "right" },
+      { key: "holiday_hc", label: "Holiday HC", format: "number", width: 100, align: "right" },
+      { key: "unplanned_shrinkage_hc", label: "Unplanned Shrinkage", format: "number", width: 140, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 120, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 150, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: [...ROLES_WFM, "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "employees"],
+    calculationNotes: "Total Shrinkage = (Scheduled - Present) / Scheduled * 100. Unplanned = Absent only (excludes approved leave, WO, holiday).",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "monthly-shrinkage-trend",
+    name: "Monthly Shrinkage Trend",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Monthly shrinkage trends with 3-month moving average",
+    rowGrain: "One row per month per branch per process",
+    primaryKey: ["month", "branch_name", "process_name"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "total_employee_days", label: "Employee-Days", format: "number", width: 120, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "absent_days", label: "Absent Days", format: "number", width: 100, align: "right" },
+      { key: "leave_days", label: "Leave Days", format: "number", width: 100, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 120, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 150, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: [...ROLES_WFM, "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["attendance_daily_record", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "punch-raw-export",
+    name: "Punch Raw Data Export",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Raw biometric punch data with all punch details",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "activity_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "biometric_code", label: "Biometric Code", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "activity_date", label: "Date", format: "date", width: 100 },
+      { key: "first_punch", label: "First Punch", format: "time", width: 100 },
+      { key: "last_punch", label: "Last Punch", format: "time", width: 100 },
+      { key: "biometric_minutes", label: "Duration (mins)", format: "number", width: 100, align: "right" },
+      { key: "total_duration", label: "Total Duration", format: "duration", width: 100 },
+      { key: "total_punches", label: "Punch Count", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["integration_biometric_daily", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "break-daily-summary",
+    name: "Break Activity Daily Summary",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Daily individual break activity: break count, total break minutes, shift, and team per employee",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "break_date"],
+    columns: [
+      { key: "break_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "shift_name", label: "Shift", format: "text", width: 100 },
+      { key: "break_count", label: "Break Count", format: "number", width: 80, align: "right" },
+      { key: "total_break_minutes", label: "Total Break (mins)", format: "number", width: 100, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["break_sessions", "employees", "wfm_roster_assignment", "wfm_shift_master"],
+    calculationNotes:
+      "Aggregated from break_sessions (not the derived break_daily_summary table) so " +
+      "the report cannot go stale if the summary writer lags. break_count and " +
+      "total_break_minutes cover COMPLETED, AUTO_CLOSED and EXCEPTION sessions only — " +
+      "an ACTIVE break has no end time and no duration yet, so counting it would report " +
+      "break minutes not actually taken. Use Break Session Log for the per-break detail. " +
+      "shift_name comes from wfm_roster_assignment and is blank where no roster exists " +
+      "for that employee and date.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "validated",
+  },
+
+  {
+    code: "break-session-log",
+    name: "Break Session Log",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Every individual break with its break-in and break-out time, duration, source and exception reason",
+    rowGrain: "One row per break session",
+    primaryKey: ["employee_code", "break_date", "break_in"],
+    columns: [
+      { key: "break_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      // Added alongside the executor change. This catalogue is contract-tested against the
+      // executor's actual output, so adding the mandatory cost centre columns in one place
+      // without the other fails the build rather than shipping a report whose columns and
+      // catalogue disagree — which is exactly what it caught here.
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "break_type", label: "Break Type", format: "text", width: 110 },
+      { key: "break_in", label: "Break In", format: "time", width: 90 },
+      { key: "break_out", label: "Break Out", format: "time", width: 90 },
+      { key: "duration_minutes", label: "Duration (mins)", format: "number", width: 100, align: "right" },
+      { key: "status", label: "Status", format: "status", width: 110 },
+      { key: "start_source", label: "Start Source", format: "text", width: 110 },
+      { key: "end_source", label: "End Source", format: "text", width: 110 },
+      { key: "kiosk_code", label: "Desk", format: "text", width: 100 },
+      { key: "biometric_punch_in", label: "Biometric In", format: "time", width: 100 },
+      { key: "biometric_punch_out", label: "Biometric Out", format: "time", width: 100 },
+      { key: "exception_reason", label: "Exception Reason", format: "text", width: 200 },
+      { key: "break_reason", label: "Break Reason", format: "text", width: 200 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS, F_BREAK_STATUS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["break_sessions", "employees", "break_kiosk_devices"],
+    calculationNotes:
+      "One row per row of break_sessions — no aggregation. Unlike Break Activity Daily " +
+      "Summary this INCLUDES ACTIVE (in-progress) breaks, which show a blank Break Out " +
+      "and zero duration; that is why the two reports' break counts can differ. " +
+      "Biometric In/Out are the shift punches captured on the session, not the break itself.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "validated",
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 3: LEAVE
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "leave-balance",
+    name: "Leave Balance Report",
+    category: "Leave",
+    subcategory: "Balance & Allocation",
+    description:
+      "Leave balance in MAS Callnet format — CL/ML/EL/PTL-MTL columns for Current, Taken and Remaining, one row per employee",
+    rowGrain: "One row per employee",
+    primaryKey: ["emp_code"],
+    columns: [
+      { key: "emp_code",         label: "EmpCode",          format: "text",   width: 110 },
+      { key: "emp_name",         label: "EmpName",          format: "text",   width: 220 },
+      { key: "branch_name",      label: "BranchName",       format: "text",   width: 130 },
+      { key: "cost_center",      label: "Cost Center",      format: "text",   width: 180 },
+      { key: "process_name",     label: "Process Name",     format: "text",   width: 170 },
+
+      { key: "cl_current",      label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_current",      label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_current",      label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_current", label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_taken",        label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_taken",        label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_taken",        label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_taken",   label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_remain",       label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_remain",       label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_remain",       label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_remain",  label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+      // LAST, matching LEAVE_BALANCE_COLUMNS in leave-balance-format.ts, which drives the XLSX.
+      // The workbook layout is supplied by the business and pins A → Q with four merges, so this
+      // column is appended in R rather than placed beside the other employee details. Screen and
+      // download therefore show the same columns in the same order — the contract test asserts
+      // this list equals LEAVE_BALANCE_COLUMNS exactly.
+      { key: "employee_status", label: "Employee Status", format: "text", width: 110, align: "center" },
+    ],
+    headerGroups: [
+      // colSpan values must sum to columns.length (18). The trailing blank group covers
+      // employee_status in R; without it the grouped header row is one column short of the data
+      // and every leave group shifts one cell left of the numbers it labels.
+      { label: "Emp Details",   colSpan: 4 },
+      { label: "",              colSpan: 1 },
+      { label: "Current Leave", colSpan: 4 },
+      { label: "Leave Taken",   colSpan: 4 },
+      { label: "Leave Remain",  colSpan: 4 },
+      { label: "",              colSpan: 1 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_balance_ledger", "leave_type_master", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    calculationNotes:
+      "Current = allocated_days + adjusted_days; Taken = used_days; Remain = Current - Taken, " +
+      "all read from leave_balance_ledger for the selected month's balance year. " +
+      "Maternity and paternity share the single PTL/MTL column; the ML column is medical/sick leave.",
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "leave-allocation-register",
+    name: "Leave Allocation Register",
+    category: "Leave",
+    subcategory: "Balance & Allocation",
+    description: "Leave allocation history",
+    rowGrain: "One row per employee per leave type per year",
+    primaryKey: ["employee_code", "leave_code", "balance_year"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
+      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
+      { key: "balance_year", label: "Year", format: "number", width: 60 },
+      // Realigned to what the executor emits, and to the frontend catalog.
+      //
+      // This declared opening_balance and carry_forward, which leave_balance_ledger does not
+      // have — its only measure columns are allocated_days, used_days and adjusted_days (see
+      // the header note in leave.executor.ts). Both keys therefore rendered em-dashes in
+      // Decision Center, while adjusted_days / used_days / remaining_days, which the executor
+      // does return, had no column to land in.
+      { key: "allocated_days", label: "Allocated", format: "number", width: 80, align: "right" },
+      { key: "adjusted_days", label: "Adjusted", format: "number", width: 80, align: "right" },
+      { key: "used_days", label: "Used", format: "number", width: 80, align: "right" },
+      { key: "remaining_days", label: "Remaining", format: "number", width: 90, align: "right" },
+    ],
+    filters: [F_YEAR, F_BRANCH, { key: "leaveType", label: "Leave Type", type: "text" }],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_balance_ledger", "leave_type_master", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    // Approved leave register in the MAS Callnet format. Covers every leave type,
+    // so maternity and paternity requests appear here and no separate
+    // Maternity / Paternity Leave Register is needed.
+    code: "leave-utilization",
+    name: "Leave Utilization Report",
+    category: "Leave",
+    subcategory: "Utilization & Trends",
+    description:
+      "Approved leave register — one row per leave request with dates, branch, process and approval details",
+    rowGrain: "One row per leave request",
+    primaryKey: ["employee_code", "start_date", "leave_type"],
+    columns: [
+      { key: "sr_no",               label: "SR#",                 format: "number", width: 60,  align: "center" },
+      { key: "employee_code",       label: "EMPLOYEE_CODE",       format: "text",   width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name",       label: "EMPLOYEE_NAME",       format: "text",   width: 200 },
+      { key: "leave_name",          label: "LEAVE_NAME",          format: "text",   width: 140 },
+      { key: "leave_type",          label: "LEAVE TYPE",          format: "text",   width: 90,  align: "center" },
+      { key: "days_used",           label: "DAYS_USED",           format: "number", width: 90,  align: "center" },
+      { key: "start_date",          label: "START DATE",          format: "text",   width: 110, align: "center" },
+      { key: "end_date",            label: "END DATE",            format: "text",   width: 110, align: "center" },
+      { key: "branch_name",         label: "BRANCH_NAME",         format: "text",   width: 130 },
+      { key: "process_name",        label: "PROCESS_NAME",        format: "text",   width: 170 },
+      { key: "leave_request_date",  label: "LEAVE REQUST DATE",   format: "text",   width: 140, align: "center" },
+      { key: "leave_approved_date", label: "LEAVE APPROVED DATE", format: "text",   width: 150, align: "center" },
+      { key: "approved_by",         label: "APPROVED BY",         format: "text",   width: 130 },
+      { key: "leave_remarks",       label: "LEAVE REMARKS",       format: "text",   width: 200 },
+    ],
+    blankInsteadOfDash: true,
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_request", "leave_type_master", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    calculationNotes:
+      "Approved requests only (status = 'approved'); pending, rejected and cancelled are excluded. " +
+      "Dates render as dd-MMM-yy. LEAVE REQUST DATE, LEAVE APPROVED DATE and APPROVED BY are blank " +
+      "wherever the source request carries no requested_at / approved_at / approved_by value.",
+  },
+
+  {
+    code: "leave-trend-monthly",
+    name: "Leave Trend (Monthly)",
+    category: "Leave",
+    subcategory: "Utilization & Trends",
+    description: "Monthly leave trends by type",
+    rowGrain: "One row per month per leave type",
+    primaryKey: ["month", "leave_code"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
+      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
+      { key: "total_requests", label: "Requests", format: "number", width: 80, align: "right" },
+      { key: "approved_requests", label: "Approved", format: "number", width: 80, align: "right" },
+      { key: "rejected_requests", label: "Rejected", format: "number", width: 80, align: "right" },
+      { key: "total_days", label: "Total Days", format: "number", width: 80, align: "right" },
+      { key: "unique_employees", label: "Employees", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_YEAR, F_BRANCH, { key: "leaveType", label: "Leave Type", type: "text" }],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_request", "leave_type_master"],
+    branchScoped: true,
+  },
+
+  {
+    code: "leave-lwp-reconciliation",
+    name: "Leave vs LWP Reconciliation",
+    category: "Leave",
+    subcategory: "Utilization & Trends",
+    description: "Reconciliation of leave taken vs LWP deducted",
+    rowGrain: "One row per employee per month",
+    primaryKey: ["employee_code", "month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "total_leave_days", label: "Leave Days", format: "number", width: 80, align: "right" },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 80, align: "right" },
+      { key: "absent_days", label: "Absent Days", format: "number", width: 80, align: "right" },
+      { key: "variance", label: "Variance", format: "number", width: 80, align: "right" },
+      { key: "reconciliation_status", label: "Status", format: "status", width: 100 },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_request", "attendance_daily_record", "employees"],
+    branchScoped: true,
+  },
+
+  // "maternity-paternity-register" is intentionally NOT listed. Maternity and
+  // paternity requests are ordinary leave types and now appear in the Leave
+  // Utilization Report, which covers every leave type with the same columns.
+  //
+  // "leave-encashment-register" is intentionally NOT listed either: it is not
+  // required, and its source table (leave_encashment_request) does not exist.
+  //
+  // Both executors remain registered in EXECUTOR_MAP so any saved request or
+  // deep link that still carries the old code keeps resolving.
+
+  {
+    code: "leave-lapse-summary",
+    name: "Leave Lapse Summary",
+    category: "Leave",
+    subcategory: "Special Categories",
+    description: "Leave balance that will lapse at year end",
+    rowGrain: "One row per employee per leave type",
+    primaryKey: ["employee_code", "leave_code"],
+    columns: [
+      // Realigned to what the executor emits. It produced balance_year / allocated / used
+      // / lapsed_days while this declared current_balance, max_carry_forward and
+      // lapsing_days — three keys nothing returns, so the report's headline number (the
+      // days actually lapsing) rendered blank alongside two permanently empty columns.
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
+      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
+      { key: "balance_year", label: "Balance Year", format: "number", width: 100, align: "right" },
+      { key: "allocated", label: "Allocated", format: "number", width: 100, align: "right" },
+      { key: "used", label: "Used", format: "number", width: 90, align: "right" },
+      { key: "lapsed_days", label: "Lapsing Days", format: "number", width: 110, align: "right" },
+    ],
+    filters: [F_YEAR, F_BRANCH],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_balance_ledger", "leave_type_master", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "holiday-master-list",
+    name: "Holiday Master List",
+    category: "Leave",
+    subcategory: "Special Categories",
+    description: "List of holidays for the year",
+    rowGrain: "One row per holiday",
+    primaryKey: ["holiday_date", "branch_name"],
+    columns: [
+      { key: "holiday_date", label: "Date", format: "date", width: 100 },
+      { key: "holiday_name", label: "Holiday Name", format: "text", width: 200 },
+      { key: "holiday_type", label: "Type", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "is_optional", label: "Optional", format: "boolean", width: 80 },
+    ],
+    filters: [F_YEAR, F_BRANCH],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_holiday_master"],
+    // Was branchScoped: true while holidayMasterList deliberately applies no row scope — the
+    // last report in the suite whose declared scoping and actual SQL disagreed. The executor is
+    // right and the flag was wrong: a holiday calendar is organisation-wide reference data, not
+    // employee data. Its branch join is descriptive, and a NULL branch_id means "applies
+    // everywhere" — which is every row live (leave_holiday_master holds 1 row, branch_id NULL,
+    // measured 2026-08-10). Scoping with a plain `branch_id IN (...)` would therefore have
+    // deleted every org-wide holiday from a branch user's calendar; the attendance engine reads
+    // the same column as `branch_id IS NULL OR branch_id = ?` for exactly that reason.
+    //
+    // Corrected to false rather than adding a predicate, because holidays are not sensitive and
+    // hiding another branch's holiday buys nothing. The flag now matches the implementation.
+    branchScoped: false,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 4: PAYROLL
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "payroll-register",
+    name: "Salary Register",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Complete salary register with all components and deductions",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      // Salary-register component columns, pivoted from salary_prep_line_component. Declared in
+      // BOTH catalogues or the grid and the export discard them.
+      { key: "bonus", label: "Bonus", format: "currency", width: 110, align: "right" },
+      { key: "conv", label: "Conv", format: "currency", width: 110, align: "right" },
+      { key: "portfolio", label: "Portfolio", format: "currency", width: 110, align: "right" },
+      { key: "medical_allowance", label: "MedicalAllowance", format: "currency", width: 130, align: "right" },
+      { key: "lta", label: "LTA", format: "currency", width: 100, align: "right" },
+      { key: "other_allowance", label: "OtherAllowance", format: "currency", width: 130, align: "right" },
+      { key: "pli", label: "PLI", format: "currency", width: 100, align: "right" },
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "run_status", label: "Run Status", format: "status", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 140 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "employment_status", label: "Employment Status", format: "text", width: 120 },
+      // employee_state, deduction_applied and line_flag are diagnostics, not decoration. On the
+      // 2026-07 run: 350 of 1,464 lines belong to employees with active_status = 0; 454 lines
+      // carry a 200 deduction against zero gross so SUM(total_deductions) overstates money
+      // actually deducted by 38,800; and 146 of those pay 200 against zero gross and zero
+      // attendance. They were previously emitted by the executor and invisible on screen.
+      { key: "employee_state", label: "Active?", format: "status", width: 90 },
+      { key: "basic_pay", label: "Basic", format: "currency", width: 110, align: "right" },
+      { key: "hra", label: "HRA", format: "currency", width: 110, align: "right" },
+      { key: "gross_salary", label: "Gross", format: "currency", width: 120, align: "right" },
+      { key: "pf_employee", label: "PF (Employee)", format: "currency", width: 110, align: "right" },
+      { key: "esic_employee", label: "ESIC (Employee)", format: "currency", width: 110, align: "right" },
+      // PT column removed 2026-09-11: Professional Tax discontinued company-wide
+      // by explicit stakeholder decision. The underlying executor still selects
+      // professional_tax (harmless, reads 0 on new runs); only the display
+      // column is dropped here as a clean, low-risk removal.
+      { key: "tds", label: "TDS", format: "currency", width: 110, align: "right" },
+      { key: "lwp_deduction", label: "LWP Deduction", format: "currency", width: 120, align: "right" },
+      { key: "total_deductions", label: "Total Deductions", format: "currency", width: 130, align: "right" },
+      { key: "deduction_applied", label: "Deduction Applied", format: "currency", width: 130, align: "right" },
+      { key: "net_salary", label: "Net Salary", format: "currency", width: 120, align: "right" },
+      { key: "net_mismatch_amount", label: "Net Mismatch", format: "currency", width: 120, align: "right" },
+      { key: "payroll_risk", label: "Payroll Risk", format: "status", width: 120 },
+      { key: "line_flag", label: "Line Flag", format: "status", width: 130 },
+      { key: "line_status", label: "Line Status", format: "status", width: 100 },
+      { key: "working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "leave_days", label: "Leave Days", format: "number", width: 100, align: "right" },
+      { key: "payable_days", label: "Payable Days", format: "number", width: 100, align: "right" },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 100, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line", "salary_prep_run", "salary_prep_line_component", "employees", "cost_centre_master"],
+    calculationNotes:
+      "Uses finalized payroll run. Components aggregated to employee level. Deduplication by employee_id + run_id. " +
+      "No figure is recomputed here: verified against live mas_hrms on 2026-08-07, gross - total_deductions = net_salary " +
+      "holds on every line where gross_salary > 0. Read Deduction Applied, not Total Deductions, when reconciling cash: " +
+      "zero-gross lines carry a deduction that net_salary floors away (38,800 on the 2026-07 run). Line Flag marks " +
+      "ZERO_GROSS and PAID_WITHOUT_GROSS lines; the run also includes employees who have left, shown by Active / Inactive.",
+    branchScoped: true,
+    processScoped: true,
+    requiresRunSelector: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "payroll-variance",
+    name: "Payroll Variance Report",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Month-over-month payroll variance analysis",
+    rowGrain: "One row per employee comparing current vs previous month",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "current_month", label: "Current Month", format: "text", width: 100 },
+      { key: "current_gross", label: "Current Gross", format: "currency", width: 120, align: "right" },
+      { key: "current_net", label: "Current Net", format: "currency", width: 120, align: "right" },
+      { key: "current_days", label: "Current Days", format: "number", width: 80, align: "right" },
+      { key: "prev_month", label: "Previous Month", format: "text", width: 100 },
+      { key: "prev_gross", label: "Previous Gross", format: "currency", width: 120, align: "right" },
+      { key: "prev_net", label: "Previous Net", format: "currency", width: 120, align: "right" },
+      { key: "prev_days", label: "Previous Days", format: "number", width: 80, align: "right" },
+      { key: "gross_variance", label: "Gross Variance", format: "currency", width: 120, align: "right" },
+      { key: "net_variance", label: "Net Variance", format: "currency", width: 120, align: "right" },
+      { key: "variance_pct", label: "Variance %", format: "percentage", width: 100, align: "right" },
+      { key: "variance_reason", label: "Variance Reason", format: "text", width: 200 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees"],
+    calculationNotes: "Compares finalized current month vs previous month payroll. Variance Reason shows major contributing factor.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: false,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "bank-advice",
+    name: "Bank Advice / Transfer Sheet",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Bank transfer file for salary disbursement",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      // ICICI Bank Transfer File columns. Declared in BOTH catalogues or the grid and the export
+      // silently drop them — the same trap that made the cost-centre change a no-op until the
+      // frontend catalogue was updated too.
+      { key: "debit_ac_no", label: "Debit Ac No", format: "text", width: 140 },
+      { key: "beneficiary_ac_no", label: "Beneficiary Ac No", format: "text", width: 160, sensitive: true },
+      { key: "beneficiary_name", label: "Beneficiary Name", format: "text", width: 180 },
+      { key: "amt", label: "Amt", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "pay_mod", label: "Pay Mod", format: "text", width: 80 },
+      { key: "transfer_date", label: "Date", format: "text", width: 120 },
+      { key: "ifsc", label: "IFSC", format: "text", width: 120, sensitive: true },
+      { key: "bene_mobile_no", label: "Bene Mobile no", format: "text", width: 130, sensitive: true },
+      { key: "bene_email_id", label: "Bene email id", format: "text", width: 200, sensitive: true },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "bank_name", label: "Bank Name", format: "text", width: 140 },
+      { key: "branch_name", label: "Bank Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "account_number", label: "Account Number", format: "masked", width: 160, sensitive: true },
+      { key: "ifsc_code", label: "IFSC Code", format: "text", width: 100 },
+      // CONFLICT means employees.bank_account_number and employee_bank_detail both hold an
+      // account for this person and they differ, so this file and neft-transfer-file would pay
+      // two different accounts — six such employees in the 2026-07 run. MISSING means neither
+      // source holds one (35). A CONFLICT row must not be paid until the records are reconciled.
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
+      { key: "net_pay", label: "Net Amount", format: "currency", width: 120, align: "right" },
+      { key: "payment_mode", label: "Payment Mode", format: "text", width: 100 },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ["super_admin", "admin", "finance", "payroll"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employee_bank_detail", "employees"],
+    branchScoped: true,
+    directDownload: true,
+  },
+
+  {
+    code: "payroll-reconciliation",
+    name: "Payroll Reconciliation",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Reconciliation between attendance inputs and payroll outputs",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "payroll_month", label: "Payroll Month", format: "text", width: 110 },
+      { key: "attendance_present_days", label: "Attendance Present", format: "number", width: 120, align: "right" },
+      { key: "payroll_payable_days", label: "Payroll Payable", format: "number", width: 120, align: "right" },
+      { key: "attendance_lwp_days", label: "Attendance LWP", format: "number", width: 100, align: "right" },
+      { key: "payroll_lwp_days", label: "Payroll LWP", format: "number", width: 100, align: "right" },
+      { key: "day_variance", label: "Day Variance", format: "number", width: 100, align: "right" },
+      { key: "reconciliation_status", label: "Status", format: "status", width: 140 },
+      { key: "remarks", label: "Remarks", format: "text", width: 260 },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line", "attendance_daily_record", "employees"],
+    calculationNotes: "Compares attendance-derived payable days with payroll-processed payable days. Flags variances > 0.",
+    branchScoped: true,
+  },
+
+  {
+    code: "arrear-payment-register",
+    name: "Arrear Payment Register",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Arrear payments processed in payroll",
+    rowGrain: "One row per employee per arrear type per payroll month",
+    primaryKey: ["employee_code", "arrear_type", "payroll_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "arrear_type", label: "Arrear Type", format: "text", width: 140 },
+      { key: "arrear_period", label: "Arrear Period", format: "text", width: 120 },
+      { key: "arrear_amount", label: "Arrear Amount", format: "currency", width: 120, align: "right" },
+      { key: "processed_month", label: "Processed Month", format: "text", width: 120 },
+      { key: "remarks", label: "Remarks", format: "text", width: 200 },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line_component", "salary_prep_line", "employees"],
+    branchScoped: true,
+  },
+
+  // The 10 entries below (payslip-status through ytd-salary-summary) all have
+  // working SQL in report-suite.routes.ts and are actively referenced by
+  // deep-report-packs.ts and/or the frontend, but were never registered here —
+  // reportCatalogAccessMiddleware 404s any code missing from this array before
+  // the query ever runs, so each rendered as empty/no-data with no visible
+  // error. Same bug class as offer-to-joining-tracker (fixed earlier). Columns
+  // below are read directly from each case's real SELECT clause, not guessed.
+  {
+    code: "payslip-status",
+    name: "Payslip Status",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Payslip generation and acknowledgement status per employee per payroll month",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "run_month"],
+    columns: [
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "payslip_ref", label: "Payslip Ref", format: "text", width: 140 },
+      { key: "file_url", label: "File", format: "text", width: 100 },
+      { key: "acknowledged_at", label: "Acknowledged At", format: "datetime", width: 140 },
+      { key: "payslip_status", label: "Status", format: "status", width: 160 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "salary_payslip"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  {
+    code: "bank-missing",
+    name: "Missing/Unverified Bank Details",
+    category: "Payroll",
+    subcategory: "Data Compliance",
+    description: "Active employees with no bank record or an unverified primary bank account",
+    rowGrain: "One row per active employee with a bank data gap",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "date_of_joining", label: "Date of Joining", format: "date", width: 110 },
+      { key: "salary_effective_date", label: "Salary Start Date", format: "date", width: 120 },
+      { key: "bank_status", label: "Bank Status", format: "status", width: 160 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["employees", "employee_bank_detail"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+  },
+
+  // it-ad-account-audit has working SQL in report-suite.routes.ts (case
+  // "it-ad-account-audit") and is called directly by the "AD Compliance
+  // Report" dialog on NativeITProvisioningTracker.tsx, but was never
+  // registered here — reportCatalogAccessMiddleware 404s any code missing
+  // from this array before the query ever runs, so the dialog always
+  // rendered "No records found" regardless of real data. Same bug class as
+  // payslip-status and friends above. Columns below match the real SELECT
+  // clause exactly.
+  {
+    code: "it-ad-account-audit",
+    name: "AD Account Provisioning Compliance",
+    category: "IT Provisioning",
+    subcategory: "Active Directory Audit",
+    description: "Domain/AD account provisioning status and AD event log evidence for every IT_EMAIL_DOMAIN_ASSET task",
+    rowGrain: "One row per IT provisioning request (email/domain/AD account task)",
+    primaryKey: ["employee_code", "requested_at"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "date_of_joining", label: "Date of Joining", format: "date", width: 110 },
+      { key: "date_of_leaving", label: "Date of Leaving", format: "date", width: 110 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "request_type", label: "Request Type", format: "text", width: 100 },
+      { key: "status", label: "Status", format: "status", width: 120 },
+      { key: "locked", label: "Locked", format: "boolean", width: 80 },
+      { key: "domain_account", label: "Domain Account", format: "text", width: 160 },
+      { key: "official_email", label: "Official Email", format: "email", width: 200 },
+      { key: "ad_log_type", label: "AD Log Type", format: "text", width: 120 },
+      { key: "ad_account_name", label: "AD Account Name", format: "text", width: 160 },
+      { key: "ad_event_id", label: "AD Event ID", format: "text", width: 100 },
+      { key: "ad_actioned_by_it", label: "Actioned By (IT)", format: "text", width: 160 },
+      { key: "ad_event_time", label: "AD Event Time", format: "datetime", width: 150 },
+      { key: "evidence_file_url", label: "Evidence File", format: "text", width: 120 },
+      { key: "requested_at", label: "Requested At", format: "datetime", width: 150 },
+      { key: "actioned_at", label: "Actioned At", format: "datetime", width: 150 },
+      { key: "sla_due_at", label: "SLA Due At", format: "datetime", width: 150 },
+      { key: "sla_status", label: "SLA Status", format: "status", width: 110 },
+      { key: "evidence_status", label: "Evidence Status", format: "status", width: 140 },
+    ],
+    filters: [
+      { key: "date_from", label: "From Date", type: "date" },
+      { key: "date_to", label: "To Date", type: "date" },
+      { key: "branch", label: "Branch", type: "text" },
+      { key: "request_type", label: "Request Type", type: "select", options: [
+        { value: "join", label: "Join" },
+        { value: "exit", label: "Exit" },
+      ] },
+      { key: "evidence_status", label: "Evidence Status", type: "select", options: [
+        { value: "with_evidence", label: "With Evidence" },
+        { value: "without_evidence", label: "Without Evidence" },
+      ] },
+    ],
+    viewRoles: ["super_admin", "admin", "it", "branch_admin", "wfm", "hr"],
+    exportRoles: ["super_admin", "admin", "it", "hr"],
+    sourceTables: ["it_provisioning_request", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  {
+    code: "increment-requests",
+    name: "Increment Requests",
+    category: "Payroll",
+    subcategory: "Compensation Audit",
+    description: "Salary increment requests with current vs. proposed CTC and approval status",
+    rowGrain: "One row per increment request",
+    primaryKey: ["id"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "current_ctc", label: "Current CTC", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "proposed_ctc", label: "Proposed CTC", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "increment_percentage", label: "Increment %", format: "percentage", width: 100, align: "right" },
+      { key: "effective_from", label: "Effective From", format: "date", width: 110 },
+      { key: "status", label: "Status", format: "status", width: 120 },
+      { key: "communication_status", label: "Communication Status", format: "status", width: 140 },
+      { key: "letter_status", label: "Letter Status", format: "status", width: 120 },
+      { key: "created_at", label: "Requested On", format: "datetime", width: 140 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_increment_request", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "salary-advance-register",
+    name: "Salary Advance Register",
+    category: "Payroll",
+    subcategory: "Compensation Audit",
+    description: "Salary advances issued, recovered and outstanding, per employee",
+    rowGrain: "One row per salary advance",
+    primaryKey: ["employee_code", "advance_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "advance_date", label: "Advance Date", format: "date", width: 110 },
+      { key: "advance_amount", label: "Advance Amount", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "recovery_months", label: "Recovery Months", format: "number", width: 110, align: "right" },
+      { key: "total_recovered", label: "Recovered", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "outstanding_amount", label: "Outstanding", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "status", label: "Status", format: "status", width: 100 },
+      { key: "remarks", label: "Remarks", format: "text", width: 180 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_advance_log", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "neft-transfer-file",
+    name: "NEFT Transfer File",
+    category: "Payroll",
+    subcategory: "Disbursal",
+    description: "Bank transfer file for net salary payout, one row per employee with a positive net salary",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "run_month"],
+    columns: [
+      // ICICI Bank Transfer File columns — declared in BOTH catalogues or the grid and export
+      // silently discard them.
+      { key: "debit_ac_no", label: "Debit Ac No", format: "text", width: 140 },
+      { key: "beneficiary_name", label: "Beneficiary Name", format: "text", width: 180 },
+      { key: "amt", label: "Amt", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "pay_mod", label: "Pay Mod", format: "text", width: 80 },
+      { key: "transfer_date", label: "Date", format: "text", width: 120 },
+      { key: "bene_mobile_no", label: "Bene Mobile no", format: "text", width: 130, sensitive: true },
+      { key: "bene_email_id", label: "Bene email id", format: "text", width: 200, sensitive: true },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "bank_name", label: "Bank", format: "text", width: 140 },
+      { key: "account_number", label: "Account Number", format: "masked", width: 140, sensitive: true },
+      { key: "ifsc_code", label: "IFSC", format: "text", width: 100 },
+      { key: "account_holder_name", label: "Account Holder", format: "text", width: 160 },
+      { key: "account_type", label: "Account Type", format: "text", width: 100 },
+      // Same check as bank-advice, from the opposite side: CONFLICT means the two account
+      // sources disagree for this employee, MISSING that neither holds an account. Around 190
+      // payable employees in the 2026-07 run have no employee_bank_detail row at all while
+      // employees.bank_account_number does hold one, so this file alone cannot pay them.
+      { key: "account_source_status", label: "Account Check", format: "status", width: 120 },
+      { key: "transfer_amount", label: "Transfer Amount", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "employee_bank_detail"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "payroll-readiness-status",
+    name: "Payroll Readiness Status",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Payroll run status and finalisation progress per branch per month",
+    rowGrain: "One row per payroll run per branch",
+    primaryKey: ["payroll_month", "branch_name"],
+    columns: [
+      { key: "payroll_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "run_status", label: "Run Status", format: "status", width: 120 },
+      { key: "total_lines", label: "Employees in Run", format: "number", width: 110, align: "right" },
+      { key: "finalized_at", label: "Finalized At", format: "datetime", width: 140 },
+      { key: "finalized_by", label: "Finalized By", format: "text", width: 160 },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_run", "branch_master", "salary_prep_line", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+  },
+
+  {
+    code: "salary-sheet-export",
+    name: "Salary Sheet Export",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    description: "Full payroll register — earnings, deductions, statutory and bank details per employee per payroll month",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "sal_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "emp_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_center", label: "Cost Centre", format: "text", width: 120 },
+      { key: "department", label: "Department", format: "text", width: 120 },
+      { key: "designation", label: "Designation", format: "text", width: 120 },
+      { key: "branch", label: "Branch", format: "text", width: 120 },
+      { key: "billable", label: "Billable", format: "text", width: 80 },
+      { key: "basic", label: "Basic", format: "currency", width: 100, align: "right", sensitive: true },
+      { key: "hra", label: "HRA", format: "currency", width: 100, align: "right", sensitive: true },
+      { key: "gross", label: "Gross", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "earned_days", label: "Earned Days", format: "number", width: 100, align: "right" },
+      { key: "leave_days", label: "Leave Days", format: "number", width: 90, align: "right" },
+      { key: "esic", label: "ESIC", format: "currency", width: 90, align: "right", sensitive: true },
+      { key: "epf", label: "EPF", format: "currency", width: 90, align: "right", sensitive: true },
+      { key: "income_tax", label: "Income Tax", format: "currency", width: 100, align: "right", sensitive: true },
+      { key: "total_deduction", label: "Total Deduction", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "net_salary", label: "Net Salary", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "uan", label: "UAN", format: "masked", width: 120, sensitive: true },
+      { key: "epf_no", label: "EPF No.", format: "masked", width: 120, sensitive: true },
+      { key: "esic_no", label: "ESIC No.", format: "masked", width: 120, sensitive: true },
+      { key: "salary_payment_mode", label: "Payment Mode", format: "text", width: 120 },
+      { key: "ac_no", label: "Account Number", format: "masked", width: 140, sensitive: true },
+      { key: "ifsc_code", label: "IFSC", format: "text", width: 100 },
+      { key: "ac_bank", label: "Bank", format: "text", width: 140 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "salary_prep_line_component", "employee_bank_detail", "employee_uan"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "cost-centre-salary-summary",
+    name: "Cost Centre Salary Summary",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description: "Headcount and gross/net salary cost aggregated by cost centre for a payroll month",
+    rowGrain: "One row per cost centre per branch per payroll month",
+    primaryKey: ["cost_centre_code", "branch_name"],
+    columns: [
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 160 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "total_gross", label: "Total Gross", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_net", label: "Total Net", format: "currency", width: 130, align: "right", sensitive: true },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "cost_centre_master", "branch_master"],
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsFinancialData: true,
+  },
+
+  {
+    code: "process-lob-salary-cost",
+    name: "Process/LOB Salary Cost",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description: "Headcount and gross/net/average salary cost aggregated by process and line of business",
+    rowGrain: "One row per process per LOB per branch per payroll month",
+    primaryKey: ["process_name", "lob_name", "branch_name"],
+    columns: [
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "lob_name", label: "LOB", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "total_gross", label: "Total Gross", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_net", label: "Total Net", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "avg_net", label: "Avg Net", format: "currency", width: 110, align: "right", sensitive: true },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "process_master", "lob_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsFinancialData: true,
+  },
+
+  {
+    // The Payroll → Cost Summary menu item routes to /payroll/cost-summary, which
+    // deep-links to this code. The executor (payrollCostSummary) has been registered
+    // and working the whole time, but the code was missing from this catalog and from
+    // the frontend one, so the menu item was a dead link — the Report Library had
+    // nothing to list or pre-select. Columns below mirror the executor's SELECT list
+    // exactly; a mismatch renders empty columns and silently drops returned values.
+    code: "payroll-cost-summary",
+    name: "Payroll Cost Summary",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description: "Headcount and gross/net cost with employer PF and ESIC, aggregated by branch, process and department for a payroll month",
+    rowGrain: "One row per branch per process per department per payroll month",
+    primaryKey: ["branch_name", "process_name", "department_name", "run_month"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_name", label: "Process", format: "text", width: 160 },
+      { key: "department_name", label: "Department", format: "text", width: 180 },
+      // Cost centre added on request. The report is now grouped by it, so the money columns
+      // below split by cost centre rather than repeating a branch/process total against each.
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "run_month", label: "Month", format: "text", width: 90 },
+      { key: "employee_count", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "total_gross", label: "Total Gross", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_pf_employer", label: "Employer PF", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_esic_employer", label: "Employer ESIC", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "total_ctc", label: "Total Cost to Company", format: "currency", width: 150, align: "right", sensitive: true },
+      { key: "total_net", label: "Total Net", format: "currency", width: 130, align: "right", sensitive: true },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS, F_DEPT],
+    // Explicit rather than ROLES_PAYROLL: the nav item exposes this to payroll_head,
+    // who is not in that set and would have been denied a report they can see listed.
+    viewRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll", "payroll_head", "hr_head"],
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "process_master", "department_master"],
+    calculationNotes:
+      "total_ctc is total_gross + employer PF + employer ESIC — employer-side statutory " +
+      "cost only. It is not the employee's contracted CTC and will not reconcile against " +
+      "ctc_offered. Rows with zero money are real: gross_salary is 0 on a large share of " +
+      "salary_prep_line rows, so roughly half the groups in a month total zero while the " +
+      "month's overall total is correct. Verified against mas_hrms for 2026-07: 146 groups, " +
+      "70 with non-zero gross, summing to 14,965,032.41 which matches the run total exactly.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: false,
+    containsFinancialData: true,
+    availabilityStatus: "validated",
+  },
+
+  {
+    code: "ytd-salary-summary",
+    name: "Year-to-Date Salary Summary",
+    category: "Payroll",
+    subcategory: "Cost Analysis",
+    description: "Cumulative gross, basic, PF, TDS and net salary per employee across a calendar or financial year",
+    rowGrain: "One row per employee per requested year",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "months_paid", label: "Months Paid", format: "number", width: 100, align: "right" },
+      { key: "ytd_gross", label: "YTD Gross", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "ytd_basic", label: "YTD Basic", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "ytd_pf", label: "YTD PF", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "ytd_tds", label: "YTD TDS", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "ytd_net", label: "YTD Net", format: "currency", width: 120, align: "right", sensitive: true },
+    ],
+    filters: [F_YEAR, F_BRANCH],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "department_master"],
+    branchScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 5: STATUTORY & COMPLIANCE
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "pf-contribution-register",
+    name: "PF Contribution Register",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description: "Monthly PF contributions (employee + employer)",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "uan", label: "UAN", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "pf_basic", label: "PF Basic", format: "currency", width: 100, align: "right" },
+      { key: "pf_employee", label: "Employee PF", format: "currency", width: 100, align: "right" },
+      { key: "pf_employer", label: "Employer PF", format: "currency", width: 100, align: "right" },
+      { key: "eps_contribution", label: "EPS", format: "currency", width: 100, align: "right" },
+      { key: "edli", label: "EDLI", format: "currency", width: 80, align: "right" },
+      { key: "admin_charges", label: "Admin Charges", format: "currency", width: 100, align: "right" },
+      { key: "total_contribution", label: "Total", format: "currency", width: 100, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line_component", "salary_prep_line", "employees"],
+    calculationNotes: "PF @ 12% of PF Basic (capped at 15000). EPS @ 8.33% (capped). Employer PF = 12% - EPS.",
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "pf-ecr-format",
+    name: "PF ECR Format Export",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description: "EPF ECR file for EPFO portal upload",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["uan", "payroll_month"],
+    columns: [
+      { key: "uan", label: "UAN", format: "text", width: 120 },
+      { key: "employee_name", label: "Member Name", format: "text", width: 180 },
+      { key: "gross_wages", label: "Gross Wages", format: "number", width: 100, align: "right" },
+      { key: "epf_wages", label: "EPF Wages", format: "number", width: 100, align: "right" },
+      { key: "eps_wages", label: "EPS Wages", format: "number", width: 100, align: "right" },
+      { key: "edli_wages", label: "EDLI Wages", format: "number", width: 100, align: "right" },
+      { key: "epf_contribution", label: "EPF Contri.", format: "number", width: 100, align: "right" },
+      { key: "eps_contribution", label: "EPS Contri.", format: "number", width: 100, align: "right" },
+      { key: "epf_eps_diff", label: "EPF EPS Diff", format: "number", width: 100, align: "right" },
+      { key: "ncp_days", label: "NCP Days", format: "number", width: 80, align: "right" },
+      { key: "refund_of_advances", label: "Refund", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ["super_admin", "admin", "finance", "payroll"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line_component", "salary_prep_line", "employees"],
+    branchScoped: true,
+    directDownload: true,
+  },
+
+  {
+    code: "esic-contribution-register",
+    name: "ESIC Contribution Register",
+    category: "Statutory",
+    subcategory: "ESIC",
+    description: "Monthly ESIC contributions",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "esic_number", label: "ESIC Number", format: "text", width: 140 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "gross_wages", label: "Gross Wages", format: "currency", width: 100, align: "right" },
+      { key: "esic_employee", label: "Employee ESIC", format: "currency", width: 100, align: "right" },
+      { key: "esic_employer", label: "Employer ESIC", format: "currency", width: 100, align: "right" },
+      { key: "total_esic", label: "Total ESIC", format: "currency", width: 100, align: "right" },
+      { key: "ip_days", label: "IP Days", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line_component", "salary_prep_line", "employees"],
+    calculationNotes: "ESIC applicable when gross <= 21000. Employee @ 0.75%, Employer @ 3.25%.",
+    branchScoped: true,
+  },
+
+  {
+    // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+    // company-wide, all states). Report entry kept, not deleted, so historical
+    // runs that already carried a professional_tax amount remain auditable;
+    // its executor (ptRegister in statutory.executor.ts) returns zero rows for
+    // every run processed after the removal.
+    code: "pt-register",
+    name: "Professional Tax Register",
+    category: "Statutory",
+    subcategory: "Professional Tax",
+    description: "Monthly professional tax deductions by state (historical only — PT discontinued company-wide 2026-09-11)",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "state", label: "State", format: "text", width: 120 },
+      { key: "gross_salary", label: "Gross Salary", format: "currency", width: 100, align: "right" },
+      { key: "pt_amount", label: "PT Amount", format: "currency", width: 100, align: "right" },
+      { key: "pt_slab", label: "PT Slab", format: "text", width: 120 },
+    ],
+    filters: [F_MONTH, F_BRANCH, { key: "state", label: "State", type: "text" }],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["salary_prep_line_component", "salary_prep_line", "employees", "statutory_config"],
+    branchScoped: true,
+  },
+
+  {
+    code: "tds-computation-register",
+    name: "TDS Computation Register",
+    category: "Statutory",
+    subcategory: "TDS/Income Tax",
+    description: "Monthly TDS computation with projection",
+    rowGrain: "One row per employee per financial year",
+    primaryKey: ["employee_code", "financial_year"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "pan", label: "PAN", format: "masked", width: 100, sensitive: true },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "regime", label: "Tax Regime", format: "text", width: 100 },
+      { key: "projected_income", label: "Projected Income", format: "currency", width: 120, align: "right" },
+      { key: "projected_deductions", label: "Deductions", format: "currency", width: 100, align: "right" },
+      { key: "taxable_income", label: "Taxable Income", format: "currency", width: 120, align: "right" },
+      { key: "total_tax", label: "Total Tax", format: "currency", width: 100, align: "right" },
+      { key: "tds_deducted_ytd", label: "TDS Deducted YTD", format: "currency", width: 120, align: "right" },
+      { key: "tds_remaining", label: "TDS Remaining", format: "currency", width: 120, align: "right" },
+      { key: "monthly_tds", label: "Monthly TDS", format: "currency", width: 100, align: "right" },
+    ],
+    filters: [{ key: "fy", label: "Financial Year", type: "text", required: true }, F_BRANCH],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["tax_declaration", "salary_prep_line_component", "employees"],
+    calculationNotes: "Uses employee's declared regime. Applies effective-dated slab configuration.",
+    branchScoped: true,
+  },
+
+  {
+    code: "form-16-status",
+    name: "Form 16 Status",
+    category: "Statutory",
+    subcategory: "TDS/Income Tax",
+    description: "Form 16 generation and distribution status",
+    rowGrain: "One row per employee per financial year",
+    primaryKey: ["employee_code", "financial_year"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "pan", label: "PAN", format: "masked", width: 100, sensitive: true },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "financial_year", label: "FY", format: "text", width: 80 },
+      { key: "generation_status", label: "Generated", format: "status", width: 100 },
+      { key: "generated_date", label: "Generated Date", format: "date", width: 100 },
+      { key: "distribution_status", label: "Distributed", format: "status", width: 100 },
+      { key: "distributed_date", label: "Distributed Date", format: "date", width: 100 },
+      { key: "employee_acknowledged", label: "Acknowledged", format: "boolean", width: 100 },
+    ],
+    filters: [{ key: "fy", label: "Financial Year", type: "text", required: true }, F_BRANCH],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["employees", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "investment-declaration-status",
+    name: "Investment Declaration Status",
+    category: "Statutory",
+    subcategory: "TDS/Income Tax",
+    description: "Status of employee investment declarations",
+    rowGrain: "One row per employee per financial year",
+    primaryKey: ["employee_code", "financial_year"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "financial_year", label: "FY", format: "text", width: 80 },
+      { key: "declaration_status", label: "Declaration Status", format: "status", width: 120 },
+      { key: "declared_amount", label: "Declared Amount", format: "currency", width: 120, align: "right" },
+      { key: "proof_submitted", label: "Proof Submitted", format: "boolean", width: 100 },
+      { key: "proof_amount", label: "Proof Amount", format: "currency", width: 120, align: "right" },
+      { key: "approved_amount", label: "Approved Amount", format: "currency", width: 120, align: "right" },
+      { key: "last_updated", label: "Last Updated", format: "date", width: 100 },
+    ],
+    filters: [{ key: "fy", label: "Financial Year", type: "text", required: true }, F_BRANCH],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["tax_declaration", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "gratuity-liability-register",
+    name: "Gratuity Liability Register",
+    category: "Statutory",
+    subcategory: "Gratuity",
+    description: "Gratuity liability calculation for eligible employees",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "years_of_service", label: "Years of Service", format: "number", width: 100, align: "right" },
+      { key: "eligible_for_gratuity", label: "Eligible", format: "boolean", width: 80 },
+            /**
+       * The tenure that is actually PRICED, not a rounded display of it.
+       *
+       * The executor emits two: tenure_years from TIMESTAMPDIFF(YEAR), which truncates, and
+       * tenure_years_exact from months/12. The liability is computed from months/12, so showing
+       * the truncated one meant a register reading "11 years" against an amount priced at 11.6 —
+       * a reader reconciling by hand would get a different number every time and have no way to
+       * see why.
+       *
+       * Declared as tenure_years_exact for that reason. Neither column was in the catalogue at
+       * all, so the register had been showing a liability with no tenure to check it against.
+       */
+      { key: "tenure_years_exact", label: "Years of Service", format: "number", width: 120, align: "right" },
+      { key: "last_drawn_basic", label: "Last Basic", format: "currency", width: 100, align: "right" },
+      { key: "gratuity_liability", label: "Gratuity Liability", format: "currency", width: 120, align: "right" },
+      { key: "calculation_basis", label: "Calculation Basis", format: "text", width: 140 },
+    ],
+    filters: [F_BRANCH, { key: "eligibleOnly", label: "Eligible Only", type: "select", options: [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }] }],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["employees", "salary_structure_master"],
+    calculationNotes: "Gratuity = (Basic × 15 × Years) / 26. Eligible after 5 years. Capped at statutory limit.",
+    branchScoped: true,
+  },
+
+  // Same "working SQL, never registered" bug as the Payroll batch above.
+  {
+    code: "pf-esi-optout-register",
+    name: "PF/ESI Opt-Out Register",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description: "Employees with an approved statutory opt-out override for PF or ESI",
+    rowGrain: "One row per employee per opt-out override",
+    primaryKey: ["employee_code", "opt_out_type"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "opt_out_type", label: "Opt-Out Type", format: "text", width: 120 },
+      { key: "effective_month", label: "Effective Month", format: "text", width: 110 },
+      { key: "status", label: "Status", format: "status", width: 100 },
+      { key: "approved_at", label: "Approved At", format: "datetime", width: 140 },
+      { key: "reason", label: "Reason", format: "text", width: 200 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ROLES_COMPLIANCE,
+    sourceTables: ["employee_statutory_override", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+  },
+
+  {
+    code: "pf-monthly-summary",
+    name: "PF Monthly Summary",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description: "Aggregate employee/employer PF and EPS contribution per payroll month",
+    rowGrain: "One row per payroll month",
+    primaryKey: ["run_month"],
+    columns: [
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "total_employees", label: "Employees", format: "number", width: 100, align: "right" },
+      { key: "total_ee_pf", label: "Employee PF", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "total_er_pf", label: "Employer PF", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "total_eps", label: "EPS", format: "currency", width: 100, align: "right", sensitive: true },
+      { key: "total_pf_contribution", label: "Total PF Contribution", format: "currency", width: 150, align: "right", sensitive: true },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ROLES_COMPLIANCE,
+    sourceTables: ["salary_prep_line", "salary_prep_run"],
+    sensitivityLevel: "restricted",
+    containsFinancialData: true,
+  },
+
+  {
+    code: "uan-master-register",
+    name: "UAN Master Register",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description: "Active employees with a UAN on file — PF identity master for EPFO filings",
+    rowGrain: "One row per active employee with a UAN",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "uan", label: "UAN", format: "masked", width: 120, sensitive: true },
+      { key: "epf_number", label: "EPF Number", format: "masked", width: 120, sensitive: true },
+      { key: "pf_member_id", label: "PF Member ID", format: "text", width: 120, sensitive: true },
+      { key: "pf_joining_date", label: "PF Joining Date", format: "date", width: 110 },
+      { key: "date_of_birth", label: "DOB", format: "date", width: 100, sensitive: true },
+      { key: "gender", label: "Gender", format: "text", width: 80 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ROLES_COMPLIANCE,
+    sourceTables: ["employees", "employee_uan", "branch_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+  },
+
+  {
+    // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+    // company-wide, all states). Report entry kept, not deleted, so historical
+    // runs that already carried a professional_tax amount remain auditable;
+    // its executor (ptMonthlyRegister in statutory.executor.ts) returns zero
+    // rows for every run processed after the removal.
+    code: "pt-monthly-register",
+    name: "Professional Tax Monthly Register",
+    category: "Statutory",
+    subcategory: "Professional Tax",
+    description: "Professional tax deducted per employee per payroll month, by state (historical only — PT discontinued company-wide 2026-09-11)",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "run_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "state", label: "State", format: "text", width: 120 },
+      { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "pt_deducted", label: "PT Deducted", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ROLES_COMPLIANCE,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "pf-esic-salary-register",
+    name: "PF/ESIC Salary Register",
+    category: "Statutory",
+    subcategory: "PF/EPF",
+    description: "PF-basic-capped and ESIC-eligible wage register per employee per payroll month",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "payroll_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "uan", label: "UAN", format: "masked", width: 120, sensitive: true },
+      { key: "esic_number", label: "ESIC Number", format: "masked", width: 120, sensitive: true },
+      { key: "pf_basic", label: "PF Basic (capped)", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "gross_wages", label: "Gross Wages", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "pf_employee", label: "PF Employee", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "pf_employer", label: "PF Employer", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "eps_contribution", label: "EPS Contribution", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "esic_employee", label: "ESIC Employee", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "esic_employer", label: "ESIC Employer", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "net_salary", label: "Net Salary", format: "currency", width: 110, align: "right", sensitive: true },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ROLES_COMPLIANCE,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "process_master", "employee_uan"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "esic-monthly-summary",
+    name: "ESIC Monthly Summary",
+    category: "Statutory",
+    subcategory: "ESIC",
+    description: "Aggregate employee/employer ESIC contribution per payroll month",
+    rowGrain: "One row per payroll month",
+    primaryKey: ["run_month"],
+    columns: [
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "total_employees", label: "Employees", format: "number", width: 100, align: "right" },
+      { key: "total_ee_esic", label: "Employee ESIC", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "total_er_esic", label: "Employer ESIC", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "total_esic_contribution", label: "Total ESIC Contribution", format: "currency", width: 160, align: "right", sensitive: true },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ROLES_COMPLIANCE,
+    sourceTables: ["salary_prep_line", "salary_prep_run"],
+    sensitivityLevel: "restricted",
+    containsFinancialData: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 6: EXIT & SEPARATION
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "resignation-register",
+    name: "Resignation Register",
+    category: "Exit & Separation",
+    subcategory: "Resignation",
+    description: "Active resignation requests and their status",
+    rowGrain: "One row per resignation request",
+    primaryKey: ["employee_code", "resignation_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "resignation_date", label: "Resignation Date", format: "date", width: 100 },
+      // Keys follow what the query emits. `last_working_date`, `notice_period_days` and
+      // `resignation_reason` were declared under names the SQL never produced, so the grid
+      // drew three permanently empty columns.
+      { key: "last_working_day", label: "LWD", format: "date", width: 100 },
+      { key: "notice_days", label: "Notice Period", format: "number", width: 100, align: "right" },
+      { key: "exit_reason", label: "Reason", format: "text", width: 160 },
+      { key: "status", label: "Status", format: "status", width: 100 },
+      // notice_served_days and shortfall_days are dropped rather than renamed. They can only be
+      // derived from an exit_request, and exit_request holds 2 rows against 1,543 resignations
+      // in the default window — a computed shortfall would be 0 for everyone and read as "no
+      // one served short notice", which is a claim the data cannot support.
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["exit_request", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "fnf-pending-register",
+    name: "F&F Pending Register",
+    category: "Exit & Separation",
+    subcategory: "Full & Final",
+    description: "Employees with pending full and final settlement",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "last_working_date", label: "LWD", format: "date", width: 100 },
+      { key: "days_since_exit", label: "Days Since Exit", format: "number", width: 100, align: "right" },
+      { key: "fnf_status", label: "F&F Status", format: "status", width: 120 },
+      { key: "pending_items", label: "Pending Items", format: "text", width: 200 },
+      { key: "estimated_amount", label: "Estimated Amount", format: "currency", width: 120, align: "right" },
+      { key: "assigned_to", label: "Assigned To", format: "text", width: 140 },
+    ],
+    filters: [F_BRANCH, { key: "daysThreshold", label: "Days > ", type: "number", placeholder: "30" }],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["full_final_calculation", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "fnf-settlement-register",
+    name: "F&F Settlement Register",
+    category: "Exit & Separation",
+    subcategory: "Full & Final",
+    description: "Completed F&F settlements with payment details",
+    rowGrain: "One row per F&F settlement",
+    primaryKey: ["employee_code", "settlement_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "last_working_date", label: "LWD", format: "date", width: 100 },
+      { key: "settlement_date", label: "Settlement Date", format: "date", width: 100 },
+      { key: "pending_salary", label: "Pending Salary", format: "currency", width: 120, align: "right" },
+      { key: "leave_encashment", label: "Leave Encashment", format: "currency", width: 120, align: "right" },
+      { key: "gratuity", label: "Gratuity", format: "currency", width: 100, align: "right" },
+      { key: "bonus", label: "Bonus", format: "currency", width: 100, align: "right" },
+      { key: "total_earnings", label: "Total Earnings", format: "currency", width: 120, align: "right" },
+      { key: "notice_recovery", label: "Notice Recovery", format: "currency", width: 120, align: "right" },
+      { key: "advance_recovery", label: "Advance Recovery", format: "currency", width: 120, align: "right" },
+      { key: "other_deductions", label: "Other Deductions", format: "currency", width: 120, align: "right" },
+      { key: "total_deductions", label: "Total Deductions", format: "currency", width: 120, align: "right" },
+      { key: "net_payable", label: "Net Payable", format: "currency", width: 120, align: "right" },
+      { key: "payment_status", label: "Payment Status", format: "status", width: 100 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
+    viewRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+    exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
+    sourceTables: ["full_final_calculation", "full_final_calculation", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "clearance-status-register",
+    name: "Clearance Status Register",
+    category: "Exit & Separation",
+    subcategory: "Clearance",
+    description: "Department-wise clearance status for exiting employees",
+    rowGrain: "One row per employee per department",
+    primaryKey: ["employee_code", "department"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "last_working_date", label: "LWD", format: "date", width: 100 },
+      { key: "department", label: "Clearance Dept", format: "text", width: 140 },
+      { key: "clearance_status", label: "Status", format: "status", width: 100 },
+      { key: "cleared_by", label: "Cleared By", format: "text", width: 140 },
+      { key: "cleared_date", label: "Cleared Date", format: "date", width: 100 },
+      { key: "remarks", label: "Remarks", format: "text", width: 200 },
+    ],
+    filters: [F_BRANCH, { key: "clearanceDept", label: "Clearance Dept", type: "text" }],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    // exit_clearance_task, not exit_clearance_checklist: both tables exist, the checklist has
+    // 0 rows and the task table is what the exit module writes (16 rows, 2026-08-08).
+    sourceTables: ["exit_clearance_task", "exit_request", "employees"],
+    branchScoped: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 7: ATTRITION & TRENDS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "monthly-attrition-summary",
+    name: "Monthly Attrition Summary",
+    category: "Attrition & Trends",
+    subcategory: "Attrition",
+    description: "Monthly attrition metrics by branch and process",
+    rowGrain: "One row per month per branch per process",
+    primaryKey: ["month", "branch_name", "process_name"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "joiners", label: "Joiners", format: "number", width: 80, align: "right" },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    // The attrition-% formula this once stated is not computable and is therefore not claimed.
+    // Avg HC needs opening and closing headcount, and point-in-time headcount is unanswerable
+    // here: 28,398 of 58,627 employees are inactive with no exit date (2026-08-08), so nothing
+    // in the data says who was employed on the first of a past month. Joiners and exits are
+    // exact — both reconciled against independently written control queries, all seven months
+    // of 2026 matching — so the report states those and stops there.
+    calculationNotes:
+      "Joiners = employees whose date_of_joining falls in the month. " +
+      "Exits = employees whose COALESCE(date_of_exit, resignation_date) falls in the month. " +
+      "Attrition % is not reported: it requires point-in-time headcount, which cannot be " +
+      "derived while 28,398 employees are inactive with no exit date recorded.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "exit-reason-analysis",
+    name: "Exit Reason Analysis",
+    category: "Attrition & Trends",
+    subcategory: "Attrition",
+    description: "Breakdown of exits by reason category",
+    rowGrain: "One row per exit reason per month",
+    primaryKey: ["month", "exit_reason"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "exit_reason", label: "Exit Reason", format: "text", width: 160 },
+      { key: "exit_count", label: "Exit Count", format: "number", width: 100, align: "right" },
+      { key: "percentage", label: "% of Total Exits", format: "percentage", width: 120, align: "right" },
+      { key: "avg_tenure_months", label: "Avg Tenure (months)", format: "number", width: 130, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["exit_request", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "tenure-distribution",
+    name: "Tenure Distribution Report",
+    category: "Attrition & Trends",
+    subcategory: "Attrition",
+    description: "Employee distribution by tenure bands",
+    rowGrain: "One row per tenure band per branch",
+    primaryKey: ["tenure_band", "branch_name"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "tenure_band", label: "Tenure Band", format: "text", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+      { key: "employee_count", label: "Employee Count", format: "number", width: 120, align: "right" },
+      { key: "percentage", label: "% of Total", format: "percentage", width: 100, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    calculationNotes: "Tenure bands: 0-3 months, 3-6 months, 6-12 months, 1-2 years, 2-5 years, 5+ years",
+    branchScoped: true,
+  },
+
+  {
+    code: "early-attrition-report",
+    name: "Early Attrition Report",
+    category: "Attrition & Trends",
+    subcategory: "Attrition",
+    description: "Employees who exited within first 90 days",
+    rowGrain: "One row per early exit",
+    primaryKey: ["employee_code", "exit_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "exit_date", label: "Exit Date", format: "date", width: 100 },
+      { key: "tenure_days", label: "Tenure (days)", format: "number", width: 100, align: "right" },
+      { key: "exit_reason", label: "Exit Reason", format: "text", width: 160 },
+      { key: "hiring_source", label: "Hiring Source", format: "text", width: 120 },
+      { key: "trainer", label: "Trainer", format: "text", width: 140 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "exit_request"],
+    calculationNotes: "Includes exits where tenure_days <= 90",
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AON (Age on Network) & Attrition Analytics
+  //
+  // AON is days since date_of_joining, bucketed 0-30 / 31-60 / 61-90 / 90+. It is
+  // derived at read time and never stored: date_of_joining is NOT NULL on all 58,840
+  // rows, so a new joiner is bucketed the moment they exist, with no job to run and
+  // nothing to go stale. See executors/aon.executor.ts for the full reasoning.
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    code: "aon-bucket-headcount",
+    name: "AON Bucket Headcount",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Active headcount by AON bucket (0-30/31-60/61-90/90+) per branch, cost centre and process",
+    rowGrain: "One row per branch per cost centre per process per AON bucket",
+    primaryKey: ["branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "pct_of_group", label: "% of Group", format: "percentage", width: 110, align: "right" },
+      { key: "min_aon_days", label: "Min AON (days)", format: "number", width: 120, align: "right" },
+      { key: "max_aon_days", label: "Max AON (days)", format: "number", width: 120, align: "right" },
+    ],
+    filters: [F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "AON = DATEDIFF(CURDATE(), date_of_joining). Active = active_status = 1 alone; " +
+      "employment_status is mixed-case free text and is not used. pct_of_group is the " +
+      "bucket's share of its own branch/cost-centre/process group, not of total headcount. " +
+      "Reconciles live 2026-08-15 to 198 / 159 / 135 / 835 across the four buckets. " +
+      "Cost centre and process are UNASSIGNED for every 0-30 employee. The cause is not a " +
+      "broken feed: onboarding does capture a cost centre (a required field on the " +
+      "employment offer, stored on ats_employment_offer.cost_centre and " +
+      "ats_payroll_hr_validation.cost_centre_id), but no employee-creation path writes " +
+      "employees.cost_centre_id — the orchestrator INSERT, bulk upload, createEmployee and " +
+      "both sync handlers all omit the column, leaving updateEmployee (the manual Edit " +
+      "Employee dialog) as its only writer. Historic 100% coverage came from legacy sync, " +
+      "which is off. Branch is unaffected at 198/198, so group by branch for a complete view.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-bucket-attrition",
+    name: "AON Bucket Attrition",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Exits by AON-at-exit bucket per month, branch, cost centre and process",
+    rowGrain: "One row per month per branch per cost centre per process per AON bucket",
+    primaryKey: ["month", "branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_tenure_days", label: "Avg Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "min_tenure_days", label: "Min Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "max_tenure_days", label: "Max Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "pct_of_month_exits", label: "% of Month Exits", format: "percentage", width: 130, align: "right" },
+      { key: "process_coverage_pct", label: "Process Coverage %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "AON at exit = DATEDIFF(date_of_exit, date_of_joining). Counts DATED exits only — " +
+      "28,426 inactive employees carry no date_of_exit and are excluded, because tenure at " +
+      "exit is unknowable without one. Safe for rolling windows: only 22 of those have a " +
+      "date_of_joining on or after 2025-08-01. Reconciles live 2026-08-15 over the twelve " +
+      "months to that date to 1,210 / 399 / 291 / 896, total 2,796, matching a plain COUNT " +
+      "over the same window (no join fan-out). process_coverage_pct is emitted because " +
+      "process_id is populated on only 272 of 2,796 recent exits (9.7%), so a " +
+      "process-grouped row is usually UNASSIGNED.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-drilldown-employees",
+    name: "AON Drill-Down Employees",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Named employees for a specific branch/cost-centre/process/AON-bucket slice",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "join_date", label: "Join Date", format: "text", width: 110 },
+      { key: "aon_days", label: "AON Days", format: "number", width: 90, align: "right" },
+      { key: "risk_score", label: "Risk Score", format: "number", width: 100, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master", "attendance_daily_record"],
+    calculationNotes:
+      "The employee-level bottom of the AON drill-down chain, reached from a heatmap cell " +
+      "(branch/cost-centre/process x AON bucket). filters.metric selects the response shape: " +
+      "'exits' returns exited employees dated by date_of_exit (bucketed by AON-at-exit, i.e. " +
+      "tenure at the time they left), any other value (default 'headcount') returns active " +
+      "employees (bucketed by AON today) with a simplified risk score (tenure + 30-day " +
+      "absence rate). filters.aonBucket narrows to one of 0-30/31-60/61-90/90+; without it the " +
+      "whole slice (still scoped by branch/cost-centre/process) is returned.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'confidential',
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-overall-attrition-rate",
+    name: "Overall Attrition Rate",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Company-wide (or scope-wide) monthly attrition rate: exits / average headcount",
+    rowGrain: "One row per month",
+    primaryKey: ["month"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_total_headcount", label: "Avg Headcount", format: "number", width: 130, align: "right" },
+      { key: "attrition_rate_pct", label: "Attrition Rate %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    calculationNotes:
+      "attrition_rate_pct = exits / avg_total_headcount for the month, where avg_total_headcount " +
+      "is the average of headcount at the start and end of the month (see aon.executor.ts for " +
+      "the month_seq generation). Defaults to the twelve months ending today when filters.from/to " +
+      "are absent, matching aon-bucket-attrition's own default window.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-bucket-shrinkage",
+    name: "AON Bucket Shrinkage",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Shrinkage by AON bucket per month, branch, cost centre and process, with data coverage",
+    rowGrain: "One row per month per branch per cost centre per process per AON bucket",
+    primaryKey: ["month", "branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "emp_days", label: "Employee Days", format: "number", width: 120, align: "right" },
+      { key: "employees_with_attendance", label: "Employees w/ Attendance", format: "number", width: 170, align: "right" },
+      { key: "present_days", label: "Present", format: "number", width: 90, align: "right" },
+      { key: "half_days", label: "Half Day", format: "number", width: 90, align: "right" },
+      { key: "week_off_worked_days", label: "Week Off Worked", format: "number", width: 130, align: "right" },
+      { key: "absent_days", label: "Absent", format: "number", width: 90, align: "right" },
+      { key: "leave_days", label: "Leave", format: "number", width: 90, align: "right" },
+      { key: "missing_punch_days", label: "Missing Punch", format: "number", width: 120, align: "right" },
+      { key: "week_off_days", label: "Week Off", format: "number", width: 100, align: "right" },
+      { key: "holiday_days", label: "Holiday", format: "number", width: 90, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 140, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 160, align: "right" },
+      { key: "missing_punch_pct", label: "Missing Punch %", format: "percentage", width: 130, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_WFM,
+    sourceTables: ["attendance_daily_record", "employees", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "AON at the measured date = DATEDIFF(record_date, date_of_joining). Formula is copied " +
+      "character for character from daily-shrinkage-report so the two reconcile: total = " +
+      "(days - present - half_day - week_off_worked) / days; unplanned = absent / days. " +
+      "missing_punch therefore sits INSIDE total and OUTSIDE unplanned — deliberate, and " +
+      "broken out as its own column because at 9,851 rows it was the second-largest status " +
+      "in Jul-2026. Reconciles live for Jul-2026 to 38.04 / 39.30 / 33.91 / 48.08% over " +
+      "42,181 employee-days. Shrinkage is computed over employee-days that EXIST: 79 of the " +
+      "198 employees in the 0-30 bucket had no attendance row at all that month, so read " +
+      "employees_with_attendance alongside the percentage.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-cohort-survival",
+    name: "AON Cohort Survival",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Per joining-cohort survival at 30, 60 and 90 days, by branch, cost centre and process",
+    rowGrain: "One row per joining cohort month per branch per cost centre per process",
+    primaryKey: ["cohort_month", "branch_name", "cost_centre_code", "process_name"],
+    columns: [
+      { key: "cohort_month", label: "Cohort (Joined)", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 160 },
+      { key: "joined", label: "Joined", format: "number", width: 90, align: "right" },
+      { key: "still_active", label: "Still Active", format: "number", width: 110, align: "right" },
+      { key: "left_by_30", label: "Left by 30d", format: "number", width: 110, align: "right" },
+      { key: "left_by_60", label: "Left by 60d", format: "number", width: 110, align: "right" },
+      { key: "left_by_90", label: "Left by 90d", format: "number", width: 110, align: "right" },
+      { key: "survival_30_pct", label: "Survival @30d", format: "percentage", width: 130, align: "right" },
+      { key: "survival_60_pct", label: "Survival @60d", format: "percentage", width: 130, align: "right" },
+      { key: "survival_90_pct", label: "Survival @90d", format: "percentage", width: 130, align: "right" },
+      { key: "avg_tenure_days_of_leavers", label: "Avg Tenure of Leavers", format: "number", width: 160, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master"],
+    calculationNotes:
+      "The cohort is every joiner in that month, INCLUDING those who have since left — " +
+      "filtering to currently-active employees would make survival 100% by construction. " +
+      "Employees who are inactive with no date_of_exit are excluded (fate unknowable); that " +
+      "is why cohort 2026-04 counts 302 and not the 303 a raw COUNT gives. A survival " +
+      "figure is emitted as blank until the cohort is old enough to have reached that " +
+      "horizon, rather than printing a flattering 100% for a cohort that joined last week. " +
+      "Measured live 2026-08-15: every cohort from 2025-08 to 2026-05 lost 36.9-48.5% of " +
+      "its joiners within 30 days and roughly two-thirds within 90.",
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "attrition-risk-score",
+    name: "Attrition Risk Ranking",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Per-employee attrition risk ranking with the component scores that produced it",
+    rowGrain: "One row per active employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Employee Code", format: "text", width: 130 },
+      { key: "employee_name", label: "Employee", format: "text", width: 190 },
+      { key: "risk_band", label: "Risk", format: "text", width: 90 },
+      { key: "risk_score", label: "Score", format: "number", width: 90, align: "right" },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 110 },
+      { key: "aon_days", label: "AON Days", format: "number", width: 100, align: "right" },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "attendance_days", label: "Attendance Days", format: "number", width: 130, align: "right" },
+      { key: "absence_rate_pct", label: "Absence %", format: "number", width: 110, align: "right" },
+      { key: "missing_punch_rate_pct", label: "Missing Punch %", format: "number", width: 140, align: "right" },
+      { key: "half_day_rate_pct", label: "Half Day %", format: "number", width: 115, align: "right" },
+      { key: "tenure_points", label: "Tenure Pts", format: "number", width: 110, align: "right" },
+      { key: "absence_points", label: "Absence Pts", format: "number", width: 115, align: "right" },
+      { key: "missing_punch_points", label: "Punch Pts", format: "number", width: 110, align: "right" },
+      { key: "half_day_points", label: "Half Day Pts", format: "number", width: 120, align: "right" },
+      { key: "date_of_joining", label: "Joined", format: "text", width: 110 },
+    ],
+    filters: [F_BRANCH, F_COST_CENTRE],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "attendance_daily_record", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "A RANKING, not a prediction. Nothing here is trained, because there is nothing to " +
+      "train against: exit_request holds 2 rows against 2,632 exits in twelve months, so why " +
+      "anyone left is not recorded. What the data supports is ordering people by resemblance " +
+      "to the population that has historically left. Measured over twelve months with " +
+      "impossible-tenure rows excluded, 1,121 of 2,615 exits (43%) fell within 30 days of " +
+      "joining and 1,760 (67%) within 90, so tenure carries most of the signal and the score " +
+      "says so openly — bucket contributes the largest single term (45/30/18/6) and the " +
+      "behavioural terms modulate it (absence up to 25, missing punch up to 20, half-day up " +
+      "to 10, capped at 100). Weights are stated judgement, not learned, and every component " +
+      "is emitted as its own column so a manager can see why someone ranks where they do. " +
+      "Rates are NULL below 5 attendance days rather than allowed to swing the score on a " +
+      "handful of rows, and attendance_days is emitted so that limit is visible. Process is " +
+      "deliberately NOT part of the arithmetic: it is NULL for 341 active employees, all 183 " +
+      "of them in the 0-30 bucket, so a process baseline would be absent for exactly the " +
+      "people this report is about.",
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: 'confidential',
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "leave-attendance-reconciliation",
+    name: "Leave vs Attendance Reconciliation",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Approved leave that attendance does not reflect, per employee per month",
+    rowGrain: "One row per employee per month with approved leave",
+    primaryKey: ["month", "employee_code"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "employee_code", label: "Employee Code", format: "text", width: 130 },
+      { key: "employee_name", label: "Employee", format: "text", width: 190 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "approved_requests", label: "Approved Requests", format: "number", width: 150, align: "right" },
+      { key: "approved_leave_days", label: "Approved Leave Days", format: "number", width: 165, align: "right" },
+      { key: "days_marked_leave_in_attendance", label: "Marked As Leave", format: "number", width: 145, align: "right" },
+      { key: "days_marked_absent_in_attendance", label: "Marked As Absent", format: "number", width: 150, align: "right" },
+      { key: "attendance_agreement_pct", label: "Agreement %", format: "number", width: 125, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_request", "attendance_daily_record", "employees", "branch_master", "cost_centre_master"],
+    calculationNotes:
+      "Approved leave does not reach attendance. Measured live 2026-08-17: 1,180 leave " +
+      "requests were approved in the last 90 days while attendance_daily_record recorded 12 " +
+      "days as leave_approved over the same period. Those employees are counted absent, " +
+      "which inflates unplanned shrinkage and understates planned absence — the split WFM " +
+      "schedules against. days_marked_absent_in_attendance is the number that matters. " +
+      "This report WRITES NOTHING: posting these days into attendance would change payable " +
+      "days, and therefore salary, for months that may already be settled, which is a " +
+      "payroll decision with a frozen-month question attached rather than a reporting one. " +
+      "Matched on the leave START date rather than expanding each request into individual " +
+      "dates, because expanding needs a calendar table this schema does not have; the " +
+      "per-request grain is enough to size the gap and name who is affected.",
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: 'confidential',
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "attrition-deep-dive",
+    name: "Attrition Deep Dive",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Exits by AON bucket sliced by source of hire, designation, department, manager, age, gender or CTC band",
+    rowGrain: "One row per dimension value per AON bucket",
+    primaryKey: ["dimension", "dimension_value", "aon_bucket"],
+    columns: [
+      { key: "dimension_label", label: "Dimension", format: "text", width: 140 },
+      { key: "dimension_value", label: "Value", format: "text", width: 220 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_tenure_days", label: "Avg Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "share_pct", label: "% of Value's Exits", format: "percentage", width: 140, align: "right" },
+      { key: "early_quit_rate", label: "Early Quit Rate %", format: "percentage", width: 140, align: "right" },
+      { key: "reason_captured_pct", label: "Reason Captured %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_AON_DIMENSION, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "exit_request", "branch_master", "cost_centre_master", "process_master", "department_master", "designation_master"],
+    calculationNotes:
+      "The dimension is chosen from a fixed allow-list in the executor; nothing from the " +
+      "request reaches the SQL text, and an unrecognised value falls back to source. " +
+      "early_quit_rate is the share of a dimension value's exits that went within 30 days " +
+      "and is constant across that value's four bucket rows, so values can be ranked on it. " +
+      "Source of hire is normalised — 'WALKI IN' (1,222 exits) and 'WALK IN' (961) are the " +
+      "same channel behind a typo and are collapsed to 2,183 under 'Walk-in'. " +
+      "reason_captured_pct is emitted deliberately and reads ~0: exit reason is not captured " +
+      "in this database (exit_request holds 2 rows, exit_interview_response and " +
+      "attrition_record are empty, legacy_history_snapshot yields a reason for 10 of 2,796 " +
+      "recent exits). This report answers what kind of joiner leaves and when, NOT why. " +
+      "exit_type_proxy is a proxy from the absence of resignation_date on 128 exits and is " +
+      "never a recorded exit type — the average gap between resignation_date and " +
+      "date_of_exit is 0.0 days, so it mirrors the exit rather than recording notice.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 8: RECRUITMENT / ATS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "recruitment-pipeline",
+    name: "Recruitment Pipeline Report",
+    category: "Recruitment",
+    subcategory: "Pipeline",
+    description: "Current candidates by stage in recruitment funnel",
+    rowGrain: "One row per stage per job requisition",
+    primaryKey: ["job_id", "stage"],
+    columns: [
+      { key: "job_title", label: "Job Title", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "stage", label: "Stage", format: "status", width: 140 },
+      { key: "candidate_count", label: "Candidates", format: "number", width: 100, align: "right" },
+      { key: "avg_days_in_stage", label: "Avg Days in Stage", format: "number", width: 120, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, { key: "jobId", label: "Job", type: "select" }],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate", "job_posting"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "candidate-tracker",
+    name: "Candidate Tracker",
+    category: "Recruitment",
+    subcategory: "Pipeline",
+    description: "Detailed candidate tracking with interview history",
+    rowGrain: "One row per candidate",
+    primaryKey: ["candidate_id"],
+    columns: [
+      { key: "candidate_id", label: "Candidate ID", format: "text", width: 100 },
+      { key: "candidate_name", label: "Candidate Name", format: "text", width: 180 },
+      { key: "mobile", label: "Mobile", format: "phone", width: 120 },
+      { key: "email", label: "Email", format: "email", width: 180 },
+      { key: "job_title", label: "Applied For", format: "text", width: 160 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "current_stage", label: "Current Stage", format: "status", width: 140 },
+      { key: "source", label: "Source", format: "text", width: 120 },
+      { key: "applied_date", label: "Applied Date", format: "date", width: 100 },
+      { key: "last_activity", label: "Last Activity", format: "datetime", width: 140 },
+      { key: "recruiter", label: "Recruiter", format: "text", width: 140 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS, { key: "stage", label: "Stage", type: "select" }],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate", "job_posting"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "source-effectiveness",
+    name: "Source Effectiveness Report",
+    category: "Recruitment",
+    subcategory: "Analytics",
+    description: "Recruitment source performance analysis",
+    rowGrain: "One row per source",
+    primaryKey: ["source"],
+    columns: [
+      { key: "source", label: "Source", format: "text", width: 160 },
+      { key: "applications", label: "Applications", format: "number", width: 100, align: "right" },
+      { key: "shortlisted", label: "Shortlisted", format: "number", width: 100, align: "right" },
+      { key: "interviewed", label: "Interviewed", format: "number", width: 100, align: "right" },
+      { key: "offered", label: "Offered", format: "number", width: 80, align: "right" },
+      { key: "joined", label: "Joined", format: "number", width: 80, align: "right" },
+      { key: "conversion_rate", label: "Conversion %", format: "percentage", width: 100, align: "right" },
+      { key: "avg_time_to_hire", label: "Avg Time to Hire", format: "number", width: 120, align: "right" },
+      { key: "cost_per_hire", label: "Cost per Hire", format: "currency", width: 120, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate", "job_posting"],
+    calculationNotes: "Conversion Rate = Joined / Applications × 100. Time to Hire = Days from application to joining.",
+    branchScoped: true,
+  },
+
+  {
+    code: "recruiter-productivity",
+    name: "Recruiter Productivity Report",
+    category: "Recruitment",
+    subcategory: "Analytics",
+    description: "Recruiter-wise hiring metrics",
+    rowGrain: "One row per recruiter",
+    primaryKey: ["recruiter_id"],
+    columns: [
+      { key: "recruiter_name", label: "Recruiter", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "active_requisitions", label: "Active Reqs", format: "number", width: 100, align: "right" },
+      { key: "candidates_sourced", label: "Sourced", format: "number", width: 100, align: "right" },
+      { key: "interviews_scheduled", label: "Interviews", format: "number", width: 100, align: "right" },
+      { key: "offers_made", label: "Offers", format: "number", width: 80, align: "right" },
+      { key: "hires", label: "Hires", format: "number", width: 80, align: "right" },
+      { key: "avg_time_to_fill", label: "Avg Time to Fill", format: "number", width: 120, align: "right" },
+      { key: "offer_acceptance_rate", label: "Offer Accept %", format: "percentage", width: 120, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate", "job_posting", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "offer-tracker",
+    name: "Offer Tracker",
+    category: "Recruitment",
+    subcategory: "Offers & Joining",
+    description: "Offer status tracking",
+    rowGrain: "One row per offer",
+    primaryKey: ["candidate_id", "offer_date"],
+    columns: [
+      { key: "candidate_name", label: "Candidate Name", format: "text", width: 180 },
+      { key: "job_title", label: "Job Title", format: "text", width: 160 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "offer_date", label: "Offer Date", format: "date", width: 100 },
+      { key: "offered_ctc", label: "Offered CTC", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "offer_status", label: "Offer Status", format: "status", width: 120 },
+      { key: "expected_joining", label: "Expected Joining", format: "date", width: 120 },
+      { key: "actual_joining", label: "Actual Joining", format: "date", width: 120 },
+      { key: "decline_reason", label: "Decline Reason", format: "text", width: 160 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate", "job_posting"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    // Query already existed and works (report-suite.routes.ts, 321 live rows
+    // verified), and this code is already referenced by ReportLibraryView.tsx
+    // and deep-report-packs.ts ("register" and "reconciliation" packs) — but
+    // was never added here. reportCatalogAccessMiddleware 404s any code not
+    // in this array before the query ever runs, so the report tile always
+    // rendered as empty/no-data with no visible error. That was the entire
+    // bug: not a data problem, a missing registration.
+    //
+    // Filters intentionally list only date range — the underlying query does
+    // not apply branchId/processId (no addScopedEmployeeFilters call, no
+    // scope params pushed in that switch case), so listing F_BRANCH/F_PROCESS
+    // here would offer filters that silently do nothing. Fix the query to
+    // scope on e.branch_id/e.process_id (nullable — many rows have no
+    // employee yet) before adding those filters back.
+    // branchScoped: false below is correct, and this records the evidence so nobody "fixes" it
+    // to true on the assumption that an unscoped employee-joining report must be an oversight.
+    // The grain is the ATS onboarding bridge — a candidate between offer and joining — and
+    // nothing on that row carries a branch. Verified live 2026-08-10:
+    //   - ats_onboarding_bridge has no branch column at all, and only 2 of its 351 rows link to
+    //     an employee, so scoping through employees.branch_id would drop 349 of 351 rows for
+    //     every scoped user;
+    //   - ats_candidate.applied_for_branch is populated on 4,987 of 37,637 rows (13%), so
+    //     scoping on it would hide the 87% that are unmapped — the opposite of this audit's
+    //     rule that unmapped rows render UNASSIGNED and are never dropped.
+    // The employees table appears in this report's SQL only as a LEFT JOIN supplying the actual
+    // date of joining, which is why a scope-gap scan flags it. It is not a leak: the report
+    // cannot be branch-scoped at all until the bridge carries a branch of its own.
+    code: "offer-to-joining-tracker",
+    name: "Offer to Joining Tracker",
+    category: "Recruitment",
+    subcategory: "Offers & Joining",
+    /**
+     * The coverage caveat is in the description because it changes what the number MEANS, and
+     * the reader has no other way to learn it.
+     *
+     * Measured on production 2026-08-12: 1,250 candidates sit at stage 'Offered' and ALL 1,250
+     * have zero rows in ats_employment_offer AND zero in ats_onboarding_bridge. The table has
+     * 375 bridge rows and ats_employment_offer holds 15 in total. So this report and the
+     * offer-stage population are disjoint — it is not a sample of offers, it is a different
+     * set. Read as "offer to joining", the 375 invites an inference about the 1,250 that the
+     * data cannot support.
+     */
+    description:
+      "Offer-to-joining timeline per onboarding-bridge record, with actual vs. expected date of joining variance. " +
+      "COVERAGE: bridge records only (375 on 2026-08-12). The 1,250 candidates at stage 'Offered' have no bridge " +
+      "or employment-offer row, so they are absent here — this is not an offer-conversion rate.",
+    rowGrain: "One row per candidate onboarding bridge record — NOT one per offer",
+    primaryKey: ["candidate_code"],
+    columns: [
+      { key: "candidate_code", label: "Candidate Code", format: "text", width: 120 },
+      { key: "full_name", label: "Candidate Name", format: "text", width: 180 },
+      { key: "mobile", label: "Mobile", format: "phone", width: 120 },
+      { key: "email", label: "Email", format: "email", width: 180 },
+      { key: "offer_date", label: "Offer Date", format: "date", width: 100 },
+      { key: "offered_doj", label: "Offered DOJ", format: "date", width: 110 },
+      { key: "actual_doj", label: "Actual DOJ", format: "date", width: 110 },
+      { key: "doj_variance_days", label: "DOJ Variance (days)", format: "number", width: 130, align: "right" },
+      { key: "onboarding_status", label: "Onboarding Status", format: "status", width: 130 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_onboarding_bridge", "ats_candidate", "employees"],
+    branchScoped: false,
+    processScoped: false,
+  },
+
+  {
+    code: "joining-pending",
+    name: "Pending Joinings",
+    category: "Recruitment",
+    subcategory: "Offers & Joining",
+    description: "Candidates with accepted offers pending joining",
+    rowGrain: "One row per candidate",
+    primaryKey: ["candidate_id"],
+    columns: [
+      { key: "candidate_name", label: "Candidate Name", format: "text", width: 180 },
+      { key: "mobile", label: "Mobile", format: "phone", width: 120 },
+      { key: "job_title", label: "Job Title", format: "text", width: 160 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "offer_acceptance_date", label: "Accepted On", format: "date", width: 100 },
+      { key: "expected_joining", label: "Expected Joining", format: "date", width: 120 },
+      { key: "days_to_joining", label: "Days to Joining", format: "number", width: 100, align: "right" },
+      { key: "recruiter", label: "Recruiter", format: "text", width: 140 },
+      { key: "last_contact", label: "Last Contact", format: "datetime", width: 140 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate", "job_posting"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 9: OPERATIONS & QUALITY
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "agent-performance-summary",
+    name: "Agent Performance Summary",
+    category: "Operations & Quality",
+    subcategory: "Performance",
+    description: "Individual agent KPI performance",
+    rowGrain: "One row per agent per month",
+    primaryKey: ["employee_code", "month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Agent Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "team_leader", label: "Team Leader", format: "text", width: 140 },
+      { key: "calls_handled", label: "Calls Handled", format: "number", width: 100, align: "right" },
+      { key: "aht_seconds", label: "AHT (sec)", format: "number", width: 80, align: "right" },
+      { key: "aht_formatted", label: "AHT", format: "duration", width: 80 },
+      { key: "quality_score", label: "Quality %", format: "percentage", width: 80, align: "right" },
+      { key: "csat_score", label: "CSAT %", format: "percentage", width: 80, align: "right" },
+      { key: "fcr_rate", label: "FCR %", format: "percentage", width: 80, align: "right" },
+      { key: "adherence_pct", label: "Adherence %", format: "percentage", width: 100, align: "right" },
+      { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 100, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ["super_admin", "admin", "operations", "quality"],
+    sourceTables: ["Shivamgiri.v_call_master_unified_kpi", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "team-performance-summary",
+    name: "Team Performance Summary",
+    category: "Operations & Quality",
+    subcategory: "Performance",
+    description: "Team-level aggregated performance",
+    rowGrain: "One row per team per month",
+    primaryKey: ["team_leader_id", "month"],
+    columns: [
+      { key: "team_leader", label: "Team Leader", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "team_size", label: "Team Size", format: "number", width: 80, align: "right" },
+      { key: "total_calls", label: "Total Calls", format: "number", width: 100, align: "right" },
+      { key: "avg_aht", label: "Avg AHT", format: "duration", width: 80 },
+      { key: "avg_quality", label: "Avg Quality %", format: "percentage", width: 100, align: "right" },
+      { key: "avg_csat", label: "Avg CSAT %", format: "percentage", width: 100, align: "right" },
+      { key: "avg_adherence", label: "Avg Adherence %", format: "percentage", width: 110, align: "right" },
+      { key: "avg_attendance", label: "Avg Attendance %", format: "percentage", width: 120, align: "right" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ["super_admin", "admin", "operations", "quality"],
+    sourceTables: ["Shivamgiri.v_call_master_unified_kpi", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "quality-audit-log",
+    name: "Quality Audit Log",
+    category: "Operations & Quality",
+    subcategory: "Quality",
+    description: "Detailed quality audit records",
+    rowGrain: "One row per audit",
+    primaryKey: ["audit_id"],
+    columns: [
+      { key: "audit_date", label: "Audit Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Agent Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "audit_type", label: "Audit Type", format: "text", width: 120 },
+      { key: "call_id", label: "Call ID", format: "text", width: 120 },
+      { key: "score", label: "Score", format: "percentage", width: 80, align: "right" },
+      { key: "fatal_error", label: "Fatal Error", format: "boolean", width: 80 },
+      { key: "auditor", label: "Auditor", format: "text", width: 140 },
+      { key: "feedback", label: "Feedback", format: "text", width: 200 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ["super_admin", "admin", "operations", "quality"],
+    sourceTables: ["db_audit.call_quality_assessment", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "fatal-error-register",
+    name: "Fatal Error Register",
+    category: "Operations & Quality",
+    subcategory: "Quality",
+    description: "Fatal quality errors requiring action",
+    rowGrain: "One row per fatal error",
+    primaryKey: ["audit_id"],
+    columns: [
+      { key: "audit_date", label: "Audit Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Agent Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "error_category", label: "Error Category", format: "text", width: 140 },
+      { key: "error_description", label: "Error Description", format: "text", width: 200 },
+      { key: "call_id", label: "Call ID", format: "text", width: 120 },
+      { key: "action_taken", label: "Action Taken", format: "text", width: 160 },
+      { key: "auditor", label: "Auditor", format: "text", width: 140 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ["super_admin", "admin", "operations", "quality"],
+    sourceTables: ["db_audit.call_quality_assessment", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    // Real report from the real Reginald_Men_Abandoned_Cart_Dashboard_SOP_
+    // WITH_PATH.xlsx's own "Day-wise" tab shape -- pivoted from
+    // process_metric_actual (REGINALD_ABCD_*/REGINALD_REPT_* metrics, sql/
+    // 1752 raw data) into one row per date, matching the client's own
+    // desired dashboard layout rather than the raw long-format metric rows.
+    code: "reginald-abandoned-cart-sales-report",
+    name: "Reginald Abandoned Cart Sales (Day-wise)",
+    category: "Operations & Quality",
+    subcategory: "Sales",
+    description: "Daily Abandoned Cart (ABCD) and Repeat (REPT) sales count, revenue and AOV for Reginald, from the real Live Sales Google Form",
+    rowGrain: "One row per date",
+    primaryKey: ["report_date"],
+    columns: [
+      { key: "report_date", label: "Date", format: "date", width: 110 },
+      { key: "process_name", label: "Process", format: "text", width: 120 },
+      { key: "reginald_abcd_sales_count", label: "Abandoned Cart Sales", format: "number", width: 150, align: "right" },
+      { key: "reginald_abcd_revenue", label: "Abandoned Cart Revenue", format: "currency", width: 170, align: "right" },
+      { key: "reginald_abcd_aov", label: "Abandoned Cart AOV", format: "currency", width: 150, align: "right" },
+      { key: "reginald_rept_sales_count", label: "Repeat Sales", format: "number", width: 120, align: "right" },
+      { key: "reginald_rept_revenue", label: "Repeat Revenue", format: "currency", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ["super_admin", "admin", "operations", "quality", "process_manager"],
+    sourceTables: ["process_metric_actual", "reginald_abandoned_cart_sales_raw"],
+    processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 10: ROSTER / WFM
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "roster-published",
+    name: "Published Roster Report",
+    category: "WFM & Roster",
+    subcategory: "Roster",
+    description: "Published roster assignments for the week/month",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "roster_date"],
+    columns: [
+      { key: "roster_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Shift", format: "text", width: 120 },
+      { key: "shift_start", label: "Shift Start", format: "time", width: 80 },
+      { key: "shift_end", label: "Shift End", format: "time", width: 80 },
+      { key: "week_off", label: "Week Off", format: "boolean", width: 80 },
+      { key: "roster_status", label: "Roster Status", format: "status", width: 100 },
+      { key: "acknowledgement_status", label: "Acknowledged", format: "status", width: 100 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["wfm_roster_assignment", "wfm_shift_master", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "roster-variance",
+    name: "Roster vs Actual Variance",
+    category: "WFM & Roster",
+    subcategory: "Roster",
+    description: "Comparison of rostered vs actual attendance",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "roster_date"],
+    columns: [
+      { key: "roster_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "rostered_shift", label: "Rostered Shift", format: "text", width: 120 },
+      { key: "actual_shift", label: "Actual Shift", format: "text", width: 120 },
+      { key: "rostered_start", label: "Rostered Start", format: "time", width: 100 },
+      { key: "actual_punch_in", label: "Actual Punch In", format: "time", width: 100 },
+      { key: "rostered_end", label: "Rostered End", format: "time", width: 100 },
+      { key: "actual_punch_out", label: "Actual Punch Out", format: "time", width: 100 },
+      { key: "variance_minutes", label: "Variance (mins)", format: "number", width: 100, align: "right" },
+      { key: "variance_type", label: "Variance Type", format: "status", width: 120 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["wfm_roster_assignment", "attendance_daily_record", "wfm_attendance_session"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "shift-swap-register",
+    name: "Shift Swap Register",
+    category: "WFM & Roster",
+    subcategory: "Roster",
+    description: "Shift swap requests and their status",
+    rowGrain: "One row per swap request",
+    primaryKey: ["swap_id"],
+    columns: [
+      { key: "request_date", label: "Request Date", format: "date", width: 100 },
+      { key: "requester_code", label: "Requester Code", format: "text", width: 100 },
+      { key: "requester_name", label: "Requester", format: "text", width: 160 },
+      { key: "swap_with_code", label: "Swap With Code", format: "text", width: 100 },
+      { key: "swap_with_name", label: "Swap With", format: "text", width: 160 },
+      { key: "swap_date", label: "Swap Date", format: "date", width: 100 },
+      { key: "original_shift", label: "Original Shift", format: "text", width: 120 },
+      { key: "new_shift", label: "New Shift", format: "text", width: 120 },
+      { key: "status", label: "Status", format: "status", width: 100 },
+      { key: "approved_by", label: "Approved By", format: "text", width: 140 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "wfm"],
+    sourceTables: ["wfm_roster_swap_request", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  {
+    code: "week-off-calendar",
+    name: "Week Off Calendar",
+    category: "WFM & Roster",
+    subcategory: "Roster",
+    description: "Week off schedule for all employees",
+    rowGrain: "One row per employee per week",
+    primaryKey: ["employee_code", "week_start"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "week_start", label: "Week Start", format: "date", width: 100 },
+      { key: "week_off_1", label: "WO 1", format: "text", width: 80 },
+      { key: "week_off_2", label: "WO 2", format: "text", width: 80 },
+      // Surfaced so a week carrying more than two recorded week-offs is visible rather than
+      // silently truncated by the two columns above.
+      { key: "week_off_count", label: "WO Count", format: "number", width: 80, align: "center" },
+      { key: "rotational", label: "Rotational", format: "boolean", width: 80 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ["super_admin", "admin", "wfm"],
+    sourceTables: ["wfm_roster_assignment", "employees"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 11: ASSETS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "asset-inventory",
+    name: "Asset Inventory Report",
+    category: "Assets",
+    subcategory: "Inventory",
+    description: "Complete asset inventory with status",
+    rowGrain: "One row per asset",
+    primaryKey: ["asset_code"],
+    columns: [
+      { key: "asset_code", label: "Asset Code", format: "text", width: 120 },
+      { key: "asset_name", label: "Asset Name", format: "text", width: 180 },
+      { key: "asset_category", label: "Category", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "purchase_date", label: "Purchase Date", format: "date", width: 100 },
+      { key: "purchase_value", label: "Purchase Value", format: "currency", width: 120, align: "right" },
+      { key: "current_value", label: "Current Value", format: "currency", width: 120, align: "right" },
+      { key: "asset_status", label: "Status", format: "status", width: 100 },
+      { key: "assigned_to", label: "Assigned To", format: "text", width: 180 },
+      { key: "location", label: "Location", format: "text", width: 140 },
+    ],
+    filters: [F_BRANCH, { key: "category", label: "Category", type: "select" }, { key: "status", label: "Status", type: "select" }],
+    viewRoles: ["super_admin", "admin", "hr", "it", "admin_ops"],
+    exportRoles: ["super_admin", "admin", "hr"],
+    sourceTables: ["asset_master", "asset_assignment"],
+    branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "asset-allocation-register",
+    name: "Asset Allocation Register",
+    category: "Assets",
+    subcategory: "Allocation",
+    description: "Current asset allocations by employee",
+    rowGrain: "One row per allocation",
+    primaryKey: ["asset_code", "employee_code"],
+    columns: [
+      { key: "asset_code", label: "Asset Code", format: "text", width: 120 },
+      { key: "asset_name", label: "Asset Name", format: "text", width: 180 },
+      { key: "asset_category", label: "Category", format: "text", width: 120 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "allocation_date", label: "Allocated On", format: "date", width: 100 },
+      { key: "expected_return", label: "Expected Return", format: "date", width: 100 },
+      { key: "allocation_status", label: "Status", format: "status", width: 100 },
+    ],
+    filters: [F_BRANCH, { key: "category", label: "Category", type: "select" }],
+    viewRoles: ["super_admin", "admin", "hr", "it", "admin_ops"],
+    exportRoles: ["super_admin", "admin", "hr"],
+    sourceTables: ["asset_assignment", "asset_master", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "asset-movement-log",
+    name: "Asset Movement Log",
+    category: "Assets",
+    subcategory: "Allocation",
+    description: "Historical asset movement and transfers",
+    rowGrain: "One row per movement event",
+    primaryKey: ["asset_code", "movement_date", "movement_type"],
+    columns: [
+      { key: "movement_date", label: "Movement Date", format: "datetime", width: 140 },
+      { key: "asset_code", label: "Asset Code", format: "text", width: 120 },
+      { key: "asset_name", label: "Asset Name", format: "text", width: 180 },
+      { key: "movement_type", label: "Movement Type", format: "status", width: 120 },
+      { key: "from_employee", label: "From", format: "text", width: 160 },
+      { key: "to_employee", label: "To", format: "text", width: 160 },
+      { key: "from_location", label: "From Location", format: "text", width: 140 },
+      { key: "to_location", label: "To Location", format: "text", width: 140 },
+      { key: "performed_by", label: "Performed By", format: "text", width: 140 },
+      { key: "remarks", label: "Remarks", format: "text", width: 200 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, { key: "movementType", label: "Movement Type", type: "select" }],
+    viewRoles: ["super_admin", "admin", "hr", "it", "admin_ops"],
+    exportRoles: ["super_admin", "admin", "hr"],
+    sourceTables: ["asset_movement_log", "asset_master", "employees"],
+    branchScoped: true,
+    // asset_movement_log does not exist in mas_hrms and has no equivalent — asset_service_log
+    // records servicing, not custody transfers (verified against live 2026-08-07). The executor
+    // now throws ReportSourceUnavailableError naming the table instead of returning an empty
+    // result, which had made an audit trail read as "no movements have ever occurred".
+    availabilityStatus: "blocked",
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 12: TRAINING / LMS INTEGRATION
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "training-completion-status",
+    name: "Training Completion Status",
+    category: "Training",
+    subcategory: "Completion",
+    description: "Training/course completion status by employee",
+    rowGrain: "One row per employee per course",
+    primaryKey: ["employee_code", "course_id"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "course_name", label: "Course Name", format: "text", width: 200 },
+      { key: "course_type", label: "Course Type", format: "text", width: 120 },
+      { key: "assigned_date", label: "Assigned Date", format: "date", width: 100 },
+      { key: "due_date", label: "Due Date", format: "date", width: 100 },
+      { key: "completion_date", label: "Completed Date", format: "date", width: 100 },
+      { key: "completion_status", label: "Status", format: "status", width: 100 },
+      { key: "score", label: "Score", format: "percentage", width: 80, align: "right" },
+      { key: "attempts", label: "Attempts", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, { key: "courseId", label: "Course", type: "select" }, { key: "status", label: "Status", type: "select" }],
+    viewRoles: [...ROLES_HR_MANAGER, "trainer"],
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["lms_learner_progress", "employees"],
+    calculationNotes: "Data synced from LMS via integration layer",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "certification-status",
+    name: "Certification Status",
+    category: "Training",
+    subcategory: "Certification",
+    description: "Employee certification status and validity",
+    rowGrain: "One row per employee per certification",
+    primaryKey: ["employee_code", "certification_id"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "certification_name", label: "Certification", format: "text", width: 200 },
+      { key: "certified_date", label: "Certified Date", format: "date", width: 100 },
+      { key: "expiry_date", label: "Expiry Date", format: "date", width: 100 },
+      { key: "certification_status", label: "Status", format: "status", width: 100 },
+      { key: "days_to_expiry", label: "Days to Expiry", format: "number", width: 100, align: "right" },
+      { key: "synced_at", label: "Last Synced", format: "datetime", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS, { key: "status", label: "Status", type: "select" }],
+    viewRoles: [...ROLES_HR_MANAGER, "trainer"],
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["lms_certification_snapshot", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    // Had no executor and no inline block, so every request returned the
+    // PENDING_DATA_BUILDER stub. It now queries its real source. That source holds 0 rows
+    // against live on 2026-08-07 — the deployed LMS is the system of record for
+    // certification and nothing has been synced into the snapshot yet — so the report is
+    // legitimately empty until the sync runs. "Empty pending sync" is a statement a user
+    // can act on; "no data builder configured" was not.
+    availabilityStatus: "validated_with_limitations",
+  },
+
+  {
+    code: "training-batch-summary",
+    name: "Training Batch Summary",
+    category: "Training",
+    subcategory: "Batches",
+    description: "Training batch progress and metrics",
+    rowGrain: "One row per batch",
+    primaryKey: ["batch_id"],
+    columns: [
+      { key: "batch_name", label: "Batch Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "trainer", label: "Trainer", format: "text", width: 160 },
+      { key: "start_date", label: "Start Date", format: "date", width: 100 },
+      { key: "end_date", label: "End Date", format: "date", width: 100 },
+      { key: "batch_size", label: "Batch Size", format: "number", width: 80, align: "right" },
+      { key: "active_count", label: "Active", format: "number", width: 80, align: "right" },
+      { key: "dropout_count", label: "Dropout", format: "number", width: 80, align: "right" },
+      { key: "certified_count", label: "Certified", format: "number", width: 80, align: "right" },
+      { key: "avg_score", label: "Avg Score", format: "percentage", width: 80, align: "right" },
+      { key: "pass_rate", label: "Pass Rate", format: "percentage", width: 80, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: [...ROLES_HR_MANAGER, "trainer"],
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["lms_learner_progress", "lms_learner_progress"],
+    branchScoped: true,
+    processScoped: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 13: DOCUMENTS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "document-expiry-tracker",
+    name: "Document Expiry Tracker",
+    category: "Documents",
+    subcategory: "Compliance",
+    // Reads as a clean bill of health and is not one. employee_documents.expiry_date is NULL on
+    // ALL 207,616 rows (measured 2026-08-10), and this report's first predicate is
+    // `expiry_date IS NOT NULL` — so it returns zero rows today and will keep doing so until
+    // expiry dates are actually captured at upload. An empty compliance report that means "no
+    // expiry dates are recorded" is dangerous when it is read as "nothing is expiring", which is
+    // exactly how an empty grid reads. The description says so rather than leaving the reader to
+    // infer it. Deliberately NOT marked blocked: the SQL is correct and the report starts working
+    // the moment the column is populated.
+    description: "Employee documents with upcoming expiry. NOTE: expiry_date is currently unset on every document in the system, so this report returns nothing — that means no expiry dates are recorded, not that nothing is expiring.",
+    rowGrain: "One row per employee per document type",
+    primaryKey: ["employee_code", "document_type"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "document_type", label: "Document Type", format: "text", width: 140 },
+      { key: "document_number", label: "Document Number", format: "masked", width: 140, sensitive: true },
+      { key: "issue_date", label: "Issue Date", format: "date", width: 100 },
+      { key: "expiry_date", label: "Expiry Date", format: "date", width: 100 },
+      { key: "days_to_expiry", label: "Days to Expiry", format: "number", width: 100, align: "right" },
+      { key: "status", label: "Status", format: "status", width: 100 },
+    ],
+    filters: [F_BRANCH, { key: "docType", label: "Document Type", type: "select" }, { key: "daysAhead", label: "Expiring in Days", type: "number", placeholder: "30" }],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employee_documents", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "document-verification-status",
+    name: "Document Verification Status",
+    category: "Documents",
+    subcategory: "Verification",
+    description: "Status of employee document verification",
+    rowGrain: "One row per employee per document type",
+    primaryKey: ["employee_code", "document_type"],
+    columns: [
+      // Keys realigned to the executor's SELECT. document_type and rejection_reason were
+      // declared here but the real columns are doc_type and verification_remarks, so both
+      // would have rendered blank even once the report started returning rows.
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "doc_type", label: "Document Type", format: "text", width: 140 },
+      { key: "doc_name", label: "Document", format: "text", width: 180 },
+      { key: "submitted_date", label: "Submitted Date", format: "date", width: 100 },
+      { key: "verification_status", label: "Verification Status", format: "status", width: 150 },
+      { key: "verified_by", label: "Verified By", format: "text", width: 140 },
+      { key: "verified_date", label: "Verified Date", format: "date", width: 100 },
+      { key: "verification_remarks", label: "Remarks", format: "text", width: 220 },
+    ],
+    filters: [F_BRANCH, { key: "docType", label: "Document Type", type: "select" }, { key: "status", label: "Status", type: "select" }],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employee_documents", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "missing-documents-report",
+    name: "Missing Documents Report",
+    category: "Documents",
+    subcategory: "Compliance",
+    description: "Employees with missing mandatory documents",
+    rowGrain: "One row per employee per missing document",
+    primaryKey: ["employee_code", "document_type"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 120 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 160 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "document_type", label: "Missing Document", format: "text", width: 160 },
+      { key: "mandatory", label: "Mandatory", format: "boolean", width: 80 },
+      { key: "days_since_joining", label: "Days Since Joining", format: "number", width: 120, align: "right" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["onboarding_document_master", "employee_documents", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    // Was marked `blocked` on the grounds that no org-wide list of required documents existed.
+    // That was wrong, and the correction is worth recording: document_type_master is genuinely
+    // absent from mas_hrms, but onboarding_document_master is present, active and populated —
+    // 11 rows, 6 of them unconditionally mandatory. The earlier note reached the right verdict
+    // about employee_joining_document_checklist (92 rows, 11 employees, useless as a
+    // requirement source) and then stopped looking.
+    //
+    // Now served by missingDocumentsReport. The master supplies the requirement list; the
+    // executor supplies only the storage mapping, which the master cannot express. Conditional
+    // documents are excluded because their condition_rule predicates are not evaluable here.
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // CATEGORY 14: IDENTITY & VERIFICATION
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "uan-status-report",
+    name: "UAN Status Report",
+    category: "Identity",
+    subcategory: "PF/UAN",
+    description: "UAN registration and linking status",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "uan", label: "UAN", format: "text", width: 120 },
+      { key: "uan_status", label: "UAN Status", format: "status", width: 100 },
+      { key: "pf_number", label: "PF Number", format: "text", width: 140 },
+      { key: "kyc_status", label: "KYC Status", format: "status", width: 100 },
+      { key: "bank_linked", label: "Bank Linked", format: "boolean", width: 100 },
+      { key: "aadhaar_linked", label: "Aadhaar Linked", format: "boolean", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, { key: "uanStatus", label: "UAN Status", type: "select" }],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["employees", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  {
+    code: "esic-status-report",
+    name: "ESIC Status Report",
+    category: "Identity",
+    subcategory: "ESIC",
+    description: "ESIC registration and eligibility status",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "esic_number", label: "ESIC Number", format: "text", width: 140 },
+      { key: "esic_status", label: "ESIC Status", format: "status", width: 100 },
+      { key: "eligible", label: "Eligible", format: "boolean", width: 80 },
+      { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right" },
+      { key: "dispensary", label: "Dispensary", format: "text", width: 160 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, { key: "esicStatus", label: "ESIC Status", type: "select" }],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["employees", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "pan-verification-status",
+    name: "PAN Verification Status",
+    category: "Identity",
+    subcategory: "KYC",
+    description: "PAN card verification status for all employees",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "pan", label: "PAN", format: "masked", width: 100, sensitive: true },
+      { key: "pan_status", label: "PAN Status", format: "status", width: 100 },
+      { key: "name_as_per_pan", label: "Name as per PAN", format: "text", width: 180 },
+      { key: "name_match", label: "Name Match", format: "boolean", width: 100 },
+      { key: "verification_date", label: "Verified Date", format: "date", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, { key: "panStatus", label: "PAN Status", type: "select" }],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["employees", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "bank-account-verification",
+    name: "Bank Account Verification Status",
+    category: "Identity",
+    subcategory: "KYC",
+    description: "Bank account verification status",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "bank_name", label: "Bank Name", format: "text", width: 140 },
+      { key: "account_number", label: "Account Number", format: "masked", width: 160, sensitive: true },
+      { key: "ifsc_code", label: "IFSC Code", format: "text", width: 100 },
+      { key: "account_holder_name", label: "Account Holder", format: "text", width: 180 },
+      { key: "verification_status", label: "Verification Status", format: "status", width: 120 },
+      { key: "penny_drop_status", label: "Penny Drop", format: "status", width: 100 },
+      { key: "verified_date", label: "Verified Date", format: "date", width: 100 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, { key: "verificationStatus", label: "Status", type: "select" }],
+    viewRoles: ROLES_COMPLIANCE,
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    sourceTables: ["employee_bank_detail", "employees"],
+    branchScoped: true,
+  },
+
+  {
+    code: "identity-source-snapshot",
+    name: "Identity Source Snapshot",
+    category: "Identity",
+    subcategory: "Master Data",
+    description: "Complete identity snapshot for compliance",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "pan", label: "PAN", format: "masked", width: 100, sensitive: true },
+      { key: "aadhaar", label: "Aadhaar", format: "masked", width: 120, sensitive: true },
+      { key: "uan", label: "UAN", format: "text", width: 120 },
+      { key: "esic_number", label: "ESIC", format: "text", width: 140 },
+      { key: "passport", label: "Passport", format: "masked", width: 100, sensitive: true },
+      { key: "driving_license", label: "DL", format: "masked", width: 120, sensitive: true },
+      { key: "voter_id", label: "Voter ID", format: "masked", width: 120, sensitive: true },
+      { key: "kyc_complete", label: "KYC Complete", format: "boolean", width: 100 },
+    ],
+    filters: [F_BRANCH],
+    viewRoles: ["super_admin", "admin", "hr_head", "finance"],
+    exportRoles: ["super_admin", "admin"],
+    sourceTables: ["employees", "employees", "employees", "employees"],
+    branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // Same "working SQL, never registered" bug as the Payroll/Statutory batches
+  // above — 11 more codes spanning Leave, Recruitment, Documents, Exit,
+  // Employee lifecycle, Attendance/WFM, Assets and Productivity. Left grouped
+  // here rather than distributed into their matching CATEGORY sections above:
+  // REPORT_CATALOG is consumed via .find()/filter, not positionally, so array
+  // placement doesn't affect behavior — the category/subcategory fields below
+  // still group them correctly wherever a consumer displays by category.
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "lwp-deduction-register",
+    name: "LWP Deduction Register",
+    category: "Leave",
+    subcategory: "Leave/Payroll Reconciliation",
+    description: "Employees with a leave-without-pay deduction in a payroll run, with LWP days and amount",
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "run_month"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "run_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 90, align: "right" },
+      { key: "lwp_deduction_amount", label: "LWP Deduction", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "net_salary", label: "Net Salary", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["salary_prep_line", "salary_prep_run", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "ats-pipeline-summary",
+    name: "ATS Pipeline Summary",
+    category: "Recruitment",
+    subcategory: "Pipeline",
+    description: "Candidate count per recruitment stage, with active vs. dropped breakdown",
+    rowGrain: "One row per recruitment stage",
+    primaryKey: ["stage"],
+    columns: [
+      { key: "stage", label: "Stage", format: "text", width: 140 },
+      { key: "candidate_count", label: "Candidates", format: "number", width: 100, align: "right" },
+      { key: "active_count", label: "Active", format: "number", width: 90, align: "right" },
+      { key: "dropped_count", label: "Dropped", format: "number", width: 90, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_ATS,
+    exportRoles: ROLES_ATS,
+    sourceTables: ["ats_candidate"],
+    sensitivityLevel: "internal",
+  },
+
+  {
+    code: "employee-document-compliance",
+    name: "Employee Document Compliance",
+    category: "Documents",
+    subcategory: "Compliance",
+    description: "Document checklist completion per active employee — verified, missing and completion percentage",
+    rowGrain: "One row per active employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "total_docs", label: "Total Docs", format: "number", width: 100, align: "right" },
+      { key: "verified_docs", label: "Verified", format: "number", width: 90, align: "right" },
+      { key: "missing_docs", label: "Missing", format: "number", width: 90, align: "right" },
+      { key: "completion_pct", label: "Completion %", format: "percentage", width: 110, align: "right" },
+      { key: "joining_document_status", label: "Joining Doc Status", format: "status", width: 140 },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "employee_documents", "employee_joining_document_checklist", "branch_master", "department_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  {
+    code: "exit-movement-report",
+    name: "Exit Movement Report",
+    category: "Exit",
+    subcategory: "Register",
+    description: "Resignation/exit requests with last working day, exit type/reason and tenure at exit",
+    rowGrain: "One row per exit request",
+    primaryKey: ["employee_code", "resignation_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "resignation_date", label: "Resignation Date", format: "datetime", width: 140 },
+      { key: "last_working_day", label: "Last Working Day", format: "date", width: 130 },
+      { key: "exit_type", label: "Exit Type", format: "text", width: 110 },
+      { key: "exit_reason", label: "Exit Reason", format: "text", width: 150 },
+      { key: "exit_status", label: "Status", format: "status", width: 110 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "tenure_months", label: "Tenure (months)", format: "number", width: 120, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["exit_request", "employees", "branch_master", "department_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  {
+    code: "ff-settlement-register",
+    name: "Full & Final Settlement Register",
+    category: "Exit",
+    subcategory: "Compliance",
+    description: "Full & final settlement calculation per exited employee — recoveries, encashment, gratuity and net payable",
+    rowGrain: "One row per exit request with an F&F calculation",
+    primaryKey: ["employee_code", "last_working_day"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text" },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "last_working_day", label: "Last Working Day", format: "date", width: 130 },
+      { key: "notice_recovery", label: "Notice Recovery", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "leave_encashment", label: "Leave Encashment", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "gratuity_amount", label: "Gratuity", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "advances_recovery", label: "Advances Recovery", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "salary_hold", label: "Salary Hold", format: "currency", width: 110, align: "right", sensitive: true },
+      { key: "net_ff_payable", label: "Net F&F Payable", format: "currency", width: 130, align: "right", sensitive: true },
+      { key: "status", label: "Status", format: "status", width: 100 },
+      { key: "is_ff_provisional", label: "Provisional", format: "boolean", width: 90 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["full_final_calculation", "exit_request", "employees"],
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "left-employee-export",
+    name: "Left Employee Export",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "Employees who exited in the selected period, with department, branch, exit reason and last drawn compensation",
+    rowGrain: "One row per exited employee",
+    primaryKey: ["emp_code"],
+    columns: [
+      { key: "emp_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "emp_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "department", label: "Department", format: "text", width: 120 },
+      { key: "designation", label: "Designation", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_center", label: "Cost Centre", format: "text", width: 120 },
+      { key: "mobile_no", label: "Mobile", format: "phone", width: 110, sensitive: true },
+      { key: "doj", label: "Date of Joining", format: "date", width: 120 },
+      { key: "left_date", label: "Date Left", format: "date", width: 110 },
+      { key: "left_remarks", label: "Exit Reason", format: "text", width: 160 },
+      { key: "source", label: "Source", format: "text", width: 100 },
+      { key: "sub_source", label: "Sub-Source", format: "text", width: 120 },
+      { key: "net_in_hand", label: "Net In Hand", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "offered_ctc", label: "Offered CTC", format: "currency", width: 120, align: "right", sensitive: true },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "exit_request", "employee_salary_snapshot", "employee_salary_assignment", "department_master", "designation_master", "branch_master", "cost_centre_master"],
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "new-join-export",
+    name: "New Join Employee Export",
+    category: "HR & Workforce",
+    subcategory: "Employee Lifecycle",
+    description: "Employees who joined in the selected period, with department, branch, source and offered compensation",
+    rowGrain: "One row per new joiner",
+    primaryKey: ["emp_code"],
+    columns: [
+      { key: "emp_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "emp_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_center", label: "Cost Centre", format: "text", width: 120 },
+      { key: "department", label: "Department", format: "text", width: 120 },
+      { key: "designation", label: "Designation", format: "text", width: 120 },
+      { key: "doj", label: "Date of Joining", format: "date", width: 120 },
+      { key: "source", label: "Source", format: "text", width: 100 },
+      { key: "sub_source", label: "Sub-Source", format: "text", width: 120 },
+      { key: "mobile_no", label: "Mobile", format: "phone", width: 110, sensitive: true },
+      { key: "net_in_hand", label: "Net In Hand", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "offered_ctc", label: "Offered CTC", format: "currency", width: 120, align: "right", sensitive: true },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "employee_salary_snapshot", "employee_salary_assignment", "branch_master", "cost_centre_master", "department_master", "designation_master"],
+    branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+
+  {
+    code: "attendance-register-monthly",
+    name: "Attendance Register (Monthly)",
+    category: "Attendance",
+    subcategory: "Register",
+    description: "Day-by-day attendance grid per employee for a payroll month (includes employees active during any part of the month), with per-status day counts",
+    rowGrain: "One row per employee per month",
+    primaryKey: ["emp_code"],
+    columns: [
+      { key: "sno", label: "SNo", format: "number", width: 50, align: "center" },
+      { key: "emp_code", label: "EmpCode", format: "text", width: 100 },
+      { key: "bio_code", label: "BioCode", format: "text", width: 90 },
+      { key: "emp_name", label: "EmpName", format: "text", width: 180 },
+      { key: "department", label: "Department", format: "text", width: 130 },
+      { key: "designation", label: "Designation", format: "text", width: 130 },
+      { key: "profile", label: "Profile", format: "text", width: 100 },
+      { key: "cost_center", label: "CostCenter", format: "text", width: 130 },
+      { key: "emp_location", label: "EmpLocation", format: "text", width: 100 },
+      { key: "process_name", label: "Process Name", format: "text", width: 140 },
+      { key: "date_of_joining", label: "Joining Date", format: "date", width: 110 },
+      { key: "salary_start_date", label: "Salary Start Date", format: "date", width: 120 },
+      { key: "billable", label: "Billable", format: "text", width: 70, align: "center" },
+      { key: "employee_status", label: "Employee Status", format: "text", width: 100, align: "center" },
+      { key: "day_1", label: "Day 1", format: "text", width: 150 },
+      { key: "day_2", label: "Day 2", format: "text", width: 150 },
+      { key: "day_3", label: "Day 3", format: "text", width: 150 },
+      { key: "day_4", label: "Day 4", format: "text", width: 150 },
+      { key: "day_5", label: "Day 5", format: "text", width: 150 },
+      { key: "day_6", label: "Day 6", format: "text", width: 150 },
+      { key: "day_7", label: "Day 7", format: "text", width: 150 },
+      { key: "day_8", label: "Day 8", format: "text", width: 150 },
+      { key: "day_9", label: "Day 9", format: "text", width: 150 },
+      { key: "day_10", label: "Day 10", format: "text", width: 150 },
+      { key: "day_11", label: "Day 11", format: "text", width: 150 },
+      { key: "day_12", label: "Day 12", format: "text", width: 150 },
+      { key: "day_13", label: "Day 13", format: "text", width: 150 },
+      { key: "day_14", label: "Day 14", format: "text", width: 150 },
+      { key: "day_15", label: "Day 15", format: "text", width: 150 },
+      { key: "day_16", label: "Day 16", format: "text", width: 150 },
+      { key: "day_17", label: "Day 17", format: "text", width: 150 },
+      { key: "day_18", label: "Day 18", format: "text", width: 150 },
+      { key: "day_19", label: "Day 19", format: "text", width: 150 },
+      { key: "day_20", label: "Day 20", format: "text", width: 150 },
+      { key: "day_21", label: "Day 21", format: "text", width: 150 },
+      { key: "day_22", label: "Day 22", format: "text", width: 150 },
+      { key: "day_23", label: "Day 23", format: "text", width: 150 },
+      { key: "day_24", label: "Day 24", format: "text", width: 150 },
+      { key: "day_25", label: "Day 25", format: "text", width: 150 },
+      { key: "day_26", label: "Day 26", format: "text", width: 150 },
+      { key: "day_27", label: "Day 27", format: "text", width: 150 },
+      { key: "day_28", label: "Day 28", format: "text", width: 150 },
+      { key: "day_29", label: "Day 29", format: "text", width: 150 },
+      { key: "day_30", label: "Day 30", format: "text", width: 150 },
+      { key: "day_31", label: "Day 31", format: "text", width: 150 },
+      { key: "absent_count", label: "A", format: "number", width: 40, align: "center" },
+      { key: "present_count", label: "P", format: "number", width: 40, align: "center" },
+      { key: "od_count", label: "OD", format: "number", width: 40, align: "center" },
+      { key: "hd_count", label: "HD", format: "number", width: 70, align: "center" },
+      { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
+      { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
+      { key: "weekoff_count", label: "W", format: "number", width: 40, align: "center" },
+      { key: "total_working_days", label: "Total Working Days", format: "number", width: 110, align: "right" },
+      { key: "sal_days", label: "SalDays", format: "number", width: 70, align: "right" },
+      { key: "total", label: "Total", format: "number", width: 50, align: "center" },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["attendance_daily_record", "employees", "department_master", "designation_master", "cost_centre_master", "branch_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  {
+    code: "roster-adherence",
+    name: "Roster Adherence",
+    category: "Roster/WFM",
+    subcategory: "Adherence",
+    description: "Daily roster-vs-actual adherence per employee — on-roster shift, attendance status and lateness",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "record_date"],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "roster_shift", label: "Roster Shift", format: "text", width: 120 },
+      { key: "attendance_status", label: "Attendance Status", format: "status", width: 140 },
+      { key: "late_mark", label: "Late Mark", format: "boolean", width: 90 },
+      { key: "adherent", label: "Adherent", format: "text", width: 90 },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_WFM,
+    exportRoles: ROLES_WFM,
+    sourceTables: ["attendance_daily_record", "employees", "wfm_roster_assignment", "wfm_shift_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  {
+    code: "asset-inventory-report",
+    // Was "Asset Inventory Report" — same rename already applied to src/lib/report-catalog.ts
+    // (a77d5293) was missed here. This backend copy's .name is what report-suite.routes.ts
+    // actually uses as the live XLSX sheet/export title (buildSecureXlsxBuffer,
+    // sheetName/reportName), so the export a user downloads was still indistinguishable
+    // from the sibling "asset-inventory" report even after the frontend tile was fixed —
+    // found by an independent QA re-audit. Neutral, not claiming either is more correct,
+    // same reasoning as the frontend rename.
+    name: "Asset Inventory Report (Alternate Source)",
+    category: "Assets",
+    subcategory: "Inventory",
+    description: "Full asset register with current assignment status",
+    rowGrain: "One row per asset",
+    primaryKey: ["asset_code"],
+    columns: [
+      { key: "asset_code", label: "Asset Code", format: "text", width: 110 },
+      { key: "asset_name", label: "Asset Name", format: "text", width: 160 },
+      { key: "asset_category", label: "Category", format: "text", width: 120 },
+      { key: "asset_status", label: "Status", format: "status", width: 100 },
+      { key: "purchase_cost", label: "Purchase Cost", format: "currency", width: 120, align: "right", sensitive: true },
+      { key: "purchase_date", label: "Purchase Date", format: "date", width: 110 },
+      { key: "assigned_to", label: "Assigned To", format: "text", width: 160 },
+      { key: "assigned_employee_code", label: "Assigned Emp Code", format: "text", width: 130 },
+      { key: "assigned_date", label: "Assigned Date", format: "date", width: 110 },
+    ],
+    filters: [],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["asset_master", "asset_assignment", "employees"],
+    sensitivityLevel: "internal",
+    containsFinancialData: true,
+  },
+
+  {
+    code: "productivity-individual-scorecard",
+    name: "Individual Productivity Scorecard",
+    category: "Operations & Quality",
+    subcategory: "Productivity",
+    description: "Per-employee login hours, biometric hours, attendance and KPI score for a payroll month",
+    rowGrain: "One row per employee per month",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "login_hours", label: "Login Hours", format: "number", width: 100, align: "right" },
+      { key: "biometric_hours", label: "Biometric Hours", format: "number", width: 120, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 110, align: "right" },
+      { key: "kpi_score", label: "KPI Score", format: "number", width: 100, align: "right" },
+      { key: "kpi_rating", label: "KPI Rating", format: "text", width: 100 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_OPERATIONS,
+    exportRoles: ROLES_OPERATIONS,
+    sourceTables: ["attendance_daily_record", "employees", "process_master", "kpi_score_summary", "kpi_score_period"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // LEGACY HRMS REPORTS (migrated from Legacy HRMS Reports tab)
+  // ═══════════════════════════════════════════════════════════════════════════════
+  {
+    code: "attendance-issues-register",
+    name: "Attendance Issues",
+    category: "Attendance",
+    subcategory: "Regularization",
+    description: "Attendance regularization requests and disputes with approval status",
+    rowGrain: "One row per attendance regularization request",
+    primaryKey: ["employee_code", "session_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "session_date", label: "Att Date", format: "date", width: 100 },
+      { key: "old_status", label: "Current Status", format: "text", width: 110 },
+      { key: "new_status", label: "Expected Status", format: "text", width: 110 },
+      { key: "dispute_type", label: "Issue Type", format: "text", width: 120 },
+      { key: "reason", label: "Reason", format: "text", width: 180 },
+      { key: "status", label: "Approval Status", format: "status", width: 120 },
+      { key: "reviewed_at", label: "Approved Date", format: "date", width: 100 },
+      { key: "manager_review_note", label: "Approved By", format: "text", width: 140 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["attendance_regularization", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+  {
+    code: "loan-register",
+    name: "Loan Register",
+    category: "Payroll",
+    subcategory: "Compensation Audit",
+    description: "Employee loans with outstanding balances, installment schedules and repayment status",
+    rowGrain: "One row per employee loan",
+    primaryKey: ["employee_code", "loan_type", "start_date"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "loan_type", label: "Type", format: "text", width: 100 },
+      { key: "loan_amount", label: "Amount", format: "currency", width: 120, align: "right" },
+      { key: "installment_amount", label: "Installment/Month", format: "currency", width: 130, align: "right" },
+      { key: "total_installments", label: "Installments", format: "number", width: 100, align: "right" },
+      { key: "start_date", label: "Start Date", format: "date", width: 100 },
+      { key: "end_date", label: "End Date", format: "date", width: 100 },
+      { key: "deducted_amount", label: "Deducted", format: "currency", width: 120, align: "right" },
+      { key: "pending_amount", label: "Pending", format: "currency", width: 120, align: "right" },
+      { key: "status", label: "Status", format: "status", width: 100 },
+    ],
+    filters: [F_BRANCH, F_PROCESS, F_STATUS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["employee_loans", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+  {
+    code: "doj-change-register",
+    name: "DOJ Change Register",
+    category: "HR & Workforce",
+    subcategory: "Employee Changes",
+    description: "Date of Joining change requests with old/new DOJ and approval status",
+    rowGrain: "One row per DOJ change request",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "old_doj", label: "Old DOJ", format: "date", width: 100 },
+      { key: "new_doj", label: "New DOJ", format: "date", width: 100 },
+      { key: "remarks", label: "Remarks", format: "text", width: 200 },
+      { key: "approve_status", label: "Status", format: "status", width: 100 },
+      { key: "approve_date", label: "Approved On", format: "date", width: 100 },
+    ],
+    filters: [F_BRANCH],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["change_doj_snapshot", "employees", "branch_master"],
+    branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+  {
+    code: "bank-account-register",
+    name: "Bank Account Register",
+    category: "Identity",
+    subcategory: "Bank Details",
+    description: "Employee bank account details for salary disbursement",
+    rowGrain: "One row per active employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "bank_name", label: "Bank Name", format: "text", width: 140 },
+      { key: "account_number", label: "Account Number", format: "masked", width: 160, sensitive: true },
+      { key: "ifsc_code", label: "IFSC Code", format: "text", width: 110 },
+      { key: "account_type", label: "Account Type", format: "text", width: 100 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_PAYROLL,
+    exportRoles: ROLES_PAYROLL,
+    sourceTables: ["employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+  },
+  {
+    code: "nominee-register",
+    name: "Nominee Register",
+    category: "Identity",
+    subcategory: "Employee Records",
+    description: "Employee nominee details for PF, gratuity and insurance",
+    rowGrain: "One row per nominee per employee",
+    primaryKey: ["employee_code", "nominee_name"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "nominee_name", label: "Nominee Name", format: "text", width: 160 },
+      { key: "relationship", label: "Relationship", format: "text", width: 120 },
+      { key: "dob", label: "Date of Birth", format: "date", width: 100 },
+      { key: "share_pct", label: "Share %", format: "number", width: 80, align: "right" },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employee_nominee", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+];
+
+// ─── Helper Functions ──────────────────────────────────────────────────────────
+
+export function getReportDefinition(code: string): ReportDefinition | undefined {
+  return REPORT_CATALOG.find(r => r.code === code);
+}
+
+export function getReportsByCategory(category: string): ReportDefinition[] {
+  return REPORT_CATALOG.filter(r => r.category === category);
+}
+
+export function getReportCategories(): string[] {
+  return [...new Set(REPORT_CATALOG.map(r => r.category))];
+}
+
+export function getCatalogForRole(roles: string[]): ReportDefinition[] {
+  return REPORT_CATALOG.filter(r =>
+    r.viewRoles.some(vr => roles.includes(vr))
+  );
+}
+
+export function canExportReport(code: string, roles: string[]): boolean {
+  const report = getReportDefinition(code);
+  if (!report) return false;
+  return report.exportRoles.some(er => roles.includes(er));
+}

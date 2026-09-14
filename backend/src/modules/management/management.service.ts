@@ -1,0 +1,1557 @@
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { columnExists, ifObjectExists, tableExists } from "../../shared/schema-object-cache.js";
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { latestPayrollMonth } from "../reporting/payroll-month.js";
+import { runRankSql } from "../payroll/run-status.js";
+import {
+  EXPECTED_TO_WORK_EXCLUSIONS,
+  HALF_DAY_STATUS,
+  LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
+  PRESENT_SESSION_STATUSES,
+  PRESENT_STATUSES,
+  attendedDaysSql,
+  expectedToWorkSql,
+  presentSql,
+  statusList,
+} from "../../shared/attendanceStatus.js";
+import { PENDENCY_CUTOFF_DATE } from "../dashboards/pendency-cutoff.js";
+import type { Request } from "express";
+
+function numberValue(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function monthKeys(monthCount: number): string[] {
+  const now = new Date();
+  const months: string[] = [];
+
+  for (let offset = monthCount - 1; offset >= 0; offset -= 1) {
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
+    months.push(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+
+  return months;
+}
+
+export const managementService = {
+  /**
+   * Resolve a list of employee IDs that are direct reports of the given manager employee ID.
+   * Falls back to an empty array if no reports found (not an error).
+   */
+  async getDirectReportIds(managerEmployeeId: string): Promise<string[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees
+        WHERE (reporting_manager_id = ? OR manager_id = ?)
+          AND active_status = 1
+        LIMIT 500`,
+      [managerEmployeeId, managerEmployeeId]
+    );
+    return (rows as RowDataPacket[]).map((r) => String(r.id));
+  },
+
+  async getTeamKpiSummary(filters: {
+    process_id?: string;
+    period?: string;
+    branch_id?: string;
+    /** When provided, restricts results to employees in this list */
+    employee_ids?: string[];
+  }) {
+    const conds: string[] = ["e.active_status = 1"];
+    const params: unknown[] = [];
+    if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
+    if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      const placeholders = filters.employee_ids.map(() => "?").join(",");
+      conds.push(`e.id IN (${placeholders})`);
+      params.push(...filters.employee_ids);
+    }
+    const period = filters.period ?? new Date().toISOString().slice(0, 7);
+    conds.push("DATE_FORMAT(kda.score_date, '%Y-%m') = ?"); params.push(period);
+
+    // Previous period for trend calculation
+    const prevDate = new Date(period + "-01");
+    prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
+    const prevPeriod = `${prevDate.getUTCFullYear()}-${String(prevDate.getUTCMonth() + 1).padStart(2, "0")}`;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id AS employee_id,
+         e.employee_code,
+         e.full_name AS employee_name,
+         ? AS period,
+         ROUND(
+           SUM((
+             CASE WHEN kmm.direction = 'lower_is_better'
+                  THEN LEAST(kpc.target_value / NULLIF(kda.actual_value, 0), 1.2)
+                  ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value, 0), 1.2)
+             END * 100
+           ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0),
+           2
+         ) AS overall_score,
+         DENSE_RANK() OVER (
+           ORDER BY
+             SUM((
+               CASE WHEN kmm.direction = 'lower_is_better'
+                    THEN LEAST(kpc.target_value / NULLIF(kda.actual_value, 0), 1.2)
+                    ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value, 0), 1.2)
+               END * 100
+             ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0) DESC
+         ) AS rank_position,
+         p.process_name
+         FROM kpi_daily_actual kda
+         JOIN employees e ON e.id = kda.employee_id
+         JOIN kpi_process_config kpc
+           ON kpc.process_id = e.process_id
+          AND kpc.metric_id = kda.metric_id
+         JOIN kpi_metric_master kmm ON kmm.id = kda.metric_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE ${conds.join(" AND ")}
+        GROUP BY e.id, e.employee_code, e.full_name, p.process_name
+        ORDER BY rank_position ASC, overall_score DESC
+        LIMIT 200`,
+      [period, ...params]
+    );
+
+    // Build trend by comparing current period score to previous period score
+    const empIds = (rows as RowDataPacket[]).map((r) => String(r.employee_id));
+    const prevScoreMap: Record<string, number> = {};
+
+    if (empIds.length > 0) {
+      const prevConds: string[] = ["e.active_status = 1", "DATE_FORMAT(kda.score_date, '%Y-%m') = ?"];
+      const prevParams: unknown[] = [prevPeriod];
+      const prevPlaceholders = empIds.map(() => "?").join(",");
+      prevConds.push(`e.id IN (${prevPlaceholders})`);
+      prevParams.push(...empIds);
+
+      const [prevRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id AS employee_id,
+           ROUND(
+             SUM((
+               CASE WHEN kmm.direction = 'lower_is_better'
+                    THEN LEAST(kpc.target_value / NULLIF(kda.actual_value, 0), 1.2)
+                    ELSE LEAST(kda.actual_value / NULLIF(kpc.target_value, 0), 1.2)
+               END * 100
+             ) * kpc.weightage) / NULLIF(SUM(kpc.weightage), 0),
+             2
+           ) AS overall_score
+           FROM kpi_daily_actual kda
+           JOIN employees e ON e.id = kda.employee_id
+           JOIN kpi_process_config kpc ON kpc.process_id = e.process_id AND kpc.metric_id = kda.metric_id
+           JOIN kpi_metric_master kmm ON kmm.id = kda.metric_id
+          WHERE ${prevConds.join(" AND ")}
+          GROUP BY e.id`,
+        prevParams
+      );
+
+      for (const prev of prevRows as RowDataPacket[]) {
+        prevScoreMap[String(prev.employee_id)] = numberValue(prev.overall_score);
+      }
+    }
+
+    return (rows as RowDataPacket[]).map((row) => {
+      const empId = String(row.employee_id);
+      const curr = numberValue(row.overall_score);
+      let trend: "up" | "down" | "stable" = "stable";
+      if (empId in prevScoreMap) {
+        const prev = prevScoreMap[empId];
+        if (curr > prev + 1) trend = "up";
+        else if (curr < prev - 1) trend = "down";
+      }
+      return { ...row, trend };
+    });
+  },
+
+  async listCoachingSessions(filters: {
+    employee_id?: string;
+    coach_user_id?: string;
+    status?: string;
+    /** When provided, restricts to sessions for employees in this list */
+    employee_ids?: string[];
+  }) {
+    const conds: string[] = ["1=1"];
+    const params: unknown[] = [];
+    if (filters.employee_id)   { conds.push("cs.employee_id = ?");   params.push(filters.employee_id); }
+    if (filters.coach_user_id) { conds.push("cs.coach_user_id = ?"); params.push(filters.coach_user_id); }
+    if (filters.status)        { conds.push("cs.status = ?");        params.push(filters.status); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      const placeholders = filters.employee_ids.map(() => "?").join(",");
+      conds.push(`cs.employee_id IN (${placeholders})`);
+      params.push(...filters.employee_ids);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cs.*, e.employee_code, e.full_name AS employee_name FROM coaching_session cs
+         JOIN employees e ON e.id = cs.employee_id
+        WHERE ${conds.join(" AND ")} ORDER BY cs.session_date DESC LIMIT 200`,
+      params
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async createCoachingSession(data: {
+    employee_id: string; session_date: string; session_type: string;
+    notes?: string; action_items?: Record<string, unknown>[];
+  }, coachUserId: string, req?: Request) {
+    const id = randomUUID();
+    await db.execute(
+      "INSERT INTO coaching_session (id, employee_id, coach_user_id, session_date, session_type, notes, action_items) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, data.employee_id, coachUserId, data.session_date, data.session_type, data.notes ?? null, data.action_items ? JSON.stringify(data.action_items) : null]
+    );
+    await logSensitiveAction({ actor_user_id: coachUserId, action_type: "COACHING_SESSION_CREATED", module_key: "MANAGEMENT", entity_type: "employee", entity_id: data.employee_id, req });
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM coaching_session WHERE id = ? LIMIT 1", [id]);
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async listAlerts(filters: {
+    employee_id?: string;
+    severity?: string;
+    acknowledged?: boolean;
+    /** When provided, restricts to alerts for employees in this list */
+    employee_ids?: string[];
+  }) {
+    const conds: string[] = ["1=1"];
+    const params: unknown[] = [];
+    if (filters.employee_id)                { conds.push("pa.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.severity)                   { conds.push("pa.severity = ?");    params.push(filters.severity); }
+    if (filters.acknowledged !== undefined) { conds.push("pa.acknowledged = ?"); params.push(filters.acknowledged ? 1 : 0); }
+    if (filters.employee_ids && filters.employee_ids.length > 0) {
+      const placeholders = filters.employee_ids.map(() => "?").join(",");
+      conds.push(`pa.employee_id IN (${placeholders})`);
+      params.push(...filters.employee_ids);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT pa.*, e.employee_code, e.full_name AS employee_name FROM performance_alert pa
+         JOIN employees e ON e.id = pa.employee_id
+        WHERE ${conds.join(" AND ")} ORDER BY pa.created_at DESC LIMIT 200`,
+      params
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async acknowledgeAlert(alertId: string, acknowledgedBy: string, req?: Request) {
+    await db.execute("UPDATE performance_alert SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ?", [acknowledgedBy, alertId]);
+    await logSensitiveAction({ actor_user_id: acknowledgedBy, action_type: "ALERT_ACKNOWLEDGED", module_key: "MANAGEMENT", entity_type: "performance_alert", entity_id: alertId, req });
+  },
+
+  // ─── TNI (Training Needs Identification) ───────────────────────────────────
+
+  async listTni(filters: { employee_id?: string; status?: string }) {
+    const conds: string[] = ["1=1"];
+    const params: unknown[] = [];
+    if (filters.employee_id) { conds.push("tn.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.status)      { conds.push("tn.status = ?");      params.push(filters.status); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT tn.*, e.employee_code, e.full_name,
+              km.metric_name, km.metric_code,
+              cs.session_type AS coaching_session_type, cs.session_date
+         FROM training_need tn
+         JOIN employees e ON e.id = tn.employee_id
+         LEFT JOIN kpi_metric_master km ON km.id = tn.metric_id
+         LEFT JOIN coaching_session cs ON cs.id = tn.coaching_session_id
+        WHERE ${conds.join(" AND ")}
+        ORDER BY tn.created_at DESC LIMIT 500`,
+      params
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async createTni(data: {
+    employee_id: string;
+    metric_id?: string;
+    need_type: string;
+    description?: string;
+    priority?: string;
+    coaching_session_id?: string;
+  }, identifiedBy: string) {
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO training_need
+         (id, employee_id, metric_id, coaching_session_id, need_type, description, priority, identified_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        data.employee_id,
+        data.metric_id ?? null,
+        data.coaching_session_id ?? null,
+        data.need_type,
+        data.description ?? null,
+        data.priority ?? "medium",
+        identifiedBy,
+      ]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM training_need WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async updateTniStatus(tniId: string, status: string) {
+    await db.execute(
+      "UPDATE training_need SET status = ? WHERE id = ?",
+      [status, tniId]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM training_need WHERE id = ? LIMIT 1", [tniId]
+    );
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async createTniFromCoaching(coachingId: string, overrides: {
+    need_type: string;
+    description?: string;
+    priority?: string;
+    metric_id?: string;
+  }, identifiedBy: string) {
+    const [sessionRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM coaching_session WHERE id = ? LIMIT 1", [coachingId]
+    );
+    const session = (sessionRows as RowDataPacket[])[0];
+    if (!session) throw new Error("Coaching session not found");
+
+    return this.createTni(
+      {
+        employee_id: session.employee_id as string,
+        need_type: overrides.need_type,
+        description: overrides.description,
+        priority: overrides.priority,
+        metric_id: overrides.metric_id,
+        coaching_session_id: coachingId,
+      },
+      identifiedBy
+    );
+  },
+
+  async getDashboardSummary(processId?: string, employeeIds?: string[]) {
+    // Build scope conditions
+    const hasEmpScope = employeeIds && employeeIds.length > 0;
+    const processClause = processId ? "AND e.process_id = ?" : "";
+    const processParams: unknown[] = processId ? [processId] : [];
+
+    // When we have an explicit employee list, use IN clause; otherwise fall back to process filter
+    const buildEmpConds = (alias: string) => {
+      if (hasEmpScope) {
+        const placeholders = employeeIds!.map(() => "?").join(",");
+        return { clause: `AND ${alias}.id IN (${placeholders})`, params: [...employeeIds!] };
+      }
+      return { clause: processClause, params: [...processParams] };
+    };
+
+    const empConds = buildEmpConds("e");
+
+    const [
+      workforceRows,
+      leaveRows,
+      ticketRows,
+      attendanceRows,
+      kpiRows,
+    ] = await Promise.all([
+      // employment_status is filtered here to match dashboard-metric.service.ts,
+      // which is what every other headcount tile uses. Without it this surface
+      // counted employees the rest of the product does not — the CEO UAT saw 1152
+      // here against different figures elsewhere for the same organisation.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           SUM(
+             e.active_status = 1
+             AND e.date_of_joining <= CURDATE()
+           ) AS headcount,
+           SUM(
+             COALESCE(e.date_of_leaving, e.resignation_date, e.date_of_exit)
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
+           ) AS exits_30d
+         FROM employees e
+         WHERE 1=1 ${empConds.clause}`,
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS pending_leaves
+           FROM leave_request lr
+           JOIN employees e ON e.id = lr.employee_id
+          WHERE LOWER(lr.status) = 'pending' ${empConds.clause}`,
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS open_tickets
+           FROM helpdesk_ticket ht
+           JOIN employees e ON e.id = ht.employee_id
+          WHERE ht.status IN ('open', 'in_progress') ${empConds.clause}`,
+        empConds.params
+      ),
+      // Anchored on LATEST_COMPLETE_ATTENDANCE_DATE_SQL, not MAX(record_date) <= CURDATE().
+      //
+      // The old anchor resolved to TODAY. Attendance rows are created at start of
+      // day and reconciled overnight, so "today" is a partially-written day: on
+      // 2026-07-30 at 15:00 it held 802 rows of which 1 was present and 431 were
+      // missing_punch. That is what produced the "Attendance Rate 2.3%" the CEO UAT
+      // reported — the panel was reading an in-progress day as if it were final.
+      // The shared helper picks the latest substantially-processed day and
+      // explicitly excludes today; see shared/attendanceStatus.ts for why a
+      // row-count threshold alone is not sufficient.
+      //
+      // Status vocabulary now comes from the same helpers as every other surface.
+      // 'on_leave' and 'leave' in the old list are not ENUM members; the real value
+      // is 'leave_approved'. 'present' alone also omitted 'week_off_worked'.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS total,
+           ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
+           ${presentSql("adr.attendance_status")} AS present,
+           SUM(adr.attendance_status = '${HALF_DAY_STATUS}') AS half_day,
+           MAX(adr.record_date) AS as_of_date
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         WHERE adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} ${empConds.clause}`,
+        empConds.params
+      ),
+      this.getTeamKpiSummary({
+        process_id: hasEmpScope ? undefined : processId,
+        period: new Date().toISOString().slice(0, 7),
+        employee_ids: employeeIds,
+      }),
+    ]);
+
+    const workforce = workforceRows[0][0] ?? {};
+    const attendance = attendanceRows[0][0] ?? {};
+    const headcount = numberValue(workforce.headcount);
+    const exits = numberValue(workforce.exits_30d);
+    const expectedToWork = numberValue(attendance.expected_to_work);
+    const averageKpi = kpiRows.length
+      ? (kpiRows as any[]).reduce((sum, row) => sum + numberValue(row.overall_score), 0) / kpiRows.length
+      : 0;
+
+    return {
+      headcount,
+      attrition_rate: headcount + exits > 0
+        ? Number(((exits / (headcount + exits / 2)) * 100).toFixed(2))
+        : 0,
+      avg_kpi_score: Number(averageKpi.toFixed(2)),
+      open_tickets: numberValue(ticketRows[0][0]?.open_tickets),
+      pending_leaves: numberValue(leaveRows[0][0]?.pending_leaves),
+      attendance_rate: expectedToWork > 0
+        ? Number(
+            ((
+              (numberValue(attendance.present) + numberValue(attendance.half_day) * 0.5)
+              / expectedToWork
+            ) * 100).toFixed(2)
+          )
+        : 0,
+    };
+  },
+
+  async getSystemDashboard() {
+    const [
+      usersRows,
+      employeeRows,
+      roleRows,
+      pageRows,
+      integrationRows,
+      twoFaRows,
+      moduleRows,
+      activityRows,
+      branchCountRows,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
+      ),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS configured,
+           SUM(active_status = 1) AS active
+         FROM integration_config`
+      ),
+      // auth_user has no 2FA column at all — two-factor is not implemented, so
+      // this cannot be counted. It used to fall into `.catch(() => 0)`, which
+      // rendered as "0 users without 2FA", i.e. the strongest possible security
+      // reassurance produced by a query that had never run. null so the tile
+      // reads as unavailable rather than as good news.
+      ifObjectExists(
+        columnExists("auth_user", "two_fa_enabled"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
+          ).catch(() => [[{ count: null }]] as any),
+        [[{ count: null }]] as any,
+      ),
+      db.execute<RowDataPacket[]>(
+        // Deliberately NOT filtered by record_type, unlike the candidate-pipeline counts
+        // elsewhere in this file. This UNION reports how many ROWS each module's table holds
+        // (a data-volume/activity metric sitting beside salary_prep_run, leave_request and
+        // attendance_daily_record row counts) — not how many genuine candidates exist. The
+        // 29,926 legacy employee rows are real rows in this table and belong in a row count;
+        // excluding them here would make "ATS records" disagree with the table it names.
+        `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
+           FROM ats_candidate
+         UNION ALL
+         SELECT 'Payroll', COUNT(*), MAX(updated_at), SUM(status = 'failed')
+           FROM salary_prep_run
+         UNION ALL
+         SELECT 'Leave', COUNT(*), MAX(COALESCE(applied_at, created_at)), 0
+           FROM leave_request
+         UNION ALL
+         SELECT 'Attendance', COUNT(*), MAX(updated_at), 0
+           FROM attendance_daily_record
+         UNION ALL
+         SELECT 'Integration Hub', COUNT(*), MAX(completed_at),
+                SUM(status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
+           FROM integration_connector_run
+         UNION ALL
+         SELECT 'KPI', COUNT(*), MAX(created_at), 0
+           FROM kpi_daily_actual`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           sal.id,
+           LOWER(sal.module_key) AS type,
+           COALESCE(au.email, 'System') AS user,
+           REPLACE(LOWER(sal.action_type), '_', ' ') AS action,
+           sal.acted_at AS timestamp,
+           'success' AS status
+         FROM sensitive_action_log sal
+         LEFT JOIN auth_user au ON au.id = sal.actor_user_id
+         ORDER BY sal.acted_at DESC
+         LIMIT 12`
+      ),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS count FROM branch_master WHERE active_status = 1"
+      ).catch(() => [[{ count: null }]] as any),
+    ]);
+
+    const modules = moduleRows[0].map((row) => {
+      const recordCount = numberValue(row.record_count);
+      const errorCount = numberValue(row.error_count);
+      return {
+        module: String(row.module_name),
+        status: errorCount > 0 ? "degraded" : recordCount > 0 ? "operational" : "degraded",
+        lastActivity: row.last_activity ?? null,
+        errorCount,
+        recordCount,
+      };
+    });
+
+    // Calculate system uptime
+    const uptimeSeconds = Math.floor(process.uptime());
+    const uptimeDays = Math.floor(uptimeSeconds / 86400);
+    const uptimeHours = Math.floor((uptimeSeconds % 86400) / 3600);
+    const uptimeMinutes = Math.floor((uptimeSeconds % 3600) / 60);
+    const uptimeFormatted = uptimeDays > 0
+      ? `${uptimeDays}d ${uptimeHours}h`
+      : uptimeHours > 0
+        ? `${uptimeHours}h ${uptimeMinutes}m`
+        : `${uptimeMinutes}m`;
+
+    return {
+      metrics: {
+        totalUsers: numberValue(usersRows[0][0]?.total),
+        activeEmployees: numberValue(employeeRows[0][0]?.total),
+        totalRoles: numberValue(roleRows[0][0]?.total),
+        totalPages: numberValue(pageRows[0][0]?.total),
+        activeIntegrations: numberValue(integrationRows[0][0]?.active),
+        configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
+        systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
+        uptime: uptimeFormatted,
+        // null, not 0 — see the query above. 2FA is not implemented, and a 0
+        // here is read as "everyone is covered".
+        usersWithout2fa: (twoFaRows as any)[0]?.[0]?.count == null
+          ? null
+          : numberValue((twoFaRows as any)[0][0].count),
+        totalBranches: numberValue((branchCountRows as any)[0]?.[0]?.count),
+      },
+      modules,
+      activities: activityRows[0],
+      generatedAt: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Accepts a LIST of branches/processes, not one of each.
+   *
+   * The caller previously passed `scope.branchIds[0]` and `scope.processIds[0]`, so a user
+   * entitled to several branches saw exactly one of them — presented as their complete
+   * view, with the filter bar above it still reading "All Branches". Live on 2026-08-28
+   * that silently hid three of four branches from an 18-strong process-manager cohort.
+   *
+   * A single string is still accepted so the other callers of this method keep working;
+   * both shapes normalise to the same list below.
+   */
+  async getWorkforceDashboard(
+    branchId?: string | readonly string[],
+    processId?: string | readonly string[],
+    scopeLevel?: string,
+  ) {
+    // Build scope WHERE fragment for employee table
+    const asList = (value?: string | readonly string[]): string[] =>
+      (Array.isArray(value) ? value : value ? [value as string] : [])
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean);
+    const branchIds = asList(branchId);
+    const processIds = asList(processId);
+
+    const scopeConds: string[] = [];
+    const scopeParams: unknown[] = [];
+    // IN (...) rather than = ? — with one id the plan is identical, with several it is the
+    // difference between the caller's whole entitlement and an arbitrary slice of it.
+    if (branchIds.length) {
+      scopeConds.push(`branch_id IN (${branchIds.map(() => "?").join(", ")})`);
+      scopeParams.push(...branchIds);
+    }
+    if (processIds.length) {
+      scopeConds.push(`process_id IN (${processIds.map(() => "?").join(", ")})`);
+      scopeParams.push(...processIds);
+    }
+    const empScopeWhere = scopeConds.length ? " AND " + scopeConds.join(" AND ") : "";
+    const empScopeJoinWhere = scopeConds.length
+      ? " AND " + scopeConds.map(c => "e." + c).join(" AND ")
+      : "";
+    // For tables that carry branch_id/process_id themselves instead of reaching them
+    // through employees — work_item is the one on this dashboard.
+    const workItemScopeWhere = scopeConds.length
+      ? " AND " + scopeConds.map(c => "wi." + c).join(" AND ")
+      : "";
+
+    const [
+      workforceResult,
+      departmentResult,
+      branchResult,
+      employmentResult,
+      joinerResult,
+      leaverResult,
+      pipelineResult,
+      attendanceResult,
+      trainingResult,
+      approvalResult,
+      mandateResult,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           SUM(active_status = 1 AND date_of_joining <= CURDATE()) AS active_headcount,
+           SUM(active_status = 1 AND date_of_joining BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()) AS new_joiners_30d,
+           SUM(
+             COALESCE(date_of_leaving, resignation_date, date_of_exit)
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
+           ) AS exits_30d,
+           SUM(active_status = 1 AND COALESCE(reporting_manager_id, manager_id) IS NULL) AS missing_manager,
+           SUM(active_status = 1 AND department_id IS NULL) AS missing_department,
+           SUM(active_status = 1 AND process_id IS NULL) AS missing_process,
+           SUM(active_status = 1 AND (bank_account_number IS NULL OR bank_account_number = '')) AS missing_bank_details
+         FROM employees WHERE 1=1${empScopeWhere}`,
+        scopeParams,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(d.dept_name, 'Unassigned') AS label, COUNT(*) AS value
+           FROM employees e
+           LEFT JOIN department_master d ON d.id = e.department_id
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()${empScopeJoinWhere}
+          GROUP BY d.dept_name
+          ORDER BY value DESC
+          LIMIT 10`,
+        scopeParams,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(b.branch_name, 'Unassigned') AS label, COUNT(*) AS value
+           FROM employees e
+           LEFT JOIN branch_master b ON b.id = e.branch_id
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()${empScopeJoinWhere}
+          GROUP BY b.branch_name
+          ORDER BY value DESC
+          LIMIT 8`,
+        scopeParams,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(NULLIF(employee_category, ''), NULLIF(employment_type, ''), 'Unspecified') AS label,
+           COUNT(*) AS value
+         FROM employees
+         WHERE active_status = 1 AND date_of_joining <= CURDATE()${empScopeWhere}
+         GROUP BY COALESCE(NULLIF(employee_category, ''), NULLIF(employment_type, ''), 'Unspecified')
+         ORDER BY value DESC`,
+        scopeParams,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(date_of_joining, '%Y-%m') AS period, COUNT(*) AS value
+           FROM employees
+          WHERE date_of_joining BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()${empScopeWhere}
+          GROUP BY DATE_FORMAT(date_of_joining, '%Y-%m')`,
+        scopeParams,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           DATE_FORMAT(COALESCE(date_of_leaving, resignation_date, date_of_exit), '%Y-%m') AS period,
+           COUNT(*) AS value
+         FROM employees
+         WHERE COALESCE(date_of_leaving, resignation_date, date_of_exit)
+           BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()${empScopeWhere}
+         GROUP BY DATE_FORMAT(COALESCE(date_of_leaving, resignation_date, date_of_exit), '%Y-%m')`,
+        scopeParams,
+      ),
+      db.execute<RowDataPacket[]>(
+        // Same legacy-employee contamination as the open-pipeline count below: without the
+        // exclusion this chart is ~34,900 'Applied' rows of staff roster drowning the few
+        // thousand real candidates in every other stage.
+        `SELECT COALESCE(NULLIF(current_stage, ''), 'Unspecified') AS stage, COUNT(*) AS value
+           FROM ats_candidate
+          WHERE active_status = 1
+            AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
+            AND LOWER(COALESCE(current_stage,'')) NOT IN (
+              'joined','converted','onboarded','rejected','declined','withdrawn','absconded'
+            )
+          GROUP BY COALESCE(NULLIF(current_stage, ''), 'Unspecified')
+          ORDER BY value DESC`,
+      ),
+      // Same anchor as every other attendance surface. Reading today's partially
+      // written day made this status breakdown report a wall of missing_punch:
+      // on 2026-07-30 at 15:00 today held 431 missing_punch against 1 present,
+      // while the completed day before it held 631 present and 4 missing_punch.
+      // Scoped to the caller's branch/process like every other tile on this dashboard.
+      // Without the join this counted the whole company while `active_headcount` two
+      // queries up counted one branch, so a NOIDA branch head saw 441 total employees
+      // beside 724 rostered and 457 present — more people present than employed.
+      // Everything derived from these rows (attendance_pct, shrinkage_pct,
+      // expected_to_work and the Today's Attendance breakdown) inherited the leak.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           adr.record_date,
+           adr.attendance_status AS status,
+           COUNT(*) AS value
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         WHERE adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}${empScopeJoinWhere}
+         GROUP BY adr.record_date, adr.attendance_status`,
+        [...scopeParams],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           (SELECT COUNT(DISTINCT candidate_id)
+              FROM ats_payroll_hr_validation
+             WHERE validation_status = 'approved'
+               AND training_period_days > 0
+               AND joining_date <= CURDATE()
+               AND COALESCE(training_end_date, DATE_ADD(joining_date, INTERVAL training_period_days DAY)) >= CURDATE()
+           ) AS ats_training,
+           -- Zero impact today (no legacy row carries a training-shaped stage, verified live
+           -- 2026-08-15: 0 before and after) but filtered for the same reason as its siblings —
+           -- record_type defaults to 'candidate', so the next bulk load of employee-shaped rows
+           -- would silently rejoin this count if the exclusion were left off.
+           (SELECT COUNT(DISTINCT id)
+              FROM ats_candidate
+             WHERE active_status = 1
+               AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
+               AND LOWER(current_stage) LIKE '%train%'
+           ) AS training_stage_candidates,
+           (SELECT COUNT(DISTINCT employee_id)
+              FROM training_need
+             WHERE status = 'in_training'
+           ) AS training_needs_in_progress,
+           (SELECT COUNT(DISTINCT employee_id)
+              FROM lms_learning_progress_snapshot
+             WHERE status = 'in_progress'
+           ) AS lms_in_progress,
+           (SELECT COUNT(*)
+              FROM ats_onboarding_request
+             WHERE status IN ('pending', 'in_progress', 'offer_submitted')
+           ) AS onboarding_in_progress`,
+      ),
+      db.execute<RowDataPacket[]>(
+        // Joined to active employees and scoped, matching dashboard-metric.service.ts's
+        // getLeaveApprovalMetrics — the metric the Manager/HR dashboard reads this same
+        // figure from. Previously an unscoped raw count of every leave_request row
+        // regardless of status of the employee who filed it or the branchId/processId
+        // this function already accepts: it counted requests from inactive/exited
+        // employees and ignored scope entirely, so this tile and that metric could (and
+        // did) show two different numbers for "pending leave approvals" in the same
+        // session — live-verified 26 (this query, unscoped) vs 11 (the metric) on
+        // 2026-08-13.
+        // legacy_leave_id IS NULL matches the getLeaveApprovalMetrics pending bucket:
+        // 547 of the rows this table calls pending are db_bill rows that were already
+        // decided ('Not Approved') in the legacy system and were imported with the wrong
+        // status. Counting them here made "Pending Leave Approvals" a queue nobody could
+        // work — every one of the 586 has a to_date in the past. The migrated rows are
+        // still reported, as legacy_leave_backlog, so nothing is hidden.
+        `SELECT
+           (SELECT COUNT(*) FROM leave_request lr
+              JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
+             WHERE LOWER(lr.status) = 'pending'
+               AND lr.legacy_leave_id IS NULL
+               AND COALESCE(lr.applied_at, lr.created_at) >= '${PENDENCY_CUTOFF_DATE}'${empScopeJoinWhere}) AS pending_leave_approvals,
+           (SELECT COUNT(*) FROM leave_request lr
+              JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
+             WHERE LOWER(lr.status) = 'pending'
+               AND lr.legacy_leave_id IS NOT NULL${empScopeJoinWhere}) AS legacy_leave_backlog,
+           (SELECT COUNT(*) FROM performance_alert
+             WHERE acknowledged = 0 AND severity IN ('high', 'critical')) AS critical_performance_alerts`,
+        // Two subqueries now interpolate empScopeJoinWhere, so its placeholders are
+        // bound twice. Passing scopeParams once here silently shifted every binding
+        // and made the branch filter read the process id.
+        [...scopeParams, ...scopeParams],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS active_mandates,
+           COALESCE(SUM(mandated_hc), 0) AS mandated_hc,
+           COALESCE(SUM(
+             CEIL(mandated_hc * (1 + (buffer_pct + shrinkage_pct + attrition_buffer_pct + training_buffer_pct) / 100))
+           ), 0) AS required_hc
+         FROM workforce_mandate
+         WHERE active_status = 1
+           AND effective_from <= CURDATE()
+           AND (effective_to IS NULL OR effective_to >= CURDATE())`,
+      ),
+    ]);
+
+    const workforce = workforceResult[0][0] ?? {};
+    const training = trainingResult[0][0] ?? {};
+    const approvals = approvalResult[0][0] ?? {};
+    const mandate = mandateResult[0][0] ?? {};
+    const activeHeadcount = numberValue(workforce.active_headcount);
+    const exits30d = numberValue(workforce.exits_30d);
+    const attritionDenominator = activeHeadcount + exits30d / 2;
+    const attritionRate30d = attritionDenominator > 0
+      ? Number(((exits30d / attritionDenominator) * 100).toFixed(2))
+      : 0;
+
+    const attendanceRows = attendanceResult[0];
+    const attendanceByStatus = Object.fromEntries(
+      attendanceRows.map((row) => [String(row.status), numberValue(row.value)]),
+    );
+    const attendanceTotal = Object.values(attendanceByStatus).reduce((sum, value) => sum + value, 0);
+    // Expected to work = total - leave/week_off/holiday (employees who should have been present).
+    // Reuses the shared vocabulary rather than a hand-maintained copy of the same five
+    // statuses — attendance-canon.contract.test.ts pins this file to the shared list
+    // elsewhere in this same module; this local array had drifted out from under that.
+    const nonWorkingCount = EXPECTED_TO_WORK_EXCLUSIONS.reduce(
+      (sum, status) => sum + numberValue(attendanceByStatus[status]),
+      0,
+    );
+    const expectedToWork = attendanceTotal - nonWorkingCount;
+    const absentEquivalent =
+      numberValue(attendanceByStatus.absent)
+      + numberValue(attendanceByStatus.unreconciled)
+      + numberValue(attendanceByStatus.half_day) * 0.5;
+    // PRESENT_STATUSES (present + week_off_worked) — not 'present' alone. Omitting
+    // week_off_worked here reintroduced, in this one hand-rolled breakdown, the exact
+    // bug the shared helper exists to prevent: an employee who worked their rostered
+    // week-off showed up as neither present nor absent, understating this figure (and
+    // therefore overstating the shrinkage_pct derived from it below) on any day with
+    // week_off_worked rows, while the org-wide Attendance Rate tile — computed via the
+    // shared presentSql() helper — counted them correctly. Both numbers render on the
+    // same CEO tile row.
+    const productiveEquivalent =
+      PRESENT_STATUSES.reduce((sum, status) => sum + numberValue(attendanceByStatus[status]), 0)
+      + numberValue(attendanceByStatus.half_day) * 0.5;
+    const attendanceDate = attendanceRows[0]?.record_date
+      ? new Date(attendanceRows[0].record_date as string | Date).toISOString().slice(0, 10)
+      : null;
+    const attendanceDataAgeDays = attendanceDate
+      ? Math.max(0, Math.floor((Date.now() - new Date(`${attendanceDate}T00:00:00Z`).getTime()) / 86_400_000))
+      : null;
+
+    const months = monthKeys(6);
+    const joinsByMonth = new Map(
+      joinerResult[0].map((row) => [String(row.period), numberValue(row.value)]),
+    );
+    const exitsByMonth = new Map(
+      leaverResult[0].map((row) => [String(row.period), numberValue(row.value)]),
+    );
+    let runningHeadcount = activeHeadcount;
+    const movement = [...months].reverse().map((period) => {
+      const joins = joinsByMonth.get(period) ?? 0;
+      const exits = exitsByMonth.get(period) ?? 0;
+      const point = { period, headcount: runningHeadcount, joins, exits };
+      runningHeadcount = runningHeadcount - joins + exits;
+      return point;
+    }).reverse();
+
+    const pipeline = pipelineResult[0].map((row) => ({
+      stage: String(row.stage),
+      value: numberValue(row.value),
+    }));
+    const terminalStages = new Set(["onboarded", "converted", "rejected", "declined", "withdrawn"]);
+    const openPipeline = pipeline.reduce(
+      (sum, item) => terminalStages.has(item.stage.toLowerCase()) ? sum : sum + item.value,
+      0,
+    );
+    const analystsInTraining =
+      numberValue(training.ats_training) + numberValue(training.training_stage_candidates);
+
+    // Add missing fields for dashboard
+    //
+    // These 14 queries are mutually independent — none reads another's
+    // result — but were previously 14 sequential awaits, each paying the
+    // round-trip cost to the DB one at a time. The Promise.all above this
+    // block already batches its 11 queries; this block just never got the
+    // same treatment. Same fix already applied 4 times elsewhere this
+    // session (dashboard-metric.service.ts, work-inbox.service.ts) —
+    // declare each as a promise, batch with Promise.all, keep each query's
+    // own .catch() attached to its own promise so the null-vs-zero failure
+    // semantics documented below are preserved exactly.
+    const [
+      [onLeaveResult],
+      [branchCountResult],
+      [leaveSummaryResult],
+      [recentJoinersResult],
+      [branchSnapshotResult],
+      [leaveUsageResult],
+      [expenseResult],
+      [overtaskResult],
+      [timesheetResult],
+      [expiredDocsResult],
+      [pendingPolicyResult],
+      [appraisalResult],
+      [processBreakdownResult],
+      [teamMembersResult],
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT lr.employee_id) as count
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+         WHERE lr.status = 'approved'
+           AND CURDATE() BETWEEN lr.start_date AND lr.end_date${empScopeJoinWhere}`,
+        [...scopeParams],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
+      ),
+      // Scoped, and the 90-day window is now reported alongside the rows.
+      //
+      // Unscoped this returned the whole company's last 90 days while the "Pending Leave"
+      // tile beside it returned the caller's branch across all time — so the same panel
+      // showed 14 pending and 1,033 approved next to a tile reading 16, with nothing on
+      // screen explaining that they count different people over different windows.
+      db.execute<RowDataPacket[]>(
+        `SELECT lr.status, COUNT(*) as count
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+         WHERE lr.start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)${empScopeJoinWhere}
+         GROUP BY lr.status`,
+        [...scopeParams],
+      ),
+      // The layout renders `designation_name`; this returned only designation_id, so
+      // every joiner showed the literal fallback subtitle "Employee". The join to
+      // designation_master already exists in the team-members query further down —
+      // reused here rather than sending an id the UI cannot resolve.
+      db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.employee_code, e.full_name as employee_name, e.designation_id,
+                dm.designation_name, e.date_of_joining as joining_date
+         FROM employees e
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+         WHERE e.active_status = 1
+           AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         ORDER BY e.date_of_joining DESC
+         LIMIT 10`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           b.id,
+           b.branch_name as name,
+           COUNT(DISTINCT e.id) as employee_count,
+           ROUND(
+             COUNT(DISTINCT s.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0),
+             2
+           ) as present_pct,
+           COUNT(DISTINCT s.employee_id) as present_count
+         FROM branch_master b
+         LEFT JOIN employees e ON e.branch_id = b.id AND e.active_status = 1 AND e.date_of_joining <= CURDATE()
+         LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
+           AND DATE(s.session_date) = CURDATE()
+           AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
+         WHERE b.active_status = 1
+         GROUP BY b.id, b.branch_name
+         HAVING employee_count > 0
+         ORDER BY employee_count DESC
+         LIMIT 15`
+      ),
+      // Leave balance usage percentage
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(DISTINCT lr.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0) as usage_pct
+         FROM employees e
+         LEFT JOIN leave_request lr ON lr.employee_id = e.id
+           AND lr.status = 'approved'
+           AND YEAR(lr.start_date) = YEAR(CURDATE())
+         WHERE e.active_status = 1`
+      ),
+      // Manager-specific: expense claims, work items
+      //
+      // This filtered `status = 'pending'`, which is not a member of the column's
+      // ENUM('draft','submitted','approved','rejected','paid') — so it matched
+      // nothing and the "Expense Claims" tile read 0 on the CEO, HR Admin, Manager,
+      // Ops and both reference dashboards despite 5,634 live rows. 'submitted' is
+      // the awaiting-review state.
+      //
+      // expense_type is constrained too: the table is a mixed ledger and 5,534 of
+      // those rows are migrated vendor bills and imprest, which are settled through
+      // the GRN / vendor-payment flow and are not a manager's expense queue.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM expense_claim ec
+         JOIN employees e ON e.id = ec.employee_id
+          WHERE ec.status = 'submitted' AND ec.expense_type = 'employee_claim'${empScopeJoinWhere}`,
+        [...scopeParams],
+      ).catch(() => [[{ count: 0 }]] as any),
+      // null, not 0, on failure. A zero here reads as "nothing is overdue", which is
+      // the reassuring answer, and it would be produced by a query that never ran.
+      // work_item carries its own branch_id/process_id — it has no employee_id, so it is
+      // scoped on its own columns rather than through a join to employees.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as overdue FROM work_item wi
+         WHERE wi.status NOT IN ('completed','cancelled') AND wi.due_at < NOW()${workItemScopeWhere}`,
+        [...scopeParams],
+      ).catch(() => [[{ overdue: null }]] as any),
+      // Pending timesheets.
+      //
+      // The query is correct and the table is real, but `item_type` is free varchar and
+      // nothing ever writes 'timesheet' — the only value present in production is
+      // 'EMPLOYEE_CODE_PENDING'. So this can only ever be 0, and a permanent zero on an
+      // approval queue reads as "nothing is waiting" rather than "this is not tracked".
+      //
+      // Returned as null so the tile renders as unavailable, matching how Document
+      // Compliance already omits expiry for the same reason.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
+      ).catch(() => [[{ count: null }]] as any),
+      // Expired employee documents.
+      //
+      // The table name and column were fixed earlier (it is employee_documents,
+      // plural, with no active_status). The query now runs — and returns 0, which is
+      // true but uninformative: `expiry_date` is populated on **0 of 207,616** rows,
+      // so nothing can ever be expired.
+      //
+      // NULLIF turns that into "not tracked" instead of a compliance all-clear. The
+      // count is only meaningful once some document actually carries an expiry date,
+      // and at that point this reports it. Document Compliance already omits expiry
+      // for exactly this reason; the two panels now agree.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           CASE WHEN SUM(expiry_date IS NOT NULL) = 0 THEN NULL
+                ELSE SUM(expiry_date IS NOT NULL AND expiry_date < CURDATE())
+           END AS count
+         FROM employee_documents`
+      ).catch(() => [[{ count: null }]] as any),
+      // Pending policy acknowledgements.
+      //
+      // `policy_acknowledgement` does not exist — there is no acknowledgement
+      // table in the schema at all. Falling back to 0 rendered as "no pending
+      // acknowledgements", which is indistinguishable from a fully compliant
+      // workforce. null so the tile reads as unavailable.
+      // Skipped without querying when the table is absent — the `.catch` below
+      // is still the safety net, but firing a doomed query on every dashboard
+      // load put 14 ER_NO_SUCH_TABLE lines into the error log per window and
+      // helped bury a real onboarding failure. Self-healing: if the table is
+      // ever created, the cache expires and the tile starts working.
+      ifObjectExists(
+        tableExists("policy_acknowledgement"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM policy_acknowledgement
+             WHERE acknowledged = 0`
+          ).catch(() => [[{ count: null }]] as any),
+        [[{ count: null }]] as any,
+      ),
+      // Appraisal completion percentage
+      ifObjectExists(
+        tableExists("performance_appraisal"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT
+               ROUND(
+                 SUM(pa.status IN ('completed','approved')) * 100.0
+                 / NULLIF(COUNT(*), 0)
+               , 2) AS completion_pct
+             FROM performance_appraisal pa
+             WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
+          ).catch(() => [[{ completion_pct: null }]] as any),
+        [[{ completion_pct: null }]] as any,
+      ),
+      // Process breakdown for Operations dashboard
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           pm.id,
+           pm.process_name,
+           COUNT(DISTINCT e.id) AS headcount,
+           ${presentSql("adr.attendance_status")} AS present_count,
+           ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
+           ROUND(
+             ${attendedDaysSql("adr.attendance_status")} * 100.0 /
+             NULLIF(${expectedToWorkSql("adr.attendance_status")}, 0),
+           2) AS attendance_pct
+         FROM process_master pm
+         LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
+           AND adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
+         WHERE pm.active_status = 1
+         GROUP BY pm.id, pm.process_name
+         HAVING headcount > 0
+         ORDER BY headcount DESC
+         LIMIT 15`
+      ).catch(() => [[]] as any),
+      // Team members snapshot for Manager dashboard roster panel.
+      //
+      // Scoped. This selected every active employee in the company, sorted by name and
+      // took twenty — so a NOIDA branch head's "My Team" opened with staff from NOIDA-2
+      // and AHMEDABAD-JALDARSHAN, and the twenty shown were simply whoever sorted first
+      // alphabetically rather than anyone reporting to them.
+      //
+      // today_status also read CURDATE() while every attendance figure on this dashboard
+      // is anchored to the last fully processed day. Today is still being written, so the
+      // roster reported 'missing_punch' for people whose day merely had not been processed
+      // yet. Anchored to the same day as the rest of the page.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id, e.employee_code, e.full_name as employee_name,
+           e.designation_id, e.employment_status,
+           b.branch_name,
+           COALESCE(dm.designation_name, e.designation_id) as designation_name,
+           COALESCE(
+             (SELECT adr.attendance_status FROM attendance_daily_record adr
+              WHERE adr.employee_id = e.id
+                AND adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} LIMIT 1),
+             'not_marked'
+           ) as today_status
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+         WHERE e.employment_status = 'active'${empScopeJoinWhere}
+         ORDER BY e.full_name ASC
+         LIMIT 20`,
+        [...scopeParams],
+      ).catch(() => [[]] as any),
+    ]);
+    const onLeaveCount = numberValue(onLeaveResult[0]?.count);
+    const totalBranches = numberValue(branchCountResult[0]?.count);
+    const leaveBalanceUsagePct = leaveUsageResult[0]?.usage_pct
+      ? Number(Number(leaveUsageResult[0].usage_pct).toFixed(2))
+      : null;
+
+    return {
+      generated_at: new Date().toISOString(),
+      scope: {
+        level: scopeLevel ?? "ORG_ALL",
+        branch_id: branchId ?? null,
+        process_id: processId ?? null,
+      },
+      summary: {
+        active_headcount: activeHeadcount,
+        new_joiners_30d: numberValue(workforce.new_joiners_30d),
+        exits_30d: exits30d,
+        attrition_rate_30d: attritionRate30d,
+        open_pipeline: openPipeline,
+        analysts_in_training: analystsInTraining,
+        shrinkage_pct: expectedToWork > 0
+          ? Number(((absentEquivalent / expectedToWork) * 100).toFixed(2))
+          : null,
+        attendance_pct: expectedToWork > 0
+          ? Number(((productiveEquivalent / expectedToWork) * 100).toFixed(2))
+          : null,
+        expected_to_work: expectedToWork,
+      },
+      on_leave: onLeaveCount,
+      total_branches: totalBranches,
+      pending_leave_requests: numberValue(approvals.pending_leave_approvals),
+      legacy_leave_backlog: numberValue(approvals.legacy_leave_backlog),
+      pending_expense_claims: numberValue(expenseResult[0]?.count),
+      // null, not 0. Nothing computes this — there is no project-risk source wired up —
+      // and a literal zero renders as "no projects at risk", which is a claim this
+      // dashboard has never had the data to make. null renders as "—".
+      projects_at_risk: null,
+      // null passes through as "—". See the query: a 0 here would be produced by a
+      // failed lookup and would read as "nothing overdue".
+      overdue_tasks: overtaskResult[0]?.overdue == null ? null : numberValue(overtaskResult[0].overdue),
+      team_members: teamMembersResult.map((row: RowDataPacket) => ({
+        id: String(row.id),
+        employee_code: String(row.employee_code),
+        employee_name: String(row.employee_name),
+        branch_name: row.branch_name ? String(row.branch_name) : null,
+        today_status: String(row.today_status),
+        status: String(row.today_status),
+        attendance_status: String(row.today_status),
+        designation_name: row.designation_name ? String(row.designation_name) : null,
+      })),
+      // Both deliberately null rather than 0 — see the queries above. `?? 0` here was
+      // undoing the null the query goes out of its way to produce.
+      pending_timesheets: (timesheetResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((timesheetResult as any)[0][0].count),
+      expired_documents: (expiredDocsResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((expiredDocsResult as any)[0][0].count),
+      // null, not 0 — the table does not exist. See the query above.
+      pending_policy_acknowledgements: (pendingPolicyResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((pendingPolicyResult as any)[0][0].count),
+      appraisal_completion_pct: (appraisalResult as any)[0]?.[0]?.completion_pct !== null
+        ? Number(Number((appraisalResult as any)[0]?.[0]?.completion_pct ?? 0).toFixed(2))
+        : null,
+      process_breakdown: (processBreakdownResult as any[]).map((row: any) => ({
+        id: String(row.id),
+        process_name: String(row.process_name),
+        headcount: numberValue(row.headcount),
+        present_count: numberValue(row.present_count),
+        attendance_pct: row.attendance_pct !== null ? Number(row.attendance_pct) : null,
+      })),
+      leave_balance_usage_pct: leaveBalanceUsagePct,
+      leave_summary: leaveSummaryResult.map((row) => ({
+        status: String(row.status),
+        count: numberValue(row.count),
+      })),
+      recent_joiners: recentJoinersResult.map((row) => ({
+        id: String(row.id),
+        employee_code: String(row.employee_code),
+        employee_name: String(row.employee_name),
+        designation_id: row.designation_id ? String(row.designation_id) : null,
+        // The layout reads this; without it every joiner read "Employee".
+        designation_name: row.designation_name ? String(row.designation_name) : null,
+        joining_date: row.joining_date,
+      })),
+      branches: branchSnapshotResult.map((row) => ({
+        id: String(row.id),
+        branch_name: String(row.name),
+        employee_count: numberValue(row.employee_count),
+        present_count: numberValue(row.present_count),
+        present_pct: row.present_pct !== null ? Number(row.present_pct) : null,
+      })),
+      movement,
+      headcount_by_department: departmentResult[0].map((row) => ({
+        label: String(row.label),
+        value: numberValue(row.value),
+      })),
+      headcount_by_branch: branchResult[0].map((row) => ({
+        label: String(row.label),
+        value: numberValue(row.value),
+      })),
+      employment_mix: employmentResult[0].map((row) => ({
+        label: String(row.label),
+        value: numberValue(row.value),
+      })),
+      pipeline,
+      attendance: {
+        record_date: attendanceDate,
+        data_age_days: attendanceDataAgeDays,
+        total: attendanceTotal,
+        statuses: attendanceRows.map((row) => ({
+          label: String(row.status),
+          value: numberValue(row.value),
+        })),
+      },
+      training: {
+        analysts_in_training: analystsInTraining,
+        ats_training: numberValue(training.ats_training),
+        training_stage_candidates: numberValue(training.training_stage_candidates),
+        training_needs_in_progress: numberValue(training.training_needs_in_progress),
+        lms_in_progress: numberValue(training.lms_in_progress),
+        onboarding_in_progress: numberValue(training.onboarding_in_progress),
+        // LMS live data (async, non-blocking)
+        certified_learners: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT SUM(certification_status IN ('certified','Certified')) AS cnt FROM trainee_master WHERE status != 'archived'`
+            );
+            return Number(rows[0]?.cnt ?? 0);
+          } catch { return null; }
+        })(),
+        lms_total_trainees: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT COUNT(*) AS cnt FROM trainee_master WHERE status != 'archived'`
+            );
+            return Number(rows[0]?.cnt ?? 0);
+          } catch { return null; }
+        })(),
+        lms_high_risk: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT COUNT(*) AS cnt FROM training_risk_log WHERE status = 'Open' AND severity IN ('HIGH','CRITICAL')`
+            );
+            return Number(rows[0]?.cnt ?? 0);
+          } catch { return null; }
+        })(),
+        lms_avg_completion: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT ROUND(AVG(course_completion_pct),1) AS avg_pct FROM trainee_master WHERE status != 'archived'`
+            );
+            return Number(rows[0]?.avg_pct ?? 0);
+          } catch { return null; }
+        })(),
+      },
+      actions: {
+        pending_leave_approvals: numberValue(approvals.pending_leave_approvals),
+        critical_performance_alerts: numberValue(approvals.critical_performance_alerts),
+        missing_manager: numberValue(workforce.missing_manager),
+        missing_department: numberValue(workforce.missing_department),
+        missing_process: numberValue(workforce.missing_process),
+        missing_bank_details: numberValue(workforce.missing_bank_details),
+      },
+      mandate: {
+        active_mandates: numberValue(mandate.active_mandates),
+        mandated_hc: numberValue(mandate.mandated_hc),
+        required_hc: numberValue(mandate.required_hc),
+        gap: numberValue(mandate.required_hc) - activeHeadcount,
+      },
+      data_readiness: {
+        attendance_available: attendanceTotal > 0,
+        attendance_fresh: attendanceDataAgeDays !== null && attendanceDataAgeDays <= 1,
+        training_records_available:
+          analystsInTraining
+          + numberValue(training.training_needs_in_progress)
+          + numberValue(training.lms_in_progress) > 0,
+        workforce_mandates_available: numberValue(mandate.active_mandates) > 0,
+      },
+    };
+  },
+
+  async getCeoMetrics() {
+    // The payroll tiles used to pin to DATE_FORMAT(CURDATE(), '%Y-%m'). Payroll is closed
+    // monthly and in arrears, so for most of any month there is no run for "this month" yet —
+    // on 2026-08-17 there was no 2026-08 run at all and every payroll tile read ₹0 with no
+    // month label, which is indistinguishable from "payroll ran and produced nothing".
+    // Resolve to the latest month that actually has payroll instead, the same way the report
+    // library already does.
+    const payrollMonth = await latestPayrollMonth();
+
+    const [
+      payrollResult,
+      mandateGapResult,
+      shrinkageResult,
+      billingResult,
+      attritionCostResult,
+      hiringGapResult,
+      ffLiabilityResult,
+    ] = await Promise.all([
+      // 1. Payroll liability — latest month with payroll (matches Payroll page total).
+      // Selects a single canonical run for the month so multiple runs are never summed.
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(SUM(spl.gross_salary), 0)  AS total_gross,
+           COALESCE(SUM(spl.net_salary), 0)    AS total_net,
+           COALESCE(SUM(spl.pf_employer), 0)   AS total_pf_employer,
+           COALESCE(SUM(spl.esic_employer), 0) AS total_esic_employer,
+           COUNT(DISTINCT spl.employee_id)     AS employee_count,
+           spr.run_month
+         FROM salary_prep_line spl
+         JOIN (
+           SELECT id, run_month
+           FROM salary_prep_run
+           WHERE run_month = ?
+             AND LOWER(COALESCE(status,'')) NOT IN ('cancelled')
+           ORDER BY ${runRankSql()}, created_at DESC
+           LIMIT 1
+         ) spr ON spr.id = spl.run_id
+         GROUP BY spr.run_month`,
+        [payrollMonth]
+      ),
+      // 2. HC gap by process: mandated vs active
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           p.process_name,
+           wm.mandated_hc,
+           CEIL(wm.mandated_hc * (1 + (wm.buffer_pct + wm.shrinkage_pct + wm.attrition_buffer_pct + wm.training_buffer_pct) / 100)) AS required_hc,
+           COALESCE(ec.active_hc, 0) AS active_hc,
+           CEIL(wm.mandated_hc * (1 + (wm.buffer_pct + wm.shrinkage_pct + wm.attrition_buffer_pct + wm.training_buffer_pct) / 100))
+             - COALESCE(ec.active_hc, 0) AS hc_gap
+         FROM workforce_mandate wm
+         JOIN process_master p ON p.id = wm.process_id
+         LEFT JOIN (
+           SELECT process_id, COUNT(*) AS active_hc
+           FROM employees WHERE active_status = 1
+           GROUP BY process_id
+         ) ec ON ec.process_id = wm.process_id
+         WHERE wm.active_status = 1
+           AND wm.effective_from <= CURDATE()
+           AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
+         ORDER BY hc_gap DESC
+         LIMIT 10`
+      ),
+      // 3. Shrinkage cost from latest snapshot
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           sds.process_id,
+           COALESCE(p.process_name, 'Unknown') AS process_name,
+           sds.rostered_hc,
+           sds.absent_hc,
+           sds.total_shrinkage_pct,
+           sds.snapshot_date,
+           ROUND(
+             COALESCE(sds.absent_hc, 0) * COALESCE(
+               (SELECT AVG(esa.ctc_annual / 365 / 8)
+                FROM employee_salary_assignment esa
+                JOIN employees e ON e.id = esa.employee_id
+                WHERE e.process_id = sds.process_id
+                  AND esa.effective_from <= CURDATE()
+                  AND (esa.effective_to IS NULL OR esa.effective_to >= CURDATE())
+               ), 0
+             ), 2
+           ) AS estimated_daily_revenue_at_risk
+         FROM shrinkage_daily_snapshot sds
+         LEFT JOIN process_master p ON p.id = sds.process_id
+         WHERE sds.snapshot_date = (
+           SELECT MAX(snapshot_date) FROM shrinkage_daily_snapshot WHERE snapshot_date <= CURDATE()
+         )
+         ORDER BY sds.total_shrinkage_pct DESC
+         LIMIT 8`
+      ),
+      // 4. Last billing cycle
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COALESCE(SUM(bi.net_amount), 0)   AS total_billed,
+           COALESCE(SUM(bi.gross_amount), 0) AS total_gross_billed,
+           COUNT(DISTINCT bi.process_id)     AS process_count,
+           DATE_FORMAT(bi.period_from, '%Y-%m') AS billing_month
+         FROM billing_invoice bi
+         WHERE bi.status IN ('approved', 'paid')
+           AND bi.period_from >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+         GROUP BY DATE_FORMAT(bi.period_from, '%Y-%m')
+         ORDER BY billing_month DESC
+         LIMIT 1`
+      ),
+      // 5. Attrition cost (exits last 30d × avg CTC × 0.5 replacement multiplier)
+      // Industry standard: replacement cost ≈ 50% of annual CTC (recruitment + training + productivity loss)
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS exits_30d,
+           ROUND(
+             COUNT(*) * COALESCE(
+               (SELECT AVG(esa.ctc_annual)
+                FROM employee_salary_assignment esa
+                WHERE esa.effective_from <= CURDATE()
+                  AND (esa.effective_to IS NULL OR esa.effective_to >= CURDATE())
+               ), 0
+             ) * 0.5, 0
+           ) AS replacement_cost_estimate
+         FROM employees
+         WHERE active_status = 0
+           AND COALESCE(date_of_leaving, resignation_date, date_of_exit)
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()`
+      ),
+      // 6. Open hiring pipeline
+      db.execute<RowDataPacket[]>(
+        // ats_candidate holds 29,926 legacy EMPLOYEE rows bulk-imported at some point,
+        // against 7,889 genuine candidates. They all sit in stage 'Applied', which the
+        // NOT IN list below does not exclude, so this counted the entire staff roster as
+        // open hiring pipeline: measured live 2026-08-15, open_candidates reported 37,815
+        // against a true 7,889 — a 379% overstatement on a CEO-facing figure.
+        // excludeEmployeeShapedCandidatesSql is the established filter (migration 1130's
+        // record_type, backfilled 2026-08-11) already used by ~20 other reporting sites;
+        // this service simply never adopted it.
+        `SELECT
+           COUNT(*) AS open_candidates,
+           SUM(CASE WHEN current_stage IN ('offer_sent','offer_accepted') THEN 1 ELSE 0 END) AS offers_pending_joining,
+           SUM(CASE WHEN current_stage IN ('screened','interview_scheduled','interview_done') THEN 1 ELSE 0 END) AS in_pipeline
+         FROM ats_candidate
+         WHERE active_status = 1
+           AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
+           AND current_stage NOT IN ('joined','rejected','declined','withdrawn','absconded')`
+      ),
+      // 7. F&F pending liability
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS pending_ff_count,
+           COALESCE(SUM(ffc.net_payable), 0) AS pending_ff_liability
+         FROM full_final_calculation ffc
+         JOIN exit_request er ON er.id = ffc.exit_request_id
+         WHERE er.status NOT IN ('completed','cancelled')
+           AND ffc.is_ff_provisional = 1`
+      ),
+    ]);
+
+    const payroll = payrollResult[0][0] ?? {};
+    const mandateGaps = mandateGapResult[0] as RowDataPacket[];
+    const shrinkageByProcess = shrinkageResult[0] as RowDataPacket[];
+    const billing = billingResult[0][0] ?? {};
+    const attrition = attritionCostResult[0][0] ?? {};
+    const hiring = hiringGapResult[0][0] ?? {};
+    const ff = ffLiabilityResult[0][0] ?? {};
+
+    const totalHcGap = mandateGaps.reduce((s, r) => s + Math.max(0, numberValue(r.hc_gap)), 0);
+    const totalRevenueAtRisk = shrinkageByProcess.reduce(
+      (s, r) => s + numberValue(r.estimated_daily_revenue_at_risk), 0
+    );
+    const processesUnderstaffed = mandateGaps.filter(r => numberValue(r.hc_gap) > 0).length;
+
+    return {
+      payroll_liability: {
+        run_month: payroll.run_month ?? null,
+        total_gross: numberValue(payroll.total_gross),
+        total_net: numberValue(payroll.total_net),
+        employer_statutory: numberValue(payroll.total_pf_employer) + numberValue(payroll.total_esic_employer),
+        employee_count: numberValue(payroll.employee_count),
+      },
+      hc_gap: {
+        total_gap: totalHcGap,
+        processes_understaffed: processesUnderstaffed,
+        by_process: mandateGaps.map(r => ({
+          process_name: String(r.process_name),
+          mandated_hc: numberValue(r.mandated_hc),
+          required_hc: numberValue(r.required_hc),
+          active_hc: numberValue(r.active_hc),
+          gap: Math.max(0, numberValue(r.hc_gap)),
+        })),
+      },
+      revenue_at_risk: {
+        total_daily_estimate: totalRevenueAtRisk,
+        by_process: shrinkageByProcess.map(r => ({
+          process_name: String(r.process_name),
+          shrinkage_pct: numberValue(r.total_shrinkage_pct),
+          absent_hc: numberValue(r.absent_hc),
+          daily_revenue_at_risk: numberValue(r.estimated_daily_revenue_at_risk),
+          snapshot_date: r.snapshot_date ?? null,
+        })),
+      },
+      billing: {
+        last_month_billed: numberValue(billing.total_billed),
+        billing_month: billing.billing_month ?? null,
+        process_count: numberValue(billing.process_count),
+      },
+      attrition_cost: {
+        exits_30d: numberValue(attrition.exits_30d),
+        replacement_cost_estimate: numberValue(attrition.replacement_cost_estimate),
+      },
+      hiring_pipeline: {
+        open_candidates: numberValue(hiring.open_candidates),
+        offers_pending_joining: numberValue(hiring.offers_pending_joining),
+        in_pipeline: numberValue(hiring.in_pipeline),
+      },
+      ff_liability: {
+        pending_count: numberValue(ff.pending_ff_count),
+        pending_amount: numberValue(ff.pending_ff_liability),
+      },
+    };
+  },
+
+  async getAttritionBreakdown(): Promise<{ reason: string; count: number; pct: number }[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(er.exit_reason_category, 'Not specified') AS reason,
+         COUNT(*) AS count,
+         ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+       FROM exit_request er
+       -- exit_request has no exit_date column. The real ones are
+       -- last_working_day_confirmed / _proposed, so this raised
+       -- ER_BAD_FIELD_ERROR on every call and the catch below turned it into an
+       -- empty chart, indistinguishable from "no attrition".
+       WHERE COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)
+             >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+       -- 'exited' is the only status this table actually holds; the three names
+       -- previously listed occur nowhere, so the filter would have matched nothing
+       -- even against the right date column. Compared case-insensitively: status is
+       -- varchar with no declared vocabulary.
+         AND LOWER(er.status) IN ('completed', 'accepted', 'approved', 'exited')
+       GROUP BY er.exit_reason_category
+       ORDER BY count DESC
+       LIMIT 6`
+    );
+    return (rows as any[]).map((r) => ({
+      reason: String(r.reason),
+      count: Number(r.count),
+      pct: Number(r.pct),
+    }));
+  },
+};

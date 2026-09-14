@@ -1,0 +1,207 @@
+# Flips ESIGN_RECONCILIATION_ENABLED on the production host and restarts the
+# workers process so the change takes effect.
+#
+# ORDER MATTERS — RUN THE BACKFILL TO COMPLETION BEFORE ENABLING.
+# The worker's give-up window (GIVE_UP_AFTER_DAYS = 30 in
+# backend/src/workers/esign-reconciliation.worker.ts) is measured from the
+# transaction's initiated_at, not from when the worker was switched on. So:
+#   - Enabling first does NOT recover the older stranded kits. Anything already
+#     past 30 days since initiation is outside the window the poller works on,
+#     and no amount of waiting brings it back.
+#   - Worse, it forecloses them. The abandonment sweep runs at the TOP of the
+#     very first tick, before any polling, and moves every transaction past the
+#     window straight to the terminal status 'abandoned_unresolved'. Terminal
+#     means the backfill will no longer consider it. Enabling before backfilling
+#     therefore destroys the thing the backfill exists to fix, on the first tick,
+#     within five minutes of this workflow finishing.
+# Correct sequence: run esign-backfill.yml with mode=confirm, confirm its report
+# shows no kits left stranded, then run this with state=enable.
+#
+# WHY THE FLAG HAS TO REACH THE WORKERS PROCESS SPECIFICALLY
+# startEsignReconciliationWorker is registered only in
+# backend/src/workers/all-workers.ts — never in server.ts. Production runs two
+# pm2 processes off the same /var/www/HRMS2/backend/.env: hrms2-backend (the API,
+# started with WORKERS_PROCESS=external) and hrms2-workers. Only hrms2-workers
+# has this worker, and it reads the flag once, at startup, via
+# backend/src/config/env.ts. Editing .env alone changes nothing until that
+# process is restarted with a fresh environment, and restarting hrms2-backend
+# would drop live API traffic to no effect at all.
+#
+# Runs on the self-hosted runner because /var/www/HRMS2/backend/.env and the pm2
+# daemon exist only on 192.168.11.225 and there is no SSH access to it.
+
+name: eSign Reconciliation Worker (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "enable only AFTER the backfill has completed — see the ordering note in this workflow file"
+        required: true
+        type: choice
+        default: enable
+        options:
+          - enable
+          - disable
+
+# Serialised: two runs racing on the same .env would interleave a backup, a
+# delete and an append against one file.
+concurrency:
+  group: esign-worker-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set ESIGN_RECONCILIATION_ENABLED on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Set the flag in backend/.env
+        id: env
+        shell: bash
+        env:
+          STATE: ${{ inputs.state }}
+        run: |
+          set -euo pipefail
+
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          KEY="ESIGN_RECONCILIATION_ENABLED"
+
+          if [[ ! -f "$ENV_FILE" ]]; then
+            echo "::error::$ENV_FILE not found. This workflow must run on the deploy host."
+            exit 1
+          fi
+
+          if [[ "$STATE" == "enable" ]]; then VALUE=true; else VALUE=false; fi
+
+          # Backup FIRST, before anything touches the file. This is the single
+          # copy of every production secret on this box — DB credentials, Luckpay
+          # keys, JWT secrets — and it is not in git. A redeploy overwrites dist,
+          # not .env, so a sed that mangles this file cannot be recovered by
+          # shipping again; the backup is the only way back. cp -a to carry the
+          # mode and ownership across, so a restore does not silently widen
+          # permissions on a file full of secrets.
+          BACKUP="${ENV_FILE}.bak-esign-flag-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"
+          echo "Backed up to $BACKUP"
+
+          # Appending to a file whose last line has no terminating newline would
+          # glue the new key onto the end of an unrelated value.
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then
+            printf '\n' >> "$ENV_FILE"
+          fi
+
+          # Delete-then-append rather than substitute-in-place: the outcome is
+          # then identical whether the key was absent, present once, or present
+          # several times from earlier hand-edits. An in-place sed would leave
+          # duplicates behind, and dotenv keeps the FIRST occurrence, so a stale
+          # duplicate above the edited line would silently win.
+          sed -i -E "/^${KEY}=/d" "$ENV_FILE"
+          printf '%s=%s\n' "$KEY" "$VALUE" >> "$ENV_FILE"
+
+          # Assert the end state rather than trusting the edit. grep -c is
+          # guarded because it exits 1 on zero matches, which is a case this
+          # check exists to report, not to crash on.
+          COUNT="$(grep -cE "^${KEY}=" "$ENV_FILE" || true)"
+          if [[ "$COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one ${KEY} line after the edit, found ${COUNT}. Restoring the backup."
+            cp -a "$BACKUP" "$ENV_FILE"
+            exit 1
+          fi
+
+          # Only the flag line is echoed. Nothing else from this file is ever
+          # printed to a run log.
+          echo "$ENV_FILE now sets: $(grep -E "^${KEY}=" "$ENV_FILE")"
+          echo "value=${VALUE}" >> "$GITHUB_OUTPUT"
+          echo "backup=${BACKUP}" >> "$GITHUB_OUTPUT"
+
+      - name: Restart the workers process
+        shell: bash
+        run: |
+          set -euo pipefail
+          # hrms2-workers only. hrms2-backend never registered this worker
+          # (all-workers.ts does, server.ts does not), so restarting the API
+          # would interrupt live requests and change no behaviour.
+          #
+          # --update-env is the load-bearing flag: without it pm2 restores the
+          # environment it captured when the process was first started, and the
+          # .env edit above would be re-read only by chance. dotenv is called at
+          # import time with override:true, so a fresh process is what picks the
+          # new value up.
+          pm2 restart hrms2-workers --update-env --no-color
+
+          # Persist the dump so a host reboot brings the process back in this
+          # state instead of the previous one.
+          pm2 save --no-color
+
+          pm2 status hrms2-workers --no-color
+
+      - name: Confirm the worker reports the new state
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.env.outputs.value }}
+        run: |
+          set -euo pipefail
+
+          # Best-effort observation, deliberately non-fatal. The flag change is
+          # already proven by the assertion on .env and by a clean pm2 restart;
+          # this only adds the worker's own account of it.
+          #
+          # Absence of a line is not evidence of failure. The worker prints its
+          # enabled/disabled line as it starts and a summary line once per tick
+          # (TICK_MS = 5 minutes), so a slow boot, a busy log or pm2's own log
+          # rotation can all leave this window empty on a perfectly healthy
+          # process. Failing here would mean rolling back a correct change
+          # because a log line was late.
+          FOUND=""
+          for attempt in $(seq 1 24); do
+            if pm2 logs hrms2-workers --lines 400 --nostream --no-color 2>/dev/null \
+                 | grep -F '[esign-reconciliation]' | tail -n 5 > /tmp/esign-worker-lines.$$; then
+              if [[ -s /tmp/esign-worker-lines.$$ ]]; then
+                FOUND=1
+                echo "Worker log lines:"
+                cat /tmp/esign-worker-lines.$$
+                break
+              fi
+            fi
+            echo "No [esign-reconciliation] line yet (${attempt}/24) — waiting 10s"
+            sleep 10
+          done
+          rm -f /tmp/esign-worker-lines.$$
+
+          if [[ -z "$FOUND" ]]; then
+            echo "::notice::No [esign-reconciliation] line appeared within ~4 minutes. This is not a failure."
+            echo "The flag is set to '${EXPECTED}' in backend/.env and hrms2-workers restarted cleanly."
+            echo "To check later, on 192.168.11.225:"
+            echo "  pm2 logs hrms2-workers --lines 400 --nostream --no-color | grep '\[esign-reconciliation\]'"
+          fi
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          STATE: ${{ inputs.state }}
+          VALUE: ${{ steps.env.outputs.value }}
+          BACKUP: ${{ steps.env.outputs.backup }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## eSign reconciliation worker — ${STATE}"
+            echo ""
+            echo "- **ESIGN_RECONCILIATION_ENABLED:** \`${VALUE:-<not changed — the edit step failed>}\`"
+            echo "- **Process restarted:** \`hrms2-workers\` (hrms2-backend untouched — it never registers this worker)"
+            echo "- **.env backup:** \`${BACKUP:-<none>}\`"
+            echo "- **Host:** 192.168.11.225"
+            echo "- **Triggered by:** ${{ github.actor }}"
+            echo ""
+            if [[ "${VALUE:-}" == "true" ]]; then
+              echo "> The abandonment sweep runs at the start of the first tick (within ~5 minutes) and moves every"
+              echo "> transaction older than 30 days from initiated_at to the terminal \`abandoned_unresolved\` status."
+              echo "> If the backfill has not already completed, those kits are now out of reach."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

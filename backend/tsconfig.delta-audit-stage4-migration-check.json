@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["scripts/migration-target-table-check.ts", "scripts/__tests__/migration-target-table-check.test.ts"]
+}

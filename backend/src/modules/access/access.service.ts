@@ -1,0 +1,457 @@
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import type { Request } from "express";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { COMMON_USER_PAGE_CODES } from "../../shared/rbacPageMatrix.js";
+
+export interface RbacMismatch {
+  user_id: string;
+  mysql_roles: string[];
+  supabase_roles: string[];
+  in_supabase_only: string[];
+  in_mysql_only: string[];
+}
+
+export interface ReconciliationReport {
+  total_mysql_users: number;
+  total_supabase_users: number;
+  mismatches: RbacMismatch[];
+  checked_at: string;
+}
+
+/**
+ * Read-only RBAC reconciliation.
+ * Compares MySQL user_roles (backend authority) against Supabase user_roles (UI mirror).
+ * No writes, no auto-fix, no backfill, no permission elevation.
+ */
+export async function getRbacReconciliation(): Promise<ReconciliationReport> {
+  // 1. Fetch all active MySQL user_roles
+  const [mysqlRows] = await db.execute<RowDataPacket[]>(
+    "SELECT user_id, role_key FROM user_roles WHERE active_status = 1 ORDER BY user_id"
+  );
+
+  const mysqlByUser = new Map<string, string[]>();
+  for (const row of mysqlRows as { user_id: string; role_key: string }[]) {
+    const existing = mysqlByUser.get(row.user_id) ?? [];
+    existing.push(row.role_key);
+    mysqlByUser.set(row.user_id, existing);
+  }
+
+  // 2. Supabase removed — reconciliation compares MySQL vs MySQL (single source of truth).
+  // Returns empty mismatch list since there is only one authoritative store.
+  const sbByUser = new Map<string, string[]>();
+
+  // 3. Union of all user_ids
+  const allUsers = new Set([...mysqlByUser.keys(), ...sbByUser.keys()]);
+
+  const mismatches: RbacMismatch[] = [];
+
+  for (const userId of allUsers) {
+    const mysqlRoles = mysqlByUser.get(userId) ?? [];
+    const sbRoles = sbByUser.get(userId) ?? [];
+
+    const inSbOnly = sbRoles.filter((r) => !mysqlRoles.includes(r));
+    const inMysqlOnly = mysqlRoles.filter((r) => !sbRoles.includes(r));
+
+    if (inSbOnly.length > 0 || inMysqlOnly.length > 0) {
+      mismatches.push({
+        user_id: userId,
+        mysql_roles: mysqlRoles,
+        supabase_roles: sbRoles,
+        in_supabase_only: inSbOnly,
+        in_mysql_only: inMysqlOnly,
+      });
+    }
+  }
+
+  return {
+    total_mysql_users: mysqlByUser.size,
+    total_supabase_users: sbByUser.size,
+    mismatches,
+    checked_at: new Date().toISOString(),
+  };
+}
+
+// ── Role administration (MySQL-authoritative writes) ─────────────────────────
+
+export async function assignRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+  const [catalog] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1",
+    [roleKey]
+  );
+  if ((catalog as RowDataPacket[]).length === 0) {
+    throw Object.assign(new Error(`Role not in catalog: ${roleKey}`), { statusCode: 400 });
+  }
+  // granted_by/granted_at are re-stamped on the ON DUPLICATE KEY branch as well as the
+  // INSERT. That branch is a REACTIVATION of a previously revoked grant, which is a new
+  // grant decision by a new actor — carrying the original one forward would attribute
+  // today's access to whoever made the superseded one. created_at deliberately keeps the
+  // original insert time; granted_at is the column that describes access held now.
+  await db.execute(
+    `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
+     VALUES (?, ?, ?, 1, ?, NOW())
+     ON DUPLICATE KEY UPDATE active_status = 1, granted_by = VALUES(granted_by), granted_at = VALUES(granted_at)`,
+    [randomUUID(), userId, roleKey, actorUserId]
+  );
+  await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_ASSIGNED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
+}
+
+export async function revokeRole(userId: string, roleKey: string, actorUserId: string, req?: Request): Promise<void> {
+  await db.execute(
+    "UPDATE user_roles SET active_status = 0 WHERE user_id = ? AND role_key = ?",
+    [userId, roleKey]
+  );
+  await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_REVOKED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
+}
+
+export async function getUserRoles(userId: string): Promise<{ role_key: string; role_name: string }[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ur.role_key, wrc.role_name FROM user_roles ur
+     JOIN workforce_role_catalog wrc ON wrc.role_key = ur.role_key
+     WHERE ur.user_id = ? AND ur.active_status = 1 ORDER BY ur.role_key`,
+    [userId]
+  );
+  return rows as { role_key: string; role_name: string }[];
+}
+
+export async function listRoleCatalog() {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key, role_name, description FROM workforce_role_catalog WHERE active_status = 1 ORDER BY role_key"
+  );
+  return rows as RowDataPacket[];
+}
+
+// ── Sensitive action log query (admin only) ───────────────────────────────────
+
+export async function querySensitiveActionLog(filters: {
+  actor_user_id?: string; module_key?: string; action_type?: string;
+  entity_type?: string; entity_id?: string; limit?: number;
+}) {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (filters.actor_user_id) { conds.push("actor_user_id = ?"); params.push(filters.actor_user_id); }
+  if (filters.module_key)    { conds.push("module_key = ?");    params.push(filters.module_key); }
+  if (filters.action_type)   { conds.push("action_type = ?");   params.push(filters.action_type); }
+  if (filters.entity_type)   { conds.push("entity_type = ?");   params.push(filters.entity_type); }
+  if (filters.entity_id)     { conds.push("entity_id = ?");     params.push(filters.entity_id); }
+  const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, actor_user_id, action_type, module_key, entity_type, entity_id, ip_address, change_summary, acted_at
+     FROM sensitive_action_log ${where} ORDER BY acted_at DESC LIMIT ${limit}`,
+    params
+  );
+  return rows as RowDataPacket[];
+}
+
+// ── /api/access/me — single source of truth for frontend RBAC ────────────────
+
+export interface AccessMeResponse {
+  userId: string;
+  email: string | undefined;
+  employeeId: string | null;
+  employeeCode: string | null;
+  employeeName: string | null;
+  employee: {
+    id: string;
+    employee_code: string;
+    first_name: string;
+    last_name: string | null;
+    full_name: string | null;
+  } | null;
+  roles: string[];
+  scopes: Array<{
+    id: string; role_key: string; scope_type: string;
+    branch_id: string | null; process_id: string | null;
+    lob_id: string | null; department_id: string | null;
+    manager_employee_id: string | null;
+  }>;
+  pages: Array<{
+    page_code: string; can_view: boolean; can_create: boolean;
+    can_edit: boolean; can_delete: boolean; can_export: boolean;
+  }>;
+  disabledPageCodes: string[];
+}
+
+export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
+  type RoleRow = RowDataPacket & { role_key?: string | null };
+  type EmployeeRow = RowDataPacket & {
+    id: string;
+    employee_code: string;
+    first_name: string;
+    last_name: string | null;
+    full_name: string | null;
+  };
+  type ScopeRow = RowDataPacket & {
+    id?: string | null;
+    role_key?: string | null;
+    scope_type?: string | null;
+    branch_id?: string | null;
+    process_id?: string | null;
+    lob_id?: string | null;
+    department_id?: string | null;
+    manager_employee_id?: string | null;
+  };
+  type DisabledPageRow = RowDataPacket & { page_code: string };
+  type CatalogPageRow = RowDataPacket & { page_code: string };
+  type PageRow = RowDataPacket & {
+    page_code: string;
+    can_view: number | boolean;
+    can_create: number | boolean;
+    can_edit: number | boolean;
+    can_delete: number | boolean;
+    can_export: number | boolean;
+  };
+
+  const loadDisabledPageRows = async (): Promise<DisabledPageRow[]> => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT page_code FROM page_catalog WHERE active_status = 0"
+      );
+      return rows as DisabledPageRow[];
+    } catch {
+      return [];
+    }
+  };
+
+  const loadActiveCatalogRows = async (): Promise<CatalogPageRow[]> => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT page_code FROM page_catalog WHERE active_status = 1"
+      );
+      return rows as CatalogPageRow[];
+    } catch {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          "SELECT page_code FROM page_catalog"
+        );
+        return rows as CatalogPageRow[];
+      } catch {
+        return [];
+      }
+    }
+  };
+
+  const loadRolePageRows = async (roleKeys: string[]): Promise<PageRow[]> => {
+    if (roleKeys.length === 0) return [];
+
+    const placeholders = roleKeys.map(() => "?").join(",");
+
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT rpa.page_code,
+                MAX(rpa.can_view)   AS can_view,
+                MAX(rpa.can_create) AS can_create,
+                MAX(rpa.can_edit)   AS can_edit,
+                MAX(rpa.can_delete) AS can_delete,
+                MAX(rpa.can_export) AS can_export
+         FROM role_page_access rpa
+         LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
+         WHERE rpa.role_key IN (${placeholders})
+           AND rpa.active_status = 1
+           AND COALESCE(pc.active_status, 1) = 1
+         GROUP BY rpa.page_code`,
+        roleKeys
+      );
+      return rows as PageRow[];
+    } catch {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT page_code,
+                MAX(can_view)   AS can_view,
+                MAX(can_create) AS can_create,
+                MAX(can_edit)   AS can_edit,
+                MAX(can_delete) AS can_delete,
+                MAX(can_export) AS can_export
+         FROM role_page_access
+         WHERE role_key IN (${placeholders})
+           AND active_status = 1
+         GROUP BY page_code`,
+        roleKeys
+      );
+      return rows as PageRow[];
+    }
+  };
+
+  const loadUserPageRows = async (): Promise<PageRow[]> => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export
+         FROM user_page_access upa
+         LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
+         WHERE upa.user_id = ?
+           AND upa.active_status = 1
+           AND COALESCE(pc.active_status, 1) = 1`,
+        [userId]
+      );
+      return rows as PageRow[];
+    } catch {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT page_code, can_view, can_create, can_edit, can_delete, can_export
+           FROM user_page_access
+           WHERE user_id = ?
+             AND active_status = 1`,
+          [userId]
+        );
+        return rows as PageRow[];
+      } catch {
+        return [];
+      }
+    }
+  };
+
+  // Batch 1: all queries independent of each other run in parallel
+  const [[roleRows], [empRows], [scopeRows], disabledRows, activeCatalogRows] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+      [userId]
+    ),
+    db.execute<RowDataPacket[]>(
+      "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id
+       FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
+      [userId]
+    ),
+    loadDisabledPageRows(),
+    loadActiveCatalogRows(),
+  ]);
+
+  const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
+  const emp = (empRows as EmployeeRow[])[0] ?? null;
+  const scopes = scopeRows as ScopeRow[];
+  const disabledPageCodes = (disabledRows as DisabledPageRow[]).map((row) => String(row.page_code));
+  const activePageCodes = (activeCatalogRows as CatalogPageRow[]).map((row) => String(row.page_code));
+
+  // Batch 2: page-permissions (depends on roles) + user-page-overrides run in parallel
+  const allRoleKeys = [...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")])].filter(Boolean);
+
+  const [pageRows, userPageRows] = await Promise.all([
+    loadRolePageRows(allRoleKeys),
+    loadUserPageRows(),
+  ]);
+  let pages: AccessMeResponse["pages"] = (pageRows as PageRow[]).map((r) => ({
+    page_code:  r.page_code as string,
+    can_view:   Boolean(r.can_view),
+    can_create: Boolean(r.can_create),
+    can_edit:   Boolean(r.can_edit),
+    can_delete: Boolean(r.can_delete),
+    can_export: Boolean(r.can_export),
+  }));
+
+  // Merge: user overrides replace role-based for matching page_code
+  const pageMap = new Map(pages.map(p => [p.page_code, p]));
+
+  if (roles.includes("super_admin")) {
+    for (const pageCode of activePageCodes) {
+      pageMap.set(pageCode, {
+        page_code: pageCode,
+        can_view: true,
+        can_create: true,
+        can_edit: true,
+        can_delete: true,
+        can_export: true,
+      });
+    }
+  } else {
+    const activePageSet = new Set(activePageCodes);
+    for (const pageCode of COMMON_USER_PAGE_CODES) {
+      if (!activePageSet.has(pageCode)) continue;
+      if (pageMap.has(pageCode)) continue;
+      pageMap.set(pageCode, {
+        page_code: pageCode,
+        can_view: true,
+        can_create: false,
+        can_edit: false,
+        can_delete: false,
+        can_export: false,
+      });
+    }
+  }
+
+  /**
+   * Team Attendance follows the reporting line, not a role.
+   *
+   * Policy (owner's decision, 2026-09-03): whoever is set as reporting manager for any employee
+   * may see it. That cannot be expressed as a role grant — measured live, 63 of the 66 people who
+   * actually hold reportees carry only the `employee` role, so granting by role would either hand
+   * the page to every employee in the company or miss almost every real manager.
+   *
+   * Deriving it from the relationship instead makes it self-maintaining: someone promoted into a
+   * reporting line gets the page on their next sign-in, and someone whose last reportee moves away
+   * loses it, with no grant table to keep in step.
+   *
+   * View only, and safe to grant on this basis because the data layer already confines the page to
+   * the caller's own team — attendance-engine.routes.ts and attendance-daily-scoped.routes.ts both
+   * filter on `e.reporting_manager_id = ? OR e.manager_id = ?`. A manager therefore sees their
+   * reportees and nobody else's; this grant decides only whether the screen opens at all.
+   */
+  const TEAM_ATTENDANCE_PAGE = "TEAM_ATTENDANCE";
+  if (
+    emp?.id &&
+    !pageMap.has(TEAM_ATTENDANCE_PAGE) &&
+    activePageCodes.includes(TEAM_ATTENDANCE_PAGE) &&
+    !disabledPageCodes.includes(TEAM_ATTENDANCE_PAGE)
+  ) {
+    const [reportRows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM employees
+        WHERE active_status = 1
+          AND (reporting_manager_id = ? OR manager_id = ?)
+        LIMIT 1`,
+      [emp.id, emp.id]
+    );
+    if ((reportRows as RowDataPacket[]).length > 0) {
+      pageMap.set(TEAM_ATTENDANCE_PAGE, {
+        page_code: TEAM_ATTENDANCE_PAGE,
+        can_view: true,
+        can_create: false,
+        can_edit: false,
+        can_delete: false,
+        can_export: false,
+      });
+    }
+  }
+
+  for (const userPage of userPageRows as PageRow[]) {
+    pageMap.set(userPage.page_code, {
+      page_code: userPage.page_code,
+      can_view: Boolean(userPage.can_view),
+      can_create: Boolean(userPage.can_create),
+      can_edit: Boolean(userPage.can_edit),
+      can_delete: Boolean(userPage.can_delete),
+      can_export: Boolean(userPage.can_export),
+    });
+  }
+  pages = Array.from(pageMap.values());
+
+  return {
+    userId,
+    email: undefined, // email not stored in MySQL — caller knows it from auth
+    employeeId:   emp?.id ?? null,
+    employeeCode: emp?.employee_code ?? null,
+    employeeName: emp?.full_name ?? null,
+    employee: emp ? {
+      id: emp.id,
+      employee_code: emp.employee_code,
+      first_name: emp.first_name,
+      last_name: emp.last_name ?? null,
+      full_name: emp.full_name ?? null,
+    } : null,
+    roles,
+    scopes: scopes.map((scope) => ({
+      id: String(scope.id ?? ""),
+      role_key: String(scope.role_key ?? ""),
+      scope_type: String(scope.scope_type ?? ""),
+      branch_id: scope.branch_id ?? null,
+      process_id: scope.process_id ?? null,
+      lob_id: scope.lob_id ?? null,
+      department_id: scope.department_id ?? null,
+      manager_employee_id: scope.manager_employee_id ?? null,
+    })),
+    pages,
+    disabledPageCodes,
+  };
+}

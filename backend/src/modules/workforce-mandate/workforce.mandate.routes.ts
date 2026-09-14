@@ -1,0 +1,355 @@
+import { Router } from "express";
+import type { Response } from "express";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { workforceMandateService } from "./workforce.mandate.service.js";
+import { getHcFormula } from "./hc-formula.service.js";
+import { lmsDb } from "../../db/lms-mysql.js";
+import type { RowDataPacket } from "mysql2";
+
+const router = Router();
+const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+router.use(requireAuth);
+
+/**
+ * GET /api/workforce-mandate
+ * List mandates with optional query filters.
+ * Roles: admin | hr | wfm | process_manager
+ */
+router.get(
+  "/",
+  requireRole("admin", "hr", "wfm", "process_manager"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { processId, branchId, active } = req.query as Record<string, string>;
+    const filters = {
+      processId: processId || undefined,
+      branchId: branchId || undefined,
+      active: active !== undefined ? active === "true" : undefined,
+    };
+    const data = await workforceMandateService.listMandates(filters);
+    return res.json({ data });
+  })
+);
+
+/**
+ * POST /api/workforce-mandate
+ * Upsert a mandate record.
+ * Roles: admin | hr
+ */
+router.post(
+  "/",
+  requireRole("admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const {
+      processId, branchId, roleGroup, hcType, mandatedHc,
+      bufferPct, shrinkagePct, attritionBufferPct, trainingBufferPct,
+      effectiveFrom, effectiveTo,
+    } = req.body as {
+      processId?: string; branchId?: string; roleGroup?: string; hcType?: string;
+      mandatedHc?: number; bufferPct?: number; shrinkagePct?: number;
+      attritionBufferPct?: number; trainingBufferPct?: number;
+      effectiveFrom?: string; effectiveTo?: string;
+    };
+
+    if (!processId || !roleGroup || !hcType || mandatedHc === undefined || !effectiveFrom) {
+      return res.status(400).json({
+        error: "processId, roleGroup, hcType, mandatedHc, and effectiveFrom are required",
+      });
+    }
+
+    const record = await workforceMandateService.upsertMandate(
+      {
+        processId,
+        branchId,
+        roleGroup,
+        hcType,
+        mandatedHc: Number(mandatedHc),
+        bufferPct: Number(bufferPct ?? 10),
+        shrinkagePct: Number(shrinkagePct ?? 15),
+        attritionBufferPct: Number(attritionBufferPct ?? 5),
+        trainingBufferPct: Number(trainingBufferPct ?? 5),
+        effectiveFrom,
+        effectiveTo,
+      },
+      req.authUser!.id
+    );
+
+    return res.json({ data: record });
+  })
+);
+
+/**
+ * GET /api/workforce-mandate/leadership-summary
+ * Per-process summary ordered by staffing risk (red first).
+ * Roles: admin | hr | ceo
+ */
+router.get(
+  "/leadership-summary",
+  requireRole("admin", "hr", "ceo"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data = await workforceMandateService.getLeadershipSummary();
+    return res.json({ data });
+  })
+);
+
+/**
+ * GET /api/workforce-mandate/support-ratios
+ * List support role ratio rules.
+ * Roles: admin | hr | wfm
+ */
+router.get(
+  "/support-ratios",
+  requireRole("admin", "hr", "wfm"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { processId } = req.query as { processId?: string };
+    const data = await workforceMandateService.getSupportRatios(processId);
+    return res.json({ data });
+  })
+);
+
+/**
+ * GET /api/workforce-mandate/capacity/:processId
+ * Full capacity snapshot for a process.
+ * Roles: admin | hr | wfm | process_manager | ceo
+ */
+router.get(
+  "/capacity/:processId",
+  requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { processId } = req.params;
+    const { branchId } = req.query as { branchId?: string };
+    const data = await workforceMandateService.getCapacitySnapshot(processId, branchId);
+    return res.json({ data });
+  })
+);
+
+/**
+ * GET /api/workforce-mandate/hc-formula
+ * Full BPO HC formula output for active mandates in scope.
+ * Query params: processId (optional), branchId (optional)
+ * Roles: hr | admin | super_admin | wfm | manager
+ */
+router.get(
+  "/hc-formula",
+  requireRole("hr", "admin", "super_admin", "wfm", "manager"),
+  (req, res, next) => {
+    getHcFormula(req, res).catch(next);
+  }
+);
+
+/**
+ * GET /api/workforce-mandate/capacity-summary
+ * Aggregated capacity dashboard summary across all active mandates.
+ *
+ * Read-only: this endpoint aggregates and returns, it writes nothing.
+ *
+ * The role list matches the grants on the WFM_CAPACITY_DASHBOARD page code exactly
+ * (migration 1688). The two MUST stay in step: a role granted the page but refused here gets a
+ * dashboard that loads and then errors, which reads as a broken product rather than as a denied
+ * permission. Widened from hr|admin|super_admin|wfm|ceo so branch and process leadership,
+ * Training & Quality and the WFM roles who are the page's actual audience can read their own
+ * capacity numbers, rather than only HR and the executive.
+ *
+ * Note this reaches people by ROLE only. Operations staff who hold just the 'employee' role -
+ * Team Leaders, Data Analysts, RTMs - cannot be admitted here without also admitting every
+ * Operations EXECUTIVE, since they share that role. Their access is a per-person grant.
+ */
+router.get(
+  "/capacity-summary",
+  requireRole(
+    "hr", "admin", "super_admin", "wfm", "ceo",
+    "branch_wfm", "branch_head", "process_manager", "manager", "assistant_manager",
+    "team_leader", "tl", "tq_head", "trainer", "qa",
+    // Designation-based audience that no existing role can express - see migration 1689.
+    "capacity_viewer",
+  ),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { branchId } = req.query as { branchId?: string };
+
+    const [mandates] = await (await import("../../db/mysql.js")).db.execute<any[]>(
+      `SELECT
+         wm.id, wm.process_id, wm.branch_id, wm.mandated_hc,
+         wm.shrinkage_pct, wm.attrition_buffer_pct, wm.training_buffer_pct,
+         p.process_name, b.branch_name
+       FROM workforce_mandate wm
+       LEFT JOIN process_master p ON p.id = wm.process_id
+       LEFT JOIN branch_master b ON b.id = wm.branch_id
+       WHERE wm.active_status = 1
+         ${branchId ? 'AND wm.branch_id = ?' : ''}`,
+      branchId ? [branchId] : []
+    );
+
+    const { db } = await import("../../db/mysql.js");
+
+    // Mandated headcount is an Ops-Executive seat count (role_group='all', hc_type='production'),
+    // not "everyone on the process" — TLs/QA/Managers/Trainers hold separate headcount.
+    // "Executive Operations profile" (migration 1082): designation REGEXP '^executive( *-.*)?$'
+    // AND department = OPERATIONS, plus DATA-ANALYST without a dept gate (GS1 ruling 2026-09-04).
+    const PROD_SEAT_SQL = `(
+      (LOWER(TRIM(d.designation_name)) REGEXP '^executive( *- *.+)?$'
+        AND UPPER(COALESCE(dept.dept_name,'')) = 'OPERATIONS')
+      OR d.designation_name = 'DATA-ANALYST'
+    )`;
+    const processIds = Array.from(new Set(mandates.map((m: any) => String(m.process_id))));
+
+    const zeroRow = [{ cnt: 0 }];
+    const [activeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
+      `SELECT COUNT(*) AS cnt FROM employees e
+       JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       WHERE e.active_status = 1 AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
+       ${branchId ? 'AND e.branch_id = ?' : ''}`,
+      branchId ? [processIds, branchId] : [processIds]
+    );
+    const [onNoticeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
+      `SELECT COUNT(*) AS cnt FROM exit_request er
+       JOIN employees e ON er.employee_id = e.id
+       JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       WHERE er.status IN ('accepted','notice_serving')
+         AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
+         ${branchId ? 'AND e.branch_id = ?' : ''}`,
+      branchId ? [processIds, branchId] : [processIds]
+    );
+    const [longLeaveRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
+      `SELECT COUNT(*) AS cnt FROM leave_request lr
+       JOIN employees e ON lr.employee_id = e.id
+       JOIN designation_master d   ON d.id    = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       WHERE lr.status = 'approved' AND lr.to_date >= CURDATE() AND lr.total_days >= 5
+         AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
+         ${branchId ? 'AND e.branch_id = ?' : ''}`,
+      branchId ? [processIds, branchId] : [processIds]
+    );
+    // In Training = live headcount sitting in an active NHT (New Hire Training) batch in the
+    // LMS, for the processes actually in view — not the whole ats_candidate table (every
+    // process, every branch, the platform's entire application history: 34,905 rows, which
+    // floored Available Production HC to 0 on every load). The LMS, not the ATS pipeline, is
+    // the system of record for "who is currently in training" (CLAUDE.md's LMS Integration
+    // Rule) — user ruling 2026-09-04.
+    //
+    // trainee_master carries the HRMS process/branch id on ~78% of rows (process_hrms_id /
+    // branch_hrms_id); the rest predate that backfill and only have the client/branch name as
+    // free text, so a row without the id is matched by name against this scope's own mandates
+    // instead of being dropped. batch_master.total_trainees is a denormalised counter that can
+    // drift from reality (measured live: one active batch showed 0 there against 10 real rows
+    // in trainee_master) — counting trainee_master rows directly is the source of truth.
+    //
+    // Read-only, wrapped and never thrown: an LMS outage must not take down the rest of this
+    // dashboard, which is otherwise entirely HRMS-local. Failure -> 0, same as "no data yet".
+    let inTrainingHc = 0;
+    if (processIds.length > 0) {
+      try {
+        const [lmsRows] = await lmsDb.query<RowDataPacket[]>(
+          `SELECT tm.process_hrms_id, tm.branch_hrms_id, tm.process AS process_name,
+                  tm.branch AS branch_name, COUNT(*) AS cnt
+           FROM trainee_master tm
+           JOIN batch_master bm ON bm.batch_no = tm.batch_no
+           WHERE bm.batch_type = 'NHT' AND bm.batch_status = 'Active'
+           GROUP BY tm.process_hrms_id, tm.branch_hrms_id, tm.process, tm.branch`
+        );
+
+        const inScopeProcessIds = new Set<string>(processIds);
+        const inScopeProcessNames = new Set<string>(
+          mandates.map((m: any) => String(m.process_name ?? "").trim().toLowerCase()).filter(Boolean)
+        );
+        const branchNameFilter = branchId
+          ? String(mandates.find((m: any) => String(m.branch_id) === branchId)?.branch_name ?? "")
+              .trim().toLowerCase() || null
+          : null;
+
+        for (const row of lmsRows as any[]) {
+          const rowProcessId = row.process_hrms_id ? String(row.process_hrms_id) : null;
+          const matchesProcess = rowProcessId
+            ? inScopeProcessIds.has(rowProcessId)
+            : inScopeProcessNames.has(String(row.process_name ?? "").trim().toLowerCase());
+          if (!matchesProcess) continue;
+
+          if (branchId) {
+            const rowBranchId = row.branch_hrms_id ? String(row.branch_hrms_id) : null;
+            const matchesBranch = rowBranchId
+              ? rowBranchId === branchId
+              : branchNameFilter !== null
+                && String(row.branch_name ?? "").trim().toLowerCase() === branchNameFilter;
+            if (!matchesBranch) continue;
+          }
+
+          inTrainingHc += Number(row.cnt ?? 0);
+        }
+      } catch (err: unknown) {
+        console.error("[capacity-summary] LMS in-training lookup failed, defaulting to 0:", err);
+        inTrainingHc = 0;
+      }
+    }
+
+    const activeHc = Number(activeRows[0]?.cnt ?? 0);
+    const onNoticeHc = Number(onNoticeRows[0]?.cnt ?? 0);
+    const longLeaveHc = Number(longLeaveRows[0]?.cnt ?? 0);
+    const availableProductionHc = Math.max(0, activeHc - onNoticeHc - longLeaveHc - inTrainingHc);
+
+    // Aggregate mandate totals
+    const totalMandatedHc = mandates.reduce((s: number, m: any) => s + Number(m.mandated_hc || 0), 0);
+    const avgShrinkage = mandates.length > 0
+      ? mandates.reduce((s: number, m: any) => s + Number(m.shrinkage_pct || 15), 0) / mandates.length
+      : 15;
+    const avgAttritionBuffer = mandates.length > 0
+      ? mandates.reduce((s: number, m: any) => s + Number(m.attrition_buffer_pct || 5), 0) / mandates.length
+      : 5;
+    const avgTrainingBuffer = mandates.length > 0
+      ? mandates.reduce((s: number, m: any) => s + Number(m.training_buffer_pct || 5), 0) / mandates.length
+      : 5;
+
+    // BPO formula
+    const denominator = 1 - avgAttritionBuffer / 100 - avgTrainingBuffer / 100;
+    const safeDenom = denominator > 0 ? denominator : 0.01;
+    const requiredStaffedHc = Math.round(totalMandatedHc * (1 + avgShrinkage / 100) / safeDenom);
+    const netGap = requiredStaffedHc - availableProductionHc;
+    const hiringDemand = Math.max(0, netGap) + onNoticeHc;
+    const coveragePct = requiredStaffedHc > 0 ? Math.round((availableProductionHc / requiredStaffedHc) * 100) : 100;
+
+    // Per-process breakdown for hiring demand
+    const hiringByProcess = mandates.map((m: any) => {
+      const mandatedHc = Number(m.mandated_hc || 0);
+      const shrinkage = Number(m.shrinkage_pct || 15);
+      const attrition = Number(m.attrition_buffer_pct || 5);
+      const training = Number(m.training_buffer_pct || 5);
+      const denom = 1 - attrition / 100 - training / 100;
+      const required = Math.round(mandatedHc * (1 + shrinkage / 100) / (denom > 0 ? denom : 0.01));
+      return {
+        processId: m.process_id,
+        processName: m.process_name,
+        branchName: m.branch_name,
+        mandatedHc,
+        requiredHc: required,
+        priority: mandatedHc >= 50 ? 'HIGH' : mandatedHc >= 20 ? 'MEDIUM' : 'LOW',
+      };
+    }).sort((a: any, b: any) => b.requiredHc - a.requiredHc);
+
+    return res.json({
+      summary: {
+        totalMandatedHc,
+        requiredStaffedHc,
+        activeHc,
+        onNoticeHc,
+        longLeaveHc,
+        inTrainingHc,
+        availableProductionHc,
+        netGap,
+        hiringDemand,
+        coveragePct,
+        riskSignal: coveragePct >= 95 ? 'green' : coveragePct >= 80 ? 'amber' : 'red',
+      },
+      formula: {
+        mandatedHc: totalMandatedHc,
+        shrinkagePct: Math.round(avgShrinkage * 10) / 10,
+        attritionBufferPct: Math.round(avgAttritionBuffer * 10) / 10,
+        trainingBufferPct: Math.round(avgTrainingBuffer * 10) / 10,
+      },
+      hiringByProcess,
+    });
+  })
+);
+
+export { router as workforceMandateRouter };

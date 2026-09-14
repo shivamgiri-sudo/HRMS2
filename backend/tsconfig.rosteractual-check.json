@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/wfm/roster.actual.secure.routes.ts",
+    "src/modules/wfm/wfm.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

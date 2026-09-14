@@ -1,0 +1,317 @@
+import { useEffect, useMemo, useState } from "react";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { Activity, AlertTriangle, BarChart3, BookOpen, Briefcase, CheckCircle2, Clock, Database, RefreshCcw, Search, ShieldCheck, Target, TrendingUp, Users } from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { AIInsightPanel } from "@/components/ai";
+type Row = Record<string, any>;
+
+const today = () => new Date().toISOString().slice(0, 10);
+const monthStart = () => {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+};
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+const uniq = (v: string[]) => ["All", ...Array.from(new Set(v.filter(Boolean))).sort()];
+
+function Stat({ title, value, sub, icon, tone }: { title: string; value: string | number; sub?: string; icon: React.ReactNode; tone: string }) {
+  return (
+    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-slate-500">{title}</p>
+          <p className="mt-2 text-3xl font-black text-slate-950">{value}</p>
+          {sub && <p className="mt-1 text-xs font-semibold text-slate-500">{sub}</p>}
+        </div>
+        <div className={`rounded-2xl p-3 ${tone}`}>{icon}</div>
+      </div>
+    </div>
+  );
+}
+
+function MiniBars({ rows, label, value }: { rows: Row[]; label: string; value: string }) {
+  const max = Math.max(1, ...rows.map((r) => Number(r[value]) || 0));
+  if (!rows.length) return <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-slate-500">No data yet.</div>;
+  return (
+    <div className="space-y-3">
+      {rows.slice(0, 8).map((r, i) => (
+        <div key={i}>
+          <div className="mb-1 flex justify-between text-sm"><b>{r[label] || "-"}</b><b>{r[value]}</b></div>
+          <div className="h-2 rounded-full bg-slate-100"><div className="h-2 rounded-full bg-slate-950" style={{ width: `${Math.max(6, ((Number(r[value]) || 0) / max) * 100)}%` }} /></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function UnifiedPerformanceCommandCenter() {
+  const [fromDate, setFromDate] = useState(monthStart());
+  const [toDate, setToDate] = useState(today());
+  const [branch, setBranch] = useState("All");
+  const [process, setProcess] = useState("All");
+  const [team, setTeam] = useState("All");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [employees, setEmployees] = useState<Row[]>([]);
+  const [atsCandidates, setAtsCandidates] = useState<Row[]>([]);
+  const [atsSubmissions, setAtsSubmissions] = useState<Row[]>([]);
+  const [lmsProgress, setLmsProgress] = useState<Row[]>([]);
+  const [wfmRoster, setWfmRoster] = useState<Row[]>([]);
+  const [wfmSessions, setWfmSessions] = useState<Row[]>([]);
+  const [qualityRows, setQualityRows] = useState<Row[]>([]);
+  const [opsRows, setOpsRows] = useState<Row[]>([]);
+  /**
+   * Sources that did not answer this load.
+   *
+   * Every fetch below is wrapped so one failure cannot empty the page, but an empty array is
+   * indistinguishable from a genuine zero once it reaches the maths: a missing quality feed
+   * produced avgQuality 0 and critical 0, a missing ops feed produced 0% shrinkage and 0
+   * volume, and because no threshold was ever crossed the alert panel settled on a green
+   * "Stable control — no major alert". The page asserted that operations were healthy using
+   * data it never received. Recording the failures is what lets the figures below say
+   * "unavailable" instead of "zero".
+   */
+  const [unavailable, setUnavailable] = useState<string[]>([]);
+
+  const load = async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      // Employees fetched via hrmsApi
+      const empRes = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
+      const empResult = { data: empRes.data ?? [] };
+
+      const failed: string[] = [];
+      // Named, so a failure can be reported as "Quality scores unavailable" rather than
+      // silently becoming an empty array that the maths below reads as a real zero.
+      const safe = async (label: string, fn: () => Promise<any>): Promise<Row[]> => {
+        try {
+          const r = await fn();
+          return r?.data ?? r ?? [];
+        } catch {
+          failed.push(label);
+          return [];
+        }
+      };
+
+      const [atsC, atsS, lms, roster, sessions, qa, ops] = await Promise.all([
+        safe("ATS candidates", () => hrmsApi.get(`/api/ats/candidates?from=${fromDate}&to=${toDate}&limit=1000`)),
+        safe("ATS submissions", () => hrmsApi.get(`/api/ats-full-parity/submissions?from=${fromDate}&to=${toDate}&limit=1000`)),
+        safe("Learning progress", () => hrmsApi.get(`/api/lms/progress-summary`)),
+        safe("Roster", () => hrmsApi.get(`/api/wfm/roster?from=${fromDate}&to=${toDate}&limit=1000`)),
+        safe("Live sessions", () => hrmsApi.get(`/api/wfm/sessions?from=${fromDate}&to=${toDate}&limit=1000`)),
+        safe("Quality scores", () => hrmsApi.get(`/api/quality-dashboard/scores?from=${fromDate}&to=${toDate}&limit=1000`)),
+        safe("Operations performance", () => hrmsApi.get(`/api/performance-dashboard/ops?from=${fromDate}&to=${toDate}&limit=1000`)),
+      ]);
+      setUnavailable(failed);
+
+      setEmployees(empResult.data || []);
+      setAtsCandidates(Array.isArray(atsC) ? atsC : []);
+      setAtsSubmissions(Array.isArray(atsS) ? atsS : []);
+      setLmsProgress(Array.isArray(lms) ? lms : []);
+      setWfmRoster(Array.isArray(roster) ? roster : []);
+      setWfmSessions(Array.isArray(sessions) ? sessions : []);
+      setQualityRows(Array.isArray(qa) ? qa : []);
+      setOpsRows(Array.isArray(ops) ? ops : []);
+    } catch (err: any) {
+      setMessage("Some performance data sources are unavailable. Please contact your system administrator.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const scopePool = useMemo(() => {
+    const values: Row[] = [];
+    atsCandidates.forEach((r) => values.push({ branch_name: r.branch_name, process_name: r.role_applied, team_name: r.team_name }));
+    wfmRoster.forEach((r) => values.push({ branch_name: r.branch_name, process_name: r.process_name, team_name: r.team_name }));
+    qualityRows.forEach((r) => values.push(r));
+    opsRows.forEach((r) => values.push(r));
+    return values;
+  }, [atsCandidates, wfmRoster, qualityRows, opsRows]);
+
+  const branches = useMemo(() => uniq(scopePool.map((r) => r.branch_name || "Unmapped")), [scopePool]);
+  const processes = useMemo(() => uniq(scopePool.map((r) => r.process_name || r.role_applied || "Unmapped")), [scopePool]);
+  const teams = useMemo(() => uniq(scopePool.map((r) => r.team_name || "Unmapped")), [scopePool]);
+
+  const inScope = (r: Row) => {
+    const b = r.branch_name || "Unmapped";
+    const p = r.process_name || r.role_applied || r.interviewed_for_process || "Unmapped";
+    const t = r.team_name || "Unmapped";
+    const q = search.trim().toLowerCase();
+    const text = Object.values(r).join(" ").toLowerCase();
+    return (branch === "All" || b === branch) && (process === "All" || p === process) && (team === "All" || t === team) && (!q || text.includes(q));
+  };
+
+  const scopedAtsCandidates = useMemo(() => atsCandidates.filter(inScope), [atsCandidates, branch, process, team, search]);
+  const scopedAtsSubmissions = useMemo(() => atsSubmissions.filter(inScope), [atsSubmissions, branch, process, team, search]);
+  const scopedWfmRoster = useMemo(() => wfmRoster.filter(inScope), [wfmRoster, branch, process, team, search]);
+  const scopedQuality = useMemo(() => qualityRows.filter(inScope), [qualityRows, branch, process, team, search]);
+  const scopedOps = useMemo(() => opsRows.filter(inScope), [opsRows, branch, process, team, search]);
+
+  const metrics = useMemo(() => {
+    const activeEmployees = employees.filter((e) => ["active", "onboarding"].includes(String(e.status || ""))).length;
+    const selected = scopedAtsSubmissions.filter((r) => r.final_decision === "Selected").length;
+    const clientPending = scopedAtsSubmissions.filter((r) => r.final_decision === "Client Round - Pending").length;
+    const completedLearning = lmsProgress.filter((r) => r.completed || Number(r.progress_percent || 0) >= 100).length;
+    const onShift = wfmSessions.filter((r) => r.current_status === "On Shift").length;
+    const avgQuality = scopedQuality.length ? Math.round((scopedQuality.reduce((a, r) => a + Number(r.quality_score || 0), 0) / scopedQuality.length) * 10) / 10 : 0;
+    const opsVolume = scopedOps.reduce((a, r) => a + Number(r.handled_volume || 0), 0);
+    const opsTarget = scopedOps.reduce((a, r) => a + Number(r.target_volume || 0), 0);
+    const shrinkage = scopedOps.reduce((a, r) => a + Number(r.shrinkage_minutes || 0), 0);
+    const login = scopedOps.reduce((a, r) => a + Number(r.login_minutes || 0), 0);
+    const critical = scopedQuality.reduce((a, r) => a + Number(r.fatal_count || 0), 0);
+    return { activeEmployees, selected, clientPending, completedLearning, onShift, avgQuality, opsVolume, opsTarget, opsAchievement: pct(opsVolume, opsTarget), shrinkagePct: pct(shrinkage, login), critical };
+  }, [employees, scopedAtsSubmissions, lmsProgress, wfmSessions, scopedQuality, scopedOps]);
+
+  const branchRows = useMemo(() => {
+    const map = new Map<string, Row>();
+    [...scopedAtsCandidates, ...scopedQuality, ...scopedOps, ...scopedWfmRoster].forEach((r) => {
+      const name = r.branch_name || "Unmapped";
+      const x = map.get(name) || { name, activity: 0, qualityScore: 0, qualityRows: 0, volume: 0 };
+      x.activity += 1;
+      if (r.quality_score !== undefined) { x.qualityScore += Number(r.quality_score || 0); x.qualityRows += 1; }
+      if (r.handled_volume !== undefined) x.volume += Number(r.handled_volume || 0);
+      x.avgQuality = x.qualityRows ? Math.round((x.qualityScore / x.qualityRows) * 10) / 10 : 0;
+      map.set(name, x);
+    });
+    return Array.from(map.values()).sort((a, b) => b.activity - a.activity);
+  }, [scopedAtsCandidates, scopedQuality, scopedOps, scopedWfmRoster]);
+
+  const processRows = useMemo(() => {
+    const map = new Map<string, Row>();
+    [...scopedAtsCandidates, ...scopedQuality, ...scopedOps].forEach((r) => {
+      const name = r.process_name || r.role_applied || r.interviewed_for_process || "Unmapped";
+      const x = map.get(name) || { name, activity: 0, volume: 0 };
+      x.activity += 1;
+      if (r.handled_volume !== undefined) x.volume += Number(r.handled_volume || 0);
+      map.set(name, x);
+    });
+    return Array.from(map.values()).sort((a, b) => b.activity - a.activity);
+  }, [scopedAtsCandidates, scopedQuality, scopedOps]);
+
+  // Which figures cannot be stated. Named per source so a quality outage does not blank the
+  // operations tiles, and vice versa — a partial page is still worth reading.
+  const qualityUnavailable = unavailable.includes("Quality scores");
+  const opsUnavailable = unavailable.includes("Operations performance");
+
+  const alerts = useMemo(() => {
+    const arr: { title: string; body: string; tone: string }[] = [];
+    if (metrics.clientPending > 0) arr.push({ title: "ATS client pending", body: `${metrics.clientPending} candidate(s) need client-round follow-up.`, tone: "amber" });
+    if (metrics.critical > 0) arr.push({ title: "Quality critical errors", body: `${metrics.critical} critical/fatal quality issue(s) in selected period.`, tone: "rose" });
+    if (metrics.shrinkagePct > 10) arr.push({ title: "Shrinkage above target", body: `Shrinkage is ${metrics.shrinkagePct}% against 10% benchmark.`, tone: "rose" });
+    if (metrics.opsAchievement < 100 && metrics.opsTarget > 0) arr.push({ title: "Operations target gap", body: `Achievement is ${metrics.opsAchievement}% against expected 100%.`, tone: "amber" });
+    // Every alert above is threshold-driven, so a source that returned nothing produces zeros
+    // that cross no threshold and stay silent. Declaring "stable" on that basis states the
+    // opposite of what is known: the checks did not pass, they never ran.
+    if (unavailable.length) {
+      arr.push({
+        title: "Assessment incomplete",
+        body: `${unavailable.join(", ")} did not load, so quality and operations alerts could not be evaluated. This is not an all-clear.`,
+        tone: "amber",
+      });
+      return arr;
+    }
+    if (!arr.length) arr.push({ title: "Stable control", body: "No major alert generated from current filters.", tone: "green" });
+    return arr;
+  }, [metrics, unavailable]);
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div className="rounded-3xl border bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-6 text-white shadow-sm">
+          <p className="text-sm font-black uppercase tracking-[0.22em] text-blue-200">Unified Workforce OS</p>
+          <h1 className="mt-2 text-4xl font-black tracking-tight">Performance Command Center</h1>
+          <p className="mt-3 max-w-5xl text-sm leading-6 text-slate-300">One cockpit for HRMS, ATS, LMS, WFM, Quality and Operations with branch/process/team filters for CEO, branch head, process manager, team leader and functional leaders.</p>
+        </div>
+
+        {message && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">{message}</div>}
+        {/* Named at the top of the page, because every figure below is an aggregate: once a
+            source is missing there is no way to tell from the numbers themselves which of them
+            are complete. */}
+        {unavailable.length > 0 && (
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-bold">Some data sources did not load</p>
+            <p className="mt-1">
+              {unavailable.join(", ")} {unavailable.length === 1 ? "is" : "are"} unavailable.
+              Figures drawn from {unavailable.length === 1 ? "it" : "them"} are shown as “—” rather
+              than zero, and totals below exclude {unavailable.length === 1 ? "it" : "them"}.
+            </p>
+          </div>
+        )}
+
+        <div className="rounded-3xl border bg-white p-4 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.4fr_170px_170px_1fr_1fr_1fr_auto]">
+            <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search across branch, process, employee, candidate..." className="h-12 w-full rounded-2xl border bg-slate-50 pl-10 pr-4 text-sm outline-none" /></label>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3" />
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3" />
+            <select value={branch} onChange={(e) => setBranch(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3">{branches.map((x) => <option key={x}>{x}</option>)}</select>
+            <select value={process} onChange={(e) => setProcess(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3">{processes.map((x) => <option key={x}>{x}</option>)}</select>
+            <select value={team} onChange={(e) => setTeam(e.target.value)} className="rounded-2xl border bg-slate-50 px-4 py-3">{teams.map((x) => <option key={x}>{x}</option>)}</select>
+            <button disabled={loading} onClick={load} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white disabled:bg-slate-300"><RefreshCcw className="h-4 w-4" /> Refresh</button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
+          <Stat title="Employees" value={metrics.activeEmployees} sub="active/onboarding" icon={<Users className="h-5 w-5" />} tone="bg-blue-50 text-blue-700" />
+          <Stat title="ATS Walk-ins" value={scopedAtsCandidates.length} sub={`${metrics.selected} selected`} icon={<Briefcase className="h-5 w-5" />} tone="bg-violet-50 text-violet-700" />
+          <Stat title="LMS Completed" value={metrics.completedLearning} sub={`${lmsProgress.length} progress rows`} icon={<BookOpen className="h-5 w-5" />} tone="bg-green-50 text-green-700" />
+          <Stat title="On Shift" value={metrics.onShift} sub={`${wfmSessions.length} sessions`} icon={<Clock className="h-5 w-5" />} tone="bg-amber-50 text-amber-700" />
+          {/* A dash, not 0%. These are computed from feeds that may not have answered, and a
+              zero here reads as a measured result — a perfect shrinkage figure, a quality score
+              of nothing — rather than an absent one. */}
+          <Stat title="Quality" value={qualityUnavailable ? "—" : `${metrics.avgQuality}%`} sub={qualityUnavailable ? "unavailable" : "avg score"} icon={<ShieldCheck className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-700" />
+          <Stat title="Ops Volume" value={opsUnavailable ? "—" : metrics.opsVolume} sub={opsUnavailable ? "unavailable" : `${metrics.opsAchievement}% achievement`} icon={<Activity className="h-5 w-5" />} tone="bg-cyan-50 text-cyan-700" />
+          <Stat title="Shrinkage" value={opsUnavailable ? "—" : `${metrics.shrinkagePct}%`} sub={opsUnavailable ? "unavailable" : "ops log"} icon={<AlertTriangle className="h-5 w-5" />} tone="bg-rose-50 text-rose-700" />
+          <Stat title="Data Rows" value={scopedAtsCandidates.length + scopedAtsSubmissions.length + lmsProgress.length + scopedWfmRoster.length + scopedQuality.length + scopedOps.length} sub="selected filters" icon={<Database className="h-5 w-5" />} tone="bg-slate-100 text-slate-700" />
+        </div>
+
+        {/* AI Performance Brief */}
+        <AIInsightPanel
+          contextType="performance_kpi"
+          role="manager"
+          title="Performance Command AI Brief"
+          enabled={!loading && employees.length > 0}
+          // null, not 0, for anything whose source did not answer. A model handed
+          // shrinkage_pct: 0 will write that shrinkage is under control; handed null alongside
+          // unavailable_sources it can say the figure is missing. This is the one place a
+          // fabricated zero would be turned into confident prose.
+          data={{
+            total_employees: metrics.activeEmployees,
+            ats_selected: metrics.selected,
+            client_pending: metrics.clientPending,
+            lms_completed: metrics.completedLearning,
+            on_shift: metrics.onShift,
+            avg_quality_score: qualityUnavailable ? null : metrics.avgQuality,
+            ops_achievement_pct: opsUnavailable ? null : metrics.opsAchievement,
+            shrinkage_pct: opsUnavailable ? null : metrics.shrinkagePct,
+            critical_quality_errors: qualityUnavailable ? null : metrics.critical,
+            unavailable_sources: unavailable,
+          }}
+        />
+
+        <div className="grid gap-5 xl:grid-cols-3">
+          <div className="rounded-3xl border bg-white p-5 shadow-sm"><h2 className="mb-4 flex items-center gap-2 font-black"><BarChart3 className="h-5 w-5" /> Branch Command View</h2><MiniBars rows={branchRows} label="name" value="activity" /></div>
+          <div className="rounded-3xl border bg-white p-5 shadow-sm"><h2 className="mb-4 flex items-center gap-2 font-black"><TrendingUp className="h-5 w-5" /> Process Command View</h2><MiniBars rows={processRows} label="name" value="activity" /></div>
+          <div className="rounded-3xl border bg-white p-5 shadow-sm"><h2 className="mb-4 flex items-center gap-2 font-black"><AlertTriangle className="h-5 w-5" /> Management Alerts</h2><div className="space-y-3">{alerts.map((a, i) => <div key={i} className={`rounded-2xl border p-4 ${a.tone === 'rose' ? 'border-rose-200 bg-rose-50 text-rose-800' : a.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><b>{a.title}</b><p className="mt-1 text-sm">{a.body}</p></div>)}</div></div>
+        </div>
+
+        <div className="grid gap-5 xl:grid-cols-2">
+          <div className="overflow-hidden rounded-3xl border bg-white shadow-sm"><div className="border-b p-5"><h2 className="font-black text-slate-950">Module Health Snapshot</h2><p className="text-sm text-slate-500">Current data coverage by module.</p></div><div className="overflow-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="p-4">Module</th><th className="p-4">Rows</th><th className="p-4">Primary Signal</th><th className="p-4">Status</th></tr></thead><tbody>{[
+            // The status column was hardcoded "Active" for every row, so a module whose feed
+            // never answered still reported itself healthy — on the one table headed "data
+            // coverage", which is exactly where the gap should have been visible.
+            ['HRMS', employees.length, `${metrics.activeEmployees} active employees`, false],
+            ['ATS', scopedAtsCandidates.length + scopedAtsSubmissions.length, `${metrics.selected} selected / ${metrics.clientPending} client pending`, unavailable.includes("ATS submissions")],
+            ['LMS', lmsProgress.length, `${metrics.completedLearning} completed rows`, unavailable.includes("Learning progress")],
+            ['WFM', scopedWfmRoster.length + wfmSessions.length, `${metrics.onShift} on shift`, unavailable.includes("Roster")],
+            ['Quality', scopedQuality.length, qualityUnavailable ? "no data received" : `${metrics.avgQuality}% avg score`, qualityUnavailable],
+            ['Operations', scopedOps.length, opsUnavailable ? "no data received" : `${metrics.opsVolume} volume`, opsUnavailable],
+          ].map((r) => <tr key={String(r[0])} className="border-t"><td className="p-4 font-black">{r[0]}</td><td className="p-4">{r[1]}</td><td className="p-4">{r[2]}</td><td className="p-4">{r[3] ? <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">Unavailable</span> : <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">Active</span>}</td></tr>)}</tbody></table></div></div>
+          <div className="overflow-hidden rounded-3xl border bg-white shadow-sm"><div className="border-b p-5"><h2 className="font-black text-slate-950">Leadership Action Register</h2><p className="text-sm text-slate-500">Auto-generated intervention points from current filters.</p></div><div className="space-y-3 p-5">{alerts.map((a, i) => <div key={i} className="rounded-2xl border p-4"><div className="flex items-start gap-3"><CheckCircle2 className="mt-1 h-5 w-5 text-slate-500" /><div><b>{a.title}</b><p className="mt-1 text-sm text-slate-600">{a.body}</p><p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Owner: Branch / Process Leader</p></div></div></div>)}</div></div>
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}

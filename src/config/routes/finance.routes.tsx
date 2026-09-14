@@ -1,0 +1,171 @@
+import { Route, Navigate } from "react-router-dom";
+import { lazy } from "./lazy";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+
+const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
+  <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
+
+const NativeERP                    = lazy(() => import("@/pages/NativeERP"));
+const NativeVendorManagement       = lazy(() => import("@/pages/NativeVendorManagement"));
+const NativeVendorBankDetails = lazy(() => import("@/pages/NativeVendorBankDetails"));
+const NativeProcurementPage        = lazy(() => import("@/pages/NativeProcurementPage"));
+const NativeVendorPaymentTracking  = lazy(() => import("@/pages/NativeVendorPaymentTracking"));
+const NativeGRNManagement          = lazy(() => import("@/pages/NativeGRNManagement"));
+const BranchBudgetManagementPage   = lazy(() => import("@/pages/finance/BranchBudgetManagementPage"));
+const AnnualBudgetSummaryPage      = lazy(() => import("@/pages/finance/AnnualBudgetSummaryPage"));
+const UnlinkedGrnReviewPage        = lazy(() => import("@/pages/finance/UnlinkedGrnReviewPage"));
+const BudgetConsolidationPage      = lazy(() => import("@/pages/finance/BudgetConsolidationPage"));
+const SalaryVoucherPage      = lazy(() => import("@/pages/finance/SalaryVoucherPage"));
+const GstTallyExportPage      = lazy(() => import("@/pages/finance/GstTallyExportPage"));
+const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
+const ProcessPnlDetailPage         = lazy(() => import("@/pages/finance/ProcessPnlDetailPage"));
+const ProcessPnlConfigurationPage  = lazy(() => import("@/pages/finance/ProcessPnlConfigurationPage"));
+const ProcessLobManagementPage     = lazy(() => import("@/pages/finance/ProcessLobManagementPage"));
+const BillabilitySeatCostPage      = lazy(() => import("@/pages/finance/BillabilitySeatCostPage"));
+const PnlPeriodClosePage           = lazy(() => import("@/pages/finance/PnlPeriodClosePage"));
+const MyExpenses                   = lazy(() => import("@/pages/expenses/MyExpenses"));
+const NewExpenseClaim              = lazy(() => import("@/pages/expenses/NewExpenseClaim"));
+const ExpenseApprovals             = lazy(() => import("@/pages/expenses/ExpenseApprovals"));
+const FinanceQueue                 = lazy(() => import("@/pages/expenses/FinanceQueue"));
+const ExpenseReports               = lazy(() => import("@/pages/expenses/ExpenseReports"));
+const CostCentreManagementPage     = lazy(() => import("@/pages/finance/CostCentreManagementPage"));
+const ClientBillingWorkspacePage   = lazy(() => import("@/pages/finance/ClientBillingWorkspacePage"));
+const ClientPaymentManagementPage  = lazy(() => import("@/pages/finance/ClientPaymentManagementPage"));
+const FinanceMasterPage            = lazy(() => import("@/pages/finance/FinanceMasterPage"));
+const CompanyBankAccountsPage      = lazy(() => import("@/pages/finance/CompanyBankAccountsPage"));
+const PaymentVouchersPage          = lazy(() => import("@/pages/finance/PaymentVouchersPage"));
+const BankLedgerReportPage         = lazy(() => import("@/pages/finance/BankLedgerReportPage"));
+const BankReconciliationPage       = lazy(() => import("@/pages/finance/BankReconciliationPage"));
+const LedgerHeadsPage              = lazy(() => import("@/pages/finance/LedgerHeadsPage"));
+const BankDirectoryPage            = lazy(() => import("@/pages/finance/BankDirectoryPage"));
+
+const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
+// Branch roles raise GRNs — the backend already grants them GRN write access and
+// scopes every read to their own branch. They are deliberately absent from
+// GRN_REVIEW_ROLES, so they can submit but never approve.
+const grnRoles: string[] = [...financeRoles, 'branch_admin', 'branch_head'];
+const pnlRoles     = ['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head'] as const;
+const budgetConsolidationRoles = ['super_admin','admin','ceo','coo','finance_head','accounts_head'] as const;
+const costCentreRoles = ['super_admin','admin','finance','finance_head','accounts_head','branch_head','branch_admin'] as const;
+// Must stay identical to the grant in backend/sql/1066_billability_page_access.sql and to
+// BILLABILITY_ROLES in backend/src/modules/process-pnl/billability.routes.ts.
+const billabilityRoles = ['super_admin','finance','payroll_head','payroll_branch'] as const;
+// Must stay identical to ALLOWED_ROLES in backend/src/modules/client-billing/client-billing.routes.ts
+// and to the grant in backend/sql/migrations/1303_client_billing_page_access.sql.
+const clientBillingRoles = ['super_admin','admin','finance','finance_head','accounts_head'] as const;
+// Vendor Payment Dispatch backend (vendor-payment.routes.ts PAYMENT_READ_ROLES) already scopes
+// branch_admin/branch_head to their own branch (capabilities.readScope === 'branch') — they were
+// missing from the route gate here, so a user with only one of those roles was blocked by
+// ProtectedRoute before ever reaching a page the API was already built to serve them.
+const vendorPaymentRoles: string[] = [...financeRoles, 'branch_admin', 'branch_head'];
+
+export const financeRouteElements = (
+  <>
+      {/* ERP / Vendors / Procurement */}
+      <Route path="/erp"        element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
+      {/* 'manager' was on this gate but backend GET /api/erp/vendors (and the mapping-summary/
+          enforcement-config calls this page also makes) never granted it — a manager-only user
+          could open the page but every data call 403'd. Removed rather than widened backend
+          access, since nothing else here indicates 'manager' was meant to reach vendor/expense
+          data specifically (contrast vendorPaymentRoles above, where the backend explicitly
+          supports branch_admin/branch_head with a dedicated branch-scoped readScope). */}
+      <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','accounts_head','finance_head']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
+      {/* Payee bank accounts. finance_head/accounts_head only — deliberately NOT admin,
+          since hasOrgWideScope() lets `admin` past org-wide checks with no scope row. */}
+      <Route path="/finance/vendor-bank-details" element={<ProtectedRoute roles={['finance_head','accounts_head']}><Gate pageCode="VENDOR_BANK_DETAILS"><NativeVendorBankDetails /></Gate></ProtectedRoute>} />
+      <Route path="/procurement" element={<ProtectedRoute><Gate pageCode="PROCUREMENT"><NativeProcurementPage /></Gate></ProtectedRoute>} />
+
+      {/* Finance Masters — expense heads/sub-heads, vendor approval, vendor→head mapping */}
+      {/* Roles match 1532_finance_masters_page_access.sql */}
+      <Route path="/finance/masters" element={<ProtectedRoute roles={['super_admin','finance_head','branch_admin']}><Gate pageCode="FINANCE_MASTERS"><FinanceMasterPage /></Gate></ProtectedRoute>} />
+
+      {/* Payment Voucher System Phase 1 (2026-09-09). Roles must match BANK_ACCOUNT_READ_ROLES /
+          VOUCHER_READ_ROLES exactly (company-bank-account.routes.ts / payment-voucher.routes.ts)
+          and the grant in migration 1706 — same discipline as every other finance route above. */}
+      <Route path="/finance/bank-accounts"    element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','branch_head','admin','finance']}><Gate pageCode="FINANCE_BANK_ACCOUNTS"><CompanyBankAccountsPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/payment-vouchers" element={<ProtectedRoute roles={['super_admin','finance_head','ceo','accounts_head','branch_head','admin','finance']}><Gate pageCode="FINANCE_PAYMENT_VOUCHERS"><PaymentVouchersPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/bank-ledger"      element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_LEDGER"><BankLedgerReportPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/bank-reconciliation" element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_RECONCILIATION"><BankReconciliationPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/ledger-heads"     element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_LEDGER_HEADS"><LedgerHeadsPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/bank-directory"   element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_DIRECTORY"><BankDirectoryPage /></Gate></ProtectedRoute>} />
+
+      {/* Finance */}
+      <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={vendorPaymentRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
+      <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />
+      {/* Roles match migration 1104's grants and the API's VOUCHER_ROLES exactly. A salary
+          voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}
+      <Route path="/finance/salary-voucher"          element={<ProtectedRoute roles={['super_admin','finance_head','payroll_hr']}><Gate pageCode="FINANCE_SALARY_VOUCHER"><SalaryVoucherPage /></Gate></ProtectedRoute>} />
+      {/* Roles must match GST_READ_ROLES in backend/src/modules/gst/gst-export.routes.ts and the
+          grant in backend/sql/1652_gst_tally_export_page_access.sql — write actions (generate,
+          mark downloaded) are further gated inside the page/API to GST_WRITE_ROLES. */}
+      <Route path="/finance/gst-export"               element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','admin','finance','branch_admin']}><Gate pageCode="FINANCE_GST_EXPORT"><GstTallyExportPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
+      {/* Roles must match ALLOWED_ROLES in annual-budget-summary.routes.ts exactly — an
+          all-branches rollup is more exposure than the single-branch screen above, so it is
+          deliberately narrower (no branch_admin/branch_head/finance). See migration 1537. */}
+      <Route path="/finance/annual-budget-summary"   element={<ProtectedRoute roles={['super_admin','admin','finance_head','accounts_head']}><Gate pageCode="FINANCE_ANNUAL_BUDGET_SUMMARY"><AnnualBudgetSummaryPage /></Gate></ProtectedRoute>} />
+      {/* Roles must match ALLOWED_ROLES in unlinked-grn-review.routes.ts exactly. See migration 1548. */}
+      <Route path="/finance/unlinked-grn-review"     element={<ProtectedRoute roles={['super_admin','admin','finance_head','accounts_head']}><Gate pageCode="FINANCE_UNLINKED_GRN_REVIEW"><UnlinkedGrnReviewPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/cost-centres"            element={<ProtectedRoute roles={costCentreRoles}><Gate pageCode="FINANCE_COST_CENTRES"><CostCentreManagementPage /></Gate></ProtectedRoute>} />
+      {/* Roles match ALLOWED_ROLES in client-billing.routes.ts and the grant in migration
+          1303 exactly — the frontend gate must never show a page the API would 403 on. */}
+      <Route path="/finance/client-billing"          element={<ProtectedRoute roles={clientBillingRoles}><Gate pageCode="FINANCE_CLIENT_BILLING"><ClientBillingWorkspacePage /></Gate></ProtectedRoute>} />
+      {/* Client Payment Management — Finance Head portal for tracking invoice payments and
+          collection trends. Roles match PAYMENT_READ/WRITE_ROLES in client-payment-tracking.routes.ts. */}
+      <Route path="/finance/client-payments"         element={<ProtectedRoute roles={clientBillingRoles}><Gate pageCode="FINANCE_CLIENT_PAYMENTS"><ClientPaymentManagementPage /></Gate></ProtectedRoute>} />
+      {/* Roles here match the grant issued in migration 1064 exactly. If they drift, the page
+          either 403s for someone who was granted it, or shows for someone the API will refuse. */}
+      <Route path="/finance/billability"             element={<ProtectedRoute roles={billabilityRoles}><Gate pageCode="FINANCE_BILLABILITY_SEAT_COST"><BillabilitySeatCostPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_CONFIG"><ProcessPnlConfigurationPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_LOBS"><ProcessLobManagementPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/period-close"  element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_PERIOD_CLOSE"><PnlPeriodClosePage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlDetailPage /></Gate></ProtectedRoute>} />
+
+      {/*
+        Expenses — RETIRED, redirected to the working reimbursement flow.
+
+        Every route here was non-functional for every user. The backend module
+        (backend/src/modules/expenses/*) queries `expense_claims`, `expense_items`,
+        `expense_approvals` and `expense_payments` — none of which exist in
+        mas_hrms. Their creating migration, sql/migrations/099_create_expense_tables.sql,
+        never ran and cannot: it sits in a directory the migration runner does not
+        resolve, it is absent from MIGRATION_MANIFEST, and it declares
+        `employee_id INT` with a foreign key to employees(id), which is CHAR(36) —
+        an FK MySQL cannot create. Verified live on 31-Jul-2026: every endpoint
+        returns "Table 'mas_hrms.expense_claims' doesn't exist".
+
+        The fix is NOT to run 099. process-pnl.service.ts computes
+        directNonPeopleCost from `expense_claims` behind `tableExists()` guards
+        that are currently false; creating the table would flip them true and
+        silently move directCost, contributionMargin and operatingProfit on every
+        process with no code change.
+
+        Repointing at the live `expense_claim` (singular) was also rejected: it is
+        the migrated db_bill finance ledger (5,634 rows, ~₹12.5 Cr, mostly vendor
+        bills), it is already owned by the ERP Expenses tab, and its flat
+        CHAR(36) shape is incompatible with this module's INT/claim+items model.
+
+        /payroll/reimbursements is the surviving employee-claim implementation:
+        self-service create, submit, approve, reject and delete over
+        employee_reimbursement_claim, which the module provisions itself.
+
+        The page components are deliberately left on disk rather than deleted, so
+        this is reversible if the module is ever rebuilt against a real schema.
+      */}
+      <Route path="/expenses"              element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/new"          element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/new/:claimId" element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/approvals"    element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/finance"      element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/reports"      element={<Navigate to="/payroll/reimbursements" replace />} />
+      <Route path="/expenses/:claimId"     element={<Navigate to="/payroll/reimbursements" replace />} />
+
+      {/* Legacy redirects */}
+      <Route path="/master-reports" element={<Navigate to="/reports" replace />} />
+      <Route path="/advanced-reports" element={<Navigate to="/reports" replace />} />
+      <Route path="/reports/enterprise" element={<Navigate to="/reports" replace />} />
+  </>
+);

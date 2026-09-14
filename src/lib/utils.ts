@@ -1,0 +1,204 @@
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+import { parseISO, isValid } from "date-fns";
+
+/**
+ * Normalize a date string before JS Date/parseISO parsing.
+ * "YYYY-MM-DD" strings are treated as UTC midnight by default, which shifts
+ * the rendered date one day back in UTC+ timezones (e.g. IST).
+ * Appending T00:00:00 (no Z) forces local-time interpretation.
+ */
+export function normalizeDate(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+    ? `${value.trim()}T00:00:00`
+    : value;
+}
+
+/** Parse a date-only or full ISO string as local time (no UTC shift). */
+export function parseLocalDate(value: string): Date {
+  return parseISO(normalizeDate(value));
+}
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+/**
+ * Format date string to standardized display format
+ * Handles ISO strings (2026-05-09T18:30:00.000Z) and date-only strings (2026-05-09)
+ * @param dateString - ISO date string or date-only string
+ * @param formatString - date-fns format string (default: "MMM d, yyyy")
+ * @returns Formatted date string (e.g., "May 9, 2026")
+ */
+export function formatDate(dateString: string | null | undefined, _formatString: string = "MMM d, yyyy"): string {
+  if (!dateString) return "";
+
+  try {
+    const normalised = normaliseToIST(dateString);
+    const date = typeof normalised === "string" ? parseISO(normalised) : normalised;
+
+    if (!isValid(date)) {
+      return dateString;
+    }
+
+    return date.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch (error) {
+    console.error("Date formatting error:", error);
+    return dateString;
+  }
+}
+
+/**
+ * Format datetime string to standardized display format with time
+ * @param dateString - ISO datetime string
+ * @returns Formatted datetime string (e.g., "May 9, 2026 at 6:30 PM")
+ */
+export function formatDateTime(dateString: string | null | undefined): string {
+  if (!dateString) return "";
+
+  try {
+    const normalised = normaliseToIST(dateString);
+    const date = typeof normalised === "string" ? parseISO(normalised) : normalised;
+
+    if (!isValid(date)) {
+      return dateString;
+    }
+
+    return date.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch (error) {
+    console.error("DateTime formatting error:", error);
+    return dateString;
+  }
+}
+
+/** Normalise a raw MySQL DATETIME string ("YYYY-MM-DD HH:mm:ss") to an
+ *  unambiguous ISO 8601 string tagged as IST (+05:30) so parseISO does not
+ *  treat it as local-browser or UTC time. Already-tagged strings pass through. */
+function normaliseToIST(date: Date | string): Date | string {
+  if (typeof date !== "string") return date;
+  const s = date.trim();
+  // "YYYY-MM-DD HH:mm:ss" — MySQL DATETIME, no timezone info
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    return s.replace(" ", "T") + "+05:30";
+  }
+  // "YYYY-MM-DDTHH:mm:ss" — naive ISO, treat as IST wall-clock
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+    return s + "+05:30";
+  }
+  return s;
+}
+
+/** Format date/time for display in IST timezone (never UTC) */
+export function formatIST(
+  date: Date | string | null | undefined,
+  fmt: string = "MMM d, yyyy h:mm a"
+): string {
+  if (!date) return "";
+
+  try {
+    const normalised = normaliseToIST(date);
+    const d = typeof normalised === "string" ? parseISO(normalised) : normalised;
+    if (!isValid(d)) return String(date);
+
+    // Use Intl API with Asia/Kolkata timezone for consistent IST display
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return String(date);
+  }
+}
+
+/**
+ * Time-of-day helpers live in ./timeOfDay, which is deliberately
+ * dependency-free so it can be unit-tested directly. Re-exported here so the
+ * many existing `from "@/lib/utils"` imports keep working unchanged.
+ */
+export {
+  extractTimeOfDay,
+  formatTime24,
+  formatClockTime,
+  minutesOfDay,
+  clockTimeToMinutes,
+  formatDuration,
+  type TimeOfDay,
+} from "./timeOfDay";
+
+/** Format time only in IST (HH:MM AM/PM) */
+export function formatISTTime(
+  date: Date | string | null | undefined,
+  showSeconds = false
+): string {
+  if (!date) return "";
+
+  try {
+    const normalised = normaliseToIST(date);
+    const d = typeof normalised === "string" ? parseISO(normalised) : normalised;
+    if (!isValid(d)) return String(date);
+
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: showSeconds ? "2-digit" : undefined,
+      hour12: true,
+    });
+  } catch {
+    return String(date);
+  }
+}
+
+/**
+ * "Last synced" text from a react-query `dataUpdatedAt` timestamp (ms epoch).
+ *
+ * The attendance/salary data itself lags the real world — COSEC syncs every
+ * 5 minutes, APR hourly — and `refetchOnWindowFocus` only closes the gap
+ * between "the browser has the latest the server can offer" and "the server's
+ * own background sync ran." Showing when the client last actually fetched
+ * makes that second, unavoidable lag visible instead of silent.
+ */
+export function formatLastSynced(dataUpdatedAt: number | undefined | null): string {
+  if (!dataUpdatedAt) return "";
+  return `Synced ${formatISTTime(new Date(dataUpdatedAt))}`;
+}
+
+/** Format date only in IST (MMM d, yyyy) */
+export function formatISTDate(
+  date: Date | string | null | undefined
+): string {
+  if (!date) return "";
+
+  try {
+    const normalised = normaliseToIST(date);
+    const d = typeof normalised === "string" ? parseISO(normalised) : normalised;
+    if (!isValid(d)) return String(date);
+
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return String(date);
+  }
+}

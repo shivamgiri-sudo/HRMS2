@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/finance/grn-imprest-tax.ts",
+    "src/modules/finance/grn-smart.service.ts",
+    "src/modules/finance/grn.service.ts"
+  ]
+}

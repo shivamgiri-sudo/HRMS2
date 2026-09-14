@@ -1,0 +1,113 @@
+DAILY TEAM BRIEFING — {{businessDate}}
+Hi {{recipientName}} ({{scopeLabel}}), generated {{generatedAtIST}}
+
+KPIs
+  Attendance: {{kpi.attendancePctDisplay}}
+  Absent: {{kpi.absent}}
+  Missing Punch: {{kpi.missingPunch}}
+  Late Arrivals: {{kpi.lateCount}}
+{{#if payrollReadiness}}
+  {{payrollReadiness.label}}: {{payrollReadiness.value}}
+{{/if}}
+{{#if payrollReadinessDetail}}
+PAYROLL READINESS
+  {{payrollReadinessDetail.pendingApprovalsCount}} run(s) pending finance/CEO sign-off.
+{{#each payrollReadinessDetail.runs}}  - {{this.runMonth}} — {{this.status}} — {{this.blockerCount}} blocker(s), {{this.warningCount}} warning(s)
+{{/each}}
+{{else if payrollOperationalHint}}
+PAYROLL
+  {{payrollOperationalHint}}
+{{/if}}
+{{#if positives}}
+WHAT'S GOING WELL
+{{#each positives}}  - {{this.label}}
+{{/each}}
+{{/if}}
+{{#if attention}}
+NEEDS YOUR ATTENTION
+{{#each attention}}  - [{{this.priority}}] {{this.label}}
+{{/each}}
+{{/if}}
+{{#if performance}}
+KPI & PERFORMANCE
+{{#if performance.exceptions.length}}{{#each performance.exceptions}}  - {{this.label}}
+{{/each}}{{else}}  No KPI exceptions for D-1.
+{{/if}}{{#if performance.overflowText}}  {{performance.overflowText}}
+{{/if}}  Coaching due/overdue: {{performance.coachingDueOrOverdueCount}}; Training needs opened: {{performance.trainingNeedsOpenedCount}}
+{{/if}}
+{{#if quality}}
+QUALITY
+  Avg quality: {{quality.avgQualityPctDisplay}}; Audit coverage: {{quality.auditCoveragePctDisplay}}
+{{#if quality.deteriorationNote}}  {{quality.deteriorationNote}}
+{{/if}}
+{{/if}}
+{{#if training}}
+COACHING & TRAINING
+  Completion: {{training.completionPctDisplay}}; Completed D-1: {{training.coursesCompletedD1}}; Overdue: {{training.overdueMandatoryTraining}}
+{{#if training.certificationsExpired}}  {{training.certificationsExpired}} certification(s) expired
+{{/if}}
+{{/if}}
+{{#if roster}}
+LOOKING AHEAD — STAFFING
+  Uncovered HC (next 7 days): {{roster.uncoveredHc}}{{#if roster.worstSeverity}} ({{roster.worstSeverity}}){{/if}}
+  Pending roster ack: {{roster.pendingAcknowledgement}}; Rejected, needs action: {{roster.pendingRejectedByEmployee}}
+{{/if}}
+{{#if peopleRisk}}
+PEOPLE RISK
+  {{peopleRisk.count}} team member(s) need people-risk attention ({{peopleRisk.severity}}).
+{{/if}}
+{{#if helpdesk}}
+HELPDESK
+  {{helpdesk.businessImpactLine}}
+{{/if}}
+{{#if recruitment}}
+RECRUITMENT & ONBOARDING
+  Moved D-1: {{recruitment.candidatesMovedD1}}; Interviews D-1: {{recruitment.interviewsScheduledD1}}; Offers pending: {{recruitment.pendingOfferApprovals}}; BGV pending: {{recruitment.bgvPending}}
+  Joining today: {{recruitment.joiningToday}}; This week: {{recruitment.joiningThisWeek}}
+{{/if}}
+{{#if exit}}
+EXIT & ATTRITION
+  Resignations D-1: {{exit.resignationsSubmittedD1}}; Manager discussions pending: {{exit.managerDiscussionsPending}}; HR discussions pending: {{exit.hrDiscussionsPending}}
+  Upcoming LWD (7 days): {{exit.upcomingLwdNext7Days}}; Clearance completion: {{exit.clearanceCompletionPctDisplay}}
+{{/if}}
+
+{{#unless rollup}}
+HYGIENE & DISCIPLINE
+{{#if hygieneIssues.length}}
+{{#each hygieneIssues}}  - {{this.employeeCode}}: {{this.issueType}} ({{this.severity}})
+{{/each}}{{else}}  No open hygiene/discipline items for {{businessDate}}.
+{{/if}}
+
+YOUR PRIORITIES TODAY
+{{#if actions.length}}
+{{#each actions}}  - [{{this.priority}}] {{this.title}}
+{{/each}}{{else}}  No open priority items right now.
+{{/if}}
+{{/unless}}
+{{#if rollup}}
+BRANCH ATTENDANCE COMPARISON
+{{#if executiveRollup.branchAttendance.length}}
+{{#each executiveRollup.branchAttendance}}  - {{this.branchName}}: {{this.attendancePctDisplay}} (absent {{this.absent}}, missing punch {{this.missingPunch}})
+{{/each}}{{#if executiveRollup.bestPerformingBranch}}  Best: {{executiveRollup.bestPerformingBranch.branchName}} ({{executiveRollup.bestPerformingBranch.attendancePct}}%)
+{{/if}}{{#if executiveRollup.worstPerformingBranch}}  Needs attention: {{executiveRollup.worstPerformingBranch.branchName}} ({{executiveRollup.worstPerformingBranch.attendancePct}}%)
+{{/if}}{{else}}  No branch attendance data for {{businessDate}}.
+{{/if}}
+
+TOP ORG-WIDE ACTIONS
+{{#if executiveRollup.topActions.length}}
+{{#each executiveRollup.topActions}}  - [{{this.severity}}] {{this.title}}
+{{/each}}{{else}}  No open high-severity business actions.
+{{/if}}
+
+HIRING & ATTRITION SUMMARY
+  Candidates moved (D-1): {{executiveRollup.hiringAttrition.candidatesMovedD1}}; Offer approvals pending: {{executiveRollup.hiringAttrition.offerApprovalsPending}}
+  Joining today: {{executiveRollup.hiringAttrition.joiningToday}}; This week: {{executiveRollup.hiringAttrition.joiningThisWeek}}
+  Resignations (D-1): {{executiveRollup.hiringAttrition.resignationsSubmittedD1}}; Open exits: {{executiveRollup.hiringAttrition.openExitRequests}}; Upcoming LWD (7d): {{executiveRollup.hiringAttrition.upcomingLwdNext7Days}}
+{{/if}}
+
+---
+Data as of {{businessDate}} (IST). Generated {{generatedAtIST}}.
+{{#if sourceHealthIssues.length}}
+Some sections may be incomplete: {{#each sourceHealthIssues}}{{this.module}} ({{this.state}}){{#unless @last}}, {{/unless}}{{/each}}.
+{{/if}}
+This is an automated summary and does not include grievance or payroll amount data.

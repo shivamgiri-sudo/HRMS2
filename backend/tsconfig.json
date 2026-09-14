@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "strict": false,
+    "strictNullChecks": true,
+    "noEmitOnError": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "scripts/migrate-ncosec-biometric.ts",
+    "scripts/ncosecDb.ts",
+    // Scripts that write to production are typechecked; the rest of scripts/ is not, because it
+    // holds a long tail of one-off diagnostics that would fail the build for no benefit. These two
+    // recover employee data from db_bill and issue UPDATE/INSERT against mas_hrms, so a type error
+    // in one is a production data error. Added 2026-08-17 after `getBillPool()` — which is async —
+    // was used without await in the statutory loader: the script was broken on its first db_bill
+    // call while `tsc --noEmit` reported clean, because scripts/ was outside the program entirely.
+    "scripts/backfill-unbanked-from-dbbill.ts",
+    "scripts/backfill-statutory-ids-from-dbbill.ts",
+    // Closes 26 stranded joining kits and their 215 checklist rows through
+    // finalizeKitEsign, and spends one billed provider call per kit, so the same
+    // rule applies: a type error in it is a production data error.
+    "scripts/backfill-stranded-joining-kits.ts",
+    // Mints a real signing token and sends a real email per candidate through
+    // resendEsignLink; same rule as the three scripts above.
+    "scripts/resend-stuck-esign-links.ts",
+    // Abandons a dead kit and dispatches a brand-new, billed Luckpay session;
+    // same rule as the scripts above.
+    "scripts/redispatch-dead-esign-kits.ts",
+    // Sends a real email asking a real person to re-enter their bank account
+    // number; same rule as the scripts above.
+    "scripts/request-bank-resubmit.ts"
+  ],
+  "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
+}

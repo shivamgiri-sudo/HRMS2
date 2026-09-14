@@ -1,0 +1,812 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { format } from "date-fns";
+
+export interface PayrollRecordFilters {
+  month?:        number;
+  year?:         number;
+  search?:       string;
+  branchId?:     string;
+  departmentId?: string;
+  processId?:    string;
+  status?:       string;
+  page?:         number;
+  limit?:        number;
+}
+
+export interface SalaryComponent {
+  component_code: string;
+  component_name: string;
+  component_type: 'earning' | 'deduction' | 'employer_cost';
+  amount: number;
+  taxable?: boolean;
+  reason?: string;
+}
+
+export type PayrollDisplayStatus = "pending" | "processing" | "paid" | "cancelled";
+
+export interface PayrollRecord {
+  id: string;
+  lineId: string;
+  runId: string;
+  employeeId: string;
+  employeeCode: string;
+  employee: {
+    name: string;
+    email: string;
+    avatar?: string;
+  };
+  month: string;
+  monthNum: number;
+  year: number;
+  runMonth: string;
+  basic: number;
+  hra: number;
+  specialAllowance: number;
+  incentiveTotal: number;
+  totalAllowances: number;
+  grossSalary: number;
+  totalDeductions: number;
+  netSalary: number;
+  earningComponents: SalaryComponent[];
+  deductionComponents: SalaryComponent[];
+  employerCostComponents: SalaryComponent[];
+  status: PayrollDisplayStatus;
+  runStatus: string;
+  lineStatus: string;
+  paidAt?: string;
+  designation?: string;
+  department?: string;
+  branch?: string;
+  process?: string;
+  workingDays?: number;
+  presentDays?: number;
+  leaveDays?: number;
+  lwpDays?: number;
+  absentDays?: number;
+  eligibleWeekoffDays?: number;
+  eligibleHolidayDays?: number;
+  paidWorkingDays?: number;
+  finalPayableDays?: number;
+  pfEmployee?: number;
+  pfEmployer?: number;
+  esicEmployee?: number;
+  esicEmployer?: number;
+  tdsAmount?: number;
+  lwpDeduction?: number;
+  advanceRecovery?: number;
+  otherDeductions?: number;
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+const toRunMonth = (month?: number, year?: number) => {
+  if (month === undefined || year === undefined) return undefined;
+  return `${year}-${String(month).padStart(2, "0")}`;
+};
+
+const normalizePayrollStatus = (runStatus?: string, lineStatus?: string): PayrollDisplayStatus => {
+  const run = String(runStatus || "").toLowerCase();
+  const line = String(lineStatus || "").toLowerCase();
+  if (run === "cancelled") return "cancelled";
+  if (["disbursed", "finalized", "finalised", "paid", "reconciled"].includes(run)) return "paid";
+  if (["calculating", "calculated", "under_review", "reviewed", "approved", "locked",
+       "finance_pending", "finance_approved", "bank_file_generated",
+       "disbursement_initiated", "partially_failed", "processing"].includes(run)
+      || line === "calculated") return "processing";
+  return "pending";
+};
+
+const mapPayrollRecord = (row: any): PayrollRecord => {
+  const [yearStr, monthStr] = String(row.run_month ?? "").split("-");
+  const monthNum = Number(monthStr || 0);
+  const employeeName = String(row.employee_name ?? "").trim() || row.employee_code || "Unknown Employee";
+  const totalAllowances =
+    Number(row.hra ?? 0) +
+    Number(row.special_allowance ?? 0) +
+    Number(row.incentive_total ?? 0);
+
+  return {
+    id: String(row.id),
+    lineId: String(row.id),
+    runId: String(row.run_id ?? ""),
+    employeeId: String(row.employee_id ?? ""),
+    employeeCode: String(row.employee_code ?? ""),
+    employee: {
+      name: employeeName,
+      email: String(row.employee_email ?? ""),
+      avatar: row.employee_avatar ?? undefined,
+    },
+    month: MONTH_NAMES[monthNum - 1] ?? String(row.run_month ?? ""),
+    monthNum,
+    year: Number(yearStr || 0),
+    runMonth: String(row.run_month ?? ""),
+    basic: Number(row.basic ?? 0),
+    hra: Number(row.hra ?? 0),
+    specialAllowance: Number(row.special_allowance ?? 0),
+    incentiveTotal: Number(row.incentive_total ?? 0),
+    totalAllowances,
+    grossSalary: Number(row.gross_salary ?? 0),
+    totalDeductions: Number(row.total_deductions ?? 0),
+    netSalary: Number(row.net_salary ?? 0),
+    earningComponents: Array.isArray(row.earnings) ? row.earnings : [],
+    deductionComponents: Array.isArray(row.deductions) ? row.deductions : [],
+    employerCostComponents: Array.isArray(row.employer_costs) ? row.employer_costs : [],
+    status: normalizePayrollStatus(row.run_status, row.line_status),
+    runStatus: String(row.run_status ?? ""),
+    lineStatus: String(row.line_status ?? ""),
+    paidAt: row.disbursed_at ? String(row.disbursed_at).slice(0, 10) : undefined,
+    designation: row.designation_name ?? row.designation ?? undefined,
+    department:  row.dept_name ?? row.department_name ?? row.department ?? undefined,
+    branch:      row.branch_name ?? undefined,
+    process:     row.process_name ?? undefined,
+    workingDays:          row.working_days          !== undefined ? Number(row.working_days)          : undefined,
+    presentDays:          row.present_days          !== undefined ? Number(row.present_days)          : undefined,
+    leaveDays:            row.leave_days            !== undefined ? Number(row.leave_days)            : undefined,
+    lwpDays:              row.lwp_days              !== undefined ? Number(row.lwp_days)              : undefined,
+    absentDays:           row.absent_days           !== undefined ? Number(row.absent_days)           : undefined,
+    eligibleWeekoffDays:  row.eligible_weekoff_days !== undefined ? Number(row.eligible_weekoff_days) : undefined,
+    eligibleHolidayDays:  row.eligible_holiday_days !== undefined ? Number(row.eligible_holiday_days) : undefined,
+    paidWorkingDays:      row.paid_working_days     !== undefined ? Number(row.paid_working_days)     : undefined,
+    finalPayableDays:     row.final_payable_days    !== undefined ? Number(row.final_payable_days)    : undefined,
+    pfEmployee:           row.pf_employee           !== undefined ? Number(row.pf_employee)           : undefined,
+    pfEmployer:           row.pf_employer           !== undefined ? Number(row.pf_employer)           : undefined,
+    esicEmployee:         row.esic_employee         !== undefined ? Number(row.esic_employee)         : undefined,
+    esicEmployer:         row.esic_employer         !== undefined ? Number(row.esic_employer)         : undefined,
+    tdsAmount:            row.tds                   !== undefined ? Number(row.tds)                   : undefined,
+    lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,
+    advanceRecovery:      row.advance_recovery      !== undefined ? Number(row.advance_recovery)      : undefined,
+    otherDeductions:      row.other_deductions      !== undefined ? Number(row.other_deductions)      : undefined,
+  };
+};
+
+export async function fetchPayrollRecordPage(
+  f: PayrollRecordFilters
+): Promise<{ records: PayrollRecord[]; total: number; page: number; limit: number }> {
+  const p = new URLSearchParams();
+  // Support independent month/year filters (not just combined runMonth)
+  if (f.month !== undefined && f.year !== undefined) {
+    p.set("runMonth", toRunMonth(f.month, f.year)!);
+  } else if (f.month !== undefined) {
+    p.set("month", String(f.month));
+  } else if (f.year !== undefined) {
+    p.set("year", String(f.year));
+  }
+  if (f.search?.trim()) p.set("search", f.search.trim());
+  if (f.branchId)     p.set("branchId",     f.branchId);
+  if (f.departmentId) p.set("departmentId", f.departmentId);
+  if (f.processId)    p.set("processId",    f.processId);
+  if (f.status)       p.set("status",       f.status);
+  p.set("page",  String(f.page  ?? 1));
+  p.set("limit", String(f.limit ?? 50));
+
+  const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number; page: number; limit: number }>(
+    `/api/payroll/records?${p}`
+  );
+  return {
+    records: (res.data ?? []).map(mapPayrollRecord),
+    total:   Number(res.total  ?? 0),
+    page:    Number(res.page   ?? 1),
+    limit:   Number(res.limit  ?? 50),
+  };
+}
+
+export function usePayrollRecords(filters: PayrollRecordFilters = {}, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["payroll-records", filters],
+    queryFn: () => fetchPayrollRecordPage(filters),
+    placeholderData: (prev) => prev,
+    staleTime: 5_000,
+    // Defaults to enabled so every existing caller keeps fetching eagerly. Payroll.tsx's
+    // History tab passes enabled:false until that tab is opened — its default "All Months"
+    // filter is an unindexed full scan of salary_prep_line (70k+ rows, measured 3.8s page
+    // query + 2.6s count query) that used to fire unconditionally on every /payroll page
+    // load, contending for the shared DB pool alongside the Current Payroll query and
+    // slowing the employee names that query loads first.
+    enabled: options.enabled ?? true,
+  });
+}
+
+export interface PayrollStats {
+  totalPayroll: number | null;
+  employeeCount: number | null;
+  avgSalary: number | null;
+  pending: number | null;
+  salaryAssignedEmployees?: number | null;
+  payrollEmployees?: number | null;
+  missingPayrollEmployees?: number | null;
+  totalBasic?: number | null;
+  totalAllowances?: number | null;
+  totalDeductions?: number | null;
+  effectiveRunMonth?: string | null;
+  isFallback?: boolean;
+  isDraft?: boolean;
+}
+
+export function usePayrollStats() {
+  return useQuery<PayrollStats>({
+    queryKey: ["payroll-stats"],
+    queryFn: async (): Promise<PayrollStats> => {
+      try {
+        // Get current month's payroll run
+        const currentDate = new Date();
+        const currentMonth = currentDate.getMonth() + 1;
+        const currentYear = currentDate.getFullYear();
+
+        const runMonth = toRunMonth(currentMonth, currentYear);
+        const res = await hrmsApi.get<{ success: boolean; data: any }>(
+          `/api/payroll/overview?runMonth=${runMonth}`
+        );
+        // Backend returns { data: { run, stats: { total_net, employee_count, ... }, runMonth } }
+        const overview = res.data || {};
+        const stats = overview.stats || {};
+        const run   = overview.run   || {};
+
+        const totalPayroll    = Number(stats.total_net      ?? run.total_net      ?? 0);
+        const payrollEmployees = Number(stats.employee_count ?? run.total_employees ?? 0);
+        // Use server-computed avg_net (COUNT DISTINCT) rather than client-side division
+        const avgSalary = Number(stats.avg_net ?? (payrollEmployees > 0 ? totalPayroll / payrollEmployees : 0));
+
+        return {
+          totalPayroll,
+          employeeCount: payrollEmployees,
+          avgSalary,
+          pending: 0,
+          salaryAssignedEmployees: payrollEmployees,
+          payrollEmployees,
+          missingPayrollEmployees: 0,
+          totalBasic:       Number(stats.total_basic       ?? 0),
+          totalAllowances:  Number(stats.total_allowances  ?? 0),
+          totalDeductions:  Number(stats.total_deductions  ?? 0),
+          effectiveRunMonth: overview.runMonth ?? null,
+          isFallback: overview.isFallback ?? false,
+          isDraft: overview.isDraft ?? false,
+        };
+      } catch (error) {
+        // Do NOT collapse a failure into zeros. A 403 rendered as ₹0 is unreadable: the user
+        // sees a populated payroll grid under summary cards claiming the month cost nothing,
+        // with nothing anywhere saying the request was refused. Let the query go to `error`
+        // so the page can say which of "no permission" and "no payroll" it is.
+        console.error("Failed to fetch payroll stats:", error);
+        throw error;
+      }
+    },
+    retry: false,
+  });
+}
+
+export function useGeneratePayroll() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      month,
+      year,
+      costCentreIds,
+    }: {
+      month: number;
+      year: number;
+      /** Omit for a company-wide run; supply to run only these cost centres. */
+      costCentreIds?: string[];
+    }) => {
+      const runMonth = toRunMonth(month, year);
+      if (!runMonth) throw new Error("Invalid payroll month");
+
+      let runId: string | null = null;
+      try {
+        /*
+         * costCentreIds makes the run scoped — it pays exactly those cost centres and may span
+         * branches. Omitted (or empty), the request keeps the legacy company-wide behaviour, which
+         * is what every existing run is, so callers that do not pass a selection are unaffected.
+         */
+        const created = await hrmsApi.post<{ data: any }>("/api/payroll/runs", {
+          runMonth,
+          ...(costCentreIds?.length ? { costCentreIds } : {}),
+        });
+        runId = created.data?.id ?? null;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!message.toLowerCase().includes("already exists")) throw error;
+        /*
+         * Adopt the month's existing run — but NEVER a voided one.
+         *
+         * This fallback used to take runs[0] whatever its status. On 2026-09-05 that silently
+         * resurrected a CANCELLED run: the create was refused as a duplicate, this branch
+         * adopted the cancelled row, and the /calculate below flipped it to 'processing' —
+         * undoing a deliberate cancellation and paying against a run somebody had voided.
+         *
+         * A cancelled or rejected run does not occupy its month (see VOID_RUN_STATUSES in
+         * payroll/run-status.ts). If the ONLY run for this month is voided, the create should
+         * have succeeded; being here with nothing adoptable means something is genuinely wrong,
+         * so surface it rather than reviving a corpse.
+         */
+        const VOID_STATUSES = ["cancelled", "rejected"];
+        const existing = await hrmsApi.get<{ data: any[] }>(
+          `/api/payroll/runs?runMonth=${runMonth}&limit=20`
+        );
+        const adoptable = (existing.data ?? []).filter(
+          (r: any) => !VOID_STATUSES.includes(String(r?.status ?? "").trim().toLowerCase())
+        );
+        if (!adoptable.length) {
+          throw new Error(
+            `Payroll for ${runMonth} could not be created, and the only existing run for that ` +
+            `month is cancelled. A cancelled run cannot be reused — it has to be investigated ` +
+            `rather than restarted.`
+          );
+        }
+        runId = adoptable[0]?.id ?? null;
+      }
+
+      if (!runId) throw new Error("Could not find or create payroll run");
+      // Payroll calculation can take 30-120s for large tenants — use extended timeout
+      const calculated = await hrmsApi.post<{ success: boolean; data: any; message?: string }>(
+        `/api/payroll/runs/${runId}/calculate`,
+        undefined,
+        120_000
+      );
+      return {
+        count: Number(calculated.data?.employees_processed ?? 0),
+        runId,
+        ...calculated.data,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
+    },
+  });
+}
+
+export function useFreezeAttendance() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (runId: string) => {
+      const result = await hrmsApi.post<{ success: boolean; message?: string; data?: any }>(
+        `/api/payroll/runs/${runId}/freeze-attendance`,
+        undefined
+      );
+      return result;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
+    },
+  });
+}
+
+export function useUpdatePayrollStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: "draft" | "processed" | "paid" }) => {
+      const backendStatus =
+        status === "paid" ? "disbursed" :
+        status === "processed" ? "reviewed" :
+        "processing";
+      await hrmsApi.patch(`/api/payroll/runs/${id}/status`, { status: backendStatus });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
+    },
+  });
+}
+
+export function useBulkUpdatePayrollStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ ids, status }: { ids: string[]; status: "draft" | "processed" | "paid" }) => {
+      const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+      await Promise.all(uniqueIds.map((id) =>
+        hrmsApi.patch(`/api/payroll/runs/${id}/status`, {
+          status: status === "paid" ? "disbursed" : status === "processed" ? "reviewed" : "processing",
+        })
+      ));
+      return { count: uniqueIds.length };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payroll-records"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll-trends"] });
+    },
+  });
+}
+
+export interface SalaryStructure {
+  id: string;
+  employeeId: string;
+  employeeCode: string;
+  employeeName: string;
+  employeeEmail: string;
+  employeeAvatar?: string;
+  basicSalary: number;
+  hra: number;
+  transportAllowance: number;
+  medicalAllowance: number;
+  otherAllowances: number;
+  taxDeduction: number;
+  otherDeductions: number;
+  effectiveFrom: string;
+  totalAllowances: number;
+  totalDeductions: number;
+  netSalary: number;
+}
+
+export function useSalaryStructures() {
+  return useQuery({
+    queryKey: ["salary-structures"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/payroll/employee-salaries");
+      return (res.data || []).map((s: any): SalaryStructure => {
+        const basicSalary = Number(s.basic_salary ?? 0);
+        const hra = Number(s.hra ?? 0);
+        const specialAllowance = Number(s.special_allowance ?? 0);
+        // transport/medical are not separate fields in our CTC model — special_allowance is the residual
+        const transportAllowance = 0;
+        const medicalAllowance = 0;
+        const otherAllowances = specialAllowance;
+        const taxDeduction = 0;
+        const otherDeductions = 0;
+        const totalAllowances = hra + specialAllowance;
+        const totalDeductions = 0;
+        const netSalary = basicSalary + totalAllowances - totalDeductions;
+
+        return {
+          id: s.id,
+          employeeId: s.employee_id ?? "",
+          employeeCode: s.employee_code ?? "",
+          employeeName: s.employee_name ?? s.employee_code ?? "Unknown",
+          employeeEmail: s.employee_email ?? "",
+          employeeAvatar: s.employee_avatar ?? undefined,
+          basicSalary,
+          hra,
+          transportAllowance,
+          medicalAllowance,
+          otherAllowances,
+          taxDeduction,
+          otherDeductions,
+          effectiveFrom: s.effective_from ?? "",
+          totalAllowances,
+          totalDeductions,
+          netSalary,
+        };
+      });
+    },
+  });
+}
+
+export interface CreateSalaryStructureData {
+  employee_id: string;
+  basic_salary: number;
+  hra?: number;
+  transport_allowance?: number;
+  medical_allowance?: number;
+  other_allowances?: number;
+  tax_deduction?: number;
+  other_deductions?: number;
+  effective_from: string;
+}
+
+export function useCreateSalaryStructure() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: CreateSalaryStructureData) => {
+      await hrmsApi.post("/api/payroll/structures", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["salary-structures"] });
+    },
+  });
+}
+
+export function useUpdateSalaryStructure() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...data }: { id: string } & Partial<CreateSalaryStructureData>) => {
+      await hrmsApi.put(`/api/payroll/structures/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["salary-structures"] });
+    },
+  });
+}
+
+export function useDeleteSalaryStructure() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await hrmsApi.delete(`/api/payroll/structures/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["salary-structures"] });
+    },
+  });
+}
+
+// ─── Analytics types ──────────────────────────────────────────────────────────
+
+export interface PayrollAnalyticsDimRow {
+  dimension_name:      string;
+  headcount:           number;
+  total_basic:         number;
+  total_allowances:    number;
+  total_gross:         number;
+  total_deductions:    number;
+  total_net:           number;
+  total_pf_employer:   number;
+  total_esic_employer: number;
+  avg_net?:            number;
+  pct_of_total?:       number;
+}
+
+export interface PayrollAnalyticsKPI {
+  headcount:           number;
+  total_net:           number;
+  avg_net:             number;
+  total_gross:         number;
+  total_deductions:    number;
+  total_basic:         number;
+  total_pf_employer:   number;
+  total_esic_employer: number;
+}
+
+export interface PayrollAnalyticsResponse {
+  runMonth: string | null;
+  kpi:      PayrollAnalyticsKPI;
+  data:     PayrollAnalyticsDimRow[];
+  meta:     PayrollAnalyticsMeta | null;
+}
+
+export interface PayrollTrendRow {
+  run_month:        string;
+  headcount:        number;
+  total_gross:      number;
+  total_deductions: number;
+  total_net:        number;
+  month_label?:     string;
+  run_status?:      string;
+  is_provisional?:  boolean;
+}
+
+/** Which payroll run the analytics figures were computed from. */
+export interface PayrollAnalyticsMeta {
+  runId:            string;
+  runStatus:        string;
+  isProvisional:    boolean;
+  otherRunsInMonth: number;
+  dimension:        string;
+}
+
+export function usePayrollAnalytics(
+  runMonth: string | undefined,
+  dimension: "department" | "branch" | "process" = "department"
+) {
+  return useQuery<PayrollAnalyticsResponse>({
+    queryKey: ["payroll-analytics", runMonth, dimension],
+    queryFn: async () => {
+      const p = new URLSearchParams({ dimension });
+      if (runMonth) p.set("runMonth", runMonth);
+      const res = await hrmsApi.get<{ success: boolean; runMonth: string | null; kpi: any; data: any[]; meta: any }>(
+        `/api/payroll/analytics?${p}`
+      );
+      const totalNet = Number(res.kpi?.total_net ?? 0);
+      return {
+        runMonth: res.runMonth ?? null,
+        meta: res.meta
+          ? {
+              runId:            String(res.meta.runId ?? ""),
+              runStatus:        String(res.meta.runStatus ?? ""),
+              isProvisional:    Boolean(res.meta.isProvisional),
+              otherRunsInMonth: Number(res.meta.otherRunsInMonth ?? 0),
+              dimension:        String(res.meta.dimension ?? dimension),
+            }
+          : null,
+        kpi: {
+          headcount:           Number(res.kpi?.headcount           ?? 0),
+          total_net:           Number(res.kpi?.total_net           ?? 0),
+          avg_net:             Number(res.kpi?.avg_net             ?? 0),
+          total_gross:         Number(res.kpi?.total_gross         ?? 0),
+          total_deductions:    Number(res.kpi?.total_deductions    ?? 0),
+          total_basic:         Number(res.kpi?.total_basic         ?? 0),
+          total_pf_employer:   Number(res.kpi?.total_pf_employer   ?? 0),
+          total_esic_employer: Number(res.kpi?.total_esic_employer ?? 0),
+        },
+        data: (res.data ?? []).map((row) => ({
+          ...row,
+          headcount:           Number(row.headcount),
+          total_net:           Number(row.total_net),
+          total_gross:         Number(row.total_gross),
+          total_pf_employer:   Number(row.total_pf_employer),
+          total_esic_employer: Number(row.total_esic_employer),
+          avg_net:      row.headcount > 0 ? Number(row.total_net) / Number(row.headcount) : 0,
+          pct_of_total: totalNet > 0 ? (Number(row.total_net) / totalNet) * 100 : 0,
+        })),
+      };
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export interface PayrollRunSummary {
+  id: string;
+  run_month: string;
+  status: string;
+  total_employees: number;
+  incentives_applied_at: string | null;
+}
+
+export function usePayrollRunSummaries() {
+  return useQuery<PayrollRunSummary[]>({
+    queryKey: ["payroll-run-summaries"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        "/api/payroll/runs?limit=200"
+      );
+      return (res.data ?? []).map((r: any) => ({
+        id: String(r.id),
+        run_month: String(r.run_month ?? ""),
+        status: String(r.status ?? ""),
+        total_employees: Number(r.total_employees ?? 0),
+        incentives_applied_at: r.incentives_applied_at ? String(r.incentives_applied_at) : null,
+      }));
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export interface EmployeeSalaryHistoryPoint {
+  runMonth: string;
+  monthLabel: string;
+  basic: number;
+  totalAllowances: number;
+  totalDeductions: number;
+  netSalary: number;
+  status: PayrollDisplayStatus;
+}
+
+export function useEmployeeSalaryHistory(employeeId: string | null | undefined) {
+  return useQuery<EmployeeSalaryHistoryPoint[]>({
+    queryKey: ["employee-salary-history", employeeId],
+    queryFn: async () => {
+      if (!employeeId) return [];
+      const p = new URLSearchParams({ limit: "24", page: "1" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number }>(
+        `/api/payroll/records?${p}&employeeId=${employeeId}`
+      );
+      // employeeId filter not supported in backend — use search by code from the records already fetched
+      return [];
+    },
+    enabled: false, // disabled — use useEmployeeSalaryHistoryByCode instead
+  });
+}
+
+export function useEmployeeSalaryHistoryByCode(employeeCode: string | null | undefined) {
+  return useQuery<EmployeeSalaryHistoryPoint[]>({
+    queryKey: ["employee-salary-history-code", employeeCode],
+    queryFn: async () => {
+      if (!employeeCode?.trim()) return [];
+      const p = new URLSearchParams({ search: employeeCode.trim(), limit: "24", page: "1" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number; page: number; limit: number }>(
+        `/api/payroll/records?${p}`
+      );
+      const records = (res.data ?? []).map(mapPayrollRecord);
+      // Sort oldest → newest for charting
+      records.sort((a, b) => {
+        if (a.year !== b.year) return a.year - b.year;
+        return a.monthNum - b.monthNum;
+      });
+      return records.map((r) => ({
+        runMonth: `${r.year}-${String(r.monthNum).padStart(2, "0")}`,
+        monthLabel: `${r.month.slice(0, 3)} ${String(r.year).slice(2)}`,
+        basic: r.basic,
+        totalAllowances: r.totalAllowances,
+        totalDeductions: r.totalDeductions,
+        netSalary: r.netSalary,
+        status: r.status,
+      }));
+    },
+    enabled: !!employeeCode?.trim(),
+    staleTime: 2 * 60_000,
+  });
+}
+
+export function usePayrollEmployeeSearch(query: string) {
+  return useQuery<Array<{ employeeId: string; employeeCode: string; name: string; branch?: string; process?: string }>>({
+    queryKey: ["payroll-employee-search", query],
+    queryFn: async () => {
+      if (!query.trim() || query.trim().length < 2) return [];
+      const p = new URLSearchParams({ search: query.trim(), limit: "10", page: "1" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/payroll/records?${p}`
+      );
+      const records = (res.data ?? []).map(mapPayrollRecord);
+      // Deduplicate by employeeId — return one entry per employee
+      const seen = new Set<string>();
+      const out: Array<{ employeeId: string; employeeCode: string; name: string; branch?: string; process?: string }> = [];
+      for (const r of records) {
+        if (!seen.has(r.employeeId)) {
+          seen.add(r.employeeId);
+          out.push({ employeeId: r.employeeId, employeeCode: r.employeeCode, name: r.employee.name, branch: r.branch, process: r.process });
+        }
+      }
+      return out;
+    },
+    enabled: query.trim().length >= 2,
+    staleTime: 60_000,
+  });
+}
+
+export interface PayrollLineAttendance {
+  total_days: number;
+  present_days: number;
+  absent_days: number;
+  week_off_days: number;
+  holiday_days: number;
+  half_days: number;
+  approved_leave_days: number;
+  lwp_days: number;
+  working_days: number;
+}
+
+export function usePayrollLineAttendance(lineId: string | null | undefined, open: boolean) {
+  return useQuery<PayrollLineAttendance | null>({
+    queryKey: ["payroll-line-attendance", lineId],
+    queryFn: async () => {
+      if (!lineId) return null;
+      const res = await hrmsApi.get<{ success: boolean; data: PayrollLineAttendance }>(
+        `/api/payroll/lines/${lineId}/attendance`
+      );
+      return res.data ?? null;
+    },
+    enabled: !!lineId && open,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function usePayrollTrends(months = 6) {
+  return useQuery<PayrollTrendRow[]>({
+    queryKey: ["payroll-trends", months],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/payroll/analytics/trends?months=${months}`
+      );
+      return (res.data ?? []).map((row) => {
+        const [yr, mo] = String(row.run_month ?? "").split("-");
+        const label = new Intl.DateTimeFormat("en-IN", { month: "short", year: "2-digit" })
+          .format(new Date(Number(yr), Number(mo) - 1, 1));
+        return {
+          run_month:        String(row.run_month),
+          headcount:        Number(row.headcount),
+          total_gross:      Number(row.total_gross),
+          total_deductions: Number(row.total_deductions),
+          total_net:        Number(row.total_net),
+          month_label:      label,
+          run_status:       String(row.run_status ?? ""),
+          // A month whose canonical run is still draft/processing will move.
+          // Charting it identically to a disbursed month invites disputes.
+          is_provisional:   ["draft", "processing"].includes(String(row.run_status ?? "").toLowerCase()),
+        };
+      });
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+}

@@ -1,0 +1,71 @@
+-- Migration: re-activate four page_catalog rows that went inactive outside the migration history
+-- Date: 2026-08-09
+--
+-- WHAT IS WRONG
+--   Four real, routed, gated pages cannot be opened by anybody in production:
+--
+--     MODULE_LAUNCHER        /modules        ModuleLauncher.tsx              208 lines
+--     ORG_CHART              /org-chart      NativeOrgChart.tsx              251 lines
+--     ORG_MASTERS            /org-masters    NativeOrgMasters.tsx          1,947 lines
+--     CUSTOMIZATION_MANAGER  /customization  NativeCustomizationManager.tsx
+--
+--   Their page_catalog rows carry active_status = 0. That is not a cosmetic flag:
+--     - getUserPageAccess() filters grants with `AND COALESCE(pc.active_status, 1) = 1`
+--       (access.service.ts:246), so every role_page_access row for these codes is discarded;
+--     - the super_admin rule reads ACTIVE page_catalog rows only (access.service.ts:341),
+--       so super_admin cannot reach them either.
+--   Three of the four are gated by <Gate pageCode=...>; /modules is gated through
+--   PAGE_CODE_BY_ROUTE. So the denial is total, and the sidebar simply hides the links
+--   because navigationAccess filters on canViewPage.
+--
+--   Measured live 2026-08-08: 10 active can_view grants are being silently voided —
+--     MODULE_LAUNCHER  -> super_admin, payroll_admin, assistant_manager, recruiter, interviewer
+--     ORG_CHART        -> recruitment_hr, branch_head, operations_head, dpo, compliance
+--
+-- WHY THIS IS DRIFT AND NOT A DELIBERATE RETIREMENT
+--   Every deliberate retirement in this repository names its codes in a migration and says
+--   why — 601 (11 superseded dashboards), 1022 and 1025 (ADVANCED_REPORTS), 1097/1105,
+--   1108. None of them mentions any of these four. Nothing in backend/sql/ ever deactivated
+--   them, so the change was made by hand, most likely through the Access Control UI.
+--
+--   The opposite intent is on record and it is recent. 1067_missing_page_catalog_entries.sql
+--   (2026-08-03) created MODULE_LAUNCHER with active_status = 1 and granted it to four roles,
+--   for the stated reason that page-access-deployment.contract.test.ts was failing without it.
+--   The live state contradicts that migration.
+--
+--   ORG_MASTERS is the clearest tell: it sits in the demo credential's ALL_PAGES list, so a
+--   demo login can open Org Masters while no real user can. Nobody designs that.
+--
+-- WHY THIS IS CONSERVATIVE
+--   It grants nothing. The role_page_access rows already exist and already say who may view
+--   these pages; this only stops those rows being discarded. The two codes with no grants
+--   (ORG_MASTERS, CUSTOMIZATION_MANAGER) become reachable by super_admin alone, through the
+--   all-active-pages rule, which is the normal resting state for an admin page.
+--
+--   It also cannot fight a future decision. Migrations are recorded by filename in
+--   schema_migrations and run exactly once, so if an administrator deactivates one of these
+--   pages next month this file will not silently switch it back at the next restart — unlike
+--   an `ON DUPLICATE KEY UPDATE ... active_status = 1` seed, which would.
+--
+-- REVERSAL
+--   UPDATE page_catalog SET active_status = 0
+--    WHERE page_code IN ('MODULE_LAUNCHER','ORG_CHART','ORG_MASTERS','CUSTOMIZATION_MANAGER');
+--
+-- Idempotent: the WHERE clause makes a second run affect 0 rows.
+
+UPDATE page_catalog
+   SET active_status = 1
+ WHERE page_code IN ('MODULE_LAUNCHER', 'ORG_CHART', 'ORG_MASTERS', 'CUSTOMIZATION_MANAGER')
+   AND active_status = 0;
+
+-- Verification after running (expects 4 rows, all active_status = 1):
+--   SELECT page_code, page_name, page_path, active_status
+--     FROM page_catalog
+--    WHERE page_code IN ('MODULE_LAUNCHER','ORG_CHART','ORG_MASTERS','CUSTOMIZATION_MANAGER');
+--
+-- And that the voided grants now resolve (expects 10 rows):
+--   SELECT rpa.role_key, rpa.page_code
+--     FROM role_page_access rpa
+--     JOIN page_catalog pc ON pc.page_code = rpa.page_code
+--    WHERE rpa.page_code IN ('MODULE_LAUNCHER','ORG_CHART')
+--      AND rpa.active_status = 1 AND rpa.can_view = 1 AND pc.active_status = 1;

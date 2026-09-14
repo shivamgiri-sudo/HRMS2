@@ -1,0 +1,7 @@
+/*
+ * Intentionally empty.
+ *
+ * The dashboard shell is now defined entirely in reference-dashboard-shell.css.
+ * This compatibility file remains temporarily so older cached module graphs do
+ * not fail while deployments roll forward. It must not contain layout rules.
+ */

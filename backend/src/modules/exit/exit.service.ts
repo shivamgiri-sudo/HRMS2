@@ -1,0 +1,550 @@
+import { randomUUID } from "crypto";
+import { employmentStatusForExit } from "./exitEmploymentStatus.js";
+import nodemailer from "nodemailer";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { env } from "../../config/env.js";
+import { logger } from "../../lib/logger.js";
+import { sendSMS } from "../communication/sms.helper.js";
+import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
+import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
+import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
+import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
+import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
+import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
+import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
+import { recordManagerChange } from "../management/manager-attribution.service.js";
+
+// Singleton transporter — created once at module load, not per-call
+const mailer = nodemailer.createTransport({
+  host: env.SMTP_HOST,
+  port: env.SMTP_PORT,
+  auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined,
+});
+
+async function notifyManagerOfResignation(employeeId: string, exitRequestId: string) {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.first_name, e.last_name, e.email AS emp_email,
+              m.first_name AS mgr_first, m.last_name AS mgr_last, m.email AS mgr_email
+         FROM employees e
+         LEFT JOIN employees m ON m.id = e.reporting_manager_id
+        WHERE e.id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = (rows as RowDataPacket[])[0];
+    if (!emp?.mgr_email) return; // no manager email — skip silently
+
+    await mailer.sendMail({
+      from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM}>`,
+      to: emp.mgr_email,
+      subject: `Resignation Notice — ${emp.first_name} ${emp.last_name}`,
+      html: `<p>Dear ${emp.mgr_first ?? 'Manager'},</p>
+             <p><strong>${emp.first_name} ${emp.last_name}</strong> has submitted a resignation request.</p>
+             <p>Please log in to HRMS to review and action this request.</p>
+             <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
+    });
+  } catch (err) {
+    logger.error({ err }, '[exit] manager notification email failed');
+  }
+}
+
+function normalizeStatus(status: string) {
+  return status === "exit_confirmed" ? "exited" : status;
+}
+
+/**
+ * A concurrent actor moved the exit request out from under this request.
+ *
+ * statusCode is mandatory, not decoration: the production error handler replaces the
+ * message of any throw that does not carry one, so a bare Error would reach the user
+ * as a generic 500 and the caller would have no way to tell "someone else already
+ * actioned this" from "the server broke".
+ */
+function exitStateChanged(message: string): Error & { statusCode: number; code: string } {
+  return Object.assign(new Error(message), { statusCode: 409, code: "EXIT_STATE_CHANGED" });
+}
+
+export const exitService = {
+  async listExitRequests(filters: {
+    status?: string;
+    employeeId?: string;
+    branchId?: string;
+    processId?: string;
+    search?: string;
+    page: number;
+    limit: number;
+  }): Promise<PaginatedResult<ExitRequest>> {
+    const { page, limit, status, employeeId, branchId, processId, search } = filters;
+    const offset = (page - 1) * limit;
+    const conds: string[] = [];
+    const params: unknown[] = [];
+
+    if (employeeId) { conds.push("er.employee_id = ?"); params.push(employeeId); }
+    if (status)     { conds.push("er.status = ?");      params.push(normalizeStatus(status)); }
+    if (branchId)   { conds.push("e.branch_id = ?");    params.push(branchId); }
+    if (processId)  { conds.push("e.process_id = ?");   params.push(processId); }
+    if (search) {
+      conds.push("(e.employee_code LIKE ? OR e.full_name LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)");
+      const q = `%${search}%`;
+      params.push(q, q, q, q);
+    }
+
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT er.*,
+              e.employee_code,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
+              b.branch_name,
+              p.process_name,
+              dept.dept_name AS department_name,
+              CONCAT_WS(' ', mgr.first_name, mgr.last_name) AS reporting_manager_name,
+              hs.engagement_score,
+              hs.regrettable_exit,
+              hs.risk_label,
+              COALESCE(clearance.total_tasks, 0) AS clearance_total,
+              COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared,
+              er.initiated_by AS submitted_by,
+              er.created_at AS submitted_at,
+              CASE WHEN er.status != 'draft' THEN 1 ELSE 0 END AS notification_sent,
+              COALESCE(mgr.email, '') AS notification_recipient,
+              COALESCE(pending_clearance.owner_role, '') AS pending_with,
+              CASE
+                WHEN er.status IN ('exited','revoked','rejected') THEN 'closed'
+                WHEN DATEDIFF(NOW(), er.created_at) > 7 THEN 'overdue'
+                ELSE 'on_track'
+              END AS escalation_status
+         FROM exit_request er
+         LEFT JOIN employees e ON e.id = er.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+         LEFT JOIN department_master dept ON dept.id = e.department_id
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+         LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id
+         LEFT JOIN (
+           SELECT exit_request_id,
+                  COUNT(*) AS total_tasks,
+                  SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks
+             FROM exit_clearance_task GROUP BY exit_request_id
+         ) clearance ON clearance.exit_request_id = er.id
+         LEFT JOIN (
+           SELECT exit_request_id, owner_role
+             FROM (
+               SELECT exit_request_id, owner_role,
+                      ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at ASC) AS rn
+                 FROM exit_clearance_task
+                WHERE status NOT IN ('cleared','waived')
+             ) ranked
+            WHERE rn = 1
+         ) pending_clearance ON pending_clearance.exit_request_id = er.id
+         ${where}
+        ORDER BY er.created_at DESC
+        LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id ${where}`,
+      params
+    );
+
+    return {
+      data: rows as ExitRequest[],
+      total: Number((countRows as { total: number }[])[0]?.total ?? 0),
+      page,
+      limit,
+    };
+  },
+
+  async getExitRequest(id: string): Promise<ExitRequest> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT er.*,
+              e.employee_code,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
+              b.branch_name,
+              p.process_name
+         FROM exit_request er
+         LEFT JOIN employees e ON e.id = er.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE er.id = ? LIMIT 1`,
+      [id]
+    );
+    const rec = (rows as ExitRequest[])[0];
+    if (!rec) throw new Error("Exit request not found");
+    return rec;
+  },
+
+  async createExitRequest(
+    input: {
+      employeeId: string;
+      exitDate: string;
+      exitType: string;
+      exitSubType?: string | null;
+      exitReasonCategory?: string | null;
+      reason?: string | null;
+      noticePeriodDays?: number;
+    },
+    userId: string
+  ): Promise<ExitRequest> {
+    const [openRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM exit_request
+        WHERE employee_id = ? AND status NOT IN ('rejected','revoked','exited')
+        LIMIT 1`,
+      [input.employeeId]
+    );
+    if (openRows.length) throw new Error("An active exit request already exists for this employee");
+
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO exit_request
+         (id, employee_id, initiated_by, initiated_by_user_id, exit_type, exit_sub_type,
+          exit_reason_category, last_working_day_proposed, resignation_reason, notice_period_days, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.employeeId,
+        "employee",
+        userId,
+        input.exitType,
+        input.exitSubType ?? "resignation",
+        input.exitReasonCategory ?? null,
+        input.exitDate,
+        input.reason ?? null,
+        input.noticePeriodDays ?? 0,
+        "submitted",
+      ]
+    );
+
+    await createExitHealthSnapshot(id).catch((err: unknown) => {
+      logger.error({ err, exitRequestId: id }, '[exit] Health snapshot creation failed');
+      return null;
+    });
+
+    // Fire-and-forget: notify manager of resignation.
+    // Strangler: the gateway reports delivered only once resignation_submitted is
+    // live; until then the legacy mailer still covers it. Never a double send.
+    void notifyResignationSubmitted(id)
+      .then((delivered) => (delivered ? null : notifyManagerOfResignation(input.employeeId, id)))
+      .catch((err: unknown) => {
+        logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
+        return null;
+      });
+
+    // SMS — separation initiated (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) sendSMS(phone, 'separation_initiated', { name: emp.name }).catch(() => {});
+    } catch { /* non-fatal */ }
+
+    // Registry-backed Action Centre item (RESIGNATION_PENDING_REVIEW). Gated on
+    // exitSubType 'resignation' (the schema default — see exit.validation.ts) so
+    // involuntary exits (termination, absconding, contract_end, ...) raised through the
+    // same createExitRequest path do not surface as a "resignation" queue item.
+    // Non-blocking, matching every other side-effect in this function.
+    if ((input.exitSubType ?? "resignation") === "resignation") {
+      try {
+        const [empRow2] = await db.execute<RowDataPacket[]>(
+          `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, branch_id
+           FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+        );
+        const emp2 = (empRow2[0] as any);
+        await triggerResignationPendingReview(id, emp2?.name ?? input.employeeId, emp2?.branch_id ?? undefined);
+      } catch { /* non-fatal */ }
+    }
+
+    return this.getExitRequest(id);
+  },
+
+  async updateExitStatus(
+    id: string,
+    status: string,
+    remarks: string,
+    userId: string,
+    /**
+     * The status the caller believed the request was in. The route's FSM check has
+     * already read it; passing it here lets the transaction below reject the write
+     * if anything moved in between, instead of silently applying a transition the
+     * caller never actually validated.
+     */
+    expectedStatus?: string
+  ): Promise<ExitRequest> {
+    const existing = await this.getExitRequest(id);
+    const nextStatus = normalizeStatus(status);
+
+    const stageMap: Record<string, string> = {
+      manager_review: "manager_actioned_at",
+      hr_review: "hr_actioned_at",
+      admin_review: "admin_actioned_at",
+      exited: "exit_confirmed_at",
+    };
+
+    const timestampCol = stageMap[nextStatus];
+    const tsClause = timestampCol ? `, ${timestampCol} = NOW()` : "";
+
+    const exitRecord = existing as any;
+    const employeeIdForExit: string = exitRecord.employee_id;
+
+    // Values needed inside the transaction, computed before it opens so the lock
+    // is held for as short a time as possible.
+    //
+    // employment_status used to be hardcoded 'inactive' here, so an involuntary
+    // termination and an ordinary resignation were indistinguishable on the employee
+    // record — the reason survived only inside exit_request. Six files already filtered on
+    // 'terminated' / 'absconded' / 'offboarded', all dead branches guarding a state nothing
+    // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
+    // the mapper and the activation guard's exclusion list must stay in one place.
+    const nextEmploymentStatus = employmentStatusForExit(exitRecord.exit_type, exitRecord.exit_sub_type);
+    // Confirmed before proposed — the same precedence payroll's employment-end-date resolver
+    // applies. Owner ruling 2026-08-16 (decision 1): the LWD written here IS the value payroll
+    // reads, so employee master and payroll cannot disagree about when someone stopped being
+    // paid. Writing `proposed` here while payroll preferred `confirmed` would put a leaver's
+    // final day one value apart in two systems.
+    const lastWorkingDay =
+      (exitRecord.last_working_day_confirmed as string | null) ??
+      (exitRecord.last_working_day_proposed as string | null) ??
+      new Date().toISOString().slice(0, 10);
+
+    // ONE transaction for the whole core state change.
+    //
+    // These were three separate autocommit statements: exit_request -> 'exited', then the
+    // approval-log INSERT, then employees -> inactive. The employees UPDATE was deliberately
+    // left to throw rather than be swallowed, which stopped the deprovisioning below from
+    // running against a still-active employee — but it did NOT undo the exit_request UPDATE,
+    // which had already committed. So the failure mode it was written to prevent survived:
+    // exit_request says 'exited' while the employee is still active_status=1, which is the
+    // exact 93-employee mismatch recorded live on 2026-08-06. A loud failure, but the same
+    // split state. Now either all three land or none do.
+    //
+    // The row is locked and re-checked here, not just in the route's FSM check. That check
+    // does SELECT-then-UPDATE across two statements with nothing held in between, so two
+    // approvers clicking at once both read the same current status, both pass the FSM, and
+    // both proceed — writing two approval-log rows and running the employee deactivation
+    // twice. SELECT ... FOR UPDATE plus an expected-state predicate on the UPDATE closes it.
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [lockedRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT status FROM exit_request WHERE id = ? FOR UPDATE`,
+        [id]
+      );
+      const locked = lockedRows[0];
+      if (!locked) throw exitStateChanged("Exit request no longer exists");
+
+      const lockedStatus = String(locked.status);
+      if (expectedStatus && normalizeStatus(expectedStatus) !== normalizeStatus(lockedStatus)) {
+        throw exitStateChanged(
+          `Exit request changed to '${normalizeStatus(lockedStatus)}' while this action was in flight`
+        );
+      }
+
+      const [statusResult] = await conn.execute<ResultSetHeader>(
+        `UPDATE exit_request SET status = ?${tsClause}, updated_at = NOW() WHERE id = ? AND status = ?`,
+        [nextStatus, id, lockedStatus]
+      );
+      // Never report success on a transition that did not happen.
+      if (statusResult.affectedRows !== 1) {
+        throw exitStateChanged("Exit request status changed before this update could be applied");
+      }
+
+      await conn.execute(
+        `INSERT INTO exit_approval_log (id, exit_request_id, stage, action, action_by, discussion_remarks)
+         VALUES (UUID(), ?, ?, ?, ?, ?)`,
+        [id, nextStatus, "status_update", userId, remarks]
+      );
+
+      if (nextStatus === "exited") {
+        // active_status is what every headcount/payroll-eligibility query in the app filters
+        // on — employment_status alone was previously updated here, leaving an exited employee
+        // still counted as active everywhere else.
+        const [employeeResult] = await conn.execute<ResultSetHeader>(
+          `UPDATE employees SET active_status = 0, employment_status = ?, date_of_exit = ?, updated_at = NOW()
+            WHERE id = ?`,
+          [nextEmploymentStatus, lastWorkingDay, employeeIdForExit]
+        );
+        if (employeeResult.affectedRows !== 1) {
+          throw exitStateChanged("Employee record could not be deactivated for this exit");
+        }
+      }
+
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      // 45 workers share this pool; a connection left unreleased here starves all of them.
+      conn.release();
+    }
+
+    // Email only on the outcomes the employee is entitled to hear about. The
+    // intermediate review stages are internal queue movements.
+    setImmediate(() => {
+      const decision =
+        nextStatus === "accepted" ? "accepted" :
+        nextStatus === "rejected" ? "rejected" :
+        nextStatus === "revoked"  ? "revoked"  : null;
+      if (decision) void notifyResignationDecision(id, decision);
+    });
+
+    if (["accepted", "notice_serving", "exited"].includes(nextStatus)) {
+      await createDefaultClearanceTasks(id, (existing as any).employee_id).catch((err: unknown) => {
+        logger.error({ err, exitRequestId: id }, '[exit] Clearance task creation failed');
+        return null;
+      });
+    }
+
+    if (nextStatus === "exited") {
+      const exitRec = exitRecord;
+      const employeeId: string = employeeIdForExit;
+
+      // EVERYTHING BELOW THIS POINT IS POST-COMMIT.
+      //
+      // exit_request, the approval log and employees.active_status are already durable by
+      // now. These steps reach outside the core state — sessions, LMS, IT provisioning,
+      // notifications — and must never sit inside the transaction that owns it: a slow or
+      // unreachable external system would otherwise hold the exit_request row lock for the
+      // length of a network timeout.
+      //
+      // The trade-off is that a failure here leaves the employee exited with some cleanup
+      // undone. Failures are logged loudly, but there is still no durable retry: nothing
+      // re-attempts a failed deprovisioning and no work item is raised for a human. That
+      // gap is recorded rather than papered over — see the audit note on retryability.
+
+      // Sessions outlive the status change: the access token in the leaver's
+      // browser is valid for up to 24h after active_status goes to 0, and
+      // requireAuth had no reason to reject it. Revoke here so the exit takes
+      // effect at the same moment the record says it did.
+      const revoked = await revokeSessionsForEmployee(employeeId, 'employee_exit');
+      if (revoked.refreshTokensRevoked > 0 || revoked.deviceSessionsRevoked > 0) {
+        logger.info(
+          { exitRequestId: id, employeeId, ...revoked },
+          '[exit] Live sessions revoked for exited employee'
+        );
+      }
+
+      // Create a pending F&F record so payroll team is alerted to process settlement
+      await db.execute(
+        `INSERT IGNORE INTO full_final_calculation
+           (id, exit_request_id, employee_id, calculation_date,
+            notice_period_days, notice_shortfall_days, notice_recovery,
+            earned_leave_encashment, gratuity_amount, salary_hold,
+            advances_recovery, net_payable, status, is_ff_provisional, prepared_by)
+         VALUES (UUID(), ?, ?, CURDATE(), 0, 0, 0, 0, 0, 0, 0, 0, 'draft', 1, ?)`,
+        [id, employeeId, userId]
+      ).catch(async (err: unknown) => {
+        logger.warn({ err }, '[exit] F&F record creation failed');
+        // Post-commit: the exit stands, so this becomes payroll's work rather than a log line.
+        await recordExitFollowUpFailure('FF_DRAFT_CREATION', id, employeeId, err);
+      });
+
+      // Nullify reporting_manager_id for direct reports so they are not orphaned
+      //
+      // This is the single most destructive manager change in the platform: when a manager
+      // exits, every one of their reports loses the only record of who managed them. 123 of
+      // 1,120 active employees currently sit with no manager at all, and 83 exited employees
+      // still have people pointing at them (counted 2026-08-27). Without an effective-dated
+      // row written FIRST, the departing manager's team history becomes unattributable the
+      // moment this UPDATE runs — their attrition and shrinkage record simply disappears.
+      const [orphanRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employees WHERE reporting_manager_id = ? AND active_status = 1`,
+        [employeeId]
+      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      for (const row of orphanRows as RowDataPacket[]) {
+        await recordManagerChange({
+          employeeId: String((row as { id: unknown }).id),
+          newManagerId: null,
+          changedBy: userId ?? null,
+          reason: 'Reporting manager exited — team pending re-parent',
+        });
+      }
+
+      await db.execute(
+        `UPDATE employees
+            SET reporting_manager_id = NULL, updated_at = NOW()
+          WHERE reporting_manager_id = ? AND active_status = 1`,
+        [employeeId]
+      ).catch(async (err: unknown) => {
+        logger.warn({ err, employeeId }, '[exit] Direct-report RM nullification failed');
+        await recordExitFollowUpFailure('DIRECT_REPORT_REPARENT', id, employeeId, err);
+      });
+
+      // Withdraw LMS access and future leave, and count kit still out on loan.
+      //
+      // Replaces three statements that named schema which does not exist
+      // (employee_asset_assignment, lms_employee_mapping.active_status,
+      // leave_requests), each wrapped in a .catch() that logged a warning and
+      // let the exit report success. Every exit silently skipped its own
+      // cleanup; 60 people who have left are still active LMS learners because
+      // of it. Failures now surface instead of being swallowed.
+      const deprovision = await deprovisionEmployeeAccess(employeeId, 'employee_exit');
+      logger.info(
+        { exitRequestId: id, employeeId, ...deprovision },
+        '[exit] Deprovisioning complete'
+      );
+      if (deprovision.failures.length > 0) {
+        logger.error(
+          { exitRequestId: id, employeeId, failures: deprovision.failures },
+          '[exit] Deprovisioning steps failed — access may persist'
+        );
+        // "Failures surface" previously meant this log line only. Access persisting after an
+        // exit is a security outcome, so it has to become work somebody is holding.
+        await recordExitFollowUpFailure('ACCESS_DEPROVISION', id, employeeId, deprovision.failures);
+      }
+
+      // Fire IT exit provisioning tasks — fire-and-forget, must not throw
+      import('../it-provisioning/it-provisioning.service.js').then(({ dispatchExitProvisioningTasks }) => {
+        dispatchExitProvisioningTasks({
+          employeeId:     exitRec.employee_id,
+          employeeCode:   exitRec.employee_code  ?? '',
+          employeeName:   exitRec.employee_name  ?? exitRec.employee_id,
+          branchId:       exitRec.branch_id      ?? null,
+          lastWorkingDay: exitRec.last_working_day_proposed ?? null,
+          exitRequestId:  id,
+          actorUserId:    userId,
+        }).catch((err: unknown) => {
+          logger.error({ err }, '[it-provisioning] exit dispatch failed');
+          void recordExitFollowUpFailure('IT_DEPROVISION_DISPATCH', id, employeeId, err);
+        });
+      }).catch((err: unknown) => {
+        logger.error({ err }, '[it-provisioning] module load failed');
+        void recordExitFollowUpFailure('IT_DEPROVISION_DISPATCH', id, employeeId, err);
+      });
+    }
+
+    return this.getExitRequest(id);
+  },
+
+  async getExitStats(): Promise<ExitStats & Record<string, number>> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`
+    );
+
+    const counts: Record<string, number> = {};
+    for (const row of rows as { status: string; cnt: number }[]) {
+      counts[row.status] = Number(row.cnt);
+    }
+
+    const statuses = [
+      "draft", "submitted", "manager_review", "hr_review", "admin_review",
+      "accepted", "rejected", "revoked", "notice_serving", "exited",
+    ];
+    const detailed = Object.fromEntries(statuses.map((s) => [s, counts[s] ?? 0])) as Record<string, number>;
+    const total = Object.values(detailed).reduce((a, b) => a + b, 0);
+    const pending = (detailed.submitted ?? 0) + (detailed.manager_review ?? 0) + (detailed.hr_review ?? 0) + (detailed.admin_review ?? 0);
+    const completed = detailed.exited ?? 0;
+
+    return {
+      ...detailed,
+      total,
+      pending,
+      completed,
+      active_notice: (detailed.accepted ?? 0) + (detailed.notice_serving ?? 0),
+    } as unknown as ExitStats & Record<string, number>;
+  },
+};

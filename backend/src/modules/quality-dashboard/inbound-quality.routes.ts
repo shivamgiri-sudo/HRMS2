@@ -1,0 +1,132 @@
+import { Router, type Request, type Response } from "express";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import * as svc from "./inbound-quality.service.js";
+
+const router = Router();
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
+
+// Fixed 2026-08-18 (Section M RBAC audit, user decision): manager and process_manager were
+// removed from this list. Every endpoint below takes clientId as an OPTIONAL filter — omitted,
+// it means "all clients" — and there is no per-user client/process scoping applied anywhere in
+// this file. That is a deliberate design for genuinely org-wide roles, but process_manager and
+// manager are role-titled as scoped to one process/client, so it silently granted them the same
+// org-wide visibility (call transcripts, KPI scores, VOC quotes, fraud/scam signals) as
+// super_admin.
+//
+// The correct fix is real per-caller client scoping, matching client-drill.routes.ts's model.
+// It cannot be built right now: verified live 2026-08-18, BOTH candidate mapping sources are
+// completely unpopulated in production — user_assignment_scope.client_id (0 of all rows) and
+// process_master.client_id (0 of 131 processes) — and process<->client is not even a clean 1:1
+// once populated (one client's campaigns span many differently-named processes, per the
+// cost-centre billing-name audit). There is no reliable way to compute "this process_manager's
+// own client" from any existing data.
+//
+// So this fails closed rather than ship a fake or broken scope: these two roles lose access to
+// this dashboard entirely until real client/process-mapping master data exists to scope by.
+// Re-add them, backed by real scoping (mirroring client-drill.routes.ts / enterpriseScope.ts's
+// buildClientScopeCondition), once that data exists.
+router.use(
+  requireAuth,
+  requireRole("super_admin", "admin", "ceo", "operations_manager", "qa", "quality_analyst")
+);
+
+function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
+  const now       = new Date();
+  const endDate   = q.endDate   ? String(q.endDate)   : now.toISOString().slice(0, 10);
+  const startDate = q.startDate ? String(q.startDate) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const clientId  = q.clientId  ? String(q.clientId)  : undefined;
+  return { startDate, endDate, clientId };
+}
+
+// ── Dashboard endpoints ───────────────────────────────────────────────────────
+router.get("/clients",               h(async (req, res) => res.json({ data: await svc.getInboundClients(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/kpis",                  h(async (req, res) => res.json({ data: await svc.getInboundProcessKPIs(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/top-performers",        h(async (req, res) => res.json({ data: await svc.getTopPerformers(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/daily-scores",          h(async (req, res) => res.json({ data: await svc.getDailyScores(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/scenarios",             h(async (req, res) => res.json({ data: await svc.getScenarios(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/social-media-threats",  h(async (req, res) => res.json({ data: await svc.getSocialMediaThreats(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/social-threat-detail",  h(async (req, res) => res.json({ data: await svc.getSocialThreatDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/neg-signal-details",    h(async (req, res) => res.json({ data: await svc.getTopNegativeSignalDetails(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/pos-signal-details",    h(async (req, res) => res.json({ data: await svc.getTopPositiveSignals(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/transcript",            h(async (req, res) => {
+  const leadId = String(req.query.leadId ?? "");
+  if (!leadId) return res.status(400).json({ error: "leadId required" });
+  res.json({ data: await svc.getTranscript(leadId) });
+}));
+router.get("/score-component-detail",h(async (req, res) => res.json({ data: await svc.getScoreComponentDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/potential-scams",       h(async (req, res) => res.json({ data: await svc.getPotentialScams(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/potential-scams-detail",h(async (req, res) => res.json({ data: await svc.getPotentialScamsDetail(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/sensitive-word-analysis",h(async (req, res) => res.json({ data: await svc.getSensitiveWordAnalysis(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/fatal-analysis",        h(async (req, res) => res.json({ data: await svc.getFatalAnalysis(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/fatal-calls-list",      h(async (req, res) => res.json({ data: await svc.getFatalCallsList(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/repeat-analysis",       h(async (req, res) => res.json({ data: await svc.getRepeatAnalysis(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/agent-audit-band",      h(async (req, res) => res.json({ data: await svc.getAgentAuditBandSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/agent-param",           h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  const scenario = req.query.scenario ? String(req.query.scenario) : undefined;
+  res.json({ data: await svc.getAgentParameterWise({ ...f, scenario }) });
+}));
+router.get("/raw-data",              h(async (req, res) => {
+  const limit = parseInt(String(req.query.limit ?? "500"), 10);
+  res.json({ data: await svc.getRawData(parseFilters(req.query as Record<string, unknown>), limit) });
+}));
+
+// ── CLAP VOC Quotes (verbatim customer voice, 2026-07-17+) ───────────────────
+router.get("/clap-voc-quotes",         h(async (req, res) => res.json({ data: await svc.getClapVocQuotes(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-summary",h(async (req, res) => res.json({ data: await svc.getClapProductVocSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-quotes", h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  // Passed through unnarrowed on purpose: the service owns the allowlist, because it is the
+  // service that interpolates this value into a column name. A cast here proved nothing.
+  res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch: req.query.branch }) });
+}));
+router.get("/clap-intelligence",       h(async (req, res) => res.json({ data: await svc.getClapIntelligence(parseFilters(req.query as Record<string, unknown>)) })));
+
+// ── Agent master management (super_admin / qa only) ────────────────────────
+router.get("/agent-master",          h(async (_req, res) => res.json({ data: await svc.getAgentMaster() })));
+router.get("/missing-agents",        h(async (req, res) => res.json({ data: await svc.getMissingAgents(parseFilters(req.query as Record<string, unknown>)) })));
+router.post(
+  "/agent-master",
+  requireRole("super_admin", "qa"),
+  h(async (req, res) => {
+    const { masId, agentName } = req.body as { masId: string; agentName: string };
+    if (!masId || !agentName) return res.status(400).json({ error: "masId and agentName required" });
+    await svc.insertAgentMaster(masId, agentName);
+    res.json({ ok: true });
+  })
+);
+
+// ── Neg-keywords management (super_admin / qa only) ───────────────────────
+router.get("/neg-keywords",  h(async (_req, res) => res.json({ data: await svc.getNegKeywords() })));
+router.post(
+  "/neg-keywords",
+  requireRole("super_admin", "qa"),
+  h(async (req, res) => {
+    const { pattern, category } = req.body as { pattern: string; category: string };
+    if (!pattern || !category) return res.status(400).json({ error: "pattern and category required" });
+    await svc.addNegKeyword(pattern, category);
+    res.json({ ok: true });
+  })
+);
+router.patch(
+  "/neg-keywords/:id",
+  requireRole("super_admin", "qa"),
+  h(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const { enabled } = req.body as { enabled: boolean };
+    await svc.updateNegKeyword(id, enabled);
+    res.json({ ok: true });
+  })
+);
+router.post(
+  "/reload-neg-rules",
+  requireRole("super_admin", "qa"),
+  h(async (_req, res) => {
+    await svc.reloadNegRules();
+    res.json({ ok: true });
+  })
+);
+
+export { router as inboundQualityRouter };

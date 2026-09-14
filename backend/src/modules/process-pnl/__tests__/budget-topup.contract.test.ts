@@ -1,0 +1,189 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { describe, expect, it } from "vitest";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const backendRoot = path.resolve(__dirname, "../../../..");
+
+function read(relativePath: string) {
+  return fs.readFileSync(path.join(backendRoot, relativePath), "utf8");
+}
+
+describe("budget top-up request workflow", () => {
+  it("registers migration 1061 in the manifest", () => {
+    const sql = read("sql/1061_finance_budget_topup_request.sql");
+    const runner = read("src/db/runPendingMigrations.ts");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS finance_budget_topup_request");
+    expect(sql).toContain("fk_budget_topup_line");
+    expect(sql).toContain("fk_budget_topup_header");
+    expect(sql).toContain("utf8mb4_unicode_ci");
+    expect(sql).not.toMatch(/DROP\s+TABLE/i);
+    expect(runner).toContain('"1061_finance_budget_topup_request.sql"');
+  });
+
+  it("gates the two review stages with the shared GRN-shaped role resolver, not a new one", () => {
+    const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
+    expect(routes).toContain("/pnl/budget-topups");
+    expect(routes).toContain("/pnl/budget-topups/:id/review");
+    expect(routes).toContain('workflow: "grn", // same two-stage shape');
+    expect(routes).toContain("TOPUP_CREATE_ROLES");
+    expect(routes).toContain("TOPUP_REVIEW_ROLES");
+    // Branch scope must be checked before create and before review, same pattern as the rest
+    // of this file's budget endpoints — not left to the service layer.
+    const createIdx = routes.indexOf("budgetTopupService.create(");
+    const reviewIdx = routes.indexOf("budgetTopupService.review(");
+    expect(createIdx).toBeGreaterThan(-1);
+    expect(reviewIdx).toBeGreaterThan(-1);
+    expect(routes.slice(createIdx - 900, createIdx)).toContain("assertFinanceRecordBranch");
+    expect(routes.slice(reviewIdx - 900, reviewIdx)).toContain("assertFinanceRecordBranch");
+  });
+
+  it("applies the increase under the same row lock GRN consumption uses, only at finance_head", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    expect(service).toContain("lockActiveBudgetLine");
+    expect(service).toContain("status = 'applied'");
+    // The apply block must be reachable only from the finance_head branch.
+    const financeHeadIdx = service.indexOf('effectiveRole === "finance_head"');
+    const applyIdx = service.indexOf("status = 'applied'");
+    expect(applyIdx).toBeGreaterThan(financeHeadIdx);
+  });
+
+  it("recomputes the whole line instead of adding to gross_amount alone", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    // The old apply wrote only these two columns, leaving base/tax/pnl_cost_amount stale —
+    // and pnl_cost_amount is what every P&L read uses, so an approved increase never reached
+    // the P&L at all. It also added a QUOTED amount to a GROSS column, which is short by the
+    // tax on the increase under exclusive GST.
+    expect(service).not.toContain("gross_amount = gross_amount + ?");
+    expect(service).not.toContain("quantity = quantity + ?");
+    // Reuses the one function that produced every other amount on the line.
+    expect(service).toContain("calculateBudgetLine");
+    for (const column of [
+      "base_amount = ?", "tax_amount = ?", "gross_amount = ?",
+      "recoverable_tax_amount = ?", "pnl_cost_amount = ?",
+      "cgst_amount = ?", "sgst_amount = ?", "igst_amount = ?",
+    ]) {
+      expect(service, `${column} must be rewritten when a top-up is applied`).toContain(column);
+    }
+  });
+
+  it("re-sums the header totals from the lines rather than incrementing them", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    expect(service).toContain("h.gross_budget_amount = (");
+    expect(service).toContain("h.pnl_budget_amount = (");
+    expect(service).toContain("SUM(l.pnl_cost_amount)");
+  });
+
+  it("exports lockActiveBudgetLine from budget-consumption.service.ts for reuse", () => {
+    const service = read("src/modules/process-pnl/budget-consumption.service.ts");
+    expect(service).toContain("export async function lockActiveBudgetLine");
+  });
+
+  it("review() enforces maker-checker — approver cannot be the request submitter (P0P1-4)", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    // Anchored on the stable error CODE, not the user-facing prose. The message used to open
+    // "Maker-checker violation:" — internal jargon aimed at no one, and now rewritten to tell the
+    // reviewer what to do. Pinning a contract test to wording blocks exactly that kind of fix.
+    const makerCheckerIdx = service.indexOf("TOPUP_MAKER_CHECKER");
+    const rejectDispatchIdx = service.indexOf('if (decision === "reject")');
+    expect(makerCheckerIdx).toBeGreaterThan(-1);
+    expect(rejectDispatchIdx).toBeGreaterThan(-1);
+    // Guard fires before either branch of the review decision
+    expect(makerCheckerIdx).toBeLessThan(rejectDispatchIdx);
+    // Checks actor vs request submitter, not role names
+    expect(service).toContain("request.requested_by");
+    expect(service.slice(makerCheckerIdx - 100, makerCheckerIdx + 200)).toContain("actorId");
+  });
+
+  /**
+   * Production 2026-08-17, reference 538f315d: the raiser of a NOIDA-2 top-up pressed Reject on
+   * their own request and got "An unexpected server error occurred. Please quote reference
+   * 538f315d if you contact HR." errorHandler.ts forwards `error.message` only when the error
+   * carries a `statusCode`; a bare `throw new Error(...)` is classified as an unexpected 500 and
+   * masked in production. Every refusal in this service is a reviewer-facing decision, so every
+   * one of them must carry a status.
+   */
+  it("every refusal carries a statusCode, so production does not mask it as a reference id", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    // A single bare throw here is a message the reviewer will never see.
+    expect(code, "a bare `throw new Error()` is masked by errorHandler.ts in production")
+      .not.toMatch(/throw new Error\(/);
+    // The refusals go through the shared helper, which is where the two fields errorHandler.ts
+    // reads are now set — this service held a local copy until the same fix was swept across the
+    // sibling budget services and the one definition moved to finance-error.ts.
+    expect(service).toContain('from "./finance-error.js"');
+    const helper = read("src/modules/process-pnl/finance-error.ts");
+    expect(helper).toContain("statusCode: status");
+    expect(helper).toContain("code");
+  });
+
+  it("maker-checker refusal is a 409 the reviewer can read, not an anonymous 500", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    const idx = service.indexOf("TOPUP_MAKER_CHECKER");
+    expect(idx).toBeGreaterThan(-1);
+    const block = service.slice(idx - 200, idx + 300);
+    expect(block).toContain("409");
+    // The message must name the actual constraint rather than internal jargon.
+    expect(block).toMatch(/cannot review it/i);
+  });
+
+  it("wrong-stage, locked-period and missing-reason refusals are all statused", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    for (const [codeName, status] of [
+      ["TOPUP_WRONG_STAGE", "409"],
+      ["FINANCE_PERIOD_LOCKED", "409"],
+      ["TOPUP_REJECT_REASON_REQUIRED", "400"],
+      ["TOPUP_NO_REVIEW_ROLE", "403"],
+      ["TOPUP_NOT_FOUND", "404"],
+    ] as const) {
+      const idx = service.indexOf(codeName);
+      expect(idx, `${codeName} must exist`).toBeGreaterThan(-1);
+      expect(
+        service.slice(idx - 120, idx + 40),
+        `${codeName} must be thrown with HTTP ${status}`
+      ).toContain(status);
+    }
+  });
+
+  /**
+   * The backend maker-checker guard runs BEFORE the decision is inspected, so it refuses reject
+   * exactly as it refuses approve. The panel disabled only Approve, leaving a live Reject button
+   * on a request it could never act on — which is how the masked 500 above was triggered at all.
+   */
+  it("the panel disables BOTH review buttons for the request's own submitter", () => {
+    const panel = fs.readFileSync(
+      path.resolve(backendRoot, "../src/components/finance/budget/BudgetTopupPanel.tsx"),
+      "utf8"
+    );
+    expect(panel).toContain("const isOwnRequest =");
+    // Anchor on the mutate() call sites, not the mutationFn's `decision: "approve" | "reject"`
+    // type annotation, which otherwise matches first and points at the wrong block entirely.
+    const approveIdx = panel.indexOf('decision: "approve" })');
+    const rejectIdx = panel.indexOf('decision: "reject" })');
+    expect(approveIdx).toBeGreaterThan(-1);
+    expect(rejectIdx).toBeGreaterThan(-1);
+    expect(
+      panel.slice(approveIdx - 500, approveIdx),
+      "Approve must be disabled for the submitter"
+    ).toContain("isOwnRequest(request)");
+    expect(
+      panel.slice(rejectIdx - 500, rejectIdx),
+      "Reject must be disabled for the submitter — the backend refuses it identically"
+    ).toContain("isOwnRequest(request)");
+    // A disabled button is silent on touch devices, so the reason must also be on screen.
+    expect(panel).toContain("You raised this request, so you cannot review it");
+  });
+
+  it("period lock is re-checked inside the finance_head transaction (P0-3)", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    expect(service).toContain("import { isPeriodLocked }");
+    // Lock check must appear after the finance_head status gate and before applyTopupToLine
+    const fhIdx = service.indexOf('effectiveRole === "finance_head"');
+    const lockIdx = service.indexOf("isPeriodLocked(", fhIdx);
+    const applyIdx = service.indexOf("applyTopupToLine(", fhIdx);
+    expect(lockIdx).toBeGreaterThan(fhIdx);
+    expect(lockIdx).toBeLessThan(applyIdx);
+  });
+});

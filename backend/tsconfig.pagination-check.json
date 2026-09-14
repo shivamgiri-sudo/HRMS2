@@ -1,0 +1,29 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/db/pagination.ts",
+    "src/db/__tests__/pagination.test.ts",
+    "src/lib/query-builders/quality-queries.ts",
+    "src/modules/ai/ai-audit.service.ts",
+    "src/modules/engagement/brain-teaser.service.ts",
+    "src/modules/engagement/daily-tips.service.ts",
+    "src/modules/engagement/daily-trivia.service.ts",
+    "src/modules/engagement/quick-poll.service.ts",
+    "src/modules/engagement/word-puzzle.service.ts",
+    "src/modules/exit/resignation.routes.ts",
+    "src/modules/ijp/ijp.service.ts",
+    "src/modules/mcnmeet/mcnmeet.service.ts",
+    "src/modules/payroll/deductionEntry.service.ts",
+    "src/modules/payroll/loans.routes.ts",
+    "src/modules/payroll/payroll-certificates.routes.ts",
+    "src/modules/payroll/payroll.routes.ts",
+    "src/modules/payroll/payroll.service.ts",
+    "src/modules/payroll/pf-creation.service.ts",
+    "src/modules/payroll/salary-verification.routes.ts",
+    "src/modules/reporting/bpo-master-adapter-utils.ts",
+    "src/modules/reporting/bpo-master-governance-safe-adapters.ts",
+    "src/modules/reporting/journey-audit-report.service.ts",
+    "src/modules/roster/roster-generation.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

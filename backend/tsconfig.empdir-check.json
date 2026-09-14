@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/employees/employee.service.ts",
+    "src/modules/employees/employee.controller.ts",
+    "src/modules/employees/employee.types.ts",
+    "src/modules/employees/employee.validation.ts",
+    "src/modules/employees/employee.routes.ts",
+    "src/modules/employees/__tests__/employeeDirectoryRecordStatus.test.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

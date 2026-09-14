@@ -1,0 +1,260 @@
+import {
+  Activity,
+  Award,
+  BadgeCheck,
+  Fingerprint,
+  IndianRupee,
+  ShieldAlert,
+  Target,
+  UserCheck,
+  UserMinus,
+  Users,
+} from "lucide-react";
+
+import {
+  ReferenceActionStrip,
+  ReferenceHeader,
+  ReferenceLineChart,
+  ReferenceListRow,
+  ReferenceMetricGrid,
+  ReferencePanel,
+  ReferenceProgress,
+} from "../ReferenceDashboardUI";
+import type { ReferenceDashboardData } from "../reference-dashboard-model";
+import {
+  arrayAt,
+  asNumber,
+  asRecord,
+  formatCurrency,
+  formatValue,
+  metricDetail,
+  metricUnavailableReason,
+  metricValue,
+  numberAt,
+  read,
+} from "../reference-dashboard-model";
+import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
+import {
+  AttendanceBreakdownPanel,
+  LiveVsProcessedPanel,
+  OnboardingFunnelPanel,
+  PayrollBlockersPanel,
+  AttendanceExceptionPanel,
+  DocumentCompliancePanel,
+} from "./ReferenceSharedPanels";
+
+export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters: React.ReactNode }) {
+  const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
+  const active = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
+  const attendance = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
+  const shrinkage = numberAt(data.workforce, "summary", "shrinkage_pct");
+  // `organisationRevenue` is not a key the P&L service returns (see
+  // bpo-pnl.service.ts) — it was always undefined, so the Revenue Gap helper line
+  // permanently read "Revenue risk" instead of the actual revenue figure.
+  const revenue = numberAt(data.pnl, "kpis", "recognizedRevenue") ?? numberAt(data.pnl, "kpis", "organisationRevenue");
+  const revenueGap = numberAt(data.pnl, "kpis", "revenueAtRisk") ?? numberAt(data.pnl, "kpis", "revenueGapMtd");
+  // `revenueAtRisk` sums process_revenue_daily.revenue_at_risk. That table holds no rows
+  // in production and only a manual POST writes it, so the sum was 0 and the tile asserted
+  // a confident "no revenue at risk" for a pipeline that has never run. The P&L service now
+  // returns null plus this reason instead of a false zero — see resolveRevenueAtRisk in
+  // canonical-pnl.service.ts.
+  const revenueGapUnavailable = read(asRecord(data.pnl).kpis, "revenueAtRiskUnavailable");
+  const revenueGapReason = typeof revenueGapUnavailable === "string" && revenueGapUnavailable
+    ? "Revenue-risk feed not generated"
+    : null;
+  // The page-level "Data as of" control (ReferenceDashboardUI's UpdatedControl)
+  // reflects /api/dashboards/{code}/summary's generatedAt, not the P&L cache's
+  // own — the two can legitimately differ (30s vs 60s TTL, different fetch
+  // times), so a CEO could see a fresher-looking page timestamp than the
+  // revenue figure actually is. pnl/summary's own generatedAt is stamped once
+  // when the allocation summary is computed and reused as-is on every cache
+  // hit (see getCachedAllocationSummary in canonical-pnl.service.ts), so it
+  // correctly reflects when this specific number was last computed.
+  const pnlGeneratedAt = read(data.pnl, "generatedAt");
+  const pnlAsOf = typeof pnlGeneratedAt === "string" && pnlGeneratedAt
+    ? new Date(pnlGeneratedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+    : null;
+  const certified = numberAt(data.workforce, "training", "certified_learners") ?? numberAt(data.workforce, "training", "certifiedLearners");
+  const onboarding = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
+  const bgv = metricDetail(m, "bgv", "pending") ?? metricValue(m, "bgv");
+  // docCompliance is already in the CEO bundle and drives the Document Coverage
+  // panel below; surfacing it as a tile fills one of the slots vacated by the
+  // three removed metrics rather than leaving the grid short.
+  const docCoverage = metricDetail(m, "docCompliance", "coveragePct");
+  const ready = metricDetail(m, "payroll", "readyCount") ?? metricValue(m, "payroll");
+  const blocked = metricDetail(m, "payroll", "blockerCount");
+  const totalPayroll = ready !== null && blocked !== null ? ready + blocked : null;
+  const payrollReadiness = totalPayroll && ready !== null ? Math.round((ready / totalPayroll) * 1000) / 10 : metricDetail(m, "payroll", "readinessPct");
+  const resignation = metricDetail(m, "resign", "pendingDiscussion") ?? metricValue(m, "resign");
+  const qualityScore = asNumber(data.quality.org_quality_score ?? data.quality.average_score ?? data.quality.score);
+  const qualityTarget = asNumber(data.quality.target ?? data.quality.target_score);
+  // The route answers 200 with a zero-filled body when the audit source fails, so a 0 here
+  // can mean "nobody scored zero" or "the query died". The payload says which.
+  const qualityNote = data.quality.data_status === "UNAVAILABLE" && typeof data.quality.note === "string"
+    ? data.quality.note
+    : null;
+  const qualityGap = qualityScore !== null && qualityTarget !== null
+    ? Math.round((qualityTarget - qualityScore) * 100) / 100
+    : null;
+  const riskAgents = asNumber(data.quality.risk_agents ?? data.quality.at_risk_agents);
+  const processRows = arrayAt(data.quality, "processes").length ? arrayAt(data.quality, "processes") : arrayAt(data.quality, "scorecard");
+  const orgScore = asNumber(data.orgKpi.org_average_score ?? data.orgKpi.average_score ?? data.orgKpi.score);
+  // Not a composite KPI score — /api/kpi/org-summary picks one named metric (see
+  // normalizeOrgKpiData). Naming it is the difference between "the org scores 9.1/100" and
+  // "sales conversion averages 9.1%".
+  const kpiMetricName = typeof data.orgKpi.metric_name === "string" ? data.orgKpi.metric_name : null;
+  const kpiMetricUnit = typeof data.orgKpi.metric_unit === "string" ? data.orgKpi.metric_unit : null;
+  const kpiUnavailable = typeof data.orgKpi.unavailable === "string" ? data.orgKpi.unavailable : null;
+  const kpiEmployeesScored = asNumber(data.orgKpi.employees_scored);
+  const bestProcess = read(data.orgKpi, "best_process") as Record<string, unknown> | undefined;
+  const needsAttention = read(data.orgKpi, "needs_attention") as Record<string, unknown> | undefined;
+  const kpiTrend = arrayAt(data.orgKpi, "trend").slice(-10).map((row) => ({
+    label: String(row.label ?? row.period ?? ""),
+    value: Number(row.value ?? row.avg_score ?? row.score ?? 0),
+  }));
+
+  return (
+    <div className="reference-dashboard-page px-1 sm:px-0">
+      <ReferenceHeader title="CEO Dashboard" subtitle="Organisation-wide summary" badge="CEO View" right={filters} />
+      <TodayCelebrationsWidget />
+
+      {/*
+        TAT Breached, Name Mismatch and Incentive Pending were removed 31-Jul-2026.
+
+        All three read metric keys the CEO bundle never requested, so they rendered a
+        permanent em-dash (CEO UAT). Wiring them was the obvious fix and is wrong:
+        their source tables are empty in production — task_tat_instance 0 rows,
+        candidate_name_match_summary 0, incentive_upload_batch 0 — so the tiles would
+        have reported a confident "0 TAT breached" and "0 name mismatches" for
+        pipelines that are not running at all. A false zero on an executive dashboard
+        is worse than a blank one.
+
+        BGV is kept: candidate_bgv_check holds 203 live rows, and `bgv` is now in the
+        CEO bundle (dashboard-definition.service.ts), so the tile shows a real figure.
+
+        This removal missed two more tiles reading the same dead keys, in the
+        "Bad Insights" panel below (TAT breaches / Name mismatch ReferenceListRows) —
+        removed those too. Restore all of them, here and in the bundle, once their
+        pipelines feed data.
+      */}
+      <ReferenceActionStrip title="Today's Operations — Immediate Actions" items={[
+        // "Candidates", not "Approvals": getBgvMetrics counts DISTINCT candidates with
+        // at least one outstanding check, having previously counted the check rows
+        // themselves — 280 rows against 109 real people. The label has to name the unit
+        // or the smaller number reads as a drop in workload rather than a unit change.
+        { label: "BGV Pending", value: bgv, detail: "Candidates awaiting verification", tone: "red", href: "/ats/bgv", ...drill("bgv") },
+        { label: "Onboarding Pending", value: onboarding, detail: "Joiners awaiting completion", tone: "amber", href: "/ats/onboarding-requests", ...drill("onb") },
+        { label: "Payroll Readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, detail: "Complete pending items", tone: "amber", href: "/payroll/branch-readiness" },
+      ]} />
+
+      <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
+        { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.changePct, unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
+        { label: "Avg Shrinkage", value: shrinkage, valueSuffix: "%", helper: "vs last 30 days", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
+        { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: (revenueGapReason ?? (revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`)) + (pnlAsOf ? ` · P&L as of ${pnlAsOf}` : ""), icon: IndianRupee, tone: "violet" },
+        { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },
+      ]} />
+
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-[1.45fr_0.55fr]">
+        <div className="grid grid-cols-2 gap-0 overflow-hidden rounded-xl border border-[#e3e9f2] bg-white sm:grid-cols-4">
+          {([
+            // Name Mismatch, TAT Breached and Incentive Pending removed — see the
+            // note above the action strip. Their source tables hold no rows, so the
+            // tiles could only ever assert a false zero.
+            ["Active Headcount", active, Users, "blue", "hc", undefined],
+            ["Onboarding Pending", onboarding, UserCheck, "green", "onb", { bucket: "pending" }],
+            ["BGV Pending", bgv, ShieldAlert, "violet", "bgv", undefined],
+            ["Payroll Readiness", payrollReadiness === null ? null : `${payrollReadiness}%`, Target, "violet", undefined, undefined],
+            ["Resignation Risk", resignation, UserMinus, "red", "resign", undefined],
+            ["Document Coverage", docCoverage === null ? null : `${docCoverage}%`, BadgeCheck, "green", "docCompliance", undefined],
+          ] as [string, string | number | null, typeof Users, string, string | undefined, Record<string, string> | undefined][]).map(([label, value, Icon, tone, drillKey, drillFilters], index) => {
+            const IconComponent = Icon as typeof Users;
+            const drillProps = drillKey ? drill(drillKey, drillFilters) : {};
+            const hasDrill = Boolean(drillKey && (drillProps as Record<string, unknown>).onDrilldown);
+            return (
+              <div
+                key={String(label)}
+                onClick={hasDrill ? (drillProps as Record<string, unknown>).onDrilldown as React.MouseEventHandler<HTMLDivElement> : undefined}
+                className={`flex min-h-[100px] min-w-0 items-start gap-3 border-[#edf1f6] p-4 ${index % 4 !== 3 ? "sm:border-r" : ""} ${index < 4 ? "border-b" : ""} ${hasDrill ? "cursor-pointer hover:bg-[#f8fafc] transition-colors" : ""}`}
+              >
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "red" ? "bg-[#fff0f1] text-[#ef4444]" : tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold leading-4 text-[#1d2b45]">{label}</p>
+                  <p className="mt-2 text-[21px] font-extrabold leading-none text-[#0b1f44]">{formatValue(value)}</p>
+                  <p className="mt-2 text-xs text-[#71809a]">{hasDrill ? "Click to view details" : "Live organisation value"}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <ReferenceWorkInbox maxItems={5} />
+      </div>
+
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[0.62fr_1.05fr]">
+        <ReferenceAIBrief title="Automated Executive Summary" actionHref="/reports" items={[
+          { label: "Attendance rate", value: attendance === null ? null : `${attendance}%`, text: "Organisation-wide processed attendance rate.", icon: Fingerprint, tone: "blue" },
+          { label: "Shrinkage", value: shrinkage === null ? null : `${shrinkage}%`, text: "Average shrinkage based on current workforce and availability.", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
+          { label: "Revenue gap", value: formatCurrency(revenueGap), text: revenueGapReason ? "The revenue-risk feed has not been generated, so no gap has been measured." : "Month-to-date revenue at risk from the finance P&L summary.", icon: IndianRupee, tone: revenueGap && revenueGap > 0 ? "red" : "green" },
+          // getPayrollReadinessMetrics gates on bank and PAN only. UAN is reported beside
+          // them but is not part of the ready test, so naming it here overstated what the
+          // percentage certifies.
+          { label: "Payroll readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, text: "Employees with complete bank and PAN details.", icon: Target, tone: payrollReadiness !== null && payrollReadiness >= 90 ? "green" : "amber" },
+        ]} />
+
+        <ReferencePanel title="Good / Bad Insights">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="border-r border-[#edf1f6] pr-4"><p className="text-xs font-bold text-[#16a34a]">Good Insights</p><div className="mt-3 space-y-2"><ReferenceListRow icon={UserCheck} title="Attendance rate" subtitle="Processed attendance performance" value={attendance === null ? null : `${attendance}%`} tone="blue" /><ReferenceListRow icon={BadgeCheck} title="Certified learners" subtitle="Training readiness" value={certified} tone="green" /><ReferenceListRow icon={Target} title="Payroll readiness" subtitle="Employee data completeness" value={payrollReadiness === null ? null : `${payrollReadiness}%`} tone={payrollReadiness !== null && payrollReadiness >= 90 ? "green" : "amber"} /></div></div>
+            <div><p className="text-xs font-bold text-[#ef4444]">Bad Insights</p><div className="mt-3 space-y-2"><ReferenceListRow icon={IndianRupee} title="Revenue gap" subtitle="MTD revenue at risk" value={formatCurrency(revenueGap)} tone="red" /></div></div>
+          </div>
+        </ReferencePanel>
+      </div>
+
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.25fr_0.75fr]">
+        {/*
+          The scorecard used to render one row named "Process 1": it grouped on
+          db_audit.call_quality_assessment.Campaign, which stopped being written after
+          April 2026, so nine processes collapsed into a single NULL-named row. Fixed in
+          quality-executive.service.ts (grouped on ClientId, named from
+          portal_client_config). The table no longer slices to six either — Du Digital BD
+          and Exicom rank 8th and 9th, and they are the two a CEO most needs to see.
+        */}
+        <ReferencePanel
+          title="Quality Overview (Last 30 Days)"
+          action={<span className="text-xs text-[#61708a]">{processRows.length ? `${processRows.length} processes` : ""}</span>}
+        >
+          {qualityNote ? <p className="mb-3 rounded-lg border border-[#fee3c5] bg-[#fff9f2] px-3 py-2 text-xs text-[#b45309]">{qualityNote}</p> : null}
+          <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Org Quality Score</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(qualityScore)}</p></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Quality vs Target</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{qualityGap === null ? "—" : `${Math.abs(qualityGap).toFixed(2)}`}</p><p className="mt-1 text-xs text-[#71809a]">{qualityGap === null ? "target unavailable" : qualityGap > 0 ? "pts below target" : "pts above target"}</p><ReferenceProgress label={`Target ${formatValue(qualityTarget, "%")}`} value={qualityScore} max={qualityTarget || 100} tone={qualityScore !== null && qualityTarget !== null && qualityScore >= qualityTarget ? "green" : "red"} /></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Risk Agents</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(riskAgents)}</p></div></div>
+          <div className="mt-4 overflow-x-auto rounded-lg border border-[#e3e9f2]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-3 py-2">Process</th><th>Avg Score</th><th>Agents</th><th>Calls</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">{processRows.length ? processRows.map((row, index) => <tr key={String(row.id ?? row.process ?? index)}><td className="px-3 py-2 font-medium text-[#1d2b45]">{String(row.process_name ?? row.process ?? "Unattributed")}</td><td>{formatValue(row.avg_score ?? row.score)}</td><td>{formatValue(row.agents ?? row.agent_count)}</td><td>{formatValue(row.calls ?? row.audit_count)}</td><td className="font-semibold text-[#16a34a]">{String(row.status ?? "—")}</td></tr>) : <tr><td colSpan={5} className="px-3 py-8 text-center text-[#94a3b8]">Quality scorecard is unavailable</td></tr>}</tbody></table></div>
+        </ReferencePanel>
+
+        {/*
+          There is no composite "org KPI score" in this database: kpi_daily_actual.actual_value
+          mixes percent, seconds, count and currency in one column, so averaging across it is
+          meaningless. /api/kpi/org-summary therefore picks ONE named headline metric — the
+          percent, higher-is-better metric with the most samples, excluding ATTENDANCE_PCT —
+          and says which. For 2026-08 that is CONVERSION_RATE at 9.10, which this panel used
+          to print as "Org Avg KPI Score 9.10 /100". The metric now names itself, and the
+          best/worst process tiles say they are ranked on it.
+        */}
+        <ReferencePanel
+          title="KPI Performance"
+          action={<span className="text-xs text-[#61708a]">{kpiEmployeesScored === null ? "" : `${kpiEmployeesScored} employees scored`}</span>}
+        >
+          {kpiUnavailable ? <p className="mb-3 rounded-lg border border-[#fee3c5] bg-[#fff9f2] px-3 py-2 text-xs text-[#b45309]">{kpiUnavailable}</p> : null}
+          <div className="grid grid-cols-3 gap-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">{kpiMetricName ?? "Headline KPI"}</p><p className="mt-4 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(orgScore)}<span className="text-xs font-medium text-[#71809a]">{kpiMetricUnit === "percent" ? "%" : ""}</span></p></div><div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4"><p className="text-xs text-[#71809a]">Best Process</p><p className="mt-4 text-[15px] font-bold text-[#16a34a]">{String(bestProcess?.name ?? bestProcess?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(bestProcess?.score)}</p></div><div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] p-4"><p className="text-xs text-[#71809a]">Needs Attention</p><p className="mt-4 text-[15px] font-bold text-[#f97316]">{String(needsAttention?.name ?? needsAttention?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(needsAttention?.score)}</p></div></div>
+          <div className="mt-4"><ReferenceLineChart data={kpiTrend} height={135} /></div>
+        </ReferencePanel>
+      </div>
+
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
+        <PayrollBlockersPanel data={data} />
+        <OnboardingFunnelPanel data={data} />
+        <LiveVsProcessedPanel data={data} />
+        <AttendanceExceptionPanel data={data} />
+        <DocumentCompliancePanel data={data} />
+      </div>
+    </div>
+  );
+}

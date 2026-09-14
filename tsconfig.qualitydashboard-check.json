@@ -1,0 +1,17 @@
+{
+  // Typecheck for the 2026-08-17 Quality Dashboard tab split: QualityDashboard.tsx trimmed
+  // to its org-summary view; the Drill-Down/Heatmap/Agent Risk/Inbound/CLAP VOC/Sales & Funnel/
+  // AI & ROI tabs moved to ExecutiveQualityDashboard.tsx, whose /quality/executive route was
+  // revived from a redirect stub to actually render it.
+  //
+  //     npx tsc -p tsconfig.qualitydashboard-check.json
+  //
+  // `npm run typecheck` at the repo root is a no-op (root tsconfig declares "files": []).
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/QualityDashboard.tsx",
+    "src/pages/ExecutiveQualityDashboard.tsx",
+    "src/config/routes/performance.routes.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

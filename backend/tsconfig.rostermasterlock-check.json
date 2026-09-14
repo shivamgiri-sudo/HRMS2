@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/roster/roster-master.service.ts", "src/modules/roster/roster-lock-guard.ts"]
+}

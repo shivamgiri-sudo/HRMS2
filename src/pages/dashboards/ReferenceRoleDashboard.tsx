@@ -1,0 +1,652 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ShieldX } from "lucide-react";
+
+import { ScopedFilterBar } from "@/components/dashboard";
+import { DashboardDrilldownDrawer } from "@/components/dashboard/DashboardDrilldownDrawer";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useExecutiveQualitySummary } from "@/hooks/useExecutiveQuality";
+import { useOrgKpiSummary } from "@/hooks/useOrgKpiSummary";
+import { useUserRole } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
+import {
+  mergeRecruiterDashboardData,
+  normalizeExecutiveQualityData,
+  normalizeOrgKpiData,
+  normalizeQualityDashboardData,
+} from "./dashboard-data-contracts";
+import { canAccessRoleDashboard, type RoleDashboardVariant } from "./roleDashboardAccess";
+import {
+  asArray,
+  asNumber,
+  asRecord,
+  unavailableMetricCodes,
+  type DashboardSummary,
+  type EmployeeDashboardData,
+  type JsonRecord,
+  type ReferenceDashboardData,
+} from "./reference-dashboard-model";
+import { ReferenceError, UpdatedControl } from "./ReferenceDashboardUI";
+import { CeoReferenceLayout } from "./reference/CeoReferenceLayout";
+import { EmployeeReferenceLayout } from "./reference/EmployeeReferenceLayout";
+import { HrReferenceLayout } from "./reference/HrReferenceLayout";
+import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
+import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
+import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { QuickLinksBar } from "@/components/dashboard/widgets/QuickLinksWidget";
+import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
+import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
+import { QualityReferenceLayout } from "./reference/QualityReferenceLayout";
+import { OperationsReferenceLayout } from "./reference/OperationsReferenceLayout";
+import { RecruiterReferenceLayout } from "./reference/RecruiterReferenceLayout";
+import { ItManagerReferenceLayout } from "./reference/ItManagerReferenceLayout";
+import { DASHBOARD_ACCESS_REGISTRY } from "../../../backend/src/shared/dashboardAccessRegistry";
+import { dashboardSummarySchema } from "../../../backend/src/shared/dashboardMetricContract";
+import "./role-dashboard-reference.css";
+
+const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
+  employee: DASHBOARD_ACCESS_REGISTRY.EMPLOYEE_SELF_DASHBOARD.code,
+  wfm: DASHBOARD_ACCESS_REGISTRY.WFM_DASHBOARD.code,
+  wfm_attendance: DASHBOARD_ACCESS_REGISTRY.WFM_ATTENDANCE_DASHBOARD.code,
+  hr: DASHBOARD_ACCESS_REGISTRY.HR_DASHBOARD.code,
+  ceo: DASHBOARD_ACCESS_REGISTRY.CEO_DASHBOARD.code,
+  payroll: DASHBOARD_ACCESS_REGISTRY.PAYROLL_HR_DASHBOARD.code,
+  manager: DASHBOARD_ACCESS_REGISTRY.MANAGEMENT_DASHBOARD.code,
+  super_admin: DASHBOARD_ACCESS_REGISTRY.SUPER_ADMIN_DASHBOARD.code,
+  quality: DASHBOARD_ACCESS_REGISTRY.QUALITY_DASHBOARD.code,
+  operations: DASHBOARD_ACCESS_REGISTRY.OPERATIONS_DASHBOARD.code,
+  recruiter: DASHBOARD_ACCESS_REGISTRY.RECRUITER_DASHBOARD.code,
+  it_manager: DASHBOARD_ACCESS_REGISTRY.IT_MANAGER_DASHBOARD.code,
+};
+
+function unwrap(value: unknown): unknown {
+  const record = asRecord(value);
+  return record.data ?? value;
+}
+
+function getIstDate(): string {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+type OptionalPayload = {
+  value: unknown;
+  error: string | null;
+  asOf: string | null;
+};
+
+async function optionalGet(path: string, label: string): Promise<OptionalPayload> {
+  try {
+    const response = await hrmsApi.get<unknown>(path);
+    const envelope = asRecord(response);
+    const value = unwrap(response);
+    const record = asRecord(value);
+    const asOf = record.asOf ?? record.as_of ?? record.generatedAt ?? record.generated_at
+      ?? record.updatedAt ?? record.updated_at ?? record.synced_at
+      ?? envelope.asOf ?? envelope.generatedAt;
+    return { value, error: null, asOf: asOf == null ? null : String(asOf) };
+  } catch (error) {
+    return {
+      value: null,
+      error: `${label}: ${error instanceof Error ? error.message : "request failed"}`,
+      asOf: null,
+    };
+  }
+}
+
+function employeeAttendanceFallback(summaryPayload: unknown): JsonRecord {
+  const summary = asRecord(summaryPayload);
+  const metrics = asRecord(summary.metrics);
+  const attendanceMetric = asRecord(metrics.att);
+  const detail = asRecord(attendanceMetric.detail);
+  if (Object.keys(detail).length === 0 && attendanceMetric.value === undefined) return {};
+
+  return {
+    presentDays: asNumber(detail.present),
+    halfDays: asNumber(detail.halfDay ?? detail.half_day),
+    absentDays: asNumber(detail.absent),
+    lateDays: asNumber(detail.late),
+    missedPunch: asNumber(detail.missedPunch ?? detail.missed_punch),
+    totalWorkingDays: asNumber(detail.totalWorkingDays ?? detail.total_working_days),
+    // The attendance metric also returns approved leave and the expected-to-work
+    // denominator. Both were dropped in this mapping, so an employee could not
+    // reconcile their own percentage: the denominator excludes approved leave, and
+    // without either number the figure is unverifiable from the page.
+    onLeaveDays: asNumber(detail.onLeave ?? detail.on_leave),
+    expectedToWork: asNumber(detail.expectedToWork ?? detail.expected_to_work),
+    attendancePct: asNumber(attendanceMetric.value ?? detail.attendanceRate ?? detail.attendance_pct),
+  };
+}
+
+async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboardData> {
+  const [attendance, attendanceSummary, leave, onboarding, lms, engagement] = await Promise.all([
+    optionalGet("/api/wfm/my-attendance", "Attendance"),
+    optionalGet("/api/dashboards/employee/summary", "Attendance fallback"),
+    optionalGet("/api/leave/balance", "Leave balance"),
+    optionalGet("/api/ats/my-onboarding-status", "Onboarding"),
+    employeeId
+      ? optionalGet(`/api/lms/learner-progress/${employeeId}`, "Learning progress")
+      : Promise.resolve({ value: null, error: "Learning progress: employee mapping unavailable", asOf: null }),
+    optionalGet("/api/engagement/me", "Engagement"),
+  ]);
+
+  const attendanceRecord = asRecord(attendance.value);
+  const fallbackAttendance = employeeAttendanceFallback(attendanceSummary.value);
+  // Tests for content, not key count. /api/wfm/my-attendance returns fourteen keys whose
+  // values are all null when the month has no rows yet, so a key-count check treats that
+  // as a populated payload and shadows the fallback — which is the sibling endpoint that
+  // does coalesce to zero. On 1 August that shadowing turned every attendance tile into an
+  // em-dash. Belt and braces alongside the COALESCEs now in wfm.routes.ts: this endpoint
+  // is not the only possible source of an all-null record.
+  const attendanceHasValues = Object.values(attendanceRecord).some(
+    (value) => value !== null && value !== undefined,
+  );
+  const resolvedAttendance = attendanceHasValues ? attendanceRecord : fallbackAttendance;
+  const leavePayload = leave.value;
+  const leaveRecord = asRecord(leavePayload);
+  const errors = [attendance, attendanceSummary, leave, onboarding, lms, engagement]
+    .map((payload) => payload.error)
+    .filter((message): message is string => Boolean(message));
+
+  if (Object.keys(resolvedAttendance).length === 0) {
+    errors.push("Attendance: no employee-linked attendance summary was returned");
+  }
+
+  return {
+    attendance: resolvedAttendance,
+    balances: Array.isArray(leavePayload) ? asArray(leavePayload) : asArray(leaveRecord.balances ?? leaveRecord.data),
+    onboarding: asRecord(onboarding.value),
+    lms: asRecord(lms.value),
+    engagement: asRecord(engagement.value),
+    sourceErrors: errors,
+    sourceFreshness: {
+      attendance: attendance.asOf ?? attendanceSummary.asOf,
+      leave: leave.asOf,
+      onboarding: onboarding.asOf,
+      lms: lms.asOf,
+      engagement: engagement.asOf,
+    },
+  };
+}
+
+const EMPTY_EMPLOYEE: EmployeeDashboardData = {
+  attendance: {},
+  balances: [],
+  onboarding: {},
+  lms: {},
+  engagement: {},
+  sourceErrors: [],
+  sourceFreshness: {},
+};
+
+export default function ReferenceRoleDashboard({ variant, subheader }: { variant: RoleDashboardVariant; subheader?: React.ReactNode }) {
+  const { data: roleData, isLoading: roleLoading } = useUserRole();
+  const [branchId, setBranchId] = useState("");
+  const [processId, setProcessId] = useState("");
+  const [selectedPayrollRunId, setSelectedPayrollRunId] = useState("");
+
+  const roleKeys = roleData?.roleKeys ?? [];
+  const accessGranted = canAccessRoleDashboard(variant, roleKeys);
+  const code = DASHBOARD_CODE[variant];
+
+  const params = useMemo(() => {
+    const query = new URLSearchParams();
+    if (branchId) query.set("branchId", branchId);
+    if (processId) query.set("processId", processId);
+    return query.toString() ? `?${query.toString()}` : "";
+  }, [branchId, processId]);
+
+  const summaryQuery = useQuery({
+    queryKey: ["reference-dashboard-summary", code, branchId, processId],
+    queryFn: async () => dashboardSummarySchema.parse(
+      unwrap(await hrmsApi.get<unknown>(`/api/dashboards/${code}/summary${params}`)),
+    ),
+    enabled: !roleLoading && variant !== "employee",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const employeeQuery = useQuery({
+    queryKey: ["reference-dashboard-employee", roleData?.employeeId],
+    queryFn: () => loadEmployee(roleData?.employeeId),
+    enabled: accessGranted && variant === "employee" && !!roleData,
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const atsQuery = useQuery({
+    queryKey: ["reference-dashboard-ats", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/ats/stats${params}`))),
+    enabled: accessGranted && ["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const recruiterHiringQuery = useQuery({
+    queryKey: ["reference-dashboard-recruiter-hiring", getIstDate()],
+    queryFn: async () => {
+      const date = getIstDate();
+      return asRecord(unwrap(await hrmsApi.get<unknown>(
+        `/api/ats/recruiter/hiring-dashboard?fromDate=${date}&toDate=${date}`,
+      )));
+    },
+    enabled: accessGranted && variant === "recruiter",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const systemQuery = useQuery({
+    queryKey: ["reference-dashboard-system"],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>("/api/management/system-dashboard"))),
+    enabled: accessGranted && variant === "super_admin",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const workforceQuery = useQuery({
+    queryKey: ["reference-dashboard-workforce", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/management/workforce-dashboard${params}`))),
+    enabled: accessGranted && ["ceo", "manager", "super_admin", "operations", "quality", "hr"].includes(variant),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const pnlQuery = useQuery({
+    queryKey: ["reference-dashboard-pnl", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/finance/pnl/summary${params}`))),
+    enabled: accessGranted && ["ceo", "payroll", "super_admin"].includes(variant),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const payrollRunsQuery = useQuery({
+    queryKey: ["reference-dashboard-payroll-runs"],
+    queryFn: async () => {
+      const response = asRecord(await hrmsApi.get<unknown>("/api/payroll/runs?limit=50"));
+      return asArray(response.data);
+    },
+    enabled: accessGranted && variant === "payroll",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  /**
+   * Land on the newest run instead of an empty page.
+   *
+   * `selectedPayrollRunId` starts as "" and nothing ever set it, so PayrollReferenceLayout
+   * took its `if (!selectedRunId)` branch on every first load — the whole dashboard was a
+   * single "Select a payroll run" dropdown, with no population, amounts, blockers, filings
+   * or disbursement status until the user chose one by hand. /api/payroll/runs already
+   * returns newest-first, so the first row is the run a payroll user wants.
+   *
+   * Only seeds when nothing is selected, so a user's own choice is never overwritten by a
+   * background refetch.
+   */
+  useEffect(() => {
+    if (variant !== "payroll" || selectedPayrollRunId) return;
+    const newest = asRecord(payrollRunsQuery.data?.[0]);
+    const id = newest.id == null ? "" : String(newest.id);
+    if (id) setSelectedPayrollRunId(id);
+  }, [variant, selectedPayrollRunId, payrollRunsQuery.data]);
+
+  const payrollQuery = useQuery({
+    queryKey: ["reference-dashboard-payroll", selectedPayrollRunId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/dashboards/PAYROLL_HR_DASHBOARD/operational-summary?runId=${selectedPayrollRunId}`,
+    ))),
+    enabled: accessGranted && variant === "payroll" && Boolean(selectedPayrollRunId),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const biometricQuery = useQuery({
+    queryKey: ["reference-dashboard-biometric", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/wfm/biometric-summary/adherence-summary${params}`))),
+    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "operations"].includes(variant),
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const devicesQuery = useQuery({
+    queryKey: ["reference-dashboard-devices", branchId],
+    queryFn: async () => ({
+      integrationStatus: asRecord(unwrap(await hrmsApi.get<unknown>("/api/integrations/cosec/sync-status"))),
+      devices: [],
+    }),
+    enabled: accessGranted && ["wfm", "wfm_attendance"].includes(variant),
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const pulseQuery = useQuery({
+    queryKey: ["reference-dashboard-pulse", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/daily-operations-pulse${params}`))),
+    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant),
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const managerLeavesQuery = useQuery({
+    queryKey: ["reference-dashboard-manager-leaves"],
+    queryFn: async () => {
+      const value = unwrap(await hrmsApi.get<unknown>("/api/leave/requests?limit=100"));
+      const record = asRecord(value);
+      return Array.isArray(value) ? asArray(value) : asArray(record.rows ?? record.requests ?? record.data);
+    },
+    enabled: accessGranted && variant === "manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const managerInsightsQuery = useQuery({
+    queryKey: ["reference-dashboard-manager-insights", code],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/dashboards/${code}/good-bad-insights`,
+    ))),
+    enabled: accessGranted && variant === "manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const managerAccountabilityQuery = useQuery({
+    queryKey: ["reference-dashboard-manager-accountability", code],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/dashboards/${code}/owner-accountability`,
+    ))),
+    enabled: accessGranted && variant === "manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const executiveQualityQuery = useExecutiveQualitySummary(
+    30,
+    accessGranted && ["ceo", "super_admin"].includes(variant),
+  );
+  const orgKpiQuery = useOrgKpiSummary(
+    undefined,
+    accessGranted && ["ceo", "super_admin", "manager"].includes(variant),
+  );
+
+  const itProvisioningQuery = useQuery({
+    queryKey: ["reference-dashboard-it-provisioning", branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/it-provisioning/stats?assigned_role=it${branchId ? `&branch_id=${branchId}` : ""}${processId ? `&process_id=${processId}` : ""}`,
+    ))),
+    enabled: accessGranted && variant === "it_manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const itDashboardQuery = useQuery({
+    queryKey: ["reference-dashboard-it-full", branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/it-provisioning/it-dashboard-summary${branchId || processId ? `?${branchId ? `branch_id=${branchId}` : ""}${branchId && processId ? "&" : ""}${processId ? `process_id=${processId}` : ""}` : ""}`,
+    ))),
+    enabled: accessGranted && variant === "it_manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const qualitySummaryQuery = useQuery({
+    queryKey: ["reference-dashboard-quality-summary", branchId, processId],
+    queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/summary${params}`),
+    enabled: accessGranted && variant === "quality",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const qualityTrendQuery = useQuery({
+    queryKey: ["reference-dashboard-quality-trend", branchId, processId],
+    queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/trend?granularity=day${branchId ? `&branchId=${branchId}` : ""}${processId ? `&processId=${processId}` : ""}`),
+    enabled: accessGranted && variant === "quality",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const qualityAgentsQuery = useQuery({
+    queryKey: ["reference-dashboard-quality-agents", branchId, processId],
+    queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/agents?limit=100${branchId ? `&branchId=${branchId}` : ""}${processId ? `&processId=${processId}` : ""}`),
+    enabled: accessGranted && variant === "quality",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  // QA-role quality data via /api/bi/quality-intervention (accessible to qa/quality_analyst roles)
+  const qaQualityQuery = useQuery({
+    queryKey: ["reference-dashboard-qa-quality", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/quality-intervention${params}`))),
+    enabled: accessGranted && ["operations", "manager", "super_admin", "ceo"].includes(variant),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const summary = summaryQuery.data;
+  const metrics = summary?.metrics ?? {};
+  const employeeData = employeeQuery.data ?? EMPTY_EMPLOYEE;
+  const activeQueryResults = accessGranted ? [
+    ...(variant !== "employee" ? [summaryQuery] : []),
+    ...(variant === "employee" ? [employeeQuery] : []),
+    ...(["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant) ? [atsQuery] : []),
+    ...(variant === "recruiter" ? [recruiterHiringQuery] : []),
+    ...(variant === "super_admin" ? [systemQuery] : []),
+    ...(["ceo", "manager", "super_admin", "operations", "quality", "hr"].includes(variant) ? [workforceQuery] : []),
+    ...(["ceo", "payroll", "super_admin"].includes(variant) ? [pnlQuery] : []),
+    ...(variant === "payroll" ? [payrollRunsQuery, payrollQuery] : []),
+    ...(["wfm", "wfm_attendance", "manager", "operations"].includes(variant) ? [biometricQuery] : []),
+    ...(["wfm", "wfm_attendance"].includes(variant) ? [devicesQuery] : []),
+    ...(["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant) ? [pulseQuery] : []),
+    ...(variant === "manager" ? [managerLeavesQuery, managerInsightsQuery, managerAccountabilityQuery] : []),
+    ...(["ceo", "super_admin"].includes(variant) ? [executiveQualityQuery] : []),
+    ...(["ceo", "super_admin", "manager"].includes(variant) ? [orgKpiQuery] : []),
+    ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
+    ...(["operations", "manager", "super_admin", "ceo"].includes(variant) ? [qaQualityQuery] : []),
+    ...(variant === "it_manager" ? [itProvisioningQuery, itDashboardQuery] : []),
+  ] : [];
+
+  // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
+  const executiveQuality = normalizeExecutiveQualityData(executiveQualityQuery.data);
+  const directQuality = normalizeQualityDashboardData(
+    qualitySummaryQuery.data,
+    qualityTrendQuery.data,
+    qualityAgentsQuery.data,
+  );
+  const qaQualityRecord = qaQualityQuery.data ?? {};
+  const interventionQuality: JsonRecord = {
+    avg_score: qaQualityRecord.summary != null
+      ? asNumber((qaQualityRecord.summary as JsonRecord).avg_quality_score)
+      : null,
+    total_audits: asNumber((qaQualityRecord.summary as JsonRecord | undefined)?.agents_below_threshold),
+    fail_rate: null,
+    pending_audits: asNumber((qaQualityRecord.summary as JsonRecord | undefined)?.processes_declining),
+    score_trend: qaQualityRecord.process_rag ?? [],
+    // Defect categories — map process_rag or process_performance
+    defects: (qaQualityRecord.process_rag as JsonRecord[] | undefined)?.map((r) => ({
+      category: r.process,
+      count: r.avg_score,
+      severity: r.rag,
+    })) ?? [],
+    // Bottom agents — from executive bottom_performers or QA critical_agents
+    bottom_agents: (qaQualityRecord.critical_agents as JsonRecord[] | undefined)?.map((a) => ({
+      agent_name: a.agent_name,
+      score: a.quality_score,
+      process: a.campaign,
+      fail_count: null,
+    })) ?? [],
+    // Intervention flags from QA pulse
+    intervention_flags: qaQualityRecord.intervention_flags ?? [],
+  };
+  const mergedQuality = variant === "quality"
+    ? directQuality
+    : ["ceo", "super_admin"].includes(variant)
+      ? executiveQuality
+      : interventionQuality;
+  const ats = variant === "recruiter"
+    ? mergeRecruiterDashboardData(atsQuery.data, recruiterHiringQuery.data)
+    : atsQuery.data ?? {};
+
+  // Show skeleton only until the primary query resolves; secondary cards render progressively.
+  const primaryLoading = roleLoading || (variant !== "employee" ? summaryQuery.isLoading : employeeQuery.isLoading);
+
+  // Single drill-down owner for all twelve dashboards.
+  //
+  // Every metric already carries a drilldownUrl and all twelve backend drilldowns work,
+  // but no layout ever opened the drawer — so no tile on any dashboard was clickable
+  // through to the records behind its number. Owning the drawer here and passing a
+  // factory down through ReferenceDashboardData means each layout only has to spread
+  // `...drilldownFor("att")` onto a tile, and no layout needs its own drawer or state.
+  const [activeDrilldown, setActiveDrilldown] = useState<
+    { metricCode: string; metricName: string; filters?: Record<string, string> } | null
+  >(null);
+
+  const drilldownFor = (
+    metricKey: string,
+    filters?: Record<string, string>,
+  ): { onDrilldown?: () => void } => {
+    const metric = metrics[metricKey];
+    // Only offer a drill-down when the metric resolved and actually exposes a route.
+    if (!metric?.drilldownUrl || metric.available === false) return {};
+    return {
+      onDrilldown: () => setActiveDrilldown({
+        metricCode: metric.code,
+        metricName: metric.label ?? metricKey,
+        filters,
+      }),
+    };
+  };
+
+  const data: ReferenceDashboardData = {
+    variant,
+    summary: summary ?? {} as DashboardSummary,
+    metrics,
+    drilldownFor,
+    employee: employeeData,
+    ats,
+    system: systemQuery.data ?? {},
+    workforce: workforceQuery.data ?? {},
+    pnl: pnlQuery.data ?? {},
+    payroll: payrollQuery.data ?? {},
+    payrollRuns: payrollRunsQuery.data ?? [],
+    selectedPayrollRunId,
+    onPayrollRunChange: setSelectedPayrollRunId,
+    biometric: biometricQuery.data ?? {},
+    devices: devicesQuery.data ?? {},
+    opsPulse: pulseQuery.data ?? {},
+    managerLeaves: managerLeavesQuery.data ?? [],
+    // /api/leave/requests was slow enough in production to 500 (its COUNT ran display
+    // joins it did not need — fixed separately). A failed query and "genuinely zero
+    // leave requests" must not render the same way: managerLeaves defaults to [] on
+    // error like any query result, so this flag is how the Leave Requests Summary panel
+    // can tell "0" from "unknown" instead of quietly showing whichever the fetch gave it.
+    managerLeavesError: managerLeavesQuery.isError,
+    managerInsights: managerInsightsQuery.data ?? {},
+    managerAccountability: asArray(managerAccountabilityQuery.data?.accountability),
+    quality: mergedQuality,
+    orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
+    itProvisioning: itProvisioningQuery.data ?? {},
+    itProvisioningAvailable: !itProvisioningQuery.isError,
+    itDashboard: itDashboardQuery.data ?? {},
+    loading: primaryLoading,
+    // True while any feed a KPI tile reads is still resolving — see ReferenceDashboardData.
+    secondaryLoading: activeQueryResults.some((query) => query.isLoading),
+    refreshing: activeQueryResults.some((query) => query.isFetching),
+    generatedAt: summary?.generatedAt,
+  };
+
+  const unavailableMetrics = unavailableMetricCodes(metrics);
+  const employeeSourceErrors = employeeData.sourceErrors ?? [];
+  const networkErrorCount = activeQueryResults.filter((query) => query.isError).length;
+  const refreshAll = () => { for (const query of activeQueryResults) void query.refetch(); };
+
+  // A source that is simply empty is NOT an error and must not appear in this banner —
+  // otherwise real breakage hides among routine empties, which is how a hard 500 and a
+  // permanently-blank panel both survived three audits. Empty sources are reported on
+  // their own tiles via metricUnavailableReason() instead.
+  const errorMessage = useMemo(() => {
+    const parts: string[] = [];
+    if (networkErrorCount > 0) parts.push(`${networkErrorCount} API request${networkErrorCount === 1 ? "" : "s"} failed`);
+    if (unavailableMetrics.length > 0) parts.push(`database sources unavailable: ${unavailableMetrics.join(", ")}`);
+    if (employeeSourceErrors.length > 0) parts.push(employeeSourceErrors.join("; "));
+    return parts.length > 0 ? `${parts.join(". ")}. Available dashboard data is still shown.` : null;
+  }, [employeeSourceErrors, networkErrorCount, unavailableMetrics]);
+
+  // "payroll" was missing from this list, and ReferenceDashboardShell.tsx — the only
+  // other source PayrollReferenceLayout's header falls back to — is never mounted
+  // anywhere in the app, so its header's right-hand slot (branch/process filter,
+  // refresh, "data as of") rendered permanently empty. This control is generic
+  // (driven by dashboardCode, not the variant), so adding payroll here is the same
+  // fix every other listed dashboard already has, not a new behavior.
+  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll"].includes(variant) ? (
+    <div className="flex flex-wrap items-center justify-end gap-3">
+      <ScopedFilterBar
+        onBranchChange={setBranchId}
+        onProcessChange={setProcessId}
+        onDateRangeChange={() => {}}
+        dashboardCode={code}
+        showDateRange={false}
+        className="border-0 bg-transparent p-0 shadow-none"
+      />
+      <UpdatedControl generatedAt={data.generatedAt} refreshing={data.refreshing} onRefresh={refreshAll} />
+    </div>
+  ) : undefined;
+
+  if (roleLoading) {
+    return (
+      <DashboardLayout subheader={subheader}>
+        <div className="space-y-4 p-2"><Skeleton className="h-12 w-80 max-w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-80 w-full" /></div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!accessGranted) {
+    return (
+      <DashboardLayout subheader={subheader}>
+        <div className="flex min-h-[65vh] items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-xl border border-[#ffdadd] bg-white p-8 text-center shadow-sm">
+            <ShieldX className="mx-auto h-12 w-12 text-[#ef4444]" />
+            <h1 className="mt-4 text-xl font-bold text-[#0b1f44]">Access Restricted</h1>
+            <p className="mt-2 text-sm text-[#61708a]">Your assigned roles do not permit access to this dashboard.</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const employeeName = roleData?.employeeName ?? roleData?.employeeCode ?? "Employee";
+
+  return (
+    <DashboardLayout subheader={subheader}>
+      <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
+        {/* Quick Links bar - thin horizontal row for quick page access */}
+        <div className="mb-3 -mt-2 border-b border-slate-100 bg-white/80 backdrop-blur-sm rounded-lg">
+          <QuickLinksBar />
+        </div>
+
+        {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
+        {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
+        {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "hr" ? <HrReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "ceo" ? <CeoReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "payroll" ? <PayrollReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} filters={filterControl} /> : null}
+        {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "quality" ? <QualityReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "operations" ? <OperationsReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "recruiter" ? <RecruiterReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "it_manager" ? <ItManagerReferenceLayout data={data} filters={filterControl} /> : null}
+
+        {/* One drawer serves every dashboard; tiles opt in via data.drilldownFor(key). */}
+        {activeDrilldown ? (
+          <DashboardDrilldownDrawer
+            open
+            onClose={() => setActiveDrilldown(null)}
+            dashboardCode={code}
+            metricCode={activeDrilldown.metricCode}
+            metricName={activeDrilldown.metricName}
+            filters={activeDrilldown.filters}
+          />
+        ) : null}
+      </main>
+    </DashboardLayout>
+  );
+}

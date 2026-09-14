@@ -1,0 +1,674 @@
+import { Router } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { randomUUID } from 'crypto';
+import { db } from '../../db/mysql.js';
+import { writeAuditLog as writeEnterpriseAuditLog } from '../../shared/auditLog.js';
+import type { RowDataPacket } from 'mysql2';
+import multer from 'multer';
+
+import * as svc from './incentives.service.js';
+import {
+  CreateIncentiveMasterSchema, UpdateIncentiveMasterSchema,
+  CreateBatchSchema, ImportLinesSchema, ApproveRejectSchema, ApplyToRunSchema,
+} from './incentives.validation.js';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+export const incentivesRouter = Router();
+incentivesRouter.use(requireAuth);
+
+// ── MASTERS ───────────────────────────────────────────────────────────────────
+incentivesRouter.get('/masters', h(async (req, res) => {
+  const includeInactive = (req.query as any).all === 'true';
+  res.json({ success: true, data: await svc.listIncentiveMasters(includeInactive) });
+}));
+
+incentivesRouter.post('/masters', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+  const parsed = CreateIncentiveMasterSchema.parse(req.body);
+  const data = await svc.createIncentiveMaster(parsed, req.authUser?.id ?? '');
+  res.status(201).json({ success: true, data });
+}));
+
+incentivesRouter.put('/masters/:id', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+  const parsed = UpdateIncentiveMasterSchema.parse(req.body);
+  const data = await svc.updateIncentiveMaster(req.params.id, parsed);
+  res.json({ success: true, data });
+}));
+
+incentivesRouter.delete('/masters/:id', requireRole('admin'), h(async (req, res) => {
+  await svc.softDeleteIncentiveMaster(req.params.id);
+  res.json({ success: true });
+}));
+
+// PATCH /masters/:id/toggle — activate / deactivate incentive type
+incentivesRouter.patch('/masters/:id/toggle', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+  const result = await svc.toggleIncentiveMaster(req.params.id);
+  res.json({ success: true, data: result });
+}));
+
+// ── BULK UPLOAD TEMPLATE ──────────────────────────────────────────────────────
+// GET /upload-template?month=YYYY-MM — download CSV template with dynamic incentive type columns
+incentivesRouter.get('/upload-template', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const month = ((req.query as any).month as string) || new Date().toISOString().slice(0, 7);
+
+  // Fetch active incentive types (alphabetical)
+  const [types] = await db.execute<RowDataPacket[]>(
+    'SELECT incentive_code FROM incentive_master WHERE active_status = 1 ORDER BY incentive_name'
+  );
+  const typeCodes = (types as any[]).map((t: any) => t.incentive_code as string);
+
+  // Fetch employees with branch + cost_centre
+  const [employees] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
+     FROM employees e
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+     WHERE e.employment_status IN ('active','on_leave')
+     ORDER BY e.employee_code
+     LIMIT 5000`
+  );
+
+  const headers = ['employee_code', 'month', 'branch', 'cost_centre', ...typeCodes, 'total_incentive'];
+  const rows = (employees as any[]).map((emp: any) => [
+    emp.employee_code,
+    month,
+    emp.branch_name ?? '',
+    emp.cost_centre_code ?? '',
+    ...typeCodes.map(() => 0),
+    0,
+  ]);
+
+  const csv = [headers.join(','), ...rows.map((r: any[]) => r.join(','))].join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="incentive_upload_${month}.csv"`);
+  res.send(csv);
+}));
+
+// ── BULK UPLOAD ───────────────────────────────────────────────────────────────
+// POST /bulk-upload — multipart CSV file upload
+// Creates one batch per incentive type found in the CSV and stores individual lines
+incentivesRouter.post('/bulk-upload',
+  requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'),
+  csvUpload.single('file'),
+  h(async (req: AuthenticatedRequest, res) => {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
+
+    const uploadedBy = req.authUser!.id;
+    const csvText = req.file.buffer.toString('utf-8');
+    const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return res.status(400).json({ success: false, message: 'CSV has no data rows' });
+
+    const headers = lines[0].split(',').map((h: string) => h.trim().toLowerCase());
+    const FIXED = new Set(['employee_code', 'month', 'branch', 'cost_centre', 'total_incentive']);
+    const typeCols = headers.filter((h: string) => !FIXED.has(h));
+
+    if (!typeCols.length) return res.status(400).json({ success: false, message: 'No incentive type columns found in CSV' });
+
+    // Load incentive masters to map code → id
+    const [masters] = await db.execute<RowDataPacket[]>(
+      'SELECT id, incentive_code FROM incentive_master WHERE active_status = 1'
+    );
+    const masterMap = new Map((masters as any[]).map((m: any) => [m.incentive_code.toLowerCase(), m.id]));
+
+    // Load branch + cost_centre lookup maps
+    const [branches] = await db.execute<RowDataPacket[]>('SELECT id, branch_name FROM branch_master');
+    const branchMap = new Map((branches as any[]).map((b: any) => [b.branch_name?.toLowerCase(), b.id]));
+
+    const [costCentres] = await db.execute<RowDataPacket[]>('SELECT id, cost_centre_code FROM cost_centre_master');
+    const ccMap = new Map((costCentres as any[]).map((c: any) => [c.cost_centre_code?.toLowerCase(), c.id]));
+
+    const [empRows] = await db.execute<RowDataPacket[]>('SELECT id, employee_code FROM employees WHERE employment_status IN ("active","on_leave")');
+    const empMap = new Map((empRows as any[]).map((e: any) => [e.employee_code?.toLowerCase(), e.id]));
+
+    // One batch per incentive type (to preserve approval-per-type semantics)
+    const batchByType = new Map<string, string>(); // incentiveCode → batchId
+    let pay_month = '';
+    const perTypeTotals: Record<string, number> = {};
+    const perTypeEmployees: Record<string, Set<string>> = {};
+    let linesInserted = 0;
+    const errors: string[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map((c: string) => c.trim());
+      const row: Record<string, string> = {};
+      headers.forEach((h: string, idx: number) => { row[h] = cols[idx] ?? ''; });
+
+      const empCode = row['employee_code']?.toLowerCase();
+      const empId = empMap.get(empCode);
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${row['employee_code']}" not found`); continue; }
+
+      pay_month = row['month'] || pay_month;
+      const branchId = branchMap.get(row['branch']?.toLowerCase()) ?? null;
+      const ccId = ccMap.get(row['cost_centre']?.toLowerCase()) ?? null;
+
+      for (const typeCode of typeCols) {
+        const amount = parseFloat(row[typeCode]);
+        if (!amount || amount <= 0) continue;
+
+        const incentiveMasterId = masterMap.get(typeCode.toLowerCase());
+        if (!incentiveMasterId) { errors.push(`Unknown incentive type: ${typeCode}`); continue; }
+
+        // Ensure batch exists for this type
+        if (!batchByType.has(typeCode)) {
+          const batchId = randomUUID();
+          const batchRef = `INCEN-${typeCode.toUpperCase()}-${pay_month}`;
+          await db.execute(
+            `INSERT INTO incentive_upload_batch
+               (id, incentive_id, pay_month, salary_month, batch_ref, status, uploaded_by, cost_centre_id, branch_id)
+             VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)
+             ON DUPLICATE KEY UPDATE id = id`,
+            [batchId, incentiveMasterId, pay_month, pay_month, batchRef, uploadedBy, ccId, branchId]
+          );
+          batchByType.set(typeCode, batchId);
+        }
+
+        const batchId = batchByType.get(typeCode)!;
+        await db.execute(
+          `INSERT INTO incentive_upload_line
+             (id, batch_id, employee_id, employee_code, incentive_code, amount, validation_status, branch_id, cost_centre_id)
+           VALUES (?, ?, ?, ?, ?, ?, 'ok', ?, ?)
+           ON DUPLICATE KEY UPDATE amount = VALUES(amount), branch_id = VALUES(branch_id), cost_centre_id = VALUES(cost_centre_id)`,
+          [randomUUID(), batchId, empId, row['employee_code'], typeCode.toUpperCase(), amount, branchId, ccId]
+        );
+
+        perTypeTotals[typeCode] = (perTypeTotals[typeCode] ?? 0) + amount;
+        if (!perTypeEmployees[typeCode]) perTypeEmployees[typeCode] = new Set();
+        perTypeEmployees[typeCode].add(empId);
+        linesInserted++;
+      }
+    }
+
+    // Update batch totals
+    for (const [typeCode, batchId] of batchByType) {
+      const total = perTypeTotals[typeCode] ?? 0;
+      const empCount = perTypeEmployees[typeCode]?.size ?? 0;
+      await db.execute(
+        'UPDATE incentive_upload_batch SET total_employees=?, total_amount=? WHERE id=?',
+        [empCount, total, batchId]
+      );
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        batches_created: batchByType.size,
+        batch_ids: Object.fromEntries(batchByType),
+        lines_inserted: linesInserted,
+        pay_month,
+        per_type_totals: perTypeTotals,
+        errors: errors.slice(0, 20),
+      },
+    });
+  })
+);
+
+// ── BATCHES ───────────────────────────────────────────────────────────────────
+incentivesRouter.get('/batches', h(async (req, res) => {
+  const { month } = req.query as Record<string, string>;
+  res.json({ success: true, data: await svc.listBatches(month) });
+}));
+
+incentivesRouter.post('/batches', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const parsed = CreateBatchSchema.parse(req.body);
+  const data = await svc.createBatch(parsed, req.authUser?.id ?? '');
+  res.status(201).json({ success: true, data });
+}));
+
+// Single-employee manual incentive entry
+incentivesRouter.post('/batches/single-entry', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const { employee_id, incentive_code, amount, remarks, pay_month } = req.body;
+  if (!employee_id || !incentive_code || !amount || !remarks || !pay_month) {
+    return res.status(400).json({ error: 'employee_id, incentive_code, amount, remarks, and pay_month are required' });
+  }
+  if (String(remarks).trim().length < 5) {
+    return res.status(400).json({ error: 'remarks must be at least 5 characters' });
+  }
+  // Resolve employee_code from employee_id
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    'SELECT employee_code FROM employees WHERE id = ? AND active_status = 1',
+    [employee_id]
+  );
+  if (!(empRows as RowDataPacket[]).length) {
+    return res.status(400).json({ error: 'Employee not found or not active' });
+  }
+  const employee_code = (empRows as RowDataPacket[])[0].employee_code;
+  // Find or create a draft batch for this pay_month
+  const existingBatches = await svc.listBatches(pay_month);
+  const batches = Array.isArray(existingBatches) ? existingBatches : (existingBatches as any)?.data ?? [];
+  let batch = batches.find((b: any) => b.status === 'draft');
+  if (!batch) {
+    batch = await svc.createBatch({ incentive_id: incentive_code, pay_month, remarks: 'Single entry batch' }, req.authUser?.id ?? '');
+  }
+  const batchId = (batch as any).id ?? batch;
+  const lines = [{ employee_code: String(employee_code), amount: Number(amount), remarks: String(remarks).trim() }];
+  const result = await svc.importLines(String(batchId), lines);
+  res.status(201).json({ success: true, batch_id: batchId, data: result });
+}));
+
+incentivesRouter.get('/batches/:id', h(async (req, res) => {
+  const data = await svc.getBatchById(req.params.id);
+  if (!data) return res.status(404).json({ error: 'Batch not found' });
+  res.json({ success: true, data });
+}));
+
+incentivesRouter.get('/batches/:id/lines', h(async (req, res) => {
+  res.json({ success: true, data: await svc.getBatchLines(req.params.id) });
+}));
+
+incentivesRouter.post('/batches/:id/lines/import', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const parsed = ImportLinesSchema.parse(req.body);
+  const data = await svc.importLines(req.params.id, parsed);
+  res.json({ success: true, data });
+}));
+
+incentivesRouter.post('/batches/:id/submit', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const data = await svc.submitBatch(req.params.id, req.authUser?.id ?? '');
+  res.json({ success: true, data });
+}));
+
+incentivesRouter.post('/batches/:id/approve', requireRole('admin', 'finance'), h(async (req, res) => {
+  const parsed = ApproveRejectSchema.parse(req.body);
+  const data = await svc.approveBatch(req.params.id, req.authUser?.id ?? '', parsed.remarks);
+  res.json({ success: true, data });
+}));
+
+incentivesRouter.post('/batches/:id/reject', requireRole('admin', 'finance'), h(async (req, res) => {
+  const parsed = ApproveRejectSchema.parse(req.body);
+  const data = await svc.rejectBatch(req.params.id, req.authUser?.id ?? '', parsed.remarks);
+  res.json({ success: true, data });
+}));
+
+// ── APPLY TO RUN ──────────────────────────────────────────────────────────────
+incentivesRouter.post('/apply-to-run', requireRole('admin', 'finance', 'payroll'), h(async (req, res) => {
+  const parsed = ApplyToRunSchema.parse(req.body);
+  const data = await svc.applyToRun(parsed.run_id, parsed.pay_month, req.authUser?.id ?? '');
+  res.json({ success: true, data });
+}));
+
+// ── 3-TIER APPROVAL CHAIN ─────────────────────────────────────────────────────
+// Flow: WFM uploads → branch_head (step 1) → operations_head (step 2) → finance_head (step 3)
+// After finance_head approves → status = 'finance_approved'
+// Register action (separate) → status = 'fully_approved'
+
+// Step role mapping: step 1=branch_head, 2=operations_head, 3=finance_head
+const APPROVAL_STEPS: Record<number, string> = {
+  1: 'branch_head',
+  2: 'operations_head',
+  3: 'finance_head',
+};
+const APPROVAL_STEP_COUNT = 3;
+
+// Helper: insert a work_item for the next approver role
+async function createApprovalWorkItem(
+  batchId: string,
+  role: string,
+  createdBy: string,
+  batchRef?: string
+): Promise<void> {
+  const title = `Incentive batch approval required${batchRef ? ` — ${batchRef}` : ''}`;
+  await db.execute(
+    `INSERT INTO work_item
+       (id, item_type, title, module_code, entity_type, entity_id,
+        assigned_to_role, priority, status, created_by)
+     VALUES (UUID(), 'INCENTIVE_APPROVAL', ?, 'INCENTIVES', 'incentive_batch', ?, ?, 'high', 'open', ?)`,
+    [title, batchId, role, createdBy]
+  );
+}
+
+/**
+ * Record an incentive approval-chain event.
+ *
+ * Neither of the two statements this replaced could ever succeed, and both
+ * failures were swallowed, so not one incentive approval, rejection or register
+ * creation has ever been audited.
+ *
+ *   audit_log named user_id, action and meta. The table has actor_user_id,
+ *   action_type and metadata_json - and module_key, which is NOT NULL with no
+ *   default and was never supplied, so it would have failed even with the right
+ *   names. That table holds 0 rows and this file was its only writer.
+ *
+ *   the fallback wrote the same shape into work_item_audit_log, which has none
+ *   of those columns. It tracks work-item transitions and requires work_item_id
+ *   (NOT NULL), so an incentive_batch row could not go there under any spelling.
+ *
+ * Delegating to the shared writer rather than correcting the SQL: it is the
+ * mechanism already in use (audit_action_log holds 84 rows against audit_log's
+ * 0), it supplies module_key, and it is non-throwing by contract, which is the
+ * property the swallowed try/catch was reaching for. Call sites keep this
+ * signature and are unchanged.
+ *
+ * The separate work_item_audit_log insert further down is left alone - that one
+ * names the real columns (work_item_id, from_status, to_status, performed_by)
+ * and is genuinely about a work-item transition.
+ */
+async function writeAuditLog(
+  userId: string,
+  action: string,
+  entityId: string,
+  meta: Record<string, unknown>
+): Promise<void> {
+  await writeEnterpriseAuditLog({
+    actor_user_id: userId,
+    action_type: action,
+    module_key: 'incentives',
+    entity_type: 'incentive_batch',
+    entity_id: entityId,
+    metadata: meta,
+  });
+}
+
+// POST /batches/:batchId/approval-chain/init — initialize 3-step approval chain
+incentivesRouter.post('/batches/:batchId/approval-chain/init',
+  requireRole('admin', 'hr', 'finance', 'wfm'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const { batchId } = req.params;
+    const userId = req.authUser!.id;
+    const batch = await svc.getBatchById(batchId);
+    if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
+
+    // Remove any prior steps for idempotency
+    await db.execute('DELETE FROM incentive_approval_step WHERE batch_id = ?', [batchId]);
+
+    for (let step = 1; step <= APPROVAL_STEP_COUNT; step++) {
+      await db.execute(
+        `INSERT INTO incentive_approval_step (id, batch_id, step_number, required_role, status)
+         VALUES (UUID(), ?, ?, ?, ?)`,
+        [batchId, step, APPROVAL_STEPS[step], step === 1 ? 'pending' : 'waiting']
+      );
+    }
+
+    await db.execute(
+      `UPDATE incentive_upload_batch SET status = 'approval_chain_active' WHERE id = ?`,
+      [batchId]
+    );
+
+    // Create work_item for the first approver (branch_head)
+    await createApprovalWorkItem(batchId, 'branch_head', userId, (batch as any).batch_ref ?? batchId);
+
+    await writeAuditLog(userId, 'INCENTIVE_APPROVAL_CHAIN_INIT', batchId, {
+      batch_ref: (batch as any).batch_ref,
+      steps: APPROVAL_STEP_COUNT,
+    });
+
+    const [steps] = await db.execute<RowDataPacket[]>(
+      'SELECT * FROM incentive_approval_step WHERE batch_id = ? ORDER BY step_number',
+      [batchId]
+    );
+    return res.status(201).json({ success: true, data: steps });
+  })
+);
+
+// POST /batches/:batchId/step-approve — current approver approves current step
+incentivesRouter.post('/batches/:batchId/step-approve',
+  h(async (req: AuthenticatedRequest, res) => {
+    const { batchId } = req.params;
+    const userId = req.authUser!.id;
+    const { remarks } = req.body as { remarks?: string };
+
+    // Find the current pending step
+    const [pendingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM incentive_approval_step
+       WHERE batch_id = ? AND status = 'pending'
+       ORDER BY step_number LIMIT 1`,
+      [batchId]
+    );
+    if (!pendingRows.length) {
+      return res.status(400).json({ success: false, message: 'No pending approval step found for this batch' });
+    }
+    const step = pendingRows[0] as any;
+
+    // Check requesting user has the required role
+    // Step 1 accepts both 'branch_head' and 'bm' as equivalent roles
+    const [userRolesRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [userId]
+    );
+    const userRole = (userRolesRows[0] as any)?.role_key ?? '';
+    const requiredRoles = step.required_role === 'branch_head'
+      ? ['branch_head', 'bm']
+      : [step.required_role];
+    if (!requiredRoles.includes(userRole) && userRole !== 'admin') {
+      return res.status(403).json({ success: false, message: `This step requires role: ${step.required_role}` });
+    }
+
+    const prevStatus = step.status as string;
+    await db.execute(
+      `UPDATE incentive_approval_step
+       SET status = 'approved', approver_user_id = ?, decided_at = NOW(), remarks = ?
+       WHERE id = ?`,
+      [userId, remarks ?? null, step.id]
+    );
+
+    // Activate next step if exists, else mark batch finance_approved
+    // (register action is a separate step that sets fully_approved)
+    const nextStep = step.step_number + 1;
+    if (nextStep <= APPROVAL_STEP_COUNT) {
+      await db.execute(
+        `UPDATE incentive_approval_step SET status = 'pending' WHERE batch_id = ? AND step_number = ?`,
+        [batchId, nextStep]
+      );
+      // Create work_item for the next approver role
+      await createApprovalWorkItem(batchId, APPROVAL_STEPS[nextStep], userId);
+    } else {
+      // All 3 steps approved — finance_head is the last approver; status = finance_approved
+      await db.execute(
+        `UPDATE incentive_upload_batch SET status = 'finance_approved' WHERE id = ?`,
+        [batchId]
+      );
+      // Create work_item for payroll_hr to action the register step
+      await createApprovalWorkItem(batchId, 'payroll_hr', userId).catch(() => {});
+    }
+
+    // Audit log: use work_item_audit_log schema
+    try {
+      await db.execute(
+        `INSERT INTO work_item_audit_log
+           (id, work_item_id, action, from_status, to_status, remarks, performed_by, performed_at)
+         VALUES (UUID(), ?, 'INCENTIVE_STEP_APPROVED', ?, 'approved', ?, ?, NOW())`,
+        [step.id, prevStatus, remarks ?? null, userId]
+      );
+    } catch {
+      // best-effort; also try generic audit_log
+      await writeAuditLog(userId, 'INCENTIVE_STEP_APPROVED', batchId, {
+        step_number: step.step_number,
+        required_role: step.required_role,
+        remarks: remarks ?? null,
+      });
+    }
+
+    const [steps] = await db.execute<RowDataPacket[]>(
+      'SELECT * FROM incentive_approval_step WHERE batch_id = ? ORDER BY step_number',
+      [batchId]
+    );
+    return res.json({ success: true, data: steps });
+  })
+);
+
+// POST /batches/:batchId/step-reject — current approver rejects with reason
+incentivesRouter.post('/batches/:batchId/step-reject',
+  h(async (req: AuthenticatedRequest, res) => {
+    const { batchId } = req.params;
+    const userId = req.authUser!.id;
+    const { reason } = req.body as { reason?: string };
+
+    if (!reason?.trim()) {
+      return res.status(400).json({ success: false, message: 'reason is required for rejection' });
+    }
+
+    const [pendingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM incentive_approval_step
+       WHERE batch_id = ? AND status = 'pending'
+       ORDER BY step_number LIMIT 1`,
+      [batchId]
+    );
+    if (!pendingRows.length) {
+      return res.status(400).json({ success: false, message: 'No pending approval step found for this batch' });
+    }
+    const step = pendingRows[0] as any;
+
+    const [userRolesRRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [userId]
+    );
+    const userRoleR = (userRolesRRows[0] as any)?.role_key ?? '';
+    const requiredRolesR = step.required_role === 'branch_head'
+      ? ['branch_head', 'bm']
+      : [step.required_role];
+    if (!requiredRolesR.includes(userRoleR) && userRoleR !== 'admin') {
+      return res.status(403).json({ success: false, message: `This step requires role: ${step.required_role}` });
+    }
+
+    const prevStatusR = step.status as string;
+    await db.execute(
+      `UPDATE incentive_approval_step
+       SET status = 'rejected', approver_user_id = ?, decided_at = NOW(), remarks = ?
+       WHERE id = ?`,
+      [userId, reason, step.id]
+    );
+
+    await db.execute(
+      `UPDATE incentive_upload_batch SET status = 'rejected' WHERE id = ?`,
+      [batchId]
+    );
+
+    // Audit log: use work_item_audit_log schema
+    try {
+      await db.execute(
+        `INSERT INTO work_item_audit_log
+           (id, work_item_id, action, from_status, to_status, remarks, performed_by, performed_at)
+         VALUES (UUID(), ?, 'INCENTIVE_STEP_REJECTED', ?, 'rejected', ?, ?, NOW())`,
+        [step.id, prevStatusR, reason, userId]
+      );
+    } catch {
+      await writeAuditLog(userId, 'INCENTIVE_STEP_REJECTED', batchId, {
+        step_number: step.step_number,
+        required_role: step.required_role,
+        reason,
+      });
+    }
+
+    return res.json({ success: true, message: 'Step rejected, batch marked as rejected' });
+  })
+);
+
+// GET /batches/:batchId/approval-steps — get all approval steps for a batch
+incentivesRouter.get('/batches/:batchId/approval-steps',
+  h(async (req: AuthenticatedRequest, res) => {
+    const [steps] = await db.execute<RowDataPacket[]>(
+      `SELECT ias.*,
+              COALESCE(
+                NULLIF(actioned_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(actioned_emp.first_name, ''), ' ', COALESCE(actioned_emp.last_name, ''))), ''),
+                actioned_user.email
+              ) as actioned_by_name
+       FROM incentive_approval_step ias
+       LEFT JOIN auth_user actioned_user ON actioned_user.id = ias.approver_user_id
+       LEFT JOIN employees actioned_emp ON actioned_emp.user_id = actioned_user.id AND actioned_emp.active_status = 1
+       WHERE ias.batch_id = ?
+       ORDER BY ias.step_number`,
+      [req.params.batchId]
+    );
+    return res.json({ success: true, data: steps });
+  })
+);
+
+// GET /approvals/pending — get batches pending this user's approval
+incentivesRouter.get('/approvals/pending',
+  h(async (req: AuthenticatedRequest, res) => {
+    const userId = req.authUser!.id;
+    const [userRolesRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [userId]
+    );
+    const userRole = (userRolesRows[0] as any)?.role_key ?? '';
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT iub.*, ias.step_number as pending_step, ias.required_role,
+              im.incentive_name, im.incentive_code
+       FROM incentive_approval_step ias
+       JOIN incentive_upload_batch iub ON iub.id = ias.batch_id
+       JOIN incentive_master im ON im.id = iub.incentive_id
+       WHERE ias.status = 'pending' AND ias.required_role = ?
+       ORDER BY iub.pay_month DESC`,
+      [userRole]
+    );
+    return res.json({ success: true, data: rows });
+  })
+);
+
+// POST /batches/:batchId/register — finalize into payroll register (Finance only)
+incentivesRouter.post('/batches/:batchId/register',
+  requireRole('admin', 'finance'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const { batchId } = req.params;
+    const batch = await svc.getBatchById(batchId);
+    if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
+    if ((batch as any).status !== 'finance_approved') {
+      return res.status(400).json({ success: false, message: 'Batch must be finance_approved before registering' });
+    }
+
+    const registerId = randomUUID();
+    const registerRef = `INCEN-REG-${Date.now().toString(36).toUpperCase()}`;
+    await db.execute(
+      `INSERT INTO incentive_payroll_register
+         (id, register_ref, batch_id, pay_month, total_employees, total_amount, finalized_by, finalized_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        registerId,
+        registerRef,
+        batchId,
+        (batch as any).pay_month,
+        (batch as any).total_employees ?? 0,
+        (batch as any).total_amount ?? 0,
+        req.authUser!.id,
+      ]
+    );
+
+    // Register action completes the workflow — set fully_approved
+    await db.execute(
+      `UPDATE incentive_upload_batch SET status = 'fully_approved' WHERE id = ?`,
+      [batchId]
+    );
+
+    await writeAuditLog(req.authUser!.id, 'INCENTIVE_REGISTER_CREATED', batchId, {
+      register_id: registerId,
+      register_ref: registerRef,
+    });
+
+    return res.status(201).json({ success: true, data: { id: registerId, register_ref: registerRef } });
+  })
+);
+
+// GET /register — list all payroll registers
+incentivesRouter.get('/register',
+  requireRole('admin', 'finance', 'payroll'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const { pay_month } = req.query as Record<string, string>;
+    const params: unknown[] = [];
+    let where = '1=1';
+    if (pay_month) { where += ' AND ipr.pay_month = ?'; params.push(pay_month); }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ipr.*, iub.pay_month, im.incentive_name, im.incentive_code,
+              COALESCE(
+                NULLIF(finalized_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(finalized_emp.first_name, ''), ' ', COALESCE(finalized_emp.last_name, ''))), ''),
+                finalized_user.email
+              ) as finalized_by_name
+       FROM incentive_payroll_register ipr
+       JOIN incentive_upload_batch iub ON iub.id = ipr.batch_id
+       JOIN incentive_master im ON im.id = iub.incentive_id
+       LEFT JOIN auth_user finalized_user ON finalized_user.id = ipr.finalized_by
+       LEFT JOIN employees finalized_emp ON finalized_emp.user_id = finalized_user.id AND finalized_emp.active_status = 1
+       WHERE ${where}
+       ORDER BY ipr.finalized_at DESC`,
+      params
+    );
+    return res.json({ success: true, data: rows });
+  })
+);

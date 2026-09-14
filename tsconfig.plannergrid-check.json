@@ -1,0 +1,14 @@
+{
+  // Typecheck for the branch budget planner grid (/finance/branch-budget, Planner tab).
+  //
+  //     npx tsc -p tsconfig.plannergrid-check.json
+  //
+  // Scoped for the same reason as tsconfig.budgettopup-check.json: the repo-wide app project
+  // reports pre-existing errors elsewhere that bury anything introduced here.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/pnl/BranchBudgetPlannerGrid.tsx",
+    "src/hooks/useBranchBudget.ts",
+    "src/vite-env.d.ts"
+  ]
+}

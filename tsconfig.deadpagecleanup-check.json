@@ -1,0 +1,13 @@
+{
+  // Typecheck for the Phase 5 dead-page cleanup (9 confirmed-unrouted payroll pages deleted,
+  // plus the dangling NativeStatutoryConfig lazy-import removed from payroll.routes.tsx).
+  // Scoped per the pattern in tsconfig.disbursalcenter-check.json — root tsconfig reports 0
+  // regardless of errors.
+  //
+  //     npx tsc -p tsconfig.deadpagecleanup-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/config/routes/payroll.routes.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

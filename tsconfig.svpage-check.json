@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/finance/SalaryVoucherPage.tsx",
+    "src/config/routes/finance.routes.tsx",
+    "src/lib/pageRoutePageCodes.ts",
+    "src/vite-env.d.ts"
+  ]
+}

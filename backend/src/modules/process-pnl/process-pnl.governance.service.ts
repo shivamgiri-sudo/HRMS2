@@ -1,0 +1,813 @@
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import { processPnlService } from "./process-pnl.service.js";
+
+type SignoffRole = "finance_preparer" | "finance_head" | "accounts_head" | "ceo";
+type AdjustmentStatus = "draft" | "pending" | "approved" | "rejected" | "reversed";
+
+const SIGNOFF_SEQUENCE: SignoffRole[] = [
+  "finance_preparer",
+  "finance_head",
+  "accounts_head",
+  "ceo",
+];
+
+const ROLE_TO_SIGNOFF: Array<{ roles: string[]; signoffRole: SignoffRole }> = [
+  { roles: ["finance", "finance_preparer", "finance_analyst"], signoffRole: "finance_preparer" },
+  { roles: ["finance_head"], signoffRole: "finance_head" },
+  { roles: ["accounts_head"], signoffRole: "accounts_head" },
+  { roles: ["ceo"], signoffRole: "ceo" },
+];
+
+const ADJUSTMENT_CLASS_BY_METRIC: Record<string, string> = {
+  recognized_revenue: "recognized_revenue",
+  variable_billing: "variable_billing",
+  reward: "reward",
+  penalty: "penalty",
+  credit_note: "credit_note",
+  direct_people_cost: "direct_people_cost",
+  direct_non_people_cost: "direct_non_people_cost",
+  indirect_cost: "indirect_cost",
+  other_operating_adjustment: "other_operating_adjustment",
+  operating_profit: "other_operating_adjustment",
+};
+
+interface SaveContractInput {
+  id?: string;
+  client_id?: string | null;
+  process_id?: string | null;
+  contract_name: string;
+  billing_type?: string;
+  billing_rate?: number;
+  currency?: string;
+  monthly_minimum_commitment?: number;
+  sla_target_percentage?: number | null;
+  penalty_rule_json?: unknown;
+  effective_from?: string;
+  effective_to?: string | null;
+  status?: string;
+}
+
+interface SaveRateInput {
+  id?: string;
+  process_id: string;
+  contract_id?: string | null;
+  rate_type: string;
+  rate_amount: number;
+  unit?: string;
+  effective_from: string;
+  effective_to?: string | null;
+  approval_reference?: string | null;
+}
+
+interface SaveMonthlyPlanInput {
+  id?: string;
+  process_id: string;
+  period_code: string;
+  contracted_seats?: number | null;
+  required_productive_hc?: number | null;
+  planned_shrinkage_pct?: number | null;
+  required_roster_hc?: number | null;
+  buffer_target_pct?: number | null;
+  revenue_budget?: number | null;
+  direct_cost_budget?: number | null;
+  indirect_cost_budget?: number | null;
+  profit_budget?: number | null;
+  status?: string;
+}
+
+interface CreateAdjustmentInput {
+  process_id: string;
+  period_code: string;
+  metric_key: string;
+  previous_value: number;
+  adjustment_amount: number;
+  reason: string;
+  attachment_path?: string | null;
+}
+
+function currentPeriod(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthRange(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const start = `${period}-01`;
+  const endDate = new Date(year, month, 0);
+  const end = `${period}-${String(endDate.getDate()).padStart(2, "0")}`;
+  return { start, end };
+}
+
+function shiftPeriod(period: string, delta: number) {
+  const [year, month] = period.split("-").map(Number);
+  const date = new Date(year, month - 1 + delta, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function nullableId(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  return text ? text : null;
+}
+
+function normalizeRoleKeys(userRoles: string[] | undefined, fallbackRole?: string) {
+  const set = new Set<string>((userRoles ?? []).map((role) => String(role).trim()).filter(Boolean));
+  if (fallbackRole) set.add(String(fallbackRole).trim());
+  return set;
+}
+
+function allowedSignoffRolesForUser(userRoles: string[] | undefined, fallbackRole?: string): SignoffRole[] {
+  const roles = normalizeRoleKeys(userRoles, fallbackRole);
+  return ROLE_TO_SIGNOFF
+    .filter((item) => item.roles.some((role) => roles.has(role)) || roles.has("super_admin"))
+    .map((item) => item.signoffRole);
+}
+
+function nextRequiredSignoffRole(signoffs: Array<{ signoff_role: string; status: string }>): SignoffRole | null {
+  const signed = new Set(signoffs.filter((item) => item.status === "signed").map((item) => item.signoff_role));
+  return SIGNOFF_SEQUENCE.find((role) => !signed.has(role)) ?? null;
+}
+
+async function ensureRequiredTable(tableName: string, help: string) {
+  if (!(await tableExists(tableName))) {
+    throw Object.assign(new Error(`${tableName} table missing. ${help}`), { statusCode: 500 });
+  }
+}
+
+async function ensureFinancePeriod(periodCode: string) {
+  await ensureRequiredTable("finance_period", "Run the Process P&L governance migration first.");
+
+  const existing = await queryRows<RowDataPacket>(
+    `SELECT *
+       FROM finance_period
+      WHERE period_code = ?
+      LIMIT 1`,
+    [periodCode]
+  );
+
+  if (existing[0]) return existing[0];
+
+  const id = randomUUID();
+  const { start, end } = monthRange(periodCode);
+  const [year, month] = periodCode.split("-").map(Number);
+  await db.execute(
+    `INSERT INTO finance_period
+      (id, period_code, period_year, period_month, start_date, end_date, status, actual_cutoff_date)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`,
+    [id, periodCode, year, month, start, end, end]
+  );
+
+  const created = await queryRows<RowDataPacket>(
+    `SELECT *
+       FROM finance_period
+      WHERE id = ?
+      LIMIT 1`,
+    [id]
+  );
+  return created[0];
+}
+
+async function refreshFinancePeriodStatus(periodId: string) {
+  if (!(await tableExists("pnl_period_signoff"))) return;
+
+  const signoffs = await queryRows<RowDataPacket>(
+    `SELECT signoff_role
+       FROM pnl_period_signoff
+      WHERE finance_period_id = ?
+        AND status = 'signed'`,
+    [periodId]
+  );
+
+  const signed = new Set(signoffs.map((row) => String(row.signoff_role)));
+  let status = "open";
+  if (signed.size > 0) status = "in_review";
+  if (["finance_preparer", "finance_head", "accounts_head"].every((role) => signed.has(role))) {
+    status = signed.has("ceo") ? "signed_off" : "in_review";
+  }
+  if (["finance_preparer", "finance_head", "accounts_head", "ceo"].every((role) => signed.has(role))) {
+    status = "signed_off";
+  }
+
+  await db.execute(`UPDATE finance_period SET status = ? WHERE id = ?`, [status, periodId]);
+}
+
+async function getReferenceData() {
+  const [processes, clients, branches] = await Promise.all([
+    queryRows<RowDataPacket>(
+      `SELECT
+          p.id,
+          p.process_name,
+          p.client_id,
+          cm.client_name,
+          p.branch_id,
+          bm.branch_name AS branch_name
+        FROM process_master p
+        LEFT JOIN client_master cm ON cm.id = p.client_id
+        LEFT JOIN branch_master bm ON bm.id = p.branch_id
+       WHERE COALESCE(p.active_status, 1) = 1
+       ORDER BY cm.client_name, p.process_name`
+    ),
+    queryRows<RowDataPacket>(
+      `SELECT id, client_name
+         FROM client_master
+        WHERE COALESCE(active_status, 1) = 1
+        ORDER BY client_name`
+    ).catch(() => []),
+    queryRows<RowDataPacket>(
+      `SELECT id, branch_name AS branch_name
+         FROM branch_master
+        WHERE COALESCE(active_status, 1) = 1
+        ORDER BY branch_name`
+    ).catch(() => []),
+  ]);
+
+  return {
+    processes: processes.map((row) => ({
+      id: String(row.id),
+      process_name: String(row.process_name ?? ""),
+      client_id: row.client_id ? String(row.client_id) : null,
+      client_name: row.client_name ? String(row.client_name) : null,
+      branch_id: row.branch_id ? String(row.branch_id) : null,
+      branch_name: row.branch_name ? String(row.branch_name) : null,
+    })),
+    clients: clients.map((row) => ({
+      id: String(row.id),
+      client_name: String(row.client_name ?? ""),
+    })),
+    branches: branches.map((row) => ({
+      id: String(row.id),
+      branch_name: String(row.branch_name ?? ""),
+    })),
+  };
+}
+
+export const processPnlGovernanceService = {
+  async getReferenceData() {
+    return getReferenceData();
+  },
+
+  async listContracts() {
+    if (!(await tableExists("client_contract_master"))) return [];
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          ccm.*,
+          cm.client_name,
+          pm.process_name,
+          bm.branch_name AS branch_name
+        FROM client_contract_master ccm
+        LEFT JOIN client_master cm ON cm.id = ccm.client_id
+        LEFT JOIN process_master pm ON pm.id = ccm.process_id
+        LEFT JOIN branch_master bm ON bm.id = pm.branch_id
+       ORDER BY ccm.status = 'active' DESC, ccm.effective_from DESC, pm.process_name`
+    );
+
+    return rows;
+  },
+
+  async saveContract(input: SaveContractInput, actorUserId: string) {
+    await ensureRequiredTable("client_contract_master", "Run the revenue at risk foundation migration first.");
+
+    if (!input.contract_name?.trim()) {
+      throw Object.assign(new Error("contract_name is required"), { statusCode: 400 });
+    }
+
+    const id = input.id?.trim() || randomUUID();
+    const values = [
+      nullableId(input.client_id),
+      nullableId(input.process_id),
+      input.contract_name.trim(),
+      input.billing_type ?? "per_seat",
+      toNumber(input.billing_rate),
+      input.currency ?? "INR",
+      toNumber(input.monthly_minimum_commitment),
+      input.sla_target_percentage ?? null,
+      input.penalty_rule_json ? JSON.stringify(input.penalty_rule_json) : null,
+      input.effective_from ?? `${currentPeriod()}-01`,
+      input.effective_to ?? null,
+      input.status ?? "active",
+    ];
+
+    const existing = await queryRows<RowDataPacket>(
+      `SELECT id FROM client_contract_master WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (existing[0]) {
+      await db.execute(
+        `UPDATE client_contract_master
+            SET client_id = ?,
+                process_id = ?,
+                contract_name = ?,
+                billing_type = ?,
+                billing_rate = ?,
+                currency = ?,
+                monthly_minimum_commitment = ?,
+                sla_target_percentage = ?,
+                penalty_rule_json = ?,
+                effective_from = ?,
+                effective_to = ?,
+                status = ?,
+                updated_at = NOW()
+          WHERE id = ?`,
+        [...values, id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO client_contract_master
+          (id, client_id, process_id, contract_name, billing_type, billing_rate, currency, monthly_minimum_commitment,
+           sla_target_percentage, penalty_rule_json, effective_from, effective_to, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, ...values, actorUserId]
+      );
+    }
+
+    processPnlService.invalidateCaches();
+    return { id };
+  },
+
+  async listRates() {
+    if (!(await tableExists("process_billing_rate"))) return [];
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          pbr.*,
+          pm.process_name,
+          ccm.contract_name
+        FROM process_billing_rate pbr
+        LEFT JOIN process_master pm ON pm.id = pbr.process_id
+        LEFT JOIN client_contract_master ccm ON ccm.id = pbr.contract_id
+       ORDER BY pbr.effective_from DESC, pm.process_name`
+    );
+
+    return rows;
+  },
+
+  async saveRate(input: SaveRateInput, actorUserId: string) {
+    await ensureRequiredTable("process_billing_rate", "Run the Process P&L governance migration first.");
+
+    if (!input.process_id) throw Object.assign(new Error("process_id is required"), { statusCode: 400 });
+    if (!input.rate_type?.trim()) throw Object.assign(new Error("rate_type is required"), { statusCode: 400 });
+    if (!input.effective_from) throw Object.assign(new Error("effective_from is required"), { statusCode: 400 });
+
+    const id = input.id?.trim() || randomUUID();
+    const values = [
+      String(input.process_id).trim(),
+      nullableId(input.contract_id),
+      input.rate_type.trim(),
+      toNumber(input.rate_amount),
+      input.unit ?? "seat",
+      input.effective_from,
+      input.effective_to ?? null,
+      actorUserId,
+      input.approval_reference ?? null,
+    ];
+
+    const existing = await queryRows<RowDataPacket>(
+      `SELECT id FROM process_billing_rate WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (existing[0]) {
+      await db.execute(
+        `UPDATE process_billing_rate
+            SET process_id = ?,
+                contract_id = ?,
+                rate_type = ?,
+                rate_amount = ?,
+                unit = ?,
+                effective_from = ?,
+                effective_to = ?,
+                approved_by = ?,
+                approval_reference = ?,
+                updated_at = NOW()
+          WHERE id = ?`,
+        [...values, id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO process_billing_rate
+          (id, process_id, contract_id, rate_type, rate_amount, unit, effective_from, effective_to, approved_by, approval_reference)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, ...values]
+      );
+    }
+
+    processPnlService.invalidateCaches();
+    return { id };
+  },
+
+  async listMonthlyPlans(periodCode?: string) {
+    if (!(await tableExists("process_monthly_plan"))) return [];
+
+    const period = periodCode || currentPeriod();
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          pmp.*,
+          pm.process_name,
+          cm.client_name,
+          bm.branch_name AS branch_name
+        FROM process_monthly_plan pmp
+        JOIN process_master pm ON pm.id = pmp.process_id
+        LEFT JOIN client_master cm ON cm.id = pm.client_id
+        LEFT JOIN branch_master bm ON bm.id = pm.branch_id
+       WHERE pmp.period_code = ?
+       ORDER BY cm.client_name, pm.process_name`,
+      [period]
+    );
+
+    return rows;
+  },
+
+  async saveMonthlyPlan(input: SaveMonthlyPlanInput, actorUserId: string) {
+    await ensureRequiredTable("process_monthly_plan", "Run the Process P&L governance migration first.");
+
+    if (!input.process_id) throw Object.assign(new Error("process_id is required"), { statusCode: 400 });
+    if (!input.period_code) throw Object.assign(new Error("period_code is required"), { statusCode: 400 });
+
+    const id = input.id?.trim() || randomUUID();
+    const values = [
+      input.process_id,
+      input.period_code,
+      input.contracted_seats ?? null,
+      input.required_productive_hc ?? null,
+      input.planned_shrinkage_pct ?? null,
+      input.required_roster_hc ?? null,
+      input.buffer_target_pct ?? null,
+      input.revenue_budget ?? null,
+      input.direct_cost_budget ?? null,
+      input.indirect_cost_budget ?? null,
+      input.profit_budget ?? null,
+      input.status ?? "draft",
+      actorUserId,
+      actorUserId,
+    ];
+
+    await db.execute(
+      `INSERT INTO process_monthly_plan
+        (id, process_id, period_code, contracted_seats, required_productive_hc, planned_shrinkage_pct,
+         required_roster_hc, buffer_target_pct, revenue_budget, direct_cost_budget, indirect_cost_budget,
+         profit_budget, status, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         contracted_seats = VALUES(contracted_seats),
+         required_productive_hc = VALUES(required_productive_hc),
+         planned_shrinkage_pct = VALUES(planned_shrinkage_pct),
+         required_roster_hc = VALUES(required_roster_hc),
+         buffer_target_pct = VALUES(buffer_target_pct),
+         revenue_budget = VALUES(revenue_budget),
+         direct_cost_budget = VALUES(direct_cost_budget),
+         indirect_cost_budget = VALUES(indirect_cost_budget),
+         profit_budget = VALUES(profit_budget),
+         status = VALUES(status),
+         updated_by = VALUES(updated_by),
+         updated_at = NOW()`,
+      [id, ...values]
+    );
+
+    processPnlService.invalidateCaches();
+    return { id };
+  },
+
+  async listAdjustments(periodCode?: string, processId?: string) {
+    if (!(await tableExists("pnl_adjustment_journal"))) return [];
+
+    const conds = ["paj.period_code = ?"];
+    const params: unknown[] = [periodCode || currentPeriod()];
+    if (processId) {
+      conds.push("paj.process_id = ?");
+      params.push(processId);
+    }
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          paj.*,
+          pm.process_name,
+          cm.client_name
+        FROM pnl_adjustment_journal paj
+        LEFT JOIN process_master pm ON pm.id = paj.process_id
+        LEFT JOIN client_master cm ON cm.id = pm.client_id
+       WHERE ${conds.join(" AND ")}
+       ORDER BY paj.created_at DESC`,
+      params
+    );
+
+    return rows;
+  },
+
+  async createAdjustment(input: CreateAdjustmentInput, actorUserId: string) {
+    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+
+    if (!input.process_id) throw Object.assign(new Error("process_id is required"), { statusCode: 400 });
+    if (!input.period_code) throw Object.assign(new Error("period_code is required"), { statusCode: 400 });
+    if (!input.metric_key?.trim()) throw Object.assign(new Error("metric_key is required"), { statusCode: 400 });
+    if (!input.reason?.trim()) throw Object.assign(new Error("reason is required"), { statusCode: 400 });
+    if (!ADJUSTMENT_CLASS_BY_METRIC[input.metric_key.trim()]) {
+      throw Object.assign(new Error("Unsupported adjustment metric_key"), { statusCode: 400 });
+    }
+
+    const id = randomUUID();
+    const previousValue = toNumber(input.previous_value);
+    const adjustmentAmount = toNumber(input.adjustment_amount);
+    const revisedValue = previousValue + adjustmentAmount;
+
+    await db.execute(
+      `INSERT INTO pnl_adjustment_journal
+        (id, process_id, period_code, metric_key, adjustment_class, previous_value, adjustment_amount, revised_value, reason,
+         attachment_path, maker_user_id, submitted_at, approval_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'pending')`,
+      [
+        id,
+        input.process_id,
+        input.period_code,
+        input.metric_key.trim(),
+        ADJUSTMENT_CLASS_BY_METRIC[input.metric_key.trim()],
+        previousValue,
+        adjustmentAmount,
+        revisedValue,
+        input.reason.trim(),
+        input.attachment_path ?? null,
+        actorUserId,
+      ]
+    );
+
+    processPnlService.invalidateCaches();
+    return { id, revised_value: revisedValue };
+  },
+
+  async approveAdjustment(adjustmentId: string, actorUserId: string) {
+    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT id, maker_user_id, approval_status
+         FROM pnl_adjustment_journal
+        WHERE id = ?
+        LIMIT 1`,
+      [adjustmentId]
+    );
+    const row = rows[0];
+    if (!row) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
+    if (!row.maker_user_id) {
+      throw Object.assign(new Error("Adjustment has no maker — cannot be approved"), { statusCode: 400 });
+    }
+    if (String(row.maker_user_id) === actorUserId) {
+      throw Object.assign(new Error("Maker cannot approve their own adjustment"), { statusCode: 400 });
+    }
+    if (String(row.approval_status ?? "") === "reversed") {
+      throw Object.assign(new Error("Reversed adjustment cannot be approved"), { statusCode: 400 });
+    }
+
+    await db.execute(
+      `UPDATE pnl_adjustment_journal
+          SET approval_status = 'approved',
+              checker_user_id = ?,
+              approved_at = NOW(),
+              checked_at = NOW(),
+              rejection_reason = NULL
+        WHERE id = ?`,
+      [actorUserId, adjustmentId]
+    );
+
+    processPnlService.invalidateCaches();
+    return { success: true };
+  },
+
+  async rejectAdjustment(adjustmentId: string, actorUserId: string, reason: string | null) {
+    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+    if (!String(reason ?? "").trim()) {
+      throw Object.assign(new Error("Rejection reason is required"), { statusCode: 400 });
+    }
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT id, approval_status
+         FROM pnl_adjustment_journal
+        WHERE id = ?
+        LIMIT 1`,
+      [adjustmentId]
+    );
+    if (!rows[0]) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
+
+    await db.execute(
+      `UPDATE pnl_adjustment_journal
+          SET approval_status = 'rejected',
+              checker_user_id = ?,
+              checked_at = NOW(),
+              rejection_reason = ?
+        WHERE id = ?`,
+      [actorUserId, String(reason).trim(), adjustmentId]
+    );
+
+    processPnlService.invalidateCaches();
+    return { success: true };
+  },
+
+  async reverseAdjustment(adjustmentId: string, actorUserId: string, reason: string | null) {
+    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+    if (!String(reason ?? "").trim()) {
+      throw Object.assign(new Error("Reversal reason is required"), { statusCode: 400 });
+    }
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT id, approval_status
+         FROM pnl_adjustment_journal
+        WHERE id = ?
+        LIMIT 1`,
+      [adjustmentId]
+    );
+    const row = rows[0];
+    if (!row) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
+    if (String(row.approval_status ?? "") !== "approved") {
+      throw Object.assign(new Error("Only approved adjustments can be reversed"), { statusCode: 400 });
+    }
+
+    await db.execute(
+      `UPDATE pnl_adjustment_journal
+          SET approval_status = 'reversed',
+              reversed_at = NOW(),
+              reversed_by = ?,
+              reversal_reason = ?
+        WHERE id = ?`,
+      [actorUserId, String(reason).trim(), adjustmentId]
+    );
+
+    processPnlService.invalidateCaches();
+    return { success: true };
+  },
+
+  async listPeriods() {
+    if (!(await tableExists("finance_period"))) {
+      return [shiftPeriod(currentPeriod(), -1), currentPeriod(), shiftPeriod(currentPeriod(), 1)].map((periodCode) => ({
+        id: periodCode,
+        period_code: periodCode,
+        status: "open",
+        virtual: true,
+      }));
+    }
+
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT *
+         FROM finance_period
+        ORDER BY period_year DESC, period_month DESC
+        LIMIT 24`
+    );
+
+    return rows;
+  },
+
+  async getPeriodClose(periodCode?: string, userRoles?: string[], fallbackRole?: string) {
+    const period = periodCode || currentPeriod();
+    const financePeriod = await ensureFinancePeriod(period);
+    const hasSignoffTable = await tableExists("pnl_period_signoff");
+    const summary = await processPnlService.getSummary({ period });
+    const processes = await processPnlService.listProcesses({ period });
+    const signoffs = hasSignoffTable
+      ? await queryRows<RowDataPacket>(
+          `SELECT signoff_role, status, signed_by, signed_at, note
+             FROM pnl_period_signoff
+            WHERE finance_period_id = ?
+            ORDER BY signed_at DESC`,
+          [financePeriod.id]
+        )
+      : [];
+    const adjustments = await this.listAdjustments(period);
+
+    const requiredSignoffs: SignoffRole[] = [...SIGNOFF_SEQUENCE];
+    const signoffMap = new Map(
+      signoffs.map((row) => [String(row.signoff_role), row])
+    );
+    const signoffRows = signoffs.map((row) => ({
+      signoff_role: String(row.signoff_role),
+      status: String(row.status ?? "pending"),
+    }));
+    const nextSignoffRole = nextRequiredSignoffRole(signoffRows);
+    const allowedSignoffRoles = allowedSignoffRolesForUser(userRoles, fallbackRole);
+
+    const groupedBranches = new Map<string, { branchName: string; revenue: number; indirectCost: number; activeHc: number }>();
+    for (const row of processes) {
+      const key = row.branchId ?? "unassigned";
+      const current = groupedBranches.get(key) ?? {
+        branchName: row.branchName ?? "Unassigned branch",
+        revenue: 0,
+        indirectCost: 0,
+        activeHc: 0,
+      };
+      current.revenue += row.revenueMtd;
+      current.indirectCost += row.indirectCost;
+      current.activeHc += row.activeHc;
+      groupedBranches.set(key, current);
+    }
+
+    const totalIndirect = processes.reduce((sum, row) => sum + row.indirectCost, 0);
+    const allocationDrivers = Array.from(groupedBranches.values())
+      .map((row) => ({
+        ...row,
+        sharePct: totalIndirect > 0 ? (row.indirectCost / totalIndirect) * 100 : 0,
+      }))
+      .sort((left, right) => right.indirectCost - left.indirectCost);
+
+    return {
+      period: financePeriod,
+      summary: summary.kpis,
+      alertCounts: {
+        critical: summary.alerts.filter((item) => item.type === "critical").length,
+        warning: summary.alerts.filter((item) => item.type === "warning").length,
+        info: summary.alerts.filter((item) => item.type === "info").length,
+      },
+      topAlerts: summary.alerts.slice(0, 8),
+      processCounts: {
+        total: processes.length,
+        profitable: processes.filter((row) => row.processStatus === "profitable").length,
+        atRisk: processes.filter((row) => row.processStatus === "at-risk").length,
+        lossMaking: processes.filter((row) => row.processStatus === "loss-making").length,
+        pendingReconciliation: processes.filter((row) => row.reconciliationStatus !== "matched").length,
+      },
+      lossMakingProcesses: processes
+        .filter((row) => row.processStatus === "loss-making")
+        .slice(0, 10),
+      signoffs: requiredSignoffs.map((role) => ({
+        role,
+        status: signoffMap.get(role)?.status ?? "pending",
+        signed_by: signoffMap.get(role)?.signed_by ?? null,
+        signed_at: signoffMap.get(role)?.signed_at ?? null,
+        note: signoffMap.get(role)?.note ?? null,
+      })),
+      availableActions: {
+        signoffRole: nextSignoffRole && allowedSignoffRoles.includes(nextSignoffRole) ? nextSignoffRole : null,
+        canSignoff: Boolean(nextSignoffRole && allowedSignoffRoles.includes(nextSignoffRole)),
+        canLock: financePeriod.status !== "locked" && nextSignoffRole === null && signoffMap.get("ceo")?.status === "signed",
+      },
+      allocationDrivers,
+      adjustments: adjustments.slice(0, 20),
+      lastCalculatedAt: summary.generatedAt,
+    };
+  },
+
+  async signoffPeriod(periodId: string, note: string | null, actorUserId: string, userRoles?: string[], fallbackRole?: string) {
+    await ensureRequiredTable("pnl_period_signoff", "Run the Process P&L governance migration first.");
+
+    const periodRows = await queryRows<RowDataPacket>(
+      `SELECT id, status FROM finance_period WHERE id = ? LIMIT 1`,
+      [periodId]
+    );
+    if (!periodRows[0]) {
+      throw Object.assign(new Error("Finance period not found"), { statusCode: 404 });
+    }
+    if (String(periodRows[0].status ?? "") === "locked") {
+      throw Object.assign(new Error("Locked period cannot be signed"), { statusCode: 400 });
+    }
+
+    const existingSignoffs = await queryRows<RowDataPacket>(
+      `SELECT signoff_role, status
+         FROM pnl_period_signoff
+        WHERE finance_period_id = ?`,
+      [periodId]
+    );
+    const nextRole = nextRequiredSignoffRole(
+      existingSignoffs.map((row) => ({
+        signoff_role: String(row.signoff_role),
+        status: String(row.status ?? "pending"),
+      }))
+    );
+    if (!nextRole) {
+      throw Object.assign(new Error("All required signoffs are already completed"), { statusCode: 400 });
+    }
+
+    const allowedRoles = allowedSignoffRolesForUser(userRoles, fallbackRole);
+    if (!allowedRoles.includes(nextRole)) {
+      throw Object.assign(new Error(`You are not allowed to sign as ${nextRole}`), { statusCode: 403 });
+    }
+
+    await db.execute(
+      `INSERT INTO pnl_period_signoff
+        (id, finance_period_id, signoff_role, status, signed_by, signed_at, note)
+       VALUES (?, ?, ?, 'signed', ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE
+         status = VALUES(status),
+         signed_by = VALUES(signed_by),
+         signed_at = VALUES(signed_at),
+         note = VALUES(note),
+         updated_at = NOW()`,
+      [randomUUID(), periodId, nextRole, actorUserId, note ?? null]
+    );
+
+    await refreshFinancePeriodStatus(periodId);
+    return { success: true, role: nextRole };
+  },
+
+  // NOTE: lockPeriod/recalculate were intentionally removed from this service (2026-07-29
+  // stabilization pass). They were dead code (zero callers repo-wide, confirmed by full grep) and
+  // unsafe: this lockPeriod flipped finance_period.status with no snapshot write and no
+  // pending-adjustment check, unlike the actually-wired canonicalPnlService.lockPeriod (which
+  // snapshots pnl_period_snapshot/pnl_period_snapshot_row transactionally before locking). A
+  // future accidental call to a governance-level lockPeriod would have locked a period with no
+  // audit trail. canonicalPnlService is the single source of truth for lock/recalculate; it
+  // already depends on this service for getPeriodClose, so delegating the other direction here
+  // would create a circular import — deletion, not delegation, is the correct fix.
+};

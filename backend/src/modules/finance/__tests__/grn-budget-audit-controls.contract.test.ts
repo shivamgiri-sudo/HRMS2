@@ -1,0 +1,846 @@
+/**
+ * Combined audit closure tests — Branch Budget + Smart GRN governance controls.
+ *
+ * Audit snapshot: HEAD 0ffcd4eb, 2026-08-13
+ * Fix commits: e5ed1a11 (round 1), b60093a6 (round 2)
+ *
+ * Test strategy:
+ *  - Contract tests (source-file assertions) prove the control is wired in and cannot be
+ *    silently removed — they fail the moment the relevant code is deleted.
+ *  - Unit tests with mocked DB exercise the actual runtime paths so a refactor that moves
+ *    code while preserving the strings still causes a test failure if the logic changes.
+ *
+ * vi.mock() is hoisted to top of file by Vitest regardless of where it appears in source,
+ * so all mock setup and shared variables MUST be at module scope.
+ */
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, "../../../..");
+
+function read(rel: string) {
+  return fs.readFileSync(path.join(root, rel), "utf8");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module-level mock state (vi.mock factories cannot reference describe-block vars)
+// ─────────────────────────────────────────────────────────────────────────────
+const mockExecute = vi.fn();
+const mockConnection = {
+  execute: vi.fn(),
+  beginTransaction: vi.fn().mockResolvedValue(undefined),
+  commit: vi.fn().mockResolvedValue(undefined),
+  rollback: vi.fn().mockResolvedValue(undefined),
+  release: vi.fn().mockResolvedValue(undefined),
+};
+
+vi.mock("../../../db/mysql.js", () => ({
+  db: {
+    execute: (...args: unknown[]) => mockExecute(...args),
+    query: (...args: unknown[]) => mockExecute(...args),
+    getConnection: vi.fn().mockResolvedValue(mockConnection),
+  },
+}));
+
+vi.mock("../../../shared/financeApprovalEvent.js", () => ({
+  recordFinanceApprovalEvent: vi.fn().mockResolvedValue(undefined),
+  listFinanceApprovalEvents: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Stubs the budget-side effects (reserve/consume/release) so the STATE_CHANGED runtime tests
+// below can drive grn.service.ts's reviewGrn() end to end without also having to fake
+// lockActiveBudgetLine's own SELECT/UPDATE sequence. Every method resolves to undefined —
+// the tests only assert on what reviewGrn() itself does with the guarded UPDATE's
+// affectedRows, not on budget-line arithmetic (that's covered elsewhere).
+vi.mock("../../process-pnl/budget-consumption.service.js", () => ({
+  budgetConsumptionService: {
+    reserve: vi.fn().mockResolvedValue(undefined),
+    consume: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn().mockResolvedValue(undefined),
+    reverseConsumption: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+// Owner ruling: reviewGrn()'s finance_head-approve branch now allocates a GRN number (moved
+// here from submission). Unmocked, it would make its own db.execute round trip and consume the
+// STATE_CHANGED tests' single scripted mockConnection.execute.mockResolvedValueOnce meant for
+// the guarded UPDATE — not what those tests exercise.
+vi.mock("../grn-number-on-submit.js", () => ({
+  resolveGrnNumberOnSubmit: vi.fn().mockResolvedValue("GRN/TEST/2026-27/0001"),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P0-1  Legacy GRN validation bypass removed
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P0-1: zero-allocation GRNs cannot bypass Smart validation on submit", () => {
+  it("submit route uses requireAllocationsForSubmit, not onlyWhenSmart", () => {
+    const routes = read("src/modules/finance/grn-smart.routes.ts");
+    expect(routes).toContain("async function requireAllocationsForSubmit");
+    expect(routes).toContain("ALLOCATIONS_REQUIRED");
+  });
+
+  it("requireAllocationsForSubmit sends 400 and does not call next('router')", () => {
+    const routes = read("src/modules/finance/grn-smart.routes.ts");
+    const fnStart = routes.indexOf("async function requireAllocationsForSubmit");
+    // Extract just the function body (next function starts with "async function" or "smartGrnRouter")
+    const fnEnd = Math.min(
+      routes.indexOf("\nasync function", fnStart + 1),
+      routes.indexOf("\nsmartGrnRouter", fnStart + 1),
+    );
+    const fnBody = routes.slice(fnStart, fnEnd > fnStart ? fnEnd : fnStart + 600);
+    expect(fnBody).toContain("res.status(400)");
+    expect(fnBody).not.toContain('next("router")');
+  });
+
+  it("submit route handler wires requireAllocationsForSubmit, not onlyWhenSmart", () => {
+    const routes = read("src/modules/finance/grn-smart.routes.ts");
+    const submitIdx = routes.indexOf('"/:id/submit"');
+    expect(submitIdx).toBeGreaterThan(-1);
+    const submitBlock = routes.slice(submitIdx, submitIdx + 500);
+    expect(submitBlock).toContain("requireAllocationsForSubmit");
+    expect(submitBlock).not.toContain("onlyWhenSmart");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P0-2  GRN types with no accounting lifecycle fail closed at every entry point
+//
+// The five checks below used to look for the literal "PROVISION_GRN_NOT_SUPPORTED", which meant
+// they proved only that PROVISION was guarded. `salary` — 39,099 rows in the enum, no create
+// branch, no payable branch, no float branch — had no guard at all and this suite passed anyway.
+// They now look for the shared guard, so a type added to the list is covered everywhere at once
+// instead of needing five more literals nobody remembers to add.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P0-2: unsupported GRN types blocked at all four entry points", () => {
+  it("the guard covers salary as well as provision, and refuses with a forwardable status", () => {
+    const guard = read("src/modules/finance/grn-type-support.ts");
+    expect(guard).toContain("provision:");
+    expect(guard).toContain("salary:");
+    // Without statusCode, errorHandler.ts masks the message as an anonymous 500 reference in
+    // production and the raiser is never told which type was refused.
+    expect(guard).toContain("statusCode: 409");
+  });
+
+  it("grn.service.ts createDraft blocks provision type before the branch guard", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    expect(svc).toContain("assertGrnTypeSupported");
+    const provIdx = svc.indexOf("assertGrnTypeSupported(payload.grnType");
+    const branchIdx = svc.indexOf("if (!payload.branchId)");
+    expect(provIdx).toBeLessThan(branchIdx);
+  });
+
+  it("grn.service.ts submitForApproval blocks provision type", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    const submitFn = svc.slice(svc.indexOf("async submitForApproval("));
+    expect(submitFn).toContain("assertGrnTypeSupported");
+  });
+
+  it("grn.service.ts reviewGrn blocks provision type inside the transaction", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async reviewGrn("));
+    expect(reviewFn).toContain("assertGrnTypeSupported");
+    const txIdx = reviewFn.indexOf("beginTransaction");
+    const provIdx = reviewFn.indexOf("assertGrnTypeSupported");
+    expect(provIdx).toBeGreaterThan(txIdx);
+  });
+
+  it("grnValidationControlService.submit blocks provision before effectiveValidation", () => {
+    const svc = read("src/modules/finance/grn-validation-control.service.ts");
+    const submitFn = svc.slice(svc.indexOf("async submit("));
+    expect(submitFn).toContain("assertGrnTypeSupported");
+    const provIdx = submitFn.indexOf("assertGrnTypeSupported");
+    const valIdx = submitFn.indexOf("effectiveValidation(grnId)");
+    expect(provIdx).toBeLessThan(valIdx);
+  });
+
+  it("grn-smart.service.ts review blocks provision type inside the transaction", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async review("));
+    expect(reviewFn).toContain("assertGrnTypeSupported");
+    const txIdx = reviewFn.indexOf("beginTransaction");
+    const provIdx = reviewFn.indexOf("assertGrnTypeSupported");
+    expect(provIdx).toBeGreaterThan(txIdx);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P0-3  Period lock re-checked inside the financial mutation transaction
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P0-3: isPeriodLocked accepts PoolConnection and is called inside transactions", () => {
+  it("finance-period-lock.ts signature accepts an optional PoolConnection", () => {
+    const src = read("src/modules/process-pnl/finance-period-lock.ts");
+    expect(src).toContain("conn?: PoolConnection");
+    expect(src).toContain("const executor = conn ?? db");
+  });
+
+  it("grn.service.ts reviewGrn passes `connection` to isPeriodLocked inside transaction", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async reviewGrn("));
+    // The connection arg must appear in the isPeriodLocked call
+    expect(reviewFn).toContain("isPeriodLocked(");
+    expect(reviewFn).toContain(", connection)");
+    const txIdx = reviewFn.indexOf("beginTransaction");
+    const lockIdx = reviewFn.indexOf("isPeriodLocked(");
+    expect(lockIdx).toBeGreaterThan(txIdx);
+  });
+
+  it("grn-smart.service.ts review passes `connection` to isPeriodLocked inside transaction", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async review("));
+    expect(reviewFn).toContain("isPeriodLocked(");
+    expect(reviewFn).toContain(", connection)");
+    const txIdx = reviewFn.indexOf("beginTransaction");
+    const lockIdx = reviewFn.indexOf("isPeriodLocked(");
+    expect(lockIdx).toBeGreaterThan(txIdx);
+  });
+
+  it("budget-topup.service.ts finance_head stage calls isPeriodLocked before applyTopupToLine", () => {
+    const svc = read("src/modules/process-pnl/budget-topup.service.ts");
+    expect(svc).toContain("import { isPeriodLocked }");
+    const fhIdx = svc.indexOf('effectiveRole === "finance_head"');
+    const lockIdx = svc.indexOf("isPeriodLocked(", fhIdx);
+    const applyIdx = svc.indexOf("applyTopupToLine(", fhIdx);
+    expect(lockIdx).toBeGreaterThan(fhIdx);
+    expect(lockIdx).toBeLessThan(applyIdx);
+  });
+
+  it("branch-budget.service.ts reviewTransfer calls isPeriodLocked inside the transaction", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fn = svc.slice(svc.indexOf("async reviewTransfer("));
+    // The call must be present and must pass a connection (second argument)
+    expect(fn).toContain("isPeriodLocked(");
+    expect(fn).toContain(", connection)");
+    // Must be inside the transaction
+    const txIdx = fn.indexOf("beginTransaction");
+    const lockIdx = fn.indexOf("isPeriodLocked(");
+    expect(lockIdx).toBeGreaterThan(txIdx);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P0P1-4  Maker-checker enforces actor identity, not role names
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P0P1-4: GRN approval maker-checker checks actor ID, not only role", () => {
+  it("grn-smart.service.ts review has branch_head self-approval guard on submitted_by", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async review("));
+    expect(reviewFn).toContain("Maker-checker violation");
+    expect(reviewFn).toContain("grn.submitted_by");
+    expect(reviewFn).toContain("role === \"branch_head\"");
+  });
+
+  it("grn-smart.service.ts review has finance_head guard against BH reviewer", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async review("));
+    expect(reviewFn).toContain("grn.branch_head_reviewed_by");
+    expect(reviewFn).toContain("role === \"finance_head\"");
+  });
+
+  it("grn.service.ts reviewGrn has the same identity checks", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async reviewGrn("));
+    expect(reviewFn).toContain("Maker-checker violation");
+    expect(reviewFn).toContain("grn.submitted_by");
+    expect(reviewFn).toContain("grn.branch_head_reviewed_by");
+  });
+});
+
+describe("P0P1-4: Budget approval maker-checker checks actor ID at both stages", () => {
+  it("branch-budget.service.ts review() SELECT includes actor columns", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async review("));
+    expect(reviewFn).toContain("submitted_by");
+    expect(reviewFn).toContain("branch_head_approved_by");
+    expect(reviewFn).toContain("finance_head_approved_by");
+  });
+
+  /**
+   * Rewritten 2026-08-19. The original asserted three literal `role === "..."` branches and three
+   * separate "Maker-checker violation" strings, because review() carried one hand-rolled block per
+   * role. review() is now stage-driven — the stage comes from the budget's status and the actors it
+   * must not match are derived from that stage — so the same rule is expressed once instead of
+   * three times. The INTENT of this test is unchanged and still enforced below: identity, not role
+   * membership, is what blocks a self-approval, and it is checked at every stage.
+   *
+   * The one deliberate behaviour change is the exemption: finance_head and super_admin may now
+   * approve their own work (owner decision — Finance Head approves at all levels). That exemption
+   * is asserted explicitly here so it cannot be widened silently.
+   *
+   * Updated 2026-08-21: the Accounts Head stage was removed from this workflow (owner decision),
+   * collapsing the chain to 2 stages (Branch Head, then Finance Head as the terminal approver).
+   * fhApprovedBy is gone — with only 2 stages there is no third stage left for a Finance Head's
+   * own prior approval to matter to.
+   */
+  it("branch-budget.service.ts review() enforces actor-identity maker-checker at every stage", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const reviewFn = svc.slice(svc.indexOf("async review("));
+
+    // Identity, not role, is what throws.
+    expect(reviewFn).toContain("BUDGET_MAKER_CHECKER");
+    expect(reviewFn).toContain("Maker-checker violation");
+    expect(reviewFn).toContain("prior.id === actorId");
+
+    // Both prior-actor identities are still considered.
+    expect(reviewFn).toContain("submittedBy");
+    expect(reviewFn).toContain("bhApprovedBy");
+
+    // The Branch Head approver is only relevant at the later (Finance Head) stage.
+    expect(reviewFn).toContain('stage.key === "finance_head"');
+
+    // Exemption is exactly finance_head + super_admin — no wider.
+    expect(reviewFn).toContain("!MAKER_CHECKER_EXEMPT_ROLES.has(role)");
+    const exempt = svc.slice(svc.indexOf("const MAKER_CHECKER_EXEMPT_ROLES"));
+    const decl = exempt.slice(0, exempt.indexOf(");") + 1);
+    expect(decl).toContain('"finance_head"');
+    expect(decl).toContain('"super_admin"');
+    expect(decl).not.toContain('"branch_head"');
+    expect(decl).not.toContain('"accounts_head"');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1-5  GRN approval atomic state guard
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P1-5: smart GRN review UPDATEs include expected status in WHERE and check affectedRows", () => {
+  it("branch_head UPDATE uses AND status = 'submitted'", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    expect(svc).toContain("AND status = 'submitted'");
+  });
+
+  it("finance_head UPDATE uses AND status = 'branch_head_approved'", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    expect(svc).toContain("AND status = 'branch_head_approved'");
+  });
+
+  it("both stage UPDATEs assert affectedRows === 1 and throw STATE_CHANGED on mismatch", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    expect(svc).toContain("STATE_CHANGED");
+    const count = (svc.match(/STATE_CHANGED/g) ?? []).length;
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1-6  Virement recalculates all budget-line fields canonically
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P1-6: reviewTransfer uses calculateBudgetLine for full field recomputation", () => {
+  it("reviewTransfer calls calculateBudgetLine at least twice (from + to lines)", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fn = svc.slice(svc.indexOf("async reviewTransfer("));
+    const count = (fn.match(/calculateBudgetLine\(/g) ?? []).length;
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reviewTransfer updates pnl_cost_amount, cgst/sgst/igst, and recoverable_tax", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fn = svc.slice(svc.indexOf("async reviewTransfer("));
+    expect(fn).toContain("pnl_cost_amount");
+    expect(fn).toContain("cgst_amount");
+    expect(fn).toContain("sgst_amount");
+    expect(fn).toContain("igst_amount");
+    expect(fn).toContain("recoverable_tax_amount");
+  });
+
+  it("reviewTransfer re-sums header totals from lines after line mutation", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fn = svc.slice(svc.indexOf("async reviewTransfer("));
+    expect(fn).toContain("gross_budget_amount");
+    expect(fn).toContain("pnl_budget_amount");
+    expect(fn).toContain("SUM(l.gross_amount)");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1-7  Budget transfer is pending until approved by a different actor
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P1-7: submitTransfer creates pending record; reviewTransfer enforces maker-checker", () => {
+  it("submitTransfer inserts with status='pending', not 'approved'", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fnStart = svc.indexOf("async submitTransfer(");
+    // Find end of submitTransfer (next async method)
+    const fnEnd = svc.indexOf("\n  async", fnStart + 10);
+    const fn = svc.slice(fnStart, fnEnd);
+    expect(fn).toContain("'pending'");
+    // Direct 'approved' INSERT must not appear in submitTransfer
+    expect(fn).not.toContain("'approved'");
+  });
+
+  it("submitTransfer has a 60-second idempotency window", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fn = svc.slice(svc.indexOf("async submitTransfer("));
+    expect(fn).toContain("INTERVAL 60 SECOND");
+    expect(fn).toContain("duplicate transfer");
+  });
+
+  it("reviewTransfer enforces created_by !== actorId", () => {
+    const svc = read("src/modules/process-pnl/branch-budget.service.ts");
+    const fn = svc.slice(svc.indexOf("async reviewTransfer("));
+    expect(fn).toContain("transfer.created_by");
+    expect(fn).toContain("Maker-checker violation");
+  });
+
+  it("POST /pnl/budget-transfers/:id/review endpoint exists", () => {
+    const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
+    expect(routes).toContain("/pnl/budget-transfers/:id/review");
+    expect(routes).toContain("reviewTransfer(");
+  });
+
+  it("original transferBetweenLines replaced by submitTransfer in the route", () => {
+    const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
+    expect(routes).toContain("submitTransfer(");
+    expect(routes).not.toContain("transferBetweenLines(");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1-8  Debit note lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
+describe("P1-8: debit note creation guarded; approve and cancel endpoints exist", () => {
+  it("creation endpoint checks GRN type and status before allowing a debit note", () => {
+    const routes = read("src/modules/finance/grn.routes.ts");
+    expect(routes).toContain("DN_ELIGIBLE_GRN_STATUSES");
+    expect(routes).toContain("pending_accounts_payment");
+    expect(routes).toContain("Debit notes can only be raised against vendor GRNs");
+    expect(routes).toContain("Finance Head-approved GRNs");
+  });
+
+  it("approve endpoint exists at /debit-notes/:id/approve", () => {
+    const routes = read("src/modules/finance/grn.routes.ts");
+    expect(routes).toContain('"/debit-notes/:id/approve"');
+    // Sets status to approved
+    expect(routes).toContain("status = 'approved'");
+    // Rejects if not in draft
+    expect(routes).toContain("cannot be approved");
+  });
+
+  it("cancel endpoint exists at /debit-notes/:id/cancel", () => {
+    const routes = read("src/modules/finance/grn.routes.ts");
+    expect(routes).toContain('"/debit-notes/:id/cancel"');
+    expect(routes).toContain("status = 'cancelled'");
+    expect(routes).toContain("Settled debit notes cannot be cancelled");
+    // Requires a reason
+    expect(routes).toContain("reason is required to cancel");
+  });
+
+  it("approve and cancel both write to the reviewer-facing approval timeline", () => {
+    const routes = read("src/modules/finance/grn.routes.ts");
+    expect(routes).toContain("recordFinanceApprovalEvent");
+    // Should appear at least twice — once for approve, once for cancel
+    const callCount = (routes.match(/recordFinanceApprovalEvent\(/g) ?? []).length;
+    expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("settlement is explicitly NOT IMPLEMENTED pending Finance sign-off", () => {
+    const routes = read("src/modules/finance/grn.routes.ts");
+    expect(routes).toContain("NOT IMPLEMENTED");
+    expect(routes).toContain("Finance sign-off");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Consumption reversal — reviewer-facing timeline
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Consumption reversal audit trail appears in the reviewer-facing timeline", () => {
+  it("reverseConsumption calls recordFinanceApprovalEvent before commit()", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    const fn = svc.slice(svc.indexOf("async reverseConsumption("));
+    expect(fn).toContain("recordFinanceApprovalEvent");
+    const eventIdx = fn.indexOf("recordFinanceApprovalEvent");
+    const commitIdx = fn.indexOf("connection.commit()");
+    expect(eventIdx).toBeLessThan(commitIdx);
+  });
+
+  it("the event records action='reverse' and toStatus='consumption_reversed'", () => {
+    const svc = read("src/modules/finance/grn.service.ts");
+    const fn = svc.slice(svc.indexOf("async reverseConsumption("));
+    const blockStart = fn.indexOf("recordFinanceApprovalEvent");
+    const block = fn.slice(blockStart, blockStart + 400);
+    expect(block).toContain('"reverse"');
+    expect(block).toContain('"consumption_reversed"');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HSN/SAC and IRN validation in canonical layer
+// ─────────────────────────────────────────────────────────────────────────────
+/** Comments discuss removed checks by name; only executable code counts. */
+function codeOnly(source: string) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+describe("HSN/SAC and IRN validation in canonical buildValidations()", () => {
+  /**
+   * HSN_SAC_REQUIRED was REMOVED on 2026-08-17, replacing the test that used to demand it. It was
+   * a warning nobody could clear: 0f1e599d had already deleted the HSN/SAC column from
+   * InvoiceComponentsEditor, so there was no field to satisfy it, while it went on reporting the
+   * code missing and citing "statutory compliance".
+   *
+   * It also claimed a duty that is not the buyer's. On a purchase, HSN/SAC reporting sits with the
+   * supplier in their GSTR-1; ITC reconciles against GSTR-2B on GSTIN + invoice number + date +
+   * taxable value + tax, all of which the GRN already captures. And there was no precedent to
+   * restore: db_bill never recorded a supplier's HSN/SAC across 11,020 invoices — neither of its
+   * vendor masters even has the column.
+   */
+  it("does NOT emit HSN_SAC_REQUIRED — removed deliberately, do not reinstate", () => {
+    const svc = codeOnly(read("src/modules/finance/grn-smart.service.ts"));
+    expect(svc, "re-adding this warning gives users something they cannot action")
+      .not.toContain("HSN_SAC_REQUIRED");
+  });
+
+  it("keeps the hsn_sac_code column plumbed, so capture can return without a schema change", () => {
+    const svc = codeOnly(read("src/modules/finance/grn-smart.service.ts"));
+    expect(svc).toContain("hsn_sac_code");
+  });
+
+  it("buildValidations emits IRN_ACK_REQUIRED when IRN is set but ACK is absent", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    expect(svc).toContain("IRN_ACK_REQUIRED");
+    expect(svc).toContain("irn_ack_no");
+  });
+
+  it("the IRN validation is non-blocking (advisory until rules are codified)", () => {
+    const svc = read("src/modules/finance/grn-smart.service.ts");
+    const irnIdx = svc.indexOf("IRN_ACK_REQUIRED");
+    const irnBlock = svc.slice(irnIdx - 20, irnIdx + 300);
+    expect(irnBlock).toContain("blocking: false");
+  });
+});
+
+/**
+ * The outward code — the one that IS our obligation, feeding our own GSTR-1 HSN/SAC summary.
+ * cost_centre_master has separate hsn_code and sac_code columns, but create/update handled only
+ * hsn_code and the form offered a single box labelled "HSN / SAC Code" wired to it. So every SAC
+ * typed went into the HSN column, and the 364 real SACs migrated from db_bill were invisible.
+ * Measured 2026-08-17: sac_code on 364 of 927 rows, hsn_code on 0 — and only 54 of 437 ACTIVE
+ * cost centres had one, against 310 of 490 closed ones.
+ */
+describe("cost centre SAC code is writable", () => {
+  it("create and update both persist sac_code alongside hsn_code", () => {
+    const svc = read("src/modules/finance/cost-centre-management.service.ts");
+    expect(svc).toMatch(/hsn_code,\s*sac_code,/);          // INSERT column list
+    expect(svc).toMatch(/sac_code = \?/);                   // UPDATE set clause
+    expect(svc).toContain("data.sac_code ?? null");         // INSERT param
+    expect(svc).toContain("data.sac_code ?? existing.sac_code"); // UPDATE keeps migrated values
+    expect(svc).toMatch(/sac_code\?: string;/);             // input type
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit tests — maker-checker runtime behaviour (DB mocked at module level above)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
+  const GRN_ID = "grn-001";
+  const SUBMITTER = "user-submitter";
+  const BH_REVIEWER = "user-bh";
+  const FINANCE_HEAD = "user-fh";
+
+  function grnRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: GRN_ID,
+      status: "submitted",
+      grn_type: "vendor",
+      accounting_period: "2026-07",
+      submitted_by: SUBMITTER,
+      branch_head_reviewed_by: null,
+      branch_id: "br-001",
+      budget_line_id: "bl-001",
+      amount_with_tax: 1000,
+      amount_without_tax: 847,
+      tax_amount: 153,
+      quantity: 1,
+      ...overrides,
+    };
+  }
+
+  const allocationRow = {
+    id: "alloc-1",
+    grn_request_id: GRN_ID,
+    budget_line_id: "bl-001",
+    amount_with_tax: 1000,
+    amount_without_tax: 847,
+    tax_amount: 153,
+    pnl_cost_amount: 847,
+    allocation_percentage: 100,
+    quantity: 1,
+    lifecycle_status: "pending",
+  };
+
+  function setupReviewMocks(grnOverrides: Record<string, unknown> = {}, periodLocked = false) {
+    mockConnection.execute
+      .mockResolvedValueOnce([[grnRow(grnOverrides)], []])          // lockGrn
+      .mockResolvedValueOnce([[allocationRow], []])                  // loadAllocations (with=true)
+      .mockResolvedValueOnce([[{ status: periodLocked ? "locked" : "open" }], []]); // isPeriodLocked
+  }
+
+  beforeEach(() => {
+    mockExecute.mockReset();
+    mockConnection.execute.mockReset();
+    mockConnection.beginTransaction.mockResolvedValue(undefined);
+    mockConnection.commit.mockResolvedValue(undefined);
+    mockConnection.rollback.mockResolvedValue(undefined);
+    mockConnection.release.mockResolvedValue(undefined);
+    vi.resetModules();
+  });
+
+  it("branch_head cannot approve a GRN they submitted", async () => {
+    setupReviewMocks();
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "approved", undefined, SUBMITTER, "branch_head"),
+    ).rejects.toThrow(/Maker-checker violation/);
+  });
+
+  it("finance_head cannot approve a GRN they submitted", async () => {
+    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "approved", undefined, SUBMITTER, "finance_head"),
+    ).rejects.toThrow(/Maker-checker violation/);
+  });
+
+  it("finance_head cannot approve a GRN where they were the branch_head reviewer", async () => {
+    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: FINANCE_HEAD });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "approved", undefined, FINANCE_HEAD, "finance_head"),
+    ).rejects.toThrow(/Maker-checker violation/);
+  });
+
+  it("approval is blocked when the GRN period is locked (P0-3)", async () => {
+    setupReviewMocks({}, true /* periodLocked */);
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "approved", undefined, BH_REVIEWER, "branch_head"),
+    ).rejects.toThrow(/locked for P&L close/);
+  });
+
+  it("provision GRN approval is blocked (P0-2)", async () => {
+    setupReviewMocks({ grn_type: "provision" });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "approved", undefined, BH_REVIEWER, "branch_head"),
+    ).rejects.toThrow(/PROVISION_GRN_NOT_SUPPORTED/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Follow-up to P1-5/P1-5b: prove the guard actually fires at runtime, not just
+  // that the WHERE clause and STATE_CHANGED string are present in source. Each
+  // test drives the real service function with a mocked connection whose guarded
+  // UPDATE resolves affectedRows: 0 — the exact shape MySQL returns when a
+  // concurrent reviewer already moved the row's status between this function's
+  // SELECT...FOR UPDATE read and its own UPDATE.
+  // ───────────────────────────────────────────────────────────────────────────
+  it("branch_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupReviewMocks(); // status: submitted (default) — no reserveAllocations call on reject
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "rejected", "not needed", BH_REVIEWER, "branch_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+
+  it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // releaseAllocations: allocationRow.lifecycle_status is 'pending' (not 'reserved'), so it
+    // skips budgetConsumptionService.release and only issues the grn_cost_allocation UPDATE.
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]); // grn_cost_allocation UPDATE
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await expect(
+      grnSmartService.review(GRN_ID, "rejected", "not needed", FINANCE_HEAD, "finance_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit tests — legacy (non-allocation) GRN review runtime behaviour, P1-5b
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mocked)", () => {
+  const GRN_ID = "grn-legacy-001";
+  const BH_REVIEWER = "user-bh-legacy";
+  const FINANCE_HEAD = "user-fh-legacy";
+
+  function grnRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: GRN_ID,
+      status: "submitted",
+      grn_type: "vendor",
+      accounting_period: "2026-07",
+      submitted_by: "user-submitter-legacy",
+      branch_head_reviewed_by: null,
+      finance_head_reviewed_by: null,
+      branch_id: "br-001",
+      budget_line_id: "bl-001",
+      amount_with_tax: 1000,
+      amount_without_tax: 847,
+      tax_amount: 153,
+      quantity: 1,
+      ...overrides,
+    };
+  }
+
+  // reviewGrn's own SELECT...FOR UPDATE, then isPeriodLocked (both against the real
+  // grn_request/finance_period columns, not the allocation-aware smart path).
+  function setupLegacyMocks(grnOverrides: Record<string, unknown> = {}) {
+    mockConnection.execute
+      .mockResolvedValueOnce([[grnRow(grnOverrides)], []])              // SELECT ... FOR UPDATE
+      .mockResolvedValueOnce([[{ status: "open" }], []]);                // isPeriodLocked
+  }
+
+  beforeEach(() => {
+    mockExecute.mockReset();
+    mockConnection.execute.mockReset();
+    mockConnection.beginTransaction.mockResolvedValue(undefined);
+    mockConnection.commit.mockResolvedValue(undefined);
+    mockConnection.rollback.mockResolvedValue(undefined);
+    mockConnection.release.mockResolvedValue(undefined);
+    vi.resetModules();
+  });
+
+  it("branch_head decision: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupLegacyMocks(); // status: submitted
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.reviewGrn(GRN_ID, { decision: "rejected", reviewNote: "not needed" }, BH_REVIEWER, "branch_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+
+  it("finance_head approve: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupLegacyMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // budgetConsumptionService.consume is module-mocked (see top of file), so the next call
+    // reviewGrn's finance_head-approve branch makes is the guarded UPDATE itself.
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.reviewGrn(GRN_ID, { decision: "approved", reviewNote: "ok" }, FINANCE_HEAD, "finance_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+
+  it("finance_head reject: STATE_CHANGED/409 when affectedRows is 0", async () => {
+    setupLegacyMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
+    // budgetConsumptionService.release is module-mocked — next call is the guarded UPDATE.
+    mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
+    const { grnService } = await import("../grn.service.js");
+    await expect(
+      grnService.reviewGrn(GRN_ID, { decision: "rejected", reviewNote: "not needed" }, FINANCE_HEAD, "finance_head"),
+    ).rejects.toMatchObject({ code: "STATE_CHANGED", statusCode: 409 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit test — submitTransfer idempotency (DB mocked at module level above)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("submitTransfer idempotency — runtime (DB mocked)", () => {
+  beforeEach(() => {
+    mockExecute.mockReset();
+    vi.resetModules();
+  });
+
+  it("blocks a second pending transfer with same parameters within 60 seconds", async () => {
+    // Idempotency check returns an existing row
+    mockExecute.mockResolvedValueOnce([[{ id: "existing-transfer" }], []]);
+    const { branchBudgetService } = await import(
+      "../../process-pnl/branch-budget.service.js"
+    );
+    await expect(
+      branchBudgetService.submitTransfer({
+        budgetId: "bgt-1",
+        fromLineId: "line-a",
+        toLineId: "line-b",
+        transferAmount: 5000,
+        reason: "Rebalancing",
+        actorId: "user-fh",
+      }),
+    ).rejects.toThrow(/duplicate transfer/);
+  });
+
+  it("proceeds when no duplicate pending transfer exists", async () => {
+    // idempotency → empty; header → active; period lock → open; lines; then getTransfer.
+    //
+    // The INSERT is deliberately absent from this queue. submitTransfer now writes inside a
+    // transaction, so the INSERT goes to conn.execute, not db.execute. While it was still queued
+    // here it was never consumed, which pushed everything after it along by one: getTransfer read
+    // the [{ insertId: 1 }] entry, whose [0] is undefined, and threw "Transfer not found" — a
+    // failure that looked like a missing row rather than a stale harness.
+    mockExecute
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{ id: "bgt-1", status: "active", period_code: "2026-07" }], []])
+      .mockResolvedValueOnce([[{ status: "open" }], []])
+      .mockResolvedValueOnce([[
+        { id: "line-a", budget_id: "bgt-1", gross_amount: 10000, reserved_amount: 0, consumed_amount: 0 },
+        { id: "line-b", budget_id: "bgt-1", gross_amount: 5000,  reserved_amount: 0, consumed_amount: 0 },
+      ], []])
+      .mockResolvedValueOnce([[{ id: "new-transfer", status: "pending" }], []]);
+    mockConnection.execute.mockResolvedValue([{ insertId: 1 }, []]);
+    const { branchBudgetService } = await import(
+      "../../process-pnl/branch-budget.service.js"
+    );
+    const result = await branchBudgetService.submitTransfer({
+      budgetId: "bgt-1",
+      fromLineId: "line-a",
+      toLineId: "line-b",
+      transferAmount: 5000,
+      reason: "Rebalancing",
+      actorId: "user-fh",
+    });
+    expect(result).toBeDefined();
+  });
+});
+
+
+/*
+ * POOLED_LINE_SHARE — owner decision, 2026-08-29: warn where a share is defined, never block.
+ *
+ * A branch-common budget line (`cost_centre_id IS NULL`) belongs to no cost centre, so the
+ * branch-wide headroom gate lets any of them draw the whole balance first come first served.
+ * 58 of 128 active lines for 2026-08 are pooled and hold Rs 48.2 lakh unspent — 46% of the
+ * branch budget — while the direct lines beside them are 73% consumed, so spill lands here.
+ * finance_budget_line_allocation records each cost centre's planned share and was read nowhere.
+ */
+describe("POOLED_LINE_SHARE: visible, and never a block", () => {
+  const service = read("src/modules/finance/grn-smart.service.ts");
+
+  it("is raised as a non-blocking validation", () => {
+    expect(service).toContain('code: "POOLED_LINE_SHARE"');
+    const block = service.slice(service.indexOf('code: "POOLED_LINE_SHARE"'));
+    const decl = block.slice(0, block.indexOf("details:"));
+    // A share is a PLAN, not an approval limit, and the money is genuinely available — so the
+    // severity tops out at warning and blocking is hard-coded false, not conditional.
+    expect(decl).toContain("blocking: false,");
+    expect(decl).not.toMatch(/blocking:\s*(true|overrun)/);
+    expect(decl).toContain('status: overrun.length ? "warning" : "passed"');
+  });
+
+  it("only warns where Finance has actually recorded a share", () => {
+    const block = service.slice(service.indexOf("const [pooledDraws]"));
+    // LEFT JOIN, so a pooled line with no recorded share still reports its balance rather than
+    // vanishing — 54 of the 58 pooled lines have no share defined today, and demanding one
+    // before anything works would make this useless until a data-entry programme finished.
+    expect(block).toContain("LEFT JOIN finance_budget_line_allocation alloc");
+    expect(block).toContain("row.defined_share != null");
+    expect(block).toContain("undefinedShareCount");
+  });
+
+  it("counts what other GRNs already drew, not just this one", () => {
+    const block = service.slice(service.indexOf("const [pooledDraws]"));
+    // A share is exhausted by the branch's cumulative draw. Looking at this GRN alone would
+    // never fire, because no single invoice is likely to exceed a share on its own.
+    expect(block).toContain("already_drawn");
+    expect(block).toContain("prior.lifecycle_status IN ('reserved','consumed')");
+    expect(block).toContain("prior.grn_request_id <> a.grn_request_id");
+  });
+
+  it("looks only at pooled lines, and only at rows that name a cost centre", () => {
+    const block = service.slice(service.indexOf("const [pooledDraws]"));
+    expect(block).toContain("l.cost_centre_id IS NULL");
+    expect(block).toContain("a.cost_centre_id IS NOT NULL");
+  });
+});

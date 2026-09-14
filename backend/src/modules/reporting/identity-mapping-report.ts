@@ -1,0 +1,239 @@
+export interface IdentityMappingReportQuery {
+  branchId?: unknown;
+  processId?: unknown;
+  departmentId?: unknown;
+}
+
+export interface BuiltReportSql {
+  sql: string;
+  params: unknown[];
+}
+
+function trimFilter(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || undefined;
+}
+
+export function buildIdentityMappingExceptionsSql(
+  query: IdentityMappingReportQuery,
+  _todayIso = new Date().toISOString().slice(0, 10),
+): BuiltReportSql {
+  const params: unknown[] = [];
+  const employeeClauses = [
+    "e.active_status = 1",
+    "LOWER(COALESCE(e.employment_status,'active')) = 'active'",
+  ];
+  const snapshotEmployeeClauses: string[] = [];
+
+  const branchId = trimFilter(query.branchId);
+  if (branchId) {
+    employeeClauses.push("e.branch_id = ?");
+    snapshotEmployeeClauses.push("e.branch_id = ?");
+    params.push(branchId);
+  }
+
+  const processId = trimFilter(query.processId);
+  if (processId) {
+    employeeClauses.push("e.process_id = ?");
+    snapshotEmployeeClauses.push("e.process_id = ?");
+    params.push(processId);
+  }
+
+  const departmentId = trimFilter(query.departmentId);
+  if (departmentId) {
+    employeeClauses.push("e.department_id = ?");
+    snapshotEmployeeClauses.push("e.department_id = ?");
+    params.push(departmentId);
+  }
+
+  const baseSelect = `e.employee_code,
+       COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+       b.branch_name,
+       p.process_name,
+       COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name,
+       e.biometric_code,
+       e.call_centre_code,
+       e.updated_at`;
+
+  const baseJoins = `FROM employees e
+  LEFT JOIN branch_master b ON b.id = e.branch_id
+  LEFT JOIN process_master p ON p.id = e.process_id
+  LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)`;
+
+  const baseFrom = `${baseJoins}
+ WHERE ${employeeClauses.join(" AND ")}`;
+
+  const snapshotEmployeeScope = snapshotEmployeeClauses.length
+    ? ` AND ${snapshotEmployeeClauses.join(" AND ")}`
+    : "";
+
+  // A source with ZERO current rows in the snapshot (never synced, or the application DB user has
+  // no SELECT grant on its schema — Masbiometric and db_masmis are denied to this user) must NOT be
+  // reported as a per-employee gap on all ~1,100 active employees. Gate each source's per-employee
+  // "missing" condition on that source actually being loaded; a source that never loaded is surfaced
+  // once below as IDENTITY_SOURCE_NOT_LOADED instead of flagging everyone.
+  const sourceLoaded = (systems: string) =>
+    `EXISTS (SELECT 1 FROM report_identity_source_snapshot WHERE is_current = 1 AND source_system IN (${systems}))`;
+  const bmLoaded = sourceLoaded("'MASBIOMETRIC_EMPLOYEE'");
+  const seLoaded = sourceLoaded("'SHIVAMGIRI_EMPLOYEE'");
+  const agentLoaded = sourceLoaded("'MASMIS_AGENT','SHIVAMGIRI_AGENT'");
+
+  const sql = `
+SELECT 'MISSING_BIOMETRIC_CODE' AS exception_type,
+       'HIGH' AS severity,
+       ${baseSelect},
+       'HRMS employee has no biometric_code, so biometric attendance cannot be reconciled safely.' AS exception_detail,
+       'Update employee biometric_code from COSEC/Masbiometric master before using biometric attendance in performance reports.' AS recommended_action
+  ${baseFrom}
+   AND COALESCE(e.biometric_code,'') = ''
+UNION ALL
+SELECT 'MISSING_CALL_CENTRE_CODE' AS exception_type,
+       'HIGH' AS severity,
+       ${baseSelect},
+       'HRMS employee has no call_centre_code, so dialer/APR/sales activity cannot be joined safely.' AS exception_detail,
+       'Map the employee to their dialer/MAS agent ID before using productivity or sales dashboards.' AS recommended_action
+  ${baseFrom}
+   AND COALESCE(e.call_centre_code,'') = ''
+UNION ALL
+SELECT 'MISSING_PROCESS_MAPPING' AS exception_type,
+       'HIGH' AS severity,
+       ${baseSelect},
+       'HRMS employee has no process_id, so team/process/AM rollups will be incomplete.' AS exception_detail,
+       'Assign process_id and verify the process-to-branch/client mapping.' AS recommended_action
+  ${baseFrom}
+   AND e.process_id IS NULL
+UNION ALL
+SELECT 'MISSING_BRANCH_MAPPING' AS exception_type,
+       'HIGH' AS severity,
+       ${baseSelect},
+       'HRMS employee has no branch_id, so branch reports and payroll readiness rollups will be incomplete.' AS exception_detail,
+       'Assign branch_id and verify payroll/operations ownership.' AS recommended_action
+  ${baseFrom}
+   AND e.branch_id IS NULL
+UNION ALL
+SELECT 'MISSING_MANAGER_MAPPING' AS exception_type,
+       'MEDIUM' AS severity,
+       ${baseSelect},
+       'HRMS employee has no reporting manager/manager mapping, so TL/AM dashboards cannot roll this employee correctly.' AS exception_detail,
+       'Assign reporting_manager_id or manager_id according to the HRMS hierarchy.' AS recommended_action
+  ${baseFrom}
+   AND e.reporting_manager_id IS NULL
+   AND e.manager_id IS NULL
+UNION ALL
+SELECT 'EXTERNAL_IDENTITY_UNMATCHED' AS exception_type,
+       CASE WHEN ris.match_status = 'ambiguous' THEN 'CRITICAL' ELSE 'HIGH' END AS severity,
+       COALESCE(ris.matched_employee_code, ris.source_employee_code, ris.source_agent_id) AS employee_code,
+       -- report_identity_source_snapshot has neither matched_employee_name nor
+       -- source_employee_name. It carries matched_employee_id / matched_employee_code and, for
+       -- the source side, source_name. Both invented columns made this SELECT throw
+       -- ER_BAD_FIELD_ERROR — and because it is a UNION ALL branch, the failure took every other
+       -- branch of the exception report down with it, not just this one.
+       --
+       -- The matched name is already reachable: the LEFT JOIN of employees e on
+       -- ris.matched_employee_id is right below, so it resolves the same way manager_name does
+       -- on the next line. Then the source's own name, then the record key, preserving the
+       -- original matched-then-source-then-key precedence.
+       COALESCE(
+         NULLIF(e.full_name, ''),
+         NULLIF(TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))), ''),
+         ris.source_name,
+         ris.source_record_key
+       ) AS employee_name,
+       b.branch_name,
+       p.process_name,
+       COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name,
+       ris.source_employee_code AS biometric_code,
+       ris.source_agent_id AS call_centre_code,
+       ris.captured_at AS updated_at,
+       CONCAT(ris.source_system, ' source record ', ris.source_record_key, ' is ', ris.match_status, ' in identity snapshot.') AS exception_detail,
+       'Map this external identity to the correct HRMS employee before including it in KPI, attendance, sales, or hierarchy rollups.' AS recommended_action
+  FROM report_identity_source_snapshot ris
+  LEFT JOIN employees e ON e.id = ris.matched_employee_id
+  LEFT JOIN branch_master b ON b.id = e.branch_id
+  LEFT JOIN process_master p ON p.id = e.process_id
+  LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
+ WHERE ris.is_current = 1
+   AND ris.match_status IN ('unmatched','ambiguous')${snapshotEmployeeScope}
+UNION ALL
+SELECT 'HRMS_MISSING_SOURCE_MAPPING' AS exception_type,
+       'MEDIUM' AS severity,
+       ${baseSelect},
+       CONCAT('HRMS employee is missing current source mapping for: ', CONCAT_WS(', ',
+         CASE WHEN ${bmLoaded} AND bm.id IS NULL THEN 'MASBIOMETRIC_EMPLOYEE' END,
+         CASE WHEN ${seLoaded} AND se.id IS NULL THEN 'SHIVAMGIRI_EMPLOYEE' END,
+         CASE WHEN ${agentLoaded} AND COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL THEN 'MASMIS_AGENT_OR_SHIVAMGIRI_AGENT' END
+       )) AS exception_detail,
+       'Run or review the identity source snapshot, then update employee biometric_code/call_centre_code/source records until every active employee has expected source coverage.' AS recommended_action
+  ${baseJoins}
+  LEFT JOIN (
+    SELECT MIN(id) AS id, matched_employee_id
+      FROM report_identity_source_snapshot
+     WHERE is_current = 1
+       AND source_system = 'MASBIOMETRIC_EMPLOYEE'
+       AND matched_employee_id IS NOT NULL
+     GROUP BY matched_employee_id
+  ) bm ON bm.matched_employee_id = e.id
+  LEFT JOIN (
+    SELECT MIN(id) AS id, matched_employee_id
+      FROM report_identity_source_snapshot
+     WHERE is_current = 1
+       AND source_system = 'SHIVAMGIRI_EMPLOYEE'
+       AND matched_employee_id IS NOT NULL
+     GROUP BY matched_employee_id
+  ) se ON se.matched_employee_id = e.id
+  LEFT JOIN (
+    SELECT MIN(id) AS id, matched_employee_id
+      FROM report_identity_source_snapshot
+     WHERE is_current = 1
+       AND source_system IN ('MASMIS_AGENT','SHIVAMGIRI_AGENT')
+       AND matched_employee_id IS NOT NULL
+     GROUP BY matched_employee_id
+  ) ma ON ma.matched_employee_id = e.id
+ WHERE ${employeeClauses.join(" AND ")}
+   AND ((${bmLoaded} AND bm.id IS NULL)
+        OR (${seLoaded} AND se.id IS NULL)
+        OR (${agentLoaded} AND COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL))
+UNION ALL
+SELECT 'IDENTITY_SOURCE_NOT_LOADED' AS exception_type,
+       'MEDIUM' AS severity,
+       NULL AS employee_code,
+       NULL AS employee_name,
+       NULL AS branch_name,
+       NULL AS process_name,
+       NULL AS manager_name,
+       NULL AS biometric_code,
+       NULL AS call_centre_code,
+       NULL AS updated_at,
+       CONCAT('Identity source ', s.src, ' has no current rows in the snapshot (never synced, or the application DB user lacks SELECT on its schema), so its coverage is reported here once rather than as a gap on every active employee.') AS exception_detail,
+       'Sync the identity source snapshot; if this source stays empty, grant the application DB user SELECT on its schema.' AS recommended_action
+  FROM (SELECT 'MASBIOMETRIC_EMPLOYEE' AS src
+        UNION ALL SELECT 'SHIVAMGIRI_EMPLOYEE'
+        UNION ALL SELECT 'SHIVAMGIRI_AGENT'
+        UNION ALL SELECT 'MASMIS_AGENT') s
+ WHERE NOT EXISTS (SELECT 1 FROM report_identity_source_snapshot r
+                    WHERE r.is_current = 1 AND r.source_system = s.src)
+UNION ALL
+SELECT 'IDENTITY_SNAPSHOT_STALE' AS exception_type,
+       'HIGH' AS severity,
+       NULL AS employee_code,
+       NULL AS employee_name,
+       NULL AS branch_name,
+       NULL AS process_name,
+       NULL AS manager_name,
+       NULL AS biometric_code,
+       NULL AS call_centre_code,
+       MAX(ris.captured_at) AS updated_at,
+       CASE
+         WHEN MAX(ris.captured_at) IS NULL THEN 'Identity snapshot has not been synced yet.'
+         ELSE CONCAT('Identity snapshot last synced at ', MAX(ris.captured_at), ', which is older than 24 hours.')
+       END AS exception_detail,
+       'Run /api/reports/suite/identity-source-snapshot/sync before trusting cross-system identity exception counts.' AS recommended_action
+  FROM report_identity_source_snapshot ris
+HAVING MAX(ris.captured_at) IS NULL OR MAX(ris.captured_at) < DATE_SUB(NOW(), INTERVAL 24 HOUR)`;
+
+  return {
+    sql,
+    params: [...params, ...params, ...params, ...params, ...params, ...params, ...params],
+  };
+}
+

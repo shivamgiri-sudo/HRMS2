@@ -1,0 +1,11 @@
+{
+  // Typecheck for Stage 3's DPDP erasure reconnection (2026-08-14 delta-audit P0).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/privacy/privacy.routes.ts",
+    "src/modules/privacy/dpdpErasure.service.ts"
+  ]
+}

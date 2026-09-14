@@ -1,0 +1,309 @@
+-- backend/sql/139_ats_enhanced_journey_safe.sql
+-- Safe migration: adds only missing columns, creates only missing tables
+USE mas_hrms;
+
+-- ── 1. Add columns to ats_queue_token (safe checks) ───────────────────────────
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='token_number') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN token_number VARCHAR(50) NULL COMMENT ''Human-readable token number''',
+  'SELECT ''token_number already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='branch_name') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN branch_name VARCHAR(255) NULL COMMENT ''Branch for this queue entry''',
+  'SELECT ''branch_name already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='queue_status') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN queue_status ENUM(''waiting'',''called'',''in_interview'',''completed'',''no_show'') NULL DEFAULT ''waiting'' COMMENT ''Current queue status''',
+  'SELECT ''queue_status already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='recruiter_id') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN recruiter_id CHAR(36) NULL COMMENT ''Assigned recruiter''',
+  'SELECT ''recruiter_id already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='estimated_wait_time') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN estimated_wait_time INT NULL COMMENT ''Estimated wait time in minutes''',
+  'SELECT ''estimated_wait_time already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='called_at') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN called_at DATETIME NULL COMMENT ''When candidate was called''',
+  'SELECT ''called_at already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_started_at') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN interview_started_at DATETIME NULL COMMENT ''Interview start time''',
+  'SELECT ''interview_started_at already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND COLUMN_NAME='interview_completed_at') = 0,
+  'ALTER TABLE ats_queue_token ADD COLUMN interview_completed_at DATETIME NULL COMMENT ''Interview completion time''',
+  'SELECT ''interview_completed_at already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- ── 2. Create interview_result table ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ats_interview_result (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  recruiter_id CHAR(36) NOT NULL,
+  interview_status ENUM('selected', 'rejected', 'hold', 'callback', 'no_show', 'walkout') NOT NULL,
+  communication_rating INT NULL CHECK (communication_rating BETWEEN 1 AND 5),
+  stability_rating INT NULL CHECK (stability_rating BETWEEN 1 AND 5),
+  salary_fit BOOLEAN DEFAULT TRUE,
+  shift_fit BOOLEAN DEFAULT TRUE,
+  location_fit BOOLEAN DEFAULT TRUE,
+  role_fit BOOLEAN DEFAULT TRUE,
+  remarks TEXT NULL,
+  rejection_reason VARCHAR(255) NULL,
+  next_step VARCHAR(500) NULL,
+  interviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_candidate (candidate_id),
+  INDEX idx_recruiter (recruiter_id),
+  INDEX idx_status (interview_status),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+);
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_interview_result' AND COLUMN_NAME='interviewed_at') = 0,
+  'ALTER TABLE ats_interview_result ADD COLUMN interviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP',
+  'SELECT ''interviewed_at already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- ── 3. Create payroll_hr_validation table ─────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ats_payroll_hr_validation (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  employment_type ENUM('onroll', 'offrole') NOT NULL,
+  gross_salary DECIMAL(10,2) NOT NULL,
+  joining_date DATE NOT NULL,
+  salary_start_date DATE NULL COMMENT 'If NULL, defaults to joining_date',
+  basic_salary DECIMAL(10,2) NULL,
+  hra DECIMAL(10,2) NULL,
+  conveyance DECIMAL(10,2) NULL,
+  special_allowance DECIMAL(10,2) NULL,
+  pf_amount DECIMAL(10,2) NULL,
+  esic_amount DECIMAL(10,2) NULL,
+  training_period_days INT DEFAULT 0,
+  training_end_date DATE NULL,
+  validated_by CHAR(36) NULL,
+  validation_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+  validated_at DATETIME NULL,
+  remarks TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_candidate (candidate_id),
+  INDEX idx_status (validation_status),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+);
+
+-- ── 4. Create employee_code_sequence table ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS employee_code_sequence (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_prefix ENUM('MAS', 'IDC') NOT NULL,
+  is_offrole BOOLEAN DEFAULT FALSE,
+  current_sequence INT NOT NULL DEFAULT 0,
+  last_generated_code VARCHAR(50) NULL,
+  last_generated_at DATETIME NULL,
+  UNIQUE KEY unique_sequence (company_prefix, is_offrole)
+);
+
+SET @col_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'is_offrole'
+);
+SET @sql_1 = IF(@col_1 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN is_offrole BOOLEAN DEFAULT FALSE',
+  'SELECT "is_offrole already exists" AS message');
+PREPARE stmt_1 FROM @sql_1;
+EXECUTE stmt_1;
+DEALLOCATE PREPARE stmt_1;
+SET @col_2 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'current_sequence'
+);
+SET @sql_2 = IF(@col_2 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN current_sequence INT NOT NULL DEFAULT 0',
+  'SELECT "current_sequence already exists" AS message');
+PREPARE stmt_2 FROM @sql_2;
+EXECUTE stmt_2;
+DEALLOCATE PREPARE stmt_2;
+SET @col_3 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'last_generated_code'
+);
+SET @sql_3 = IF(@col_3 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN last_generated_code VARCHAR(50) NULL',
+  'SELECT "last_generated_code already exists" AS message');
+PREPARE stmt_3 FROM @sql_3;
+EXECUTE stmt_3;
+DEALLOCATE PREPARE stmt_3;
+SET @col_4 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_code_sequence' AND COLUMN_NAME = 'last_generated_at'
+);
+SET @sql_4 = IF(@col_4 = 0,
+  'ALTER TABLE employee_code_sequence ADD COLUMN last_generated_at DATETIME NULL',
+  'SELECT "last_generated_at already exists" AS message');
+PREPARE stmt_4 FROM @sql_4;
+EXECUTE stmt_4;
+DEALLOCATE PREPARE stmt_4;
+
+-- Initialize sequences
+INSERT INTO employee_code_sequence (company_prefix, is_offrole, current_sequence) VALUES
+('MAS', FALSE, 47814),
+('MAS', TRUE, 0),
+('IDC', FALSE, 0),
+('IDC', TRUE, 0)
+ON DUPLICATE KEY UPDATE
+  current_sequence = GREATEST(current_sequence, VALUES(current_sequence)),
+  is_offrole = is_offrole;
+
+-- ── 5. Create module_access_control table ─────────────────────────────────────
+CREATE TABLE IF NOT EXISTS module_access_control (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  module_name VARCHAR(100) NOT NULL,
+  employee_code VARCHAR(50) NOT NULL,
+  has_access BOOLEAN DEFAULT TRUE,
+  granted_by CHAR(36) NULL,
+  granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at DATETIME NULL,
+  remarks TEXT NULL,
+  INDEX idx_module (module_name),
+  INDEX idx_employee (employee_code),
+  UNIQUE KEY unique_access (module_name, employee_code)
+);
+
+SET @col_5 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND COLUMN_NAME = 'employee_code'
+);
+SET @sql_5 = IF(@col_5 = 0,
+  'ALTER TABLE module_access_control ADD COLUMN employee_code VARCHAR(50) NULL',
+  'SELECT "employee_code already exists" AS message');
+PREPARE stmt_5 FROM @sql_5;
+EXECUTE stmt_5;
+DEALLOCATE PREPARE stmt_5;
+SET @col_6 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND COLUMN_NAME = 'has_access'
+);
+SET @sql_6 = IF(@col_6 = 0,
+  'ALTER TABLE module_access_control ADD COLUMN has_access BOOLEAN DEFAULT TRUE',
+  'SELECT "has_access already exists" AS message');
+PREPARE stmt_6 FROM @sql_6;
+EXECUTE stmt_6;
+DEALLOCATE PREPARE stmt_6;
+SET @col_7 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND COLUMN_NAME = 'remarks'
+);
+SET @sql_7 = IF(@col_7 = 0,
+  'ALTER TABLE module_access_control ADD COLUMN remarks TEXT NULL',
+  'SELECT "remarks already exists" AS message');
+PREPARE stmt_7 FROM @sql_7;
+EXECUTE stmt_7;
+DEALLOCATE PREPARE stmt_7;
+SET @idxchk_1 = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'module_access_control' AND INDEX_NAME = 'unique_access'
+);
+SET @idxsql_1 = IF(@idxchk_1 = 0,
+  'ALTER TABLE module_access_control ADD UNIQUE KEY unique_access (module_name, employee_code)',
+  'SELECT "unique_access already exists" AS message');
+PREPARE stmt_idx_1 FROM @idxsql_1;
+EXECUTE stmt_idx_1;
+DEALLOCATE PREPARE stmt_idx_1;
+
+-- Grant super admin access to MAS47814
+INSERT INTO module_access_control (
+  employee_id, module_code, module_name, employee_code, has_access, access_granted, granted_by, remarks
+)
+SELECT
+  COALESCE((SELECT id FROM employees WHERE employee_code = 'MAS47814' LIMIT 1), '00000000-0000-0000-0000-000000000000'),
+  seed.module_name,
+  seed.module_name,
+  'MAS47814',
+  TRUE,
+  1,
+  'SYSTEM',
+  'Super admin full access'
+FROM (
+  SELECT 'ATS_DASHBOARD' AS module_name
+  UNION ALL SELECT 'PAYROLL_HR_VALIDATION'
+  UNION ALL SELECT 'RECRUITER_PORTAL'
+  UNION ALL SELECT 'COMMAND_CENTRE'
+) seed
+ON DUPLICATE KEY UPDATE has_access=TRUE;
+
+-- ── 6. Create recruiter_assignment_log table ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS ats_recruiter_assignment_log (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  candidate_id CHAR(36) NOT NULL,
+  old_recruiter_id CHAR(36) NULL,
+  new_recruiter_id CHAR(36) NULL,
+  assignment_reason VARCHAR(255) NOT NULL,
+  assigned_by VARCHAR(50) DEFAULT 'SYSTEM',
+  assigned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_candidate (candidate_id),
+  INDEX idx_recruiter (new_recruiter_id),
+  FOREIGN KEY (candidate_id) REFERENCES ats_candidate(id) ON DELETE CASCADE
+);
+
+-- ── 7. Create cost_centre_master table ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS cost_centre_master (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  cost_centre_code VARCHAR(50) NOT NULL UNIQUE,
+  cost_centre_name VARCHAR(255) NOT NULL,
+  branch_name VARCHAR(255) NULL,
+  process_name VARCHAR(255) NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_by CHAR(36) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_code (cost_centre_code),
+  INDEX idx_branch (branch_name),
+  INDEX idx_process (process_name)
+);
+
+-- ── 8. Add indexes for performance ────────────────────────────────────────────
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_branch_status') = 0,
+  'CREATE INDEX idx_queue_branch_status ON ats_queue_token(branch_name, queue_status)',
+  'SELECT ''idx_queue_branch_status already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_queue_created_at') = 0,
+  'CREATE INDEX idx_queue_created_at ON ats_queue_token(created_at)',
+  'SELECT ''idx_queue_created_at already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='ats_interview_result' AND INDEX_NAME='idx_interview_date') = 0,
+  'CREATE INDEX idx_interview_date ON ats_interview_result(interviewed_at)',
+  'SELECT ''idx_interview_date already exists'' AS note'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SELECT '✅ Migration 139 complete: ATS Enhanced Journey tables created' AS result;

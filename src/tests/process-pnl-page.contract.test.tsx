@@ -1,0 +1,124 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const pageSource = readFileSync(resolve(process.cwd(), "src/pages/finance/ProcessPnlPage.tsx"), "utf8");
+const matrixSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/BpoPnlMatrixTable.tsx"),
+  "utf8",
+);
+const drawerSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlRowDrawer.tsx"),
+  "utf8",
+);
+const alertsWorkspaceSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlAlertsWorkspace.tsx"),
+  "utf8",
+);
+const totalsSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlMatrixTotals.tsx"),
+  "utf8",
+);
+
+describe("Process P&L page matrix contracts", () => {
+  it("exposes the alerts and reconciliation tab", () => {
+    expect(pageSource).toContain('TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>');
+  });
+
+  it("mounts the focused alerts workspace instead of the retired charts tab", () => {
+    expect(pageSource).toContain("<ProcessPnlAlertsWorkspace");
+    expect(pageSource).not.toContain('TabsContent value="charts"');
+  });
+
+  it("owns the matrix filter state", () => {
+    expect(pageSource).toContain("const [matrixPreset, setMatrixPreset]");
+    expect(pageSource).toContain("const [statusFilter, setStatusFilter]");
+    expect(pageSource).toContain("const [issueFilter, setIssueFilter]");
+  });
+
+  it("renders the matrix toolbar with a summary default", () => {
+    expect(pageSource).toContain("<ProcessPnlMatrixToolbar");
+    expect(pageSource).toContain('useState<ProcessPnlMatrixPreset>("summary")');
+  });
+
+  it("renders config-driven totals and sortable matrix headers", () => {
+    expect(matrixSource).toContain("<ProcessPnlMatrixTotals");
+    expect(matrixSource).toContain("onClick={() => handleSort(column.key)}");
+    expect(matrixSource).toContain('preset === "full"');
+  });
+
+  it("supports opening a process snapshot from the matrix", () => {
+    expect(matrixSource).toContain("setSelectedRow(row)");
+    expect(matrixSource).toContain("<ProcessPnlRowDrawer");
+    expect(matrixSource).toContain('title="Open process snapshot"');
+  });
+
+  it("guards matrix preference writes when browser storage is unavailable", () => {
+    expect(pageSource).toContain("window.localStorage.setItem");
+    expect(pageSource).toContain("Unable to persist matrix view preferences");
+  });
+
+  it("does not expose unauthorized branch-budget links from the row drawer", () => {
+    expect(drawerSource).not.toContain("/finance/branch-budget");
+    expect(drawerSource).toContain("/finance/process-pnl/period-close");
+  });
+
+  it("exposes action-oriented alert workspace sections and controls", () => {
+    expect(alertsWorkspaceSource).toContain("Reconciliation blockers");
+    expect(alertsWorkspaceSource).toContain("Data coverage gaps");
+    expect(alertsWorkspaceSource).toContain("severityFilter");
+    expect(alertsWorkspaceSource).toContain("groupBy");
+    expect(alertsWorkspaceSource).toContain('REVENUE_RULE_MISSING');
+    expect(alertsWorkspaceSource).toContain('DELIVERY_ACTUAL_MISSING');
+    expect(alertsWorkspaceSource).toContain('groupBy === "severity"');
+    expect(alertsWorkspaceSource).toContain('groupBy !== "severity"');
+    expect(alertsWorkspaceSource).toContain('Object.entries(groupedAlerts).map');
+  });
+
+  it("keeps totals sticky offsets aligned with four sticky identity columns", () => {
+    expect(totalsSource).toContain('const stickyOffsets = ["0px", "220px", "370px", "500px"]');
+  });
+});
+
+describe("P&L running-salary snapshot freshness", () => {
+  const statementSource = readFileSync(
+    resolve(process.cwd(), "src/components/finance/pnl/PnlStatementView.tsx"),
+    "utf8",
+  );
+  const hookSource = readFileSync(resolve(process.cwd(), "src/hooks/usePnlStatement.ts"), "utf8");
+
+  /**
+   * Agent/DSC/BMC people cost comes from pnl_running_salary_snapshot, refreshed only
+   * by an explicit endpoint call. Nothing in the app called it, so the statement could
+   * show an arbitrarily old cost beside live revenue and still read as current.
+   */
+  it("gives the statement a way to refresh the snapshot it reads", () => {
+    expect(hookSource).toContain("useRefreshRunningSalarySnapshot");
+    expect(hookSource).toContain("/api/finance/pnl/running-salary/refresh");
+    expect(statementSource).toContain("useRefreshRunningSalarySnapshot");
+    expect(statementSource).toContain("Refresh people cost");
+  });
+
+  it("invalidates the views that read the snapshot once it is rewritten", () => {
+    expect(hookSource).toContain('queryKey: ["pnl-statement"]');
+    expect(hookSource).toContain('queryKey: ["pnl-summary"]');
+  });
+
+  it("states the snapshot's age rather than implying the cost is current", () => {
+    expect(statementSource).toContain("People cost as of");
+    expect(statementSource).toContain("No people-cost snapshot for this period");
+    expect(statementSource).toContain("isStale");
+  });
+
+  it("passes the viewed period through, since the refresh is period-scoped", () => {
+    expect(pageSource).toContain("period={filters.period}");
+    expect(statementSource).toContain("disabled={!period || refresh.isPending}");
+  });
+
+  it("reports skipped and failed employees, which understate people cost", () => {
+    // A silent success would hide that some staff were never costed, and an
+    // uncosted employee inflates Operating Profit by their whole salary.
+    expect(statementSource).toContain("refresh.data.skipped");
+    expect(statementSource).toContain("refresh.data.failed");
+  });
+});

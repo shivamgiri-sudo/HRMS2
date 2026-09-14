@@ -1,0 +1,16 @@
+{
+  // Typecheck for PaymentDisbursalCenter.tsx (Batch 3 Phase 2/3 payroll audit fixes:
+  // lock-gated Mark as Disbursed, break-glass dialog, disbursal-tab role gating, owner
+  // picker wiring). Scoped per the pattern in tsconfig.budgettopup-check.json — the root
+  // tsconfig has `"files": []` and exits 0 regardless, and `tsc -p tsconfig.app.json`
+  // reports pre-existing errors elsewhere that would bury anything introduced here.
+  //
+  //     npx tsc -p tsconfig.disbursalcenter-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/payroll/PaymentDisbursalCenter.tsx",
+    "src/hooks/useUserRole.ts",
+    "src/lib/hrmsApi.ts",
+    "src/vite-env.d.ts"
+  ]
+}

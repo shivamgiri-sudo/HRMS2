@@ -1,0 +1,1641 @@
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  AlertTriangle,
+  ArrowRight,
+  BadgeIndianRupee,
+  BarChart3,
+  BookOpenCheck,
+  Boxes,
+  Building2,
+  Calculator,
+  CheckCircle2,
+  CircleDollarSign,
+  Database,
+  FileClock,
+  FileSpreadsheet,
+  Gauge,
+  GitCompareArrows,
+  Landmark,
+  LockKeyhole,
+  Network,
+  ReceiptIndianRupee,
+  RefreshCw,
+  Scale,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+  TrendingUp,
+  UsersRound,
+  Workflow,
+  XCircle,
+} from "lucide-react";
+import { toast } from "sonner";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useHasRole } from "@/hooks/useUserRole";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  useBpoPnlConfiguration,
+  type AllocationPolicyPayload,
+  type ClassificationRulePayload,
+  type CostComponentPayload,
+  type DeliveryActualPayload,
+  type RevenueComponentPayload,
+  type RevenueRulePayload,
+  type RewardPenaltyPayload,
+} from "@/hooks/useBpoPnlConfiguration";
+import { useCostCentreList } from "@/hooks/useCostCentreManagement";
+import {
+  usePnlConfiguration,
+  type SaveContractPayload,
+  type SaveMonthlyPlanPayload,
+  type SaveRatePayload,
+} from "@/hooks/usePnlConfiguration";
+import { PnlBulkUploadDialog } from "@/components/finance/PnlBulkUploadDialog";
+
+type AnyRow = Record<string, any>;
+
+type Column = {
+  key: string;
+  label: string;
+  align?: "left" | "right";
+  render?: (value: any, row: AnyRow) => ReactNode;
+};
+
+const selectClass =
+  "flex h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100";
+
+function currentPeriod() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function firstDay(period = currentPeriod()) {
+  return `${period}-01`;
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function numberValue(value: string) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function currency(value: unknown) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(Number(value ?? 0));
+}
+
+function percent(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return `${Number.isFinite(parsed) ? parsed.toFixed(1) : "0.0"}%`;
+}
+
+function titleCase(value: unknown) {
+  return String(value ?? "-")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+  return (
+    // min-w-0 lets this grid/flex item shrink below its label's natural width instead of
+    // overflowing into the next column; break-words wraps a long label onto a second line
+    // rather than spilling text over the neighboring field when the column is narrow
+    // (e.g. a form panel nested inside a split-pane inside a two-column tab layout).
+    <div className="min-w-0 space-y-2">
+      <Label className="text-xs font-bold uppercase tracking-[0.13em] text-slate-500 break-words">{label}</Label>
+      {children}
+      {hint ? <p className="text-xs leading-5 text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function ProcessSelect({
+  value,
+  onChange,
+  processes,
+  allowBlank = false,
+}: {
+  value: string | null | undefined;
+  onChange: (value: string) => void;
+  processes: Array<{ id: string; process_name: string; branch_name?: string | null }>;
+  allowBlank?: boolean;
+}) {
+  return (
+    <select className={selectClass} value={value ?? ""} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{allowBlank ? "Shared / organisation level" : "Select process"}</option>
+      {processes.map((process) => (
+        <option key={process.id} value={process.id}>
+          {process.process_name}{process.branch_name ? ` — ${process.branch_name}` : ""}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function BranchSelect({
+  value,
+  onChange,
+  branches,
+  allowBlank = false,
+}: {
+  value: string | null | undefined;
+  onChange: (value: string) => void;
+  branches: Array<{ id: string; branch_name: string }>;
+  allowBlank?: boolean;
+}) {
+  return (
+    <select className={selectClass} value={value ?? ""} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{allowBlank ? "Organisation / no single branch" : "Select branch"}</option>
+      {branches.map((branch) => (
+        <option key={branch.id} value={branch.id}>{branch.branch_name}</option>
+      ))}
+    </select>
+  );
+}
+
+function StatusPill({ value }: { value: unknown }) {
+  const status = String(value ?? "unknown").toLowerCase();
+  const className = status.includes("locked")
+    ? "border-violet-200 bg-violet-50 text-violet-700"
+    : status.includes("approved") || status.includes("active") || status.includes("validated")
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : status.includes("reject") || status.includes("reverse") || status.includes("inactive")
+        ? "border-rose-200 bg-rose-50 text-rose-700"
+        : "border-amber-200 bg-amber-50 text-amber-700";
+  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${className}`}>{titleCase(status)}</span>;
+}
+
+function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick, selectedId, loading }: { columns: Column[]; rows: AnyRow[]; emptyText: string; maxHeight?: number; onRowClick?: (row: AnyRow) => void; selectedId?: string | number | null; loading?: boolean }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-auto" style={{ maxHeight }}>
+        <table className="min-w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur">
+            <tr>
+              {columns.map((column) => (
+                <th key={column.key} className={`whitespace-nowrap px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-slate-500 ${column.align === "right" ? "text-right" : "text-left"}`}>
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {loading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <tr key={i}>
+                  {columns.map((column) => (
+                    <td key={column.key} className="px-4 py-3">
+                      <Skeleton className="h-4 w-full rounded" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <>
+                {rows.map((row, rowIndex) => {
+                  const isSelected = selectedId != null && String(row.id) === String(selectedId);
+                  return (
+                    <tr
+                      key={String(row.id ?? `${rowIndex}-${row[columns[0]?.key]}`)}
+                      className={`transition ${isSelected ? "bg-sky-50 ring-1 ring-inset ring-sky-200" : "hover:bg-sky-50/40"} ${onRowClick ? "cursor-pointer" : ""}`}
+                      onClick={() => onRowClick?.(row)}
+                    >
+                      {columns.map((column) => (
+                        <td key={column.key} className={`whitespace-nowrap px-4 py-3 ${isSelected ? "text-slate-900" : "text-slate-700"} ${column.align === "right" ? "text-right" : "text-left"}`}>
+                          {column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "-")}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+                {rows.length === 0 ? (
+                  <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-sm text-slate-500">{emptyText}</td></tr>
+                ) : null}
+              </>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function HealthLine({ label, value, detail }: { label: string; value: number; detail: string }) {
+  const normalized = Math.max(0, Math.min(100, value));
+  const tone = normalized >= 90 ? "bg-emerald-500" : normalized >= 70 ? "bg-amber-500" : "bg-rose-500";
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold text-slate-800">{label}</p>
+          <p className="text-xs text-slate-500">{detail}</p>
+        </div>
+        <span className="text-sm font-black text-slate-950">{normalized.toFixed(0)}%</span>
+      </div>
+      <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full transition-all ${tone}`} style={{ width: `${normalized}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * WRITE_ROLES / PNL_WRITE_ROLES on the endpoints every editor in this page posts to
+ * (bpo-pnl.routes.ts, process-pnl.routes.ts). The page is reachable by the wider pnlRoles list,
+ * which also admits ceo and coo — neither of whom may write. All nine editors go through this one
+ * component, so gating here covers contracts, rate cards, delivery actuals, revenue and cost
+ * components, allocation policies, classification rules and the monthly plan in one place rather
+ * than nine that can drift apart. The backend is still the gate; this only stops the page
+ * offering an Add and a Save that can only come back 403.
+ */
+const PNL_CONFIG_WRITE_ROLES = [
+  "super_admin", "admin", "finance", "finance_head", "accounts_head", "payroll_head",
+] as const;
+
+// Split-pane layout helper
+function SplitPane({
+  formOpen,
+  tableLabel,
+  onAdd,
+  onClose,
+  selectedRow,
+  tableSlot,
+  formSlot,
+  onSave,
+  saving,
+}: {
+  formOpen: boolean;
+  tableLabel: string;
+  onAdd: () => void;
+  onClose: () => void;
+  selectedRow: AnyRow | null;
+  tableSlot: ReactNode;
+  formSlot: ReactNode;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  const canWrite = useHasRole(...PNL_CONFIG_WRITE_ROLES);
+  return (
+    <div className="flex h-full gap-0 overflow-hidden">
+      {/* Table side */}
+      <div className={`flex flex-col overflow-hidden transition-all duration-150 ${formOpen ? "w-[55%]" : "w-full"}`}>
+        <div className="flex items-center justify-between border-b px-3 py-2 shrink-0">
+          <span className="text-xs font-medium text-slate-500">{tableLabel}</span>
+          {canWrite
+            ? <Button size="sm" onClick={onAdd}>+ Add</Button>
+            : <span className="text-[11px] text-slate-400">Read-only for your role</span>}
+        </div>
+        <div className="flex-1 overflow-auto px-3 py-2">
+          {tableSlot}
+        </div>
+      </div>
+
+      {/* Form panel */}
+      {formOpen && (
+        <div className="w-[45%] border-l flex flex-col overflow-hidden shrink-0">
+          <div className="flex items-center justify-between border-b px-3 py-2 shrink-0">
+            <span className="text-xs font-semibold">
+              {selectedRow ? "Edit entry" : "Add new"}
+            </span>
+            <Button variant="ghost" size="sm" aria-label="Close form panel" className="h-8 w-8 min-w-[2rem] p-0" onClick={onClose}>
+              ×
+            </Button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 py-3">
+            {formSlot}
+          </div>
+          <div className="border-t px-3 py-2 flex justify-end gap-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            {/* A row can still be opened to read it; only the write is withheld. */}
+            <Button size="sm" onClick={onSave} disabled={saving || !canWrite}>
+              {saving ? "Saving…" : canWrite ? "Save" : "Read-only"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function PnlMasterControlCenterPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const period = searchParams.get("period") ?? currentPeriod();
+  const activeTab = searchParams.get("tab") ?? "overview";
+  const [processFilter, setProcessFilter] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [impactProcessId, setImpactProcessId] = useState("");
+  const [impactRateChange, setImpactRateChange] = useState(5);
+
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+
+  // Split-pane shared state (one tab active at a time)
+  const [formOpen, setFormOpen] = useState(false);
+  const [selectedRow, setSelectedRow] = useState<AnyRow | null>(null);
+  // For commercial tab which has multiple form types
+  const [commercialFormType, setCommercialFormType] = useState<"rule" | "contract" | "rate">("rule");
+  // Delivery tab has two side-by-side SplitPanes; separate open states prevent both from opening simultaneously
+  const [deliveryFormOpen, setDeliveryFormOpen] = useState(false);
+  const [revenueFormOpen, setRevenueFormOpen] = useState(false);
+  const [rpFormOpen, setRpFormOpen] = useState(false);
+  const [rpRejectId, setRpRejectId] = useState<string | null>(null);
+  const [rpRejectReason, setRpRejectReason] = useState("");
+
+  const legacy = usePnlConfiguration(period, processFilter || undefined);
+  const bpo = useBpoPnlConfiguration(period, processFilter || undefined, branchFilter || undefined);
+  const references = legacy.referenceQuery.data;
+  const processes = references?.processes ?? [];
+  const branches = references?.branches ?? [];
+  const clients = references?.clients ?? [];
+
+  const processName = useMemo(() => new Map(processes.map((process) => [process.id, process.process_name])), [processes]);
+  const branchName = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.branch_name])), [branches]);
+  const clientName = useMemo(() => new Map(clients.map((client) => [client.id, client.client_name])), [clients]);
+
+  const contracts = legacy.contractsQuery.data ?? [];
+  const rates = legacy.ratesQuery.data ?? [];
+  const plans = legacy.monthlyPlansQuery.data ?? [];
+  const periods = legacy.periodsQuery.data ?? [];
+  const adjustments = legacy.adjustmentsQuery.data ?? [];
+  // Governance tab "Data-source readiness" — these two used to be hardcoded `true`. `undefined`
+  // (query still loading, or not yet enabled because no period is selected) is distinct from a
+  // real false, so the card can show a neutral state instead of flashing a false "Ready".
+  const grnAllocationsReady = bpo.grnAllocationReadinessQuery.data?.ready;
+  const vendorPaymentsReady = bpo.vendorPaymentReadinessQuery.data?.ready;
+  const revenueRules = bpo.revenueRulesQuery.data ?? [];
+  const deliveryActuals = bpo.deliveryActualsQuery.data ?? [];
+  const revenueComponents = bpo.revenueComponentsQuery.data ?? [];
+  const costComponents = bpo.costComponentsQuery.data ?? [];
+  const allocationPolicies = bpo.allocationPoliciesQuery.data ?? [];
+  const classificationRules = bpo.classificationRulesQuery.data ?? [];
+
+  const health = useMemo(() => {
+    // Commercial metrics (mapping, contracts, rules) apply only to client-facing processes.
+    // Internal support processes (HR, Finance, IT, Admin) have no client_id by design and
+    // must not count as gaps — using the full process list as denominator would cap the score
+    // well below 100% even when everything is configured correctly.
+    const clientProcesses = processes.filter((process) => process.client_id);
+    const clientTotal = Math.max(clientProcesses.length, 1);
+
+    const mapped = clientProcesses.filter((process) => process.branch_id).length;
+    const contractProcessIds = new Set(contracts.map((row) => String(row.process_id ?? "")).filter(Boolean));
+    const ruleProcessIds = new Set(revenueRules.map((row) => String(row.process_id ?? "")).filter(Boolean));
+    const planProcessIds = new Set(plans.map((row) => String(row.process_id ?? "")).filter(Boolean));
+    const classificationCoverage = classificationRules.length > 0 ? 100 : 0;
+    const mappingPct = (mapped / clientTotal) * 100;
+    const contractPct = (clientProcesses.filter((process) => contractProcessIds.has(process.id)).length / clientTotal) * 100;
+    const rulePct = (clientProcesses.filter((process) => ruleProcessIds.has(process.id)).length / clientTotal) * 100;
+    const planPct = (clientProcesses.filter((process) => planProcessIds.has(process.id)).length / clientTotal) * 100;
+    const score = Math.round((mappingPct + contractPct + rulePct + planPct + classificationCoverage) / 5);
+
+    const manualGroups = new Map<string, number>();
+    allocationPolicies
+      .filter((row) => String(row.allocation_driver) === "manual")
+      .forEach((row) => {
+        const key = `${row.branch_id ?? "org"}|${row.pool_type ?? "unknown"}`;
+        manualGroups.set(key, (manualGroups.get(key) ?? 0) + Number(row.manual_allocation_pct ?? 0));
+      });
+    const allocationIssues = [...manualGroups.entries()].filter(([, totalPct]) => Math.abs(totalPct - 100) > 0.01);
+
+    return {
+      score,
+      mappingPct,
+      contractPct,
+      rulePct,
+      planPct,
+      classificationCoverage,
+      // Unmapped = client processes missing branch; internal processes are correctly unmapped by design
+      unmappedProcesses: clientProcesses.filter((process) => !process.branch_id),
+      withoutContract: clientProcesses.filter((process) => !contractProcessIds.has(process.id)),
+      withoutRule: clientProcesses.filter((process) => !ruleProcessIds.has(process.id)),
+      withoutPlan: clientProcesses.filter((process) => !planProcessIds.has(process.id)),
+      allocationIssues,
+    };
+  }, [allocationPolicies, classificationRules.length, contracts, plans, processes, revenueRules]);
+
+  const impactPreview = useMemo(() => {
+    const rules = revenueRules.filter((row) => String(row.process_id) === impactProcessId);
+    const currentMonthlyRevenue = rules.reduce((sum, row) => {
+      const base = Math.max(Number(row.monthly_minimum_commitment ?? 0), Number(row.rate_amount ?? 0) * Number(row.mandated_seats ?? row.included_units ?? 0));
+      return sum + base * Number(row.fx_to_inr ?? 1);
+    }, 0);
+    const delta = currentMonthlyRevenue * (impactRateChange / 100);
+    return { currentMonthlyRevenue, delta, revised: currentMonthlyRevenue + delta, ruleCount: rules.length };
+  }, [impactProcessId, impactRateChange, revenueRules]);
+
+  const [revenueRuleForm, setRevenueRuleForm] = useState<RevenueRulePayload>({
+    processId: "",
+    contractId: null,
+    ruleName: "",
+    billingModel: "per_seat",
+    metricKey: "billable_seats",
+    rateAmount: 0,
+    currencyCode: "INR",
+    fxToInr: 1,
+    monthlyMinimumCommitment: 0,
+    includedUnits: 0,
+    overageRate: 0,
+    mandatedSeats: 0,
+    qualityGatePct: null,
+    slaGatePct: null,
+    effectiveFrom: firstDay(period),
+    effectiveTo: null,
+    status: "approved",
+    approvalReference: "",
+  });
+
+  const [deliveryForm, setDeliveryForm] = useState<DeliveryActualPayload>({
+    processId: "",
+    periodCode: period,
+    activityDate: today(),
+    metricKey: "billable_seats",
+    plannedUnits: 0,
+    deliveredUnits: 0,
+    acceptedUnits: 0,
+    rejectedUnits: 0,
+    billableUnits: 0,
+    productiveHours: 0,
+    loginHours: 0,
+    talkMinutes: 0,
+    qualityScore: null,
+    slaScore: null,
+    dataSource: "manual",
+    sourceReference: "finance-master",
+    status: "validated",
+  });
+
+  const [revenueComponentForm, setRevenueComponentForm] = useState<RevenueComponentPayload>({
+    processId: "",
+    periodCode: period,
+    componentType: "incentive",
+    direction: "increase",
+    description: "",
+    amountInr: 0,
+    recognitionDate: today(),
+    invoiceReference: "",
+    sourceReference: "finance-master",
+    status: "approved",
+  });
+
+  const [rpForm, setRpForm] = useState<RewardPenaltyPayload>({
+    cost_centre_id: "",
+    period_code: period,
+    entry_type: "reward",
+    description: "",
+    amount_inr: 0,
+    client_reference: "",
+  });
+
+  const rewardPenaltyEntries = bpo.rewardPenaltyQuery.data ?? [];
+  const costCentreList = useCostCentreList({ status: "active", branch_id: branchFilter || undefined });
+  const costCentres = costCentreList.data?.data ?? [];
+  const costCentreName = useMemo(
+    () => new Map(costCentres.map((cc: any) => [cc.id, cc.cost_centre_name as string])),
+    [costCentres]
+  );
+  // useHasRole is variadic (...roles: string[]). Passing an array made roles === [[...]],
+  // which expandRoleKeys can never match against a role key, so isApprover was permanently
+  // false and the reward/penalty approval controls were hidden from every approver.
+  const isApprover = useHasRole("super_admin", "finance_head", "accounts_head");
+
+  const [costForm, setCostForm] = useState<CostComponentPayload>({
+    processId: null,
+    branchId: null,
+    periodCode: period,
+    costType: "depreciation",
+    description: "",
+    amountInr: 0,
+    allocationDriver: "direct",
+    manualAllocationPct: null,
+    sourceReference: "finance-master",
+    status: "approved",
+  });
+
+  const [allocationForm, setAllocationForm] = useState<AllocationPolicyPayload>({
+    branchId: "",
+    processId: null,
+    poolType: "bmc_people",
+    allocationDriver: "active_hc",
+    manualAllocationPct: null,
+    effectiveFrom: firstDay(period),
+    effectiveTo: null,
+    status: "approved",
+  });
+
+  const [classificationForm, setClassificationForm] = useState<ClassificationRulePayload>({
+    ruleName: "",
+    scopeType: "designation",
+    scopeKey: "",
+    processId: null,
+    branchId: null,
+    pnlBucket: "agent_salary",
+    priority: 100,
+    effectiveFrom: firstDay(period),
+    effectiveTo: null,
+    activeStatus: true,
+  });
+
+  const [contractForm, setContractForm] = useState<SaveContractPayload>({
+    process_id: "",
+    client_id: "",
+    contract_name: "",
+    billing_type: "per_seat",
+    billing_rate: 0,
+    currency: "INR",
+    monthly_minimum_commitment: 0,
+    effective_from: firstDay(period),
+    status: "active",
+  });
+
+  const [rateForm, setRateForm] = useState<SaveRatePayload>({
+    process_id: "",
+    contract_id: "",
+    rate_type: "seat_rate",
+    rate_amount: 0,
+    unit: "seat",
+    effective_from: firstDay(period),
+    approval_reference: "",
+  });
+
+  const [planForm, setPlanForm] = useState<SaveMonthlyPlanPayload>({
+    process_id: "",
+    period_code: period,
+    contracted_seats: 0,
+    required_productive_hc: 0,
+    planned_shrinkage_pct: 0,
+    required_roster_hc: 0,
+    buffer_target_pct: 0,
+    revenue_budget: 0,
+    direct_cost_budget: 0,
+    indirect_cost_budget: 0,
+    profit_budget: 0,
+    status: "draft",
+  });
+
+  // P1: populate the active tab's form when a row is selected for editing
+  useEffect(() => {
+    if (!selectedRow || !formOpen) return;
+    if (activeTab === "commercial") {
+      if (commercialFormType === "rule") {
+        setRevenueRuleForm({
+          processId: String(selectedRow.process_id ?? ""),
+          contractId: selectedRow.contract_id ?? null,
+          ruleName: String(selectedRow.rule_name ?? ""),
+          billingModel: String(selectedRow.billing_model ?? "per_seat"),
+          metricKey: String(selectedRow.metric_key ?? "billable_seats"),
+          rateAmount: Number(selectedRow.rate_amount ?? 0),
+          currencyCode: String(selectedRow.currency_code ?? "INR"),
+          fxToInr: Number(selectedRow.fx_to_inr ?? 1),
+          monthlyMinimumCommitment: Number(selectedRow.monthly_minimum_commitment ?? 0),
+          includedUnits: Number(selectedRow.included_units ?? 0),
+          overageRate: Number(selectedRow.overage_rate ?? 0),
+          mandatedSeats: Number(selectedRow.mandated_seats ?? 0),
+          qualityGatePct: selectedRow.quality_gate_pct != null ? Number(selectedRow.quality_gate_pct) : null,
+          slaGatePct: selectedRow.sla_gate_pct != null ? Number(selectedRow.sla_gate_pct) : null,
+          effectiveFrom: String(selectedRow.effective_from ?? firstDay(period)),
+          effectiveTo: selectedRow.effective_to != null ? String(selectedRow.effective_to) : null,
+          status: String(selectedRow.status ?? "approved"),
+          approvalReference: String(selectedRow.approval_reference ?? ""),
+        });
+      } else if (commercialFormType === "contract") {
+        setContractForm({
+          process_id: String(selectedRow.process_id ?? ""),
+          client_id: String(selectedRow.client_id ?? ""),
+          contract_name: String(selectedRow.contract_name ?? ""),
+          billing_type: String(selectedRow.billing_type ?? "per_seat"),
+          billing_rate: Number(selectedRow.billing_rate ?? 0),
+          currency: String(selectedRow.currency ?? "INR"),
+          monthly_minimum_commitment: Number(selectedRow.monthly_minimum_commitment ?? 0),
+          effective_from: String(selectedRow.effective_from ?? firstDay(period)),
+          status: String(selectedRow.status ?? "active"),
+        });
+      } else if (commercialFormType === "rate") {
+        setRateForm({
+          process_id: String(selectedRow.process_id ?? ""),
+          contract_id: String(selectedRow.contract_id ?? ""),
+          rate_type: String(selectedRow.rate_type ?? "seat_rate"),
+          rate_amount: Number(selectedRow.rate_amount ?? 0),
+          unit: String(selectedRow.unit ?? "seat"),
+          effective_from: String(selectedRow.effective_from ?? firstDay(period)),
+          approval_reference: String(selectedRow.approval_reference ?? ""),
+        });
+      }
+    } else if (activeTab === "costs") {
+      setCostForm({
+        processId: selectedRow.process_id != null ? String(selectedRow.process_id) : null,
+        branchId: selectedRow.branch_id != null ? String(selectedRow.branch_id) : null,
+        periodCode: String(selectedRow.period_code ?? period),
+        costType: String(selectedRow.cost_type ?? "depreciation"),
+        description: String(selectedRow.description ?? ""),
+        amountInr: Number(selectedRow.amount_inr ?? 0),
+        allocationDriver: String(selectedRow.allocation_driver ?? "direct"),
+        manualAllocationPct: selectedRow.manual_allocation_pct != null ? Number(selectedRow.manual_allocation_pct) : null,
+        sourceReference: String(selectedRow.source_reference ?? "finance-master"),
+        status: String(selectedRow.status ?? "approved"),
+      });
+    } else if (activeTab === "allocation") {
+      setAllocationForm({
+        branchId: String(selectedRow.branch_id ?? ""),
+        processId: selectedRow.process_id != null ? String(selectedRow.process_id) : null,
+        poolType: String(selectedRow.pool_type ?? "bmc_people"),
+        allocationDriver: String(selectedRow.allocation_driver ?? "active_hc"),
+        manualAllocationPct: selectedRow.manual_allocation_pct != null ? Number(selectedRow.manual_allocation_pct) : null,
+        effectiveFrom: String(selectedRow.effective_from ?? firstDay(period)),
+        effectiveTo: selectedRow.effective_to != null ? String(selectedRow.effective_to) : null,
+        status: String(selectedRow.status ?? "approved"),
+      });
+    } else if (activeTab === "classification") {
+      setClassificationForm({
+        ruleName: String(selectedRow.rule_name ?? ""),
+        scopeType: String(selectedRow.scope_type ?? "designation"),
+        scopeKey: String(selectedRow.scope_key ?? ""),
+        processId: selectedRow.process_id != null ? String(selectedRow.process_id) : null,
+        branchId: selectedRow.branch_id != null ? String(selectedRow.branch_id) : null,
+        pnlBucket: String(selectedRow.pnl_bucket ?? "agent_salary"),
+        priority: Number(selectedRow.priority ?? 100),
+        effectiveFrom: String(selectedRow.effective_from ?? firstDay(period)),
+        effectiveTo: selectedRow.effective_to != null ? String(selectedRow.effective_to) : null,
+        activeStatus: selectedRow.active_status != null ? Boolean(selectedRow.active_status) : true,
+      });
+    } else if (activeTab === "plans") {
+      setPlanForm({
+        process_id: String(selectedRow.process_id ?? ""),
+        period_code: String(selectedRow.period_code ?? period),
+        contracted_seats: Number(selectedRow.contracted_seats ?? 0),
+        required_productive_hc: Number(selectedRow.required_productive_hc ?? 0),
+        planned_shrinkage_pct: Number(selectedRow.planned_shrinkage_pct ?? 0),
+        required_roster_hc: Number(selectedRow.required_roster_hc ?? 0),
+        buffer_target_pct: Number(selectedRow.buffer_target_pct ?? 0),
+        revenue_budget: Number(selectedRow.revenue_budget ?? 0),
+        direct_cost_budget: Number(selectedRow.direct_cost_budget ?? 0),
+        indirect_cost_budget: Number(selectedRow.indirect_cost_budget ?? 0),
+        profit_budget: Number(selectedRow.profit_budget ?? 0),
+        status: String(selectedRow.status ?? "draft"),
+      });
+    }
+  }, [selectedRow]);
+
+  async function saveWithToast(action: () => Promise<unknown>, successMessage: string) {
+    try {
+      await action();
+      toast.success(successMessage);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save P&L master data.");
+    }
+  }
+
+  function updatePeriod(nextPeriod: string) {
+    setSearchParams({ period: nextPeriod, tab: activeTab });
+    setDeliveryForm((current) => ({ ...current, periodCode: nextPeriod }));
+    setRevenueComponentForm((current) => ({ ...current, periodCode: nextPeriod }));
+    setCostForm((current) => ({ ...current, periodCode: nextPeriod }));
+    setPlanForm((current) => ({ ...current, period_code: nextPeriod }));
+    setRpForm((current) => ({ ...current, period_code: nextPeriod }));
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    setSelectedRow(null);
+  }
+
+  function openAdd() {
+    setSelectedRow(null);
+    setFormOpen(true);
+  }
+
+  const loading = legacy.referenceQuery.isLoading || legacy.contractsQuery.isLoading || bpo.revenueRulesQuery.isLoading;
+
+  return (
+    <DashboardLayout>
+      <div className="flex h-full flex-col">
+        {/* Slim header — min-h (not a fixed h-12) plus flex-wrap so the title, period badge and
+            four action buttons reflow onto a second line on a narrow window instead of being
+            clipped off-screen by a row that was never allowed to grow past 48px. */}
+        <div className="flex flex-wrap items-center justify-between gap-y-2 border-b px-4 py-2 min-h-[48px] shrink-0 bg-white">
+          <h1 className="text-base font-bold text-slate-900">P&L Master & Control Center</h1>
+          {/* Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification */}
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
+            <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={() => setBulkUploadOpen(true)}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />Bulk Upload
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="text-xs">
+              <Link to={`/finance/process-pnl?period=${period}`}><BarChart3 className="mr-1.5 h-3.5 w-3.5" />P&amp;L Command Centre</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="text-xs">
+              <Link to={`/finance/process-pnl/period-close?period=${period}`}><LockKeyhole className="mr-1.5 h-3.5 w-3.5" />Period Close</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="text-xs">
+              <Link to={`/finance/branch-budget?period=${period}`}><Landmark className="mr-1.5 h-3.5 w-3.5" />Branch Budget</Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          <div className="mx-auto max-w-[1700px] space-y-4 p-4">
+            {/* Master scope filter */}
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><SlidersHorizontal className="h-4 w-4" />Master scope</div>
+              <div className="grid gap-4 lg:grid-cols-[220px_1fr_1fr_auto]">
+                <Field label="Financial period"><MonthYearPicker value={period} onChange={updatePeriod} /></Field>
+                <Field label="Process filter"><ProcessSelect value={processFilter} onChange={setProcessFilter} processes={processes} allowBlank /></Field>
+                <Field label="Branch filter"><BranchSelect value={branchFilter} onChange={setBranchFilter} branches={branches} allowBlank /></Field>
+                <div className="flex items-end"><Button variant="outline" className="w-full rounded-xl" disabled={legacy.referenceQuery.isFetching || legacy.contractsQuery.isFetching || bpo.revenueRulesQuery.isFetching || bpo.classificationRulesQuery.isFetching} onClick={() => { legacy.referenceQuery.refetch(); legacy.contractsQuery.refetch(); bpo.revenueRulesQuery.refetch(); bpo.classificationRulesQuery.refetch(); }}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
+              </div>
+            </section>
+
+            {loading ? (
+              <div className="grid gap-4 md:grid-cols-4"><Skeleton className="h-20 rounded-2xl" /><Skeleton className="h-20 rounded-2xl" /><Skeleton className="h-20 rounded-2xl" /><Skeleton className="h-20 rounded-2xl" /></div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {[
+                  { label: "Contracts", value: contracts.length, detail: `${health.withoutContract.length} processes without active contract`, tone: health.withoutContract.length ? "amber" : "emerald" },
+                  { label: "Revenue rules", value: revenueRules.length, detail: `${health.withoutRule.length} processes require a billing rule`, tone: health.withoutRule.length ? "rose" : "emerald" },
+                  { label: "Classification rules", value: classificationRules.length, detail: "Employee, designation, department and expense rules", tone: "violet" },
+                  { label: "Allocation policies", value: allocationPolicies.length, detail: `${health.allocationIssues.length} manual pools not balanced to 100%`, tone: health.allocationIssues.length ? "rose" : "sky" },
+                ].map(({ label, value, detail, tone }) => {
+                  const borderClass = tone === "rose" ? "border-rose-300 bg-rose-50/60" : tone === "amber" ? "border-amber-300 bg-amber-50/60" : tone === "emerald" ? "border-emerald-200" : "border-slate-200";
+                  const detailClass = tone === "rose" ? "text-rose-700" : tone === "amber" ? "text-amber-700" : "text-slate-500";
+                  return (
+                  <Card key={label} className={`rounded-2xl shadow-sm ${borderClass}`}>
+                    <CardContent className="p-4">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</p>
+                      <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
+                      <p className={`mt-1 text-xs ${detailClass}`}>{detail}</p>
+                    </CardContent>
+                  </Card>
+                  );
+                })}
+              </div>
+            )}
+
+            <Tabs
+              value={activeTab}
+              onValueChange={(tab) => {
+                setSearchParams({ period, tab });
+                setFormOpen(false);
+                setSelectedRow(null);
+              }}
+              className="space-y-3"
+            >
+              <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+                <TabsTrigger className="rounded-xl" value="overview">Control overview</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="commercial">Revenue &amp; contracts</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="delivery">Delivery &amp; adjustments</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="costs">Cost master</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="allocation">Allocation master</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="classification">Classification</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="plans">Plans &amp; periods</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="governance">Governance &amp; history</TabsTrigger>
+              </TabsList>
+
+              {/* ── OVERVIEW ── */}
+              <TabsContent value="overview" className="space-y-4">
+                <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-2"><Gauge className="h-4 w-4 text-sky-600" /></div>
+                      <div>
+                        <p className="text-sm font-black text-slate-950">Configuration health</p>
+                        <p className="text-xs text-slate-500">Coverage from active HRMS process mappings, commercial masters, monthly plans and classification controls.</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <HealthLine label="Organisation mapping" value={health.mappingPct} detail={`${health.unmappedProcesses.length} processes missing client or branch`} />
+                      <HealthLine label="Contract coverage" value={health.contractPct} detail={`${health.withoutContract.length} processes without contract`} />
+                      <HealthLine label="Revenue-rule coverage" value={health.rulePct} detail={`${health.withoutRule.length} processes without approved commercial rule`} />
+                      <HealthLine label="Monthly-plan coverage" value={health.planPct} detail={`${health.withoutPlan.length} processes without ${period} plan`} />
+                      <HealthLine label="Classification readiness" value={health.classificationCoverage} detail={`${classificationRules.length} active classification records`} />
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-2"><GitCompareArrows className="h-4 w-4 text-violet-600" /></div>
+                      <div>
+                        <p className="text-sm font-black text-slate-950">Master impact simulator</p>
+                        <p className="text-xs text-slate-500">Preview the directional impact of a rate-card change before changing the approved commercial master.</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <Field label="Process"><ProcessSelect value={impactProcessId} onChange={setImpactProcessId} processes={processes} /></Field>
+                      <Field label="Proposed rate change %"><Input className="rounded-xl" type="number" value={impactRateChange} onChange={(event) => setImpactRateChange(numberValue(event.target.value))} /></Field>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Current proxy</p><p className="mt-2 text-xl font-black text-slate-950">{currency(impactPreview.currentMonthlyRevenue)}</p></div>
+                        <div className={`rounded-2xl border p-4 ${impactPreview.delta < 0 ? "border-rose-200 bg-rose-50" : "border-sky-200 bg-sky-50"}`}><p className={`text-xs font-bold uppercase tracking-wider ${impactPreview.delta < 0 ? "text-rose-700" : "text-sky-700"}`}>Impact</p><p className={`mt-2 text-xl font-black ${impactPreview.delta < 0 ? "text-rose-950" : "text-sky-950"}`}>{impactPreview.delta < 0 ? "−" : "+"}{currency(Math.abs(impactPreview.delta))}</p></div>
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Revised proxy</p><p className="mt-2 text-xl font-black text-emerald-950">{currency(impactPreview.revised)}</p></div>
+                      </div>
+                      <p className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Preview uses {impactPreview.ruleCount} configured rule(s), monthly minimums, mandated seats and FX. The live P&amp;L remains unchanged until the approved master is saved.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-3">
+                  <div className="rounded-xl border border-slate-200 bg-white">
+                    <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5"><Building2 className="h-3.5 w-3.5 text-rose-600" /><p className="text-xs font-bold uppercase tracking-wide text-slate-700">Unmapped process queue</p></div>
+                    {health.unmappedProcesses.length === 0 ? (
+                      <p className="px-4 py-3 text-xs text-emerald-700">All process mappings are complete.</p>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {health.unmappedProcesses.slice(0, 8).map((process) => (
+                          <div key={process.id} className="flex items-center justify-between gap-2 px-4 py-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-slate-900">{process.process_name}</p>
+                              <p className="text-[11px] text-slate-500">{!process.client_id ? "Client missing" : ""}{!process.client_id && !process.branch_id ? " · " : ""}{!process.branch_id ? "Branch missing" : ""}</p>
+                            </div>
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />
+                          </div>
+                        ))}
+                        {health.unmappedProcesses.length > 8 && (
+                          <p className="px-4 py-2 text-xs text-slate-500">+{health.unmappedProcesses.length - 8} more — filter by process to view all</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white">
+                    <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5"><ReceiptIndianRupee className="h-3.5 w-3.5 text-amber-600" /><p className="text-xs font-bold uppercase tracking-wide text-slate-700">Commercial gaps</p></div>
+                    {health.withoutRule.length === 0 ? (
+                      <p className="px-4 py-3 text-xs text-emerald-700">All processes have commercial rules.</p>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {health.withoutRule.slice(0, 8).map((process) => (
+                          <button type="button" key={process.id} aria-label={`Create billing rule for ${process.process_name}`} onClick={() => { setRevenueRuleForm((current) => ({ ...current, processId: process.id })); setSearchParams({ period, tab: "commercial" }); }} className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left hover:bg-amber-50/60">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-slate-900">{process.process_name}</p>
+                              <p className="text-[11px] text-slate-500">Create commercial billing rule</p>
+                            </div>
+                            <ArrowRight aria-hidden className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-white">
+                    <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5"><Scale className="h-3.5 w-3.5 text-violet-600" /><p className="text-xs font-bold uppercase tracking-wide text-slate-700">Allocation exceptions</p></div>
+                    {health.allocationIssues.length === 0 ? (
+                      <p className="px-4 py-3 text-xs text-emerald-700">All manual allocation pools are balanced.</p>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {health.allocationIssues.map(([key, totalPct]) => (
+                          <div key={key} className="px-4 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="truncate text-sm font-medium text-slate-900">{titleCase(key.replace("|", " / "))}</p>
+                              <span className="shrink-0 text-sm font-semibold text-rose-700">{percent(totalPct)}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500">Difference from 100%: {percent(Math.abs(100 - totalPct))}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* ── COMMERCIAL ── */}
+              <TabsContent value="commercial" className="flex-1 overflow-hidden m-0">
+                <div className="space-y-1 mb-2 flex items-center gap-2 px-1 pt-1">
+                  <span className="text-xs text-slate-500 font-medium" id="commercial-form-label">Form:</span>
+                  <div role="group" aria-labelledby="commercial-form-label" className="flex items-center gap-1">
+                    {(["rule", "contract", "rate"] as const).map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        aria-pressed={commercialFormType === type}
+                        onClick={() => { setCommercialFormType(type); closeForm(); }}
+                        className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${commercialFormType === type ? "bg-sky-100 text-sky-700" : "text-slate-500 hover:bg-slate-100"}`}
+                      >
+                        {type === "rule" ? "Revenue Rule" : type === "contract" ? "Contract" : "Rate Card"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {commercialFormType === "rule" && (
+                  <SplitPane
+                    formOpen={formOpen}
+                    tableLabel="Approved commercial rules"
+                    onAdd={openAdd}
+                    onClose={closeForm}
+                    selectedRow={selectedRow}
+                    onSave={() => saveWithToast(() => bpo.saveRevenueRule.mutateAsync(revenueRuleForm as RevenueRulePayload & Record<string, unknown>), "Commercial revenue rule saved.").then(closeForm)}
+                    saving={bpo.saveRevenueRule.isPending}
+                    tableSlot={
+                      <MasterTable
+                        loading={bpo.revenueRulesQuery.isLoading}
+                        emptyText="No revenue rule is configured for this scope."
+                        selectedId={selectedRow?.id}
+                        rows={revenueRules}
+                        onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                        columns={[{ key: "process_id", label: "Process", render: (value) => processName.get(String(value)) ?? String(value) }, { key: "rule_name", label: "Rule" }, { key: "billing_model", label: "Model", render: titleCase }, { key: "rate_amount", label: "Rate", align: "right", render: currency }, { key: "monthly_minimum_commitment", label: "Minimum", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                      />
+                    }
+                    formSlot={
+                      <div className="grid gap-4">
+                        {/* RevenueRulePayload carries no branchId of its own (process-scoped only,
+                            branch is implicit via the process) — narrowed against the page-level
+                            branchFilter instead, per user decision, same as Cost-component/
+                            Classification's own-field pattern below but keyed off the page filter. */}
+                        <Field label="Process"><ProcessSelect value={revenueRuleForm.processId} onChange={(value) => setRevenueRuleForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
+                        <Field label="Rule name"><Input className="rounded-xl" value={revenueRuleForm.ruleName} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, ruleName: event.target.value }))} placeholder="Primary seat billing" /></Field>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field label="Billing model"><select className={selectClass} value={revenueRuleForm.billingModel} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, billingModel: event.target.value }))}><option value="per_seat">Per seat</option><option value="per_fte">Per FTE</option><option value="per_productive_hour">Per productive hour</option><option value="per_login_hour">Per login hour</option><option value="per_talk_minute">Per talk minute</option><option value="per_transaction">Per transaction</option><option value="per_mandate">Per mandate</option><option value="per_case">Per case</option><option value="fixed_monthly">Fixed monthly</option><option value="outcome_based">Outcome based</option></select></Field>
+                          <Field label="Metric key"><Input className="rounded-xl" value={revenueRuleForm.metricKey} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, metricKey: event.target.value }))} /></Field>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Field label="Rate"><Input className="rounded-xl" type="number" value={revenueRuleForm.rateAmount} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, rateAmount: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Currency"><Input className="rounded-xl" value={revenueRuleForm.currencyCode ?? "INR"} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, currencyCode: event.target.value.toUpperCase() }))} /></Field>
+                          <Field label="FX to INR"><Input className="rounded-xl" type="number" step="0.0001" value={revenueRuleForm.fxToInr ?? 1} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, fxToInr: numberValue(event.target.value) }))} /></Field>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Field label="Monthly minimum"><Input className="rounded-xl" type="number" value={revenueRuleForm.monthlyMinimumCommitment ?? 0} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, monthlyMinimumCommitment: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Included units"><Input className="rounded-xl" type="number" value={revenueRuleForm.includedUnits ?? 0} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, includedUnits: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Overage rate"><Input className="rounded-xl" type="number" value={revenueRuleForm.overageRate ?? 0} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, overageRate: numberValue(event.target.value) }))} /></Field>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Field label="Mandated seats"><Input className="rounded-xl" type="number" value={revenueRuleForm.mandatedSeats ?? 0} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, mandatedSeats: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Quality gate %"><Input className="rounded-xl" type="number" value={revenueRuleForm.qualityGatePct ?? ""} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, qualityGatePct: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                          <Field label="SLA gate %"><Input className="rounded-xl" type="number" value={revenueRuleForm.slaGatePct ?? ""} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, slaGatePct: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field label="Effective from"><Input className="rounded-xl" type="date" value={revenueRuleForm.effectiveFrom} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, effectiveFrom: event.target.value }))} /></Field>
+                          <Field label="Approval reference"><Input className="rounded-xl" value={revenueRuleForm.approvalReference ?? ""} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, approvalReference: event.target.value }))} placeholder="MSA / approval email / amendment ID" /></Field>
+                        </div>
+                      </div>
+                    }
+                  />
+                )}
+
+                {commercialFormType === "contract" && (
+                  <SplitPane
+                    formOpen={formOpen}
+                    tableLabel="Contract register"
+                    onAdd={openAdd}
+                    onClose={closeForm}
+                    selectedRow={selectedRow}
+                    onSave={() => saveWithToast(() => legacy.saveContract.mutateAsync(contractForm), "Contract master saved.").then(closeForm)}
+                    saving={legacy.saveContract.isPending}
+                    tableSlot={
+                      <MasterTable
+                        loading={legacy.contractsQuery.isLoading}
+                        rows={contracts as AnyRow[]}
+                        emptyText="No contract configured."
+                        selectedId={selectedRow?.id}
+                        onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                        columns={[{ key: "process_name", label: "Process" }, { key: "contract_name", label: "Contract" }, { key: "billing_type", label: "Type", render: titleCase }, { key: "billing_rate", label: "Base rate", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                      />
+                    }
+                    formSlot={
+                      <div className="grid gap-4">
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field label="Process"><ProcessSelect value={contractForm.process_id} onChange={(value) => { const process = processes.find((item) => item.id === value); setContractForm((current) => ({ ...current, process_id: value, client_id: process?.client_id ?? current.client_id })); }} processes={processes} /></Field>
+                          <Field label="Client"><select className={selectClass} value={contractForm.client_id ?? ""} onChange={(event) => setContractForm((current) => ({ ...current, client_id: event.target.value }))}><option value="">Select client</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.client_name}</option>)}</select></Field>
+                        </div>
+                        <Field label="Contract name"><Input className="rounded-xl" value={contractForm.contract_name} onChange={(event) => setContractForm((current) => ({ ...current, contract_name: event.target.value }))} /></Field>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Field label="Billing type"><select className={selectClass} value={contractForm.billing_type ?? "per_seat"} onChange={(event) => setContractForm((current) => ({ ...current, billing_type: event.target.value }))}><option value="per_seat">Per seat</option><option value="per_fte">Per FTE</option><option value="transaction">Transaction</option><option value="fixed">Fixed</option><option value="hybrid">Hybrid</option></select></Field>
+                          <Field label="Base rate"><Input className="rounded-xl" type="number" value={contractForm.billing_rate ?? 0} onChange={(event) => setContractForm((current) => ({ ...current, billing_rate: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Currency"><Input className="rounded-xl" value={contractForm.currency ?? "INR"} onChange={(event) => setContractForm((current) => ({ ...current, currency: event.target.value.toUpperCase() }))} /></Field>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field label="Monthly minimum"><Input className="rounded-xl" type="number" value={contractForm.monthly_minimum_commitment ?? 0} onChange={(event) => setContractForm((current) => ({ ...current, monthly_minimum_commitment: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Effective from"><Input className="rounded-xl" type="date" value={contractForm.effective_from ?? firstDay(period)} onChange={(event) => setContractForm((current) => ({ ...current, effective_from: event.target.value }))} /></Field>
+                        </div>
+                      </div>
+                    }
+                  />
+                )}
+
+                {commercialFormType === "rate" && (
+                  <SplitPane
+                    formOpen={formOpen}
+                    tableLabel="Rate card register"
+                    onAdd={openAdd}
+                    onClose={closeForm}
+                    selectedRow={selectedRow}
+                    onSave={() => saveWithToast(() => legacy.saveRate.mutateAsync(rateForm), "Rate card saved.").then(closeForm)}
+                    saving={legacy.saveRate.isPending}
+                    tableSlot={
+                      <MasterTable
+                        loading={legacy.ratesQuery.isLoading}
+                        rows={rates as AnyRow[]}
+                        emptyText="No rate card configured."
+                        selectedId={selectedRow?.id}
+                        onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                        columns={[{ key: "process_name", label: "Process" }, { key: "rate_type", label: "Rate type", render: titleCase }, { key: "rate_amount", label: "Amount", align: "right", render: currency }, { key: "unit", label: "Unit" }, { key: "effective_from", label: "Effective" }]}
+                      />
+                    }
+                    formSlot={
+                      <div className="grid gap-4">
+                        <Field label="Process"><ProcessSelect value={rateForm.process_id} onChange={(value) => setRateForm((current) => ({ ...current, process_id: value }))} processes={processes} /></Field>
+                        <Field label="Contract"><select className={selectClass} value={rateForm.contract_id ?? ""} onChange={(event) => setRateForm((current) => ({ ...current, contract_id: event.target.value }))}><option value="">Select contract</option>{contracts.filter((row) => !rateForm.process_id || row.process_id === rateForm.process_id).map((row) => <option key={row.id} value={row.id}>{row.contract_name}</option>)}</select></Field>
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <Field label="Rate type"><Input className="rounded-xl" value={rateForm.rate_type} onChange={(event) => setRateForm((current) => ({ ...current, rate_type: event.target.value }))} /></Field>
+                          <Field label="Amount"><Input className="rounded-xl" type="number" value={rateForm.rate_amount} onChange={(event) => setRateForm((current) => ({ ...current, rate_amount: numberValue(event.target.value) }))} /></Field>
+                          <Field label="Unit"><Input className="rounded-xl" value={rateForm.unit ?? "seat"} onChange={(event) => setRateForm((current) => ({ ...current, unit: event.target.value }))} /></Field>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <Field label="Effective from"><Input className="rounded-xl" type="date" value={rateForm.effective_from} onChange={(event) => setRateForm((current) => ({ ...current, effective_from: event.target.value }))} /></Field>
+                          <Field label="Approval reference"><Input className="rounded-xl" value={rateForm.approval_reference ?? ""} onChange={(event) => setRateForm((current) => ({ ...current, approval_reference: event.target.value }))} /></Field>
+                        </div>
+                      </div>
+                    }
+                  />
+                )}
+              </TabsContent>
+
+              {/* ── DELIVERY ── */}
+              <TabsContent value="delivery" className="space-y-3">
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {/* Delivery split-pane */}
+                  <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden" style={{ minHeight: 480 }}>
+                    <SplitPane
+                      formOpen={deliveryFormOpen}
+                      tableLabel="Delivery register"
+                      onAdd={() => { setSelectedRow(null); setDeliveryFormOpen(true); }}
+                      onClose={() => { setDeliveryFormOpen(false); setSelectedRow(null); }}
+                      selectedRow={selectedRow}
+                      onSave={() => saveWithToast(() => bpo.saveDeliveryActual.mutateAsync(deliveryForm as DeliveryActualPayload & Record<string, unknown>), "Validated delivery saved.").then(() => { setDeliveryFormOpen(false); setSelectedRow(null); })}
+                      saving={bpo.saveDeliveryActual.isPending}
+                      tableSlot={
+                        <MasterTable
+                          loading={bpo.deliveryActualsQuery.isLoading}
+                          rows={deliveryActuals}
+                          emptyText="No delivery records for the selected period."
+                          selectedId={selectedRow?.id}
+                          onRowClick={(row) => {
+                            setSelectedRow(row);
+                            setDeliveryFormOpen(true);
+                            setDeliveryForm({
+                              processId: String(row.process_id ?? ""),
+                              periodCode: String(row.period_code ?? period),
+                              activityDate: String(row.activity_date ?? today()),
+                              metricKey: String(row.metric_key ?? "billable_seats"),
+                              plannedUnits: Number(row.planned_units ?? 0),
+                              deliveredUnits: Number(row.delivered_units ?? 0),
+                              acceptedUnits: Number(row.accepted_units ?? 0),
+                              rejectedUnits: Number(row.rejected_units ?? 0),
+                              billableUnits: Number(row.billable_units ?? 0),
+                              productiveHours: Number(row.productive_hours ?? 0),
+                              loginHours: Number(row.login_hours ?? 0),
+                              talkMinutes: Number(row.talk_minutes ?? 0),
+                              qualityScore: row.quality_score != null ? Number(row.quality_score) : null,
+                              slaScore: row.sla_score != null ? Number(row.sla_score) : null,
+                              dataSource: String(row.data_source ?? "manual"),
+                              sourceReference: String(row.source_reference ?? "finance-master"),
+                              status: String(row.status ?? "validated"),
+                            });
+                          }}
+                          columns={[{ key: "process_id", label: "Process", render: (value) => processName.get(String(value)) ?? String(value) }, { key: "metric_key", label: "Metric" }, { key: "delivered_units", label: "Delivered", align: "right" }, { key: "billable_units", label: "Billable", align: "right" }, { key: "quality_score", label: "Quality", align: "right", render: percent }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                        />
+                      }
+                      formSlot={
+                        <div className="grid gap-4">
+                          {/* DeliveryActualPayload carries no branchId of its own — narrowed
+                              against the page-level branchFilter instead, per user decision. */}
+                          <Field label="Process"><ProcessSelect value={deliveryForm.processId} onChange={(value) => setDeliveryForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
+                            <Field label="Period"><MonthYearPicker value={deliveryForm.periodCode} onChange={(v) => setDeliveryForm((current) => ({ ...current, periodCode: v }))} /></Field>
+                            <Field label="Activity date"><Input className="rounded-xl" type="date" value={deliveryForm.activityDate ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, activityDate: event.target.value }))} /></Field>
+                          </div>
+                          <Field label="Metric key"><Input className="rounded-xl" value={deliveryForm.metricKey} onChange={(event) => setDeliveryForm((current) => ({ ...current, metricKey: event.target.value }))} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
+                            {(["plannedUnits", "deliveredUnits", "acceptedUnits", "rejectedUnits", "billableUnits"] as const).map((key) => <Field key={key} label={titleCase(key)}><Input className="rounded-xl" type="number" value={deliveryForm[key] ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, [key]: numberValue(event.target.value) }))} /></Field>)}
+                          </div>
+                          <div className="grid gap-4 grid-cols-2">
+                            <Field label="Productive hours"><Input className="rounded-xl" type="number" value={deliveryForm.productiveHours ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, productiveHours: numberValue(event.target.value) }))} /></Field>
+                            <Field label="Login hours"><Input className="rounded-xl" type="number" value={deliveryForm.loginHours ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, loginHours: numberValue(event.target.value) }))} /></Field>
+                          </div>
+                          <Field label="Talk minutes"><Input className="rounded-xl" type="number" value={deliveryForm.talkMinutes ?? 0} onChange={(event) => setDeliveryForm((current) => ({ ...current, talkMinutes: numberValue(event.target.value) }))} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
+                            <Field label="Quality %"><Input className="rounded-xl" type="number" value={deliveryForm.qualityScore ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, qualityScore: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                            <Field label="SLA %"><Input className="rounded-xl" type="number" value={deliveryForm.slaScore ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, slaScore: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                          </div>
+                          <div className="grid gap-4 grid-cols-2">
+                            <Field label="Data source"><Input className="rounded-xl" value={deliveryForm.dataSource ?? "manual"} onChange={(event) => setDeliveryForm((current) => ({ ...current, dataSource: event.target.value }))} /></Field>
+                            <Field label="Source reference"><Input className="rounded-xl" value={deliveryForm.sourceReference ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, sourceReference: event.target.value }))} /></Field>
+                          </div>
+                        </div>
+                      }
+                    />
+                  </div>
+
+                  {/* Revenue component split-pane */}
+                  <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden" style={{ minHeight: 480 }}>
+                    <SplitPane
+                      formOpen={revenueFormOpen}
+                      tableLabel="Revenue addition or deduction ledger"
+                      onAdd={() => { setSelectedRow(null); setRevenueFormOpen(true); }}
+                      onClose={() => { setRevenueFormOpen(false); setSelectedRow(null); }}
+                      selectedRow={selectedRow}
+                      onSave={() => saveWithToast(() => bpo.saveRevenueComponent.mutateAsync(revenueComponentForm as RevenueComponentPayload & Record<string, unknown>), "Revenue component saved.").then(() => { setRevenueFormOpen(false); setSelectedRow(null); })}
+                      saving={bpo.saveRevenueComponent.isPending}
+                      tableSlot={
+                        <MasterTable
+                          loading={bpo.revenueComponentsQuery.isLoading}
+                          rows={revenueComponents}
+                          emptyText="No revenue components for the selected period."
+                          selectedId={selectedRow?.id}
+                          onRowClick={(row) => {
+                            setSelectedRow(row);
+                            setRevenueFormOpen(true);
+                            setRevenueComponentForm({
+                              processId: String(row.process_id ?? ""),
+                              periodCode: String(row.period_code ?? period),
+                              componentType: String(row.component_type ?? "incentive"),
+                              direction: (row.direction as "increase" | "decrease") ?? "increase",
+                              description: String(row.description ?? ""),
+                              amountInr: Number(row.amount_inr ?? 0),
+                              recognitionDate: String(row.recognition_date ?? today()),
+                              invoiceReference: String(row.invoice_reference ?? ""),
+                              sourceReference: String(row.source_reference ?? "finance-master"),
+                              status: String(row.status ?? "approved"),
+                            });
+                          }}
+                          columns={[{ key: "process_id", label: "Process", render: (value) => processName.get(String(value)) ?? String(value) }, { key: "component_type", label: "Type", render: titleCase }, { key: "direction", label: "Direction", render: titleCase }, { key: "amount_inr", label: "Amount", align: "right", render: (value, row) => `${row.direction === "decrease" ? "-" : "+"}${currency(value)}` }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                        />
+                      }
+                      formSlot={
+                        <div className="grid gap-4">
+                          {/* RevenueComponentPayload carries no branchId of its own — narrowed
+                              against the page-level branchFilter instead, per user decision. */}
+                          <Field label="Process"><ProcessSelect value={revenueComponentForm.processId} onChange={(value) => setRevenueComponentForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
+                            <Field label="Component type"><select className={selectClass} value={revenueComponentForm.componentType} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, componentType: event.target.value }))}><option value="incentive">Incentive</option><option value="reward">Reward</option><option value="penalty">Penalty</option><option value="sla_deduction">SLA deduction</option><option value="credit_note">Credit note</option><option value="rate_true_up">Rate true-up</option><option value="fx_adjustment">FX adjustment</option><option value="ramp_up">Ramp-up</option><option value="training_revenue">Training revenue</option><option value="one_time">One-time</option><option value="other">Other</option></select></Field>
+                            <Field label="Direction"><select className={selectClass} value={revenueComponentForm.direction} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, direction: event.target.value as "increase" | "decrease" }))}><option value="increase">Increase revenue</option><option value="decrease">Decrease revenue</option></select></Field>
+                          </div>
+                          <Field label="Description"><Textarea className="rounded-xl" rows={2} value={revenueComponentForm.description} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, description: event.target.value }))} /></Field>
+                          <div className="grid gap-4 grid-cols-2">
+                            <Field label="Amount INR"><Input className="rounded-xl" type="number" value={revenueComponentForm.amountInr} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, amountInr: numberValue(event.target.value) }))} /></Field>
+                            <Field label="Recognition date"><Input className="rounded-xl" type="date" value={revenueComponentForm.recognitionDate ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, recognitionDate: event.target.value }))} /></Field>
+                          </div>
+                          <Field label="Invoice reference"><Input className="rounded-xl" value={revenueComponentForm.invoiceReference ?? ""} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, invoiceReference: event.target.value }))} /></Field>
+                        </div>
+                      }
+                    />
+                  </div>
+                </div>
+
+                {/* ── Rewards & Penalties ── */}
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-800">Rewards &amp; Penalties</h3>
+                        <Badge variant="outline" className="rounded-full border-amber-300 bg-amber-50 px-2 py-0 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Legacy</Badge>
+                      </div>
+                      {/*
+                        Two reward/penalty mechanisms now exist. This one is the original: approved
+                        entries blend straight into the process's recognized revenue (rewardRevenue /
+                        penalty in bpo-pnl.service.ts) with no separate line on the P&L. It is NOT the
+                        same as "Manual Adjustments" on each process's P&L detail page — that one is
+                        maker-checker approved and shown as its own "Adjusted Total", never blended
+                        into system-calculated actuals. Using both for the same cost centre/period does
+                        not combine automatically and can double-count. See
+                        docs note on cost_centre_reward_penalty (migration 1215) vs pnl_manual_adjustment
+                        (migration 1645).
+                      */}
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Per cost centre, per period. Approved entries blend directly into revenue here —
+                        this is a different mechanism from the approval-gated "Manual Adjustments" shown
+                        separately on each process's P&amp;L page; the two do not combine automatically.
+                      </p>
+                    </div>
+                    <Button size="sm" className="rounded-xl" onClick={() => { setRpForm((f) => ({ ...f, period_code: period, cost_centre_id: "", description: "", amount_inr: 0, client_reference: "" })); setRpFormOpen(true); }}>
+                      + Add entry
+                    </Button>
+                  </div>
+
+                  {rpFormOpen && (
+                    <div className="border-b border-slate-100 bg-slate-50 px-4 py-4">
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Cost centre</Label>
+                          <select className={selectClass} value={rpForm.cost_centre_id} onChange={(e) => setRpForm((f) => ({ ...f, cost_centre_id: e.target.value }))}>
+                            <option value="">Select cost centre…</option>
+                            {costCentres.map((cc: any) => <option key={cc.id} value={cc.id}>{cc.cost_centre_name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Type</Label>
+                          <select className={selectClass} value={rpForm.entry_type} onChange={(e) => setRpForm((f) => ({ ...f, entry_type: e.target.value as "reward" | "penalty" }))}>
+                            <option value="reward">Reward</option>
+                            <option value="penalty">Penalty</option>
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Amount (₹)</Label>
+                          <Input className="rounded-xl" type="number" value={rpForm.amount_inr} onChange={(e) => setRpForm((f) => ({ ...f, amount_inr: numberValue(e.target.value) }))} />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Client reference</Label>
+                          <Input className="rounded-xl" value={rpForm.client_reference ?? ""} onChange={(e) => setRpForm((f) => ({ ...f, client_reference: e.target.value }))} placeholder="Optional" />
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <Label className="text-xs text-slate-600 mb-1 block">Description</Label>
+                        <Textarea className="rounded-xl" rows={2} value={rpForm.description} onChange={(e) => setRpForm((f) => ({ ...f, description: e.target.value }))} placeholder="Brief description of the reward or penalty…" />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" className="rounded-xl" disabled={bpo.createRewardPenalty.isPending} onClick={() => saveWithToast(() => bpo.createRewardPenalty.mutateAsync(rpForm), "Entry submitted for approval.").then(() => setRpFormOpen(false))}>
+                          Submit for approval
+                        </Button>
+                        <Button size="sm" variant="outline" className="rounded-xl" onClick={() => setRpFormOpen(false)}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {rpRejectId && (
+                    <div className="border-b border-slate-100 bg-red-50 px-4 py-3">
+                      <p className="text-sm font-medium text-red-800 mb-2">Rejection reason</p>
+                      <div className="flex gap-2">
+                        <Input className="rounded-xl flex-1" value={rpRejectReason} onChange={(e) => setRpRejectReason(e.target.value)} placeholder="Required reason…" />
+                        <Button size="sm" variant="destructive" className="rounded-xl" disabled={bpo.rejectRewardPenalty.isPending || !rpRejectReason.trim()} onClick={() => saveWithToast(() => bpo.rejectRewardPenalty.mutateAsync({ id: rpRejectId, reason: rpRejectReason }), "Entry rejected.").then(() => { setRpRejectId(null); setRpRejectReason(""); })}>
+                          Confirm reject
+                        </Button>
+                        <Button size="sm" variant="outline" className="rounded-xl" onClick={() => { setRpRejectId(null); setRpRejectReason(""); }}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto">
+                    {bpo.rewardPenaltyQuery.isLoading ? (
+                      <div className="p-4 space-y-2">{[1,2,3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+                    ) : rewardPenaltyEntries.length === 0 ? (
+                      <p className="p-6 text-center text-sm text-slate-400">No reward or penalty entries for this period.</p>
+                    ) : (
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100 bg-slate-50">
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Cost centre</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Type</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Description</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Client ref</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-slate-500">Amount</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-slate-500">Status</th>
+                            {isApprover && <th className="px-4 py-2 text-center text-xs font-medium text-slate-500">Actions</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rewardPenaltyEntries.map((row: any) => (
+                            <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
+                              <td className="px-4 py-2 text-slate-700">{row.cost_centre_name ?? costCentreName.get(row.cost_centre_id) ?? row.cost_centre_id}</td>
+                              <td className="px-4 py-2">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${row.entry_type === "reward" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                                  {row.entry_type === "reward" ? "Reward" : "Penalty"}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-slate-600 max-w-xs truncate">{row.description}</td>
+                              <td className="px-4 py-2 text-slate-500 text-xs">{row.client_reference ?? "—"}</td>
+                              <td className="px-4 py-2 text-right font-mono">
+                                <span className={row.entry_type === "reward" ? "text-emerald-700" : "text-red-700"}>
+                                  {row.entry_type === "reward" ? "+" : "-"}₹{Number(row.amount_inr).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-center"><StatusPill value={row.approval_status} /></td>
+                              {isApprover && (
+                                <td className="px-4 py-2 text-center">
+                                  {row.approval_status === "draft" && (
+                                    <div className="flex justify-center gap-1">
+                                      <button type="button" className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" disabled={bpo.approveRewardPenalty.isPending} onClick={() => saveWithToast(() => bpo.approveRewardPenalty.mutateAsync(row.id), "Entry approved.")}>Approve</button>
+                                      <button type="button" className="rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100" onClick={() => { setRpRejectId(row.id); setRpRejectReason(""); }}>Reject</button>
+                                    </div>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* ── COSTS ── */}
+              <TabsContent value="costs" className="flex-1 overflow-hidden m-0 space-y-3">
+                <SplitPane
+                  formOpen={formOpen}
+                  tableLabel="Cost component register"
+                  onAdd={openAdd}
+                  onClose={closeForm}
+                  selectedRow={selectedRow}
+                  onSave={() => saveWithToast(() => bpo.saveCostComponent.mutateAsync(costForm as CostComponentPayload & Record<string, unknown>), "Cost master component saved.").then(closeForm)}
+                  saving={bpo.saveCostComponent.isPending}
+                  tableSlot={
+                    <MasterTable
+                      loading={bpo.costComponentsQuery.isLoading}
+                      rows={costComponents}
+                      emptyText="No cost components for the selected period."
+                      selectedId={selectedRow?.id}
+                      onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                      columns={[{ key: "process_id", label: "Process", render: (value) => value ? processName.get(String(value)) ?? String(value) : "Shared" }, { key: "branch_id", label: "Branch", render: (value) => value ? branchName.get(String(value)) ?? String(value) : "Organisation" }, { key: "cost_type", label: "Cost type", render: titleCase }, { key: "description", label: "Description" }, { key: "amount_inr", label: "Amount", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                    />
+                  }
+                  formSlot={
+                    <div className="grid gap-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Process"><ProcessSelect value={costForm.processId} onChange={(value) => setCostForm((current) => ({ ...current, processId: value || null }))} processes={processes.filter((process) => !costForm.branchId || process.branch_id === costForm.branchId)} allowBlank /></Field>
+                        <Field label="Branch"><BranchSelect value={costForm.branchId} onChange={(value) => setCostForm((current) => ({ ...current, branchId: value || null }))} branches={branches} allowBlank /></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Cost type"><select className={selectClass} value={costForm.costType} onChange={(event) => setCostForm((current) => ({ ...current, costType: event.target.value }))}><option value="depreciation">Depreciation</option><option value="amortization">Amortisation</option><option value="finance_cost">Finance cost</option><option value="tax">Tax</option><option value="other_operating_cost">Other operating cost</option><option value="exceptional_item">Exceptional item</option></select></Field>
+                        <Field label="Period"><MonthYearPicker value={costForm.periodCode} onChange={(v) => setCostForm((current) => ({ ...current, periodCode: v }))} /></Field>
+                      </div>
+                      <Field label="Description"><Textarea className="rounded-xl" rows={3} value={costForm.description} onChange={(event) => setCostForm((current) => ({ ...current, description: event.target.value }))} /></Field>
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <Field label="Amount INR"><Input className="rounded-xl" type="number" value={costForm.amountInr} onChange={(event) => setCostForm((current) => ({ ...current, amountInr: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Allocation driver"><select className={selectClass} value={costForm.allocationDriver ?? "direct"} onChange={(event) => setCostForm((current) => ({ ...current, allocationDriver: event.target.value }))}><option value="direct">Direct</option><option value="active_hc">Active HC</option><option value="billable_hc">Billable HC</option><option value="contracted_seats">Contracted seats</option><option value="revenue">Revenue</option><option value="equal">Equal</option><option value="manual">Manual</option></select></Field>
+                        <Field label="Manual allocation %"><Input className="rounded-xl" type="number" value={costForm.manualAllocationPct ?? ""} onChange={(event) => setCostForm((current) => ({ ...current, manualAllocationPct: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                      </div>
+                      <Field label="Source reference"><Input className="rounded-xl" value={costForm.sourceReference ?? ""} onChange={(event) => setCostForm((current) => ({ ...current, sourceReference: event.target.value }))} /></Field>
+                    </div>
+                  }
+                />
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center gap-2 mb-3"><Workflow className="h-4 w-4 text-emerald-600" /><p className="text-sm font-black text-slate-950">P&amp;L line hierarchy</p></div>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {[
+                      ["Revenue", "Gross potential → earned → recognised → invoiced → collected"],
+                      ["Direct service cost", "Agent Salary + DSC People + DSC Non-People"],
+                      ["Contribution", "Recognised Revenue − Direct Service Cost"],
+                      ["EBITDA", "Contribution − BMC People − BMC Non-People − other operating cost"],
+                      ["EBIT", "EBITDA − Depreciation − Amortisation"],
+                      ["PBT", "EBIT − Finance Cost ± Non-operating items"],
+                      ["PAT", "PBT − Tax"],
+                      ["Excluded", "Capex and explicitly excluded non-P&L items"],
+                    ].map(([label, detail], index) => (
+                      <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-950 text-xs font-black text-white">{index + 1}</span>
+                          <p className="font-black text-slate-950">{label}</p>
+                        </div>
+                        <p className="mt-3 text-xs leading-5 text-slate-500">{detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* ── ALLOCATION ── */}
+              <TabsContent value="allocation" className="flex-1 overflow-hidden m-0">
+                <SplitPane
+                  formOpen={formOpen}
+                  tableLabel="Allocation policy register"
+                  onAdd={openAdd}
+                  onClose={closeForm}
+                  selectedRow={selectedRow}
+                  onSave={() => saveWithToast(() => bpo.saveAllocationPolicy.mutateAsync(allocationForm as AllocationPolicyPayload & Record<string, unknown>), "Allocation policy saved.").then(closeForm)}
+                  saving={bpo.saveAllocationPolicy.isPending}
+                  tableSlot={
+                    <MasterTable
+                      loading={bpo.allocationPoliciesQuery.isLoading}
+                      rows={allocationPolicies}
+                      emptyText="No allocation policy configured."
+                      selectedId={selectedRow?.id}
+                      onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                      columns={[{ key: "branch_id", label: "Branch", render: (value) => branchName.get(String(value)) ?? String(value) }, { key: "process_id", label: "Process", render: (value) => value ? processName.get(String(value)) ?? String(value) : "Branch pool" }, { key: "pool_type", label: "Pool", render: titleCase }, { key: "allocation_driver", label: "Driver", render: titleCase }, { key: "manual_allocation_pct", label: "Manual %", align: "right", render: (value) => value == null ? "-" : percent(value) }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                    />
+                  }
+                  formSlot={
+                    <div className="grid gap-4">
+                      <Field label="Branch"><BranchSelect value={allocationForm.branchId} onChange={(value) => setAllocationForm((current) => ({ ...current, branchId: value }))} branches={branches} /></Field>
+                      <Field label="Process"><ProcessSelect value={allocationForm.processId} onChange={(value) => setAllocationForm((current) => ({ ...current, processId: value || null }))} processes={processes.filter((process) => !allocationForm.branchId || process.branch_id === allocationForm.branchId)} allowBlank /></Field>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Pool type"><select className={selectClass} value={allocationForm.poolType} onChange={(event) => setAllocationForm((current) => ({ ...current, poolType: event.target.value }))}><option value="bmc_people">BMC People</option><option value="bmc_non_people">BMC Non-People</option><option value="shared_service">Shared service</option><option value="corporate_overhead">Corporate overhead</option></select></Field>
+                        <Field label="Allocation driver"><select className={selectClass} value={allocationForm.allocationDriver} onChange={(event) => setAllocationForm((current) => ({ ...current, allocationDriver: event.target.value }))}><option value="active_hc">Active HC</option><option value="billable_hc">Billable HC</option><option value="contracted_seats">Contracted seats</option><option value="revenue">Revenue</option><option value="floor_area">Floor area</option><option value="device_count">Device count</option><option value="equal">Equal</option><option value="manual">Manual %</option></select></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <Field label="Manual %"><Input className="rounded-xl" type="number" disabled={allocationForm.allocationDriver !== "manual"} value={allocationForm.manualAllocationPct ?? ""} onChange={(event) => setAllocationForm((current) => ({ ...current, manualAllocationPct: event.target.value ? numberValue(event.target.value) : null }))} /></Field>
+                        <Field label="Effective from"><Input className="rounded-xl" type="date" value={allocationForm.effectiveFrom} onChange={(event) => setAllocationForm((current) => ({ ...current, effectiveFrom: event.target.value }))} /></Field>
+                        <Field label="Effective to"><Input className="rounded-xl" type="date" value={allocationForm.effectiveTo ?? ""} onChange={(event) => setAllocationForm((current) => ({ ...current, effectiveTo: event.target.value || null }))} /></Field>
+                      </div>
+                    </div>
+                  }
+                />
+              </TabsContent>
+
+              {/* ── CLASSIFICATION ── */}
+              <TabsContent value="classification" className="flex-1 overflow-hidden m-0">
+                <SplitPane
+                  formOpen={formOpen}
+                  tableLabel="P&L classification rule register"
+                  onAdd={openAdd}
+                  onClose={closeForm}
+                  selectedRow={selectedRow}
+                  onSave={() => saveWithToast(() => bpo.saveClassificationRule.mutateAsync(classificationForm as ClassificationRulePayload & Record<string, unknown>), "Classification rule saved.").then(closeForm)}
+                  saving={bpo.saveClassificationRule.isPending}
+                  tableSlot={
+                    <MasterTable
+                      loading={bpo.classificationRulesQuery.isLoading}
+                      rows={classificationRules}
+                      emptyText="No classification rule configured."
+                      selectedId={selectedRow?.id}
+                      onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                      columns={[{ key: "rule_name", label: "Rule" }, { key: "scope_type", label: "Scope", render: titleCase }, { key: "scope_key", label: "Key" }, { key: "pnl_bucket", label: "P&L bucket", render: titleCase }, { key: "priority", label: "Priority", align: "right" }, { key: "active_status", label: "Status", render: (value) => <StatusPill value={Number(value) === 0 ? "inactive" : "active"} /> }]}
+                    />
+                  }
+                  formSlot={
+                    <div className="grid gap-4">
+                      <Field label="Rule name"><Input className="rounded-xl" value={classificationForm.ruleName} onChange={(event) => setClassificationForm((current) => ({ ...current, ruleName: event.target.value }))} /></Field>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Scope type"><select className={selectClass} value={classificationForm.scopeType} onChange={(event) => setClassificationForm((current) => ({ ...current, scopeType: event.target.value, pnlBucket: ["expense_head", "expense_sub_head"].includes(event.target.value) ? "dsc_non_people" : "agent_salary" }))}><option value="employee">Employee</option><option value="designation">Designation</option><option value="department">Department</option><option value="expense_head">Expense Head</option><option value="expense_sub_head">Expense Sub-Head</option></select></Field>
+                        <Field label="Exact scope key"><Input className="rounded-xl" value={classificationForm.scopeKey} onChange={(event) => setClassificationForm((current) => ({ ...current, scopeKey: event.target.value }))} placeholder="Employee ID, designation, department or master code" /></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Process"><ProcessSelect value={classificationForm.processId} onChange={(value) => setClassificationForm((current) => ({ ...current, processId: value || null }))} processes={processes.filter((process) => !classificationForm.branchId || process.branch_id === classificationForm.branchId)} allowBlank /></Field>
+                        <Field label="Branch"><BranchSelect value={classificationForm.branchId} onChange={(value) => setClassificationForm((current) => ({ ...current, branchId: value || null }))} branches={branches} allowBlank /></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="P&L bucket"><select className={selectClass} value={classificationForm.pnlBucket} onChange={(event) => setClassificationForm((current) => ({ ...current, pnlBucket: event.target.value }))}>{["employee", "designation", "department"].includes(classificationForm.scopeType) ? <><option value="agent_salary">Agent Salary</option><option value="dsc_people">DSC People</option><option value="bmc_people">BMC People</option><option value="excluded">Excluded</option></> : <><option value="dsc_non_people">DSC Non-People</option><option value="bmc_non_people">BMC Non-People</option><option value="depreciation">Depreciation</option><option value="amortization">Amortisation</option><option value="finance_cost">Finance Cost</option><option value="tax">Tax</option><option value="capex">Capex</option><option value="excluded">Excluded</option></>}</select></Field>
+                        <Field label="Priority"><Input className="rounded-xl" type="number" value={classificationForm.priority ?? 100} onChange={(event) => setClassificationForm((current) => ({ ...current, priority: numberValue(event.target.value) }))} /></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Effective from"><Input className="rounded-xl" type="date" value={classificationForm.effectiveFrom} onChange={(event) => setClassificationForm((current) => ({ ...current, effectiveFrom: event.target.value }))} /></Field>
+                        <Field label="Effective to"><Input className="rounded-xl" type="date" value={classificationForm.effectiveTo ?? ""} onChange={(event) => setClassificationForm((current) => ({ ...current, effectiveTo: event.target.value || null }))} /></Field>
+                      </div>
+                    </div>
+                  }
+                />
+              </TabsContent>
+
+              {/* ── PLANS ── */}
+              <TabsContent value="plans" className="flex-1 overflow-hidden m-0">
+                <SplitPane
+                  formOpen={formOpen}
+                  tableLabel={`${period} plan register`}
+                  onAdd={openAdd}
+                  onClose={closeForm}
+                  selectedRow={selectedRow}
+                  onSave={() => saveWithToast(() => legacy.saveMonthlyPlan.mutateAsync(planForm), "Monthly operating plan saved.").then(closeForm)}
+                  saving={legacy.saveMonthlyPlan.isPending}
+                  tableSlot={
+                    <MasterTable
+                      loading={legacy.monthlyPlansQuery.isLoading}
+                      rows={plans as AnyRow[]}
+                      emptyText="No monthly plan configured for this period."
+                      selectedId={selectedRow?.id}
+                      onRowClick={(row) => { setSelectedRow(row); setFormOpen(true); }}
+                      columns={[{ key: "process_name", label: "Process" }, { key: "contracted_seats", label: "Seats", align: "right" }, { key: "required_roster_hc", label: "Roster HC", align: "right" }, { key: "revenue_budget", label: "Revenue", align: "right", render: currency }, { key: "profit_budget", label: "Profit", align: "right", render: currency }, { key: "status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                    />
+                  }
+                  formSlot={
+                    <div className="grid gap-4">
+                      <Field label="Process"><ProcessSelect value={planForm.process_id} onChange={(value) => setPlanForm((current) => ({ ...current, process_id: value }))} processes={processes} /></Field>
+                      <Field label="Period"><MonthYearPicker value={planForm.period_code} onChange={(v) => setPlanForm((current) => ({ ...current, period_code: v }))} /></Field>
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <Field label="Contracted seats"><Input className="rounded-xl" type="number" value={planForm.contracted_seats ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, contracted_seats: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Productive HC"><Input className="rounded-xl" type="number" value={planForm.required_productive_hc ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, required_productive_hc: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Roster HC"><Input className="rounded-xl" type="number" value={planForm.required_roster_hc ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, required_roster_hc: numberValue(event.target.value) }))} /></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Shrinkage %"><Input className="rounded-xl" type="number" value={planForm.planned_shrinkage_pct ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, planned_shrinkage_pct: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Buffer target %"><Input className="rounded-xl" type="number" value={planForm.buffer_target_pct ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, buffer_target_pct: numberValue(event.target.value) }))} /></Field>
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Revenue budget"><Input className="rounded-xl" type="number" value={planForm.revenue_budget ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, revenue_budget: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Direct cost budget"><Input className="rounded-xl" type="number" value={planForm.direct_cost_budget ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, direct_cost_budget: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Indirect cost budget"><Input className="rounded-xl" type="number" value={planForm.indirect_cost_budget ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, indirect_cost_budget: numberValue(event.target.value) }))} /></Field>
+                        <Field label="Profit budget"><Input className="rounded-xl" type="number" value={planForm.profit_budget ?? 0} onChange={(event) => setPlanForm((current) => ({ ...current, profit_budget: numberValue(event.target.value) }))} /></Field>
+                      </div>
+                    </div>
+                  }
+                />
+              </TabsContent>
+
+              {/* ── GOVERNANCE ── */}
+              <TabsContent value="governance" className="space-y-4">
+                <div className="grid gap-4 xl:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3"><ShieldCheck className="h-4 w-4 text-emerald-600" /><p className="text-sm font-black text-slate-950">Maker-checker control</p></div>
+                    <div className="space-y-3">
+                      {[["1", "Finance Preparer", "Create and edit master drafts"], ["2", "Finance Head", "Approve commercial and classification changes"], ["3", "Accounts Head", "Approve accounting-impact changes"], ["4", "CEO / COO", "Final period sign-off where configured"]].map(([step, role, detail]) => (
+                        <div key={step} className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-black text-white">{step}</span>
+                          <div><p className="text-sm font-black text-slate-900">{role}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3"><LockKeyhole className="h-4 w-4 text-amber-600" /><p className="text-sm font-black text-slate-950">Period governance</p></div>
+                    <div className="space-y-2">
+                      {legacy.periodsQuery.isLoading ? (
+                        [1, 2, 3].map((n) => <Skeleton key={n} className="h-[3.25rem] rounded-2xl" />)
+                      ) : periods.length === 0 ? (
+                        <p className="py-4 text-center text-xs text-slate-500">No periods configured. Add periods via the Period Close workflow.</p>
+                      ) : (
+                        periods.slice(0, 8).map((row) => (
+                          <div key={row.id} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
+                            <div>
+                              <p className="text-sm font-black text-slate-900">{row.period_code}</p>
+                              <p className="text-xs text-slate-500">{row.locked_at ? `Locked ${new Date(row.locked_at).toLocaleString("en-IN")}` : "Available for governance"}</p>
+                            </div>
+                            <StatusPill value={row.status} />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3"><Database className="h-4 w-4 text-sky-600" /><p className="text-sm font-black text-slate-950">Data-source readiness</p></div>
+                    <div className="space-y-2">
+                      {([
+                        ["Payroll", classificationRules.length > 0],
+                        ["Commercial rules", revenueRules.length > 0],
+                        ["Delivery actuals", deliveryActuals.length > 0],
+                        ["GRN allocations", grnAllocationsReady],
+                        ["Vendor payments", vendorPaymentsReady],
+                        ["Monthly plans", plans.length > 0],
+                      ] as [string, boolean | undefined][]).map(([label, ready]) => (
+                        <div key={label} className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3">
+                          <span className="text-sm font-bold text-slate-800">{label}</span>
+                          {ready === undefined ? (
+                            <span className="text-xs text-slate-400">Checking…</span>
+                          ) : ready ? (
+                            <CheckCircle2 aria-label="Ready" className="h-5 w-5 text-emerald-500" />
+                          ) : (
+                            <XCircle aria-label="Not ready" className="h-5 w-5 text-rose-500" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {(grnAllocationsReady === false || vendorPaymentsReady === false) && (
+                      <p className="mt-3 text-xs leading-5 text-slate-500">
+                        {grnAllocationsReady === false && (
+                          <>GRN allocations: {bpo.grnAllocationReadinessQuery.data?.unreconciledAllocationCount} allocation(s) across {bpo.grnAllocationReadinessQuery.data?.unreconciledGrnCount} GRN(s) still draft/reserved, not yet consumed into P&amp;L cost for {period}. </>
+                        )}
+                        {vendorPaymentsReady === false && (
+                          <>Vendor payments: {bpo.vendorPaymentReadinessQuery.data?.pendingCount} payment(s) still outstanding for {period}.</>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2"><FileClock className="h-4 w-4 text-violet-600" /><p className="text-sm font-black text-slate-950">Adjustment and master-change history</p></div>
+                    <Button asChild variant="outline" className="rounded-xl">
+                      <Link to={`/finance/process-pnl/period-close?period=${period}`}>Open period close<ArrowRight className="ml-2 h-4 w-4" /></Link>
+                    </Button>
+                  </div>
+                  <MasterTable
+                    loading={legacy.adjustmentsQuery.isLoading}
+                    rows={adjustments as AnyRow[]}
+                    emptyText="No adjustment history for the selected period."
+                    maxHeight={520}
+                    columns={[{ key: "process_name", label: "Process" }, { key: "metric_key", label: "Metric", render: titleCase }, { key: "previous_value", label: "Previous", align: "right", render: currency }, { key: "adjustment_amount", label: "Adjustment", align: "right", render: currency }, { key: "revised_value", label: "Revised", align: "right", render: currency }, { key: "reason", label: "Reason" }, { key: "approval_status", label: "Status", render: (value) => <StatusPill value={value} /> }]}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+              <p className="max-w-3xl text-xs leading-5 text-slate-600">
+                Every master saved here refreshes the same P&amp;L APIs used by the command centre and process drill-down. Closed-period control remains in the separate sign-off workspace.
+              </p>
+              <Button asChild size="sm" variant="outline">
+                <Link to={`/finance/process-pnl?period=${period}`}>Review calculated impact<ArrowRight className="ml-1.5 h-3.5 w-3.5" /></Link>
+              </Button>
+            </section>
+          </div>
+        </div>
+      </div>
+      <PnlBulkUploadDialog
+        open={bulkUploadOpen}
+        onOpenChange={setBulkUploadOpen}
+        onSuccess={() => {
+          legacy.referenceQuery.refetch();
+          legacy.contractsQuery.refetch();
+          legacy.ratesQuery.refetch();
+          legacy.monthlyPlansQuery.refetch();
+          bpo.revenueRulesQuery.refetch();
+          bpo.deliveryActualsQuery.refetch();
+          bpo.revenueComponentsQuery.refetch();
+          bpo.costComponentsQuery.refetch();
+          bpo.allocationPoliciesQuery.refetch();
+          bpo.classificationRulesQuery.refetch();
+        }}
+      />
+    </DashboardLayout>
+  );
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest", "--isolated"]
+    },
+    "hrms-db": {
+      "command": "node",
+      "args": ["mcp-server/index.mjs"]
+    }
+  }
+}

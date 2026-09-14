@@ -1,0 +1,321 @@
+/**
+ * Quality Insights Service
+ * AI-powered analytics and predictions for quality metrics
+ */
+
+import type { RowDataPacket } from 'mysql2';
+import { getShivamgiriPool } from '../../db/shivamgiriDb.js';
+
+function getCiPool() {
+  return getShivamgiriPool();
+}
+
+/**
+ * Get hour-of-day quality heatmap data
+ */
+export async function getQualityHeatmap(from: string, to: string) {
+  const pool = getCiPool();
+  const [rows] = await pool.execute<RowDataPacket[]>(`
+    SELECT
+      DAYNAME(CallDate) as day_name,
+      DAYOFWEEK(CallDate) as dow,
+      HOUR(CallDate) as hour,
+      COUNT(*) as call_count,
+      ROUND(AVG(quality_percentage), 1) as avg_score,
+      COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) as critical_calls
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+    GROUP BY DAYOFWEEK(CallDate), HOUR(CallDate)
+    ORDER BY dow, hour
+  `, [from, to]);
+
+  // Transform to heatmap structure
+  const heatmap: Record<string, Record<number, { score: number; calls: number; critical: number }>> = {};
+  for (const row of rows) {
+    if (!heatmap[row.day_name]) heatmap[row.day_name] = {};
+    heatmap[row.day_name][row.hour] = {
+      score: row.avg_score,
+      calls: row.call_count,
+      critical: row.critical_calls
+    };
+  }
+  return heatmap;
+}
+
+/**
+ * Predict agent at-risk status based on quality trends
+ */
+export async function predictAgentRisk(from: string, to: string) {
+  const pool = getCiPool();
+  const [rows] = await pool.execute<RowDataPacket[]>(`
+    WITH agent_metrics AS (
+      SELECT
+        User as agent_code,
+        COUNT(*) as total_calls,
+        AVG(quality_percentage) as overall_avg,
+        AVG(CASE WHEN CallDate >= DATE_SUB(?, INTERVAL 7 DAY) THEN quality_percentage END) as week_avg,
+        AVG(CASE WHEN CallDate >= DATE_SUB(?, INTERVAL 1 DAY) THEN quality_percentage END) as yesterday_avg,
+        STDDEV(quality_percentage) as quality_volatility,
+        MIN(quality_percentage) as worst_call,
+        MAX(quality_percentage) as best_call,
+        SUM(CASE WHEN quality_percentage < 50 THEN 1 ELSE 0 END) as critical_count
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND User IS NOT NULL AND User != ''
+      GROUP BY User
+      HAVING COUNT(*) >= 5
+    )
+    SELECT
+      am.agent_code,
+      COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), am.agent_code) AS agent_name,
+      total_calls,
+      ROUND(overall_avg, 1) as overall_avg,
+      ROUND(week_avg, 1) as week_avg,
+      ROUND(yesterday_avg, 1) as yesterday_avg,
+      ROUND(quality_volatility, 1) as volatility,
+      worst_call,
+      best_call,
+      critical_count,
+      ROUND(week_avg - overall_avg, 1) as trend_delta,
+      CASE
+        WHEN week_avg < overall_avg - 10 THEN 'declining_fast'
+        WHEN week_avg < overall_avg - 5 THEN 'declining'
+        WHEN week_avg > overall_avg + 5 THEN 'improving'
+        WHEN quality_volatility > 25 THEN 'unstable'
+        WHEN overall_avg < 60 THEN 'consistently_poor'
+        WHEN overall_avg >= 85 THEN 'top_performer'
+        ELSE 'stable'
+      END as risk_status,
+      CASE
+        WHEN week_avg < 60 AND quality_volatility > 20 THEN 'Immediate coaching required'
+        WHEN week_avg < overall_avg - 10 THEN 'Schedule performance review'
+        WHEN critical_count > total_calls * 0.1 THEN 'Too many critical calls - review process knowledge'
+        WHEN overall_avg >= 90 THEN 'Consider for mentorship role'
+        ELSE 'Continue monitoring'
+      END as recommended_action
+    FROM agent_metrics am
+    LEFT JOIN mas_hrms.employees e ON e.employee_code = am.agent_code
+    WHERE COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), am.agent_code) NOT LIKE 'Codex E2E%'
+      AND COALESCE(e.active_status, 1) = 1
+    ORDER BY
+      CASE
+        WHEN week_avg < overall_avg - 10 THEN 1
+        WHEN week_avg < 60 THEN 2
+        WHEN quality_volatility > 25 THEN 3
+        ELSE 4
+      END,
+      week_avg ASC
+  `, [to, to, from, to]);
+
+  return rows;
+}
+
+/**
+ * Generate automated insights based on current data patterns
+ */
+export async function generateInsights(from: string, to: string) {
+  const pool = getCiPool();
+  const insights: Array<{
+    type: 'success' | 'warning' | 'critical' | 'opportunity';
+    title: string;
+    message: string;
+    metric?: number;
+    action?: string;
+  }> = [];
+
+  // Insight 1: Quality trend
+  const [trendData] = await pool.execute<RowDataPacket[]>(`
+    SELECT
+      AVG(CASE WHEN DATE(CallDate) = CURDATE() THEN quality_percentage END) as today_avg,
+      AVG(CASE WHEN DATE(CallDate) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN quality_percentage END) as yesterday_avg,
+      AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN quality_percentage END) as week_avg,
+      AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN quality_percentage END) as month_avg
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+  `, [from, to]);
+
+  const trend = trendData[0];
+  if (trend.today_avg && trend.yesterday_avg) {
+    const delta = trend.today_avg - trend.yesterday_avg;
+    if (delta > 5) {
+      insights.push({
+        type: 'success',
+        title: 'Quality Improving',
+        message: `Today's quality is ${delta.toFixed(1)}% higher than yesterday`,
+        metric: trend.today_avg,
+        action: 'Identify and replicate successful practices'
+      });
+    } else if (delta < -5) {
+      insights.push({
+        type: 'warning',
+        title: 'Quality Declining',
+        message: `Today's quality dropped ${Math.abs(delta).toFixed(1)}% from yesterday`,
+        metric: trend.today_avg,
+        action: 'Investigate root cause immediately'
+      });
+    }
+  }
+
+  // Insight 2: Critical agents
+  const [criticalAgents] = await pool.execute<RowDataPacket[]>(`
+    SELECT cqa.User, COUNT(*) as poor_calls,
+           COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User) AS display_name
+    FROM db_audit.call_quality_assessment cqa
+    LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+    WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+      AND cqa.quality_percentage < 50
+    GROUP BY cqa.User, e.full_name, e.first_name, e.last_name
+    HAVING COUNT(*) >= 3
+    ORDER BY poor_calls DESC
+    LIMIT 3
+  `, []);
+
+  if (criticalAgents.length > 0) {
+    insights.push({
+      type: 'critical',
+      title: 'Agents Need Immediate Support',
+      message: `${criticalAgents.length} agents have 3+ critical calls in last 24 hours`,
+      action: `Priority coaching for: ${criticalAgents.map((a: any) => a.display_name).join(', ')}`
+    });
+  }
+
+  // Insight 3: Best practices opportunity
+  const [topPerformers] = await pool.execute<RowDataPacket[]>(`
+    SELECT
+      COUNT(DISTINCT User) as top_count,
+      AVG(quality_percentage) as top_avg
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+      AND quality_percentage >= 90
+  `, [from, to]);
+
+  const [bottomPerformers] = await pool.execute<RowDataPacket[]>(`
+    SELECT
+      COUNT(DISTINCT User) as bottom_count,
+      AVG(quality_percentage) as bottom_avg
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+      AND quality_percentage < 70
+  `, [from, to]);
+
+  if (topPerformers[0].top_count > 0 && bottomPerformers[0].bottom_count > 0) {
+    const gap = topPerformers[0].top_avg - bottomPerformers[0].bottom_avg;
+    insights.push({
+      type: 'opportunity',
+      title: 'Performance Gap Opportunity',
+      message: `${gap.toFixed(1)}% quality gap between top and bottom performers`,
+      action: 'Implement peer mentoring program to close the gap'
+    });
+  }
+
+  // Insight 4: Peak hour performance
+  const [peakHours] = await pool.execute<RowDataPacket[]>(`
+    SELECT
+      HOUR(CallDate) as hour,
+      AVG(quality_percentage) as avg_score,
+      COUNT(*) as call_volume
+    FROM db_audit.call_quality_assessment
+    WHERE CallDate BETWEEN ? AND ?
+    GROUP BY HOUR(CallDate)
+    ORDER BY avg_score ASC
+    LIMIT 1
+  `, [from, to]);
+
+  if (peakHours[0]) {
+    insights.push({
+      type: 'warning',
+      title: 'Weakest Hour Identified',
+      message: `Quality drops to ${parseFloat(peakHours[0].avg_score).toFixed(1)}% at ${peakHours[0].hour}:00 hrs`,
+      metric: peakHours[0].call_volume,
+      action: 'Consider additional staffing or breaks during this hour'
+    });
+  }
+
+  return insights;
+}
+
+/**
+ * Calculate ROI of quality improvements
+ */
+export async function calculateQualityROI(from: string, to: string) {
+  const pool = getCiPool();
+
+  // Get quality and sales correlation
+  const [data] = await pool.execute<RowDataPacket[]>(`
+    SELECT
+      AVG(qc.quality_percentage) as avg_quality,
+      COUNT(DISTINCT qc.User) as agent_count,
+      COUNT(*) as total_calls,
+      SUM(CASE WHEN cd.SaleDone IN ('Yes', '1') THEN 1 ELSE 0 END) as sales_count
+    FROM db_audit.call_quality_assessment qc
+    LEFT JOIN db_external.CallDetails cd ON cd.CallDate = qc.CallDate
+      AND cd.AgentName = qc.User COLLATE utf8mb4_unicode_ci
+    WHERE qc.CallDate BETWEEN ? AND ?
+  `, [from, to]);
+
+  const current = data[0];
+  // current.avg_quality is a MySQL DECIMAL, which mysql2 returns as a string. Left as a
+  // string, `current.avg_quality + proj.improvement` below did string concatenation
+  // ("73.45" + 5 -> "73.455") instead of arithmetic. Fixed 2026-09-01.
+  const avgQuality = Number(current.avg_quality ?? 0);
+  const conversionRate = (current.sales_count / current.total_calls) * 100;
+
+  // These projections were presented as computed fact (an "×ROI" badge, "Add. Revenue"
+  // in ₹) but rest on two invented, unconfigurable constants: a 1%-quality→0.3%-conversion
+  // correlation with no supporting regression anywhere in this codebase, and a flat
+  // per-sale deal value that was hardcoded in USD ($500) while the UI labels the result
+  // with a ₹ sign — a currency-unit bug on top of the fabrication. No real per-sale value
+  // or cost-per-improvement config exists yet to source these from (see ASSUMPTIONS_NOTE).
+  // Until one does, this stays a labeled illustrative scenario, not a claimed prediction —
+  // no mock metric should be presented as measured fact. Fixed 2026-09-01.
+  const ASSUMED_CONVERSION_LIFT_PER_QUALITY_PCT = 0.003; // 0.3% conversion per 1% quality
+  const ASSUMED_AVG_DEAL_VALUE_INR = 40000; // ₹ — placeholder until real config exists
+  const ASSUMED_COST_PER_QUALITY_PCT_INR = 80000; // ₹ — placeholder until real config exists
+  const ASSUMPTIONS_NOTE =
+    "Illustrative scenario, not a measured prediction. Assumes a 1% quality " +
+    "improvement lifts conversion by 0.3%, an average deal value of " +
+    `₹${ASSUMED_AVG_DEAL_VALUE_INR.toLocaleString("en-IN")}, and an improvement cost of ` +
+    `₹${ASSUMED_COST_PER_QUALITY_PCT_INR.toLocaleString("en-IN")} per 1% of quality gained. ` +
+    "None of these are configured/measured values yet.";
+
+  // Projections based on quality improvements
+  const projections = [
+    { improvement: 5, label: '+5% Quality' },
+    { improvement: 10, label: '+10% Quality' },
+    { improvement: 15, label: '+15% Quality' }
+  ].map(proj => {
+    const newConversion = conversionRate * (1 + (proj.improvement * ASSUMED_CONVERSION_LIFT_PER_QUALITY_PCT));
+    const additionalSales = (current.total_calls * (newConversion - conversionRate) / 100);
+    const additionalRevenue = additionalSales * ASSUMED_AVG_DEAL_VALUE_INR;
+
+    return {
+      ...proj,
+      current_quality: avgQuality,
+      projected_quality: avgQuality + proj.improvement,
+      current_conversion: conversionRate.toFixed(2),
+      projected_conversion: newConversion.toFixed(2),
+      additional_sales: Math.round(additionalSales),
+      additional_revenue: Math.round(additionalRevenue),
+      roi_multiple: (additionalRevenue / (proj.improvement * ASSUMED_COST_PER_QUALITY_PCT_INR)).toFixed(1)
+    };
+  });
+
+  return {
+    is_estimate: true,
+    assumptions_note: ASSUMPTIONS_NOTE,
+    current_metrics: {
+      quality: avgQuality,
+      conversion: conversionRate,
+      total_calls: current.total_calls,
+      total_sales: current.sales_count
+    },
+    projections
+  };
+}
+
+export const qualityInsightsService = {
+  getQualityHeatmap,
+  predictAgentRisk,
+  generateInsights,
+  calculateQualityROI
+};

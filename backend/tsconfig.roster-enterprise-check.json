@@ -1,0 +1,35 @@
+{
+  // Typecheck for the roster enterprise-controls program (shift versioning,
+  // minimum rest, week-off policy, roster lifecycle lock) commissioned 2026-08-13.
+  //
+  //     npx tsc -p tsconfig.roster-enterprise-check.json
+  //
+  // Deliberately narrow: only files this program has actually edited. Files
+  // like wfm.routes.ts pull in unrelated modules (payroll-governance.service.ts)
+  // that concurrent sessions are actively editing in this shared repo —
+  // including them here would make this scoped check fail on someone else's
+  // in-progress work, not mine. roster-generation.service.ts was re-verified
+  // clean in isolation (2026-08-13, Area 2 gap-closing pass) and re-added.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/wfm/wfm.service.ts",
+    "src/modules/wfm/wfm.types.ts",
+    "src/modules/wfm/auto-roster-synced.service.ts",
+    "src/modules/wfm/roster.service.ts",
+    "src/modules/wfm/shift-scheduling.util.ts",
+    "src/modules/wfm/schema-probe.util.ts",
+    "src/modules/wfm/rest-policy.service.ts",
+    "src/modules/wfm/__tests__/shift-versioning.test.ts",
+    "src/modules/wfm/__tests__/rest-policy.test.ts",
+    "src/modules/wfm/__tests__/roster-service-rest-validation.test.ts",
+    "src/modules/wfm/schema-probe.util.ts",
+    "src/modules/roster/roster-generation.service.ts",
+    "src/modules/bulk-upload/roster-assignment-bulk.service.ts",
+    "src/modules/bulk-upload/shift-roster-bulk.service.ts",
+    "src/modules/bulk-upload/__tests__/roster-assignment-bulk-transaction.test.ts",
+    "src/modules/bulk-upload/__tests__/shift-roster-bulk-transaction.test.ts"
+  ]
+}

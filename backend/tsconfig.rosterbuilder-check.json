@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/wfm/roster-builder.routes.ts", "src/modules/wfm/roster-builder.service.ts"]
+}

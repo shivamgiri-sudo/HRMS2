@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ID Card Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f172a;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 48px;
+    padding: 48px 24px 72px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  }
+  h1 { color: #475569; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; }
+  .row { display: flex; gap: 48px; flex-wrap: wrap; justify-content: center; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .tier-label { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 0.15em; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>Employee ID Card — Designation Tier Preview</h1>
+<div class="row" id="cards"></div>
+
+<script>
+/* ─── Tier definitions ─────────────────────────────────────────────── */
+const TIERS = [
+  {
+    title: "Executive / Agent",
+    designation: "Customer Service Executive",
+    department: "Operations",
+    gradient: "linear-gradient(160deg, #0d6e6e 0%, #0a5555 55%, #073d3d 100%)",
+    accent: "#2dd4bf",
+    accentRgb: "45,212,191",
+    premium: false,
+  },
+  {
+    title: "Team Leader",
+    designation: "Team Leader",
+    department: "Operations",
+    gradient: "linear-gradient(160deg, #3730a3 0%, #312e81 55%, #1e1b6b 100%)",
+    accent: "#818cf8",
+    accentRgb: "129,140,248",
+    premium: false,
+  },
+  {
+    title: "Quality Auditor",
+    designation: "Quality Auditor",
+    department: "Quality",
+    gradient: "linear-gradient(160deg, #92400e 0%, #78350f 55%, #5a2707 100%)",
+    accent: "#f59e0b",
+    accentRgb: "245,158,11",
+    premium: false,
+  },
+  {
+    title: "Manager & Above",
+    designation: "Operations Manager",
+    department: "Management",
+    /* Rich deep navy — feels premium, distinct from Executive teal */
+    gradient: "linear-gradient(160deg, #061e40 0%, #0a2d5a 40%, #051428 100%)",
+    accent: "#d4a017",
+    accentRgb: "212,160,23",
+    premium: true,
+  },
+];
+
+/* ─── Card geometry ────────────────────────────────────────────────── */
+const W  = 340;
+const H  = 590;
+const WH = 200;   // white header height
+const PD = 130;   // photo ring outer diameter
+const PI = 116;   // photo inner diameter
+const PT = WH - PD / 2; // photo absolute top
+
+/* ─── Geometric decoration — white header ──────────────────────────── */
+function headerGeo(accent, accentRgb, premium) {
+  const uid = accent.replace('#','');
+  if (premium) {
+    // Gold corner ornament + fine crosshatch
+    return `
+      <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern id="xh-${uid}" x="0" y="0" width="14" height="14" patternUnits="userSpaceOnUse">
+            <line x1="0" y1="0" x2="14" y2="14" stroke="rgba(${accentRgb},0.07)" stroke-width="0.8"/>
+            <line x1="14" y1="0" x2="0" y2="14" stroke="rgba(${accentRgb},0.07)" stroke-width="0.8"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#xh-${uid})"/>
+        <!-- top-right ornamental arc -->
+        <circle cx="${W}" cy="0" r="90" fill="none" stroke="rgba(${accentRgb},0.18)" stroke-width="14"/>
+        <circle cx="${W}" cy="0" r="68" fill="none" stroke="rgba(${accentRgb},0.10)" stroke-width="6"/>
+        <!-- bottom-left arc -->
+        <circle cx="0" cy="${WH}" r="70" fill="none" stroke="rgba(${accentRgb},0.10)" stroke-width="10"/>
+        <!-- small gold dots top-left -->
+        <circle cx="18" cy="16" r="4" fill="rgba(${accentRgb},0.25)"/>
+        <circle cx="32" cy="26" r="2.5" fill="rgba(${accentRgb},0.15)"/>
+        <circle cx="14" cy="32" r="2" fill="rgba(${accentRgb},0.10)"/>
+        <!-- horizontal accent line below subtitle -->
+        <line x1="${W/2 - 40}" y1="178" x2="${W/2 + 40}" y2="178" stroke="rgba(${accentRgb},0.35)" stroke-width="1"/>
+      </svg>`;
+  }
+  // Standard tier: diagonal lines + two circles
+  return `
+    <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="hatch-${uid}" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="20" stroke="rgba(${accentRgb},0.07)" stroke-width="1.5"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#hatch-${uid})"/>
+      <circle cx="${W - 18}" cy="${WH - 10}" r="80" fill="none" stroke="rgba(${accentRgb},0.12)" stroke-width="16"/>
+      <circle cx="18" cy="18" r="32" fill="none" stroke="rgba(${accentRgb},0.08)" stroke-width="10"/>
+      <circle cx="${W - 26}" cy="20" r="4" fill="rgba(${accentRgb},0.15)"/>
+      <circle cx="${W - 14}" cy="32" r="3" fill="rgba(${accentRgb},0.10)"/>
+      <circle cx="${W - 38}" cy="34" r="2.5" fill="rgba(${accentRgb},0.08)"/>
+    </svg>`;
+}
+
+/* ─── Geometric decoration — dark body ─────────────────────────────── */
+function bodyGeo(accentRgb, premium) {
+  if (premium) {
+    // Premium: large overlapping circles + diagonal accent lines
+    return `
+      <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Subtle gold shimmer overlay top-right -->
+        <circle cx="${W + 30}" cy="-20" r="160" fill="rgba(${accentRgb},0.04)"/>
+        <!-- Large circle bottom-left -->
+        <circle cx="-30" cy="${H - WH}" r="180" fill="rgba(${accentRgb},0.03)"/>
+        <!-- Diagonal accent lines right edge -->
+        <line x1="${W - 60}" y1="0" x2="${W}" y2="80" stroke="rgba(${accentRgb},0.08)" stroke-width="1.2"/>
+        <line x1="${W - 40}" y1="0" x2="${W}" y2="60" stroke="rgba(${accentRgb},0.05)" stroke-width="1"/>
+        <!-- Small diamond shape -->
+        <polygon points="${W - 30},${H - WH - 100} ${W - 14},${H - WH - 82} ${W - 30},${H - WH - 64} ${W - 46},${H - WH - 82}"
+                 fill="none" stroke="rgba(${accentRgb},0.12)" stroke-width="1.2"/>
+      </svg>`;
+  }
+  return `
+    <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="${W + 10}" cy="40" r="110" fill="rgba(${accentRgb},0.04)"/>
+      <circle cx="-10" cy="${H - WH - 50}" r="90" fill="rgba(${accentRgb},0.04)"/>
+    </svg>`;
+}
+
+/* ─── Photo ring ────────────────────────────────────────────────────── */
+function photoRing(accent, accentRgb, premium) {
+  if (!premium) {
+    // Standard: accent ring → 3px white gap → photo
+    return `<div style="
+      position:absolute;top:${PT}px;left:50%;transform:translateX(-50%);z-index:10;
+      width:${PD}px;height:${PD}px;border-radius:50%;background:${accent};
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 0 4px rgba(255,255,255,0.95),0 8px 28px rgba(0,0,0,0.4)">
+      <div style="width:${PD-6}px;height:${PD-6}px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;">
+        <div style="width:${PI}px;height:${PI}px;border-radius:50%;overflow:hidden;background:#e5e7eb;
+             display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:#9ca3af">RS</div>
+      </div>
+    </div>`;
+  }
+  // Premium: conic gold shimmer ring → white gap → photo
+  return `
+    <div style="
+      position:absolute;top:${PT - 4}px;left:50%;transform:translateX(-50%);z-index:9;
+      width:${PD + 8}px;height:${PD + 8}px;border-radius:50%;
+      background:conic-gradient(from 0deg, rgba(212,160,23,0.9), rgba(255,220,80,1), rgba(212,160,23,0.5), rgba(255,220,80,1), rgba(212,160,23,0.9));
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 0 3px rgba(255,255,255,0.9),0 8px 28px rgba(0,0,0,0.45)">
+      <div style="width:${PD+2}px;height:${PD+2}px;border-radius:50%;background:white;display:flex;align-items:center;justify-content:center;">
+        <div style="width:${PI}px;height:${PI}px;border-radius:50%;overflow:hidden;background:#e5e7eb;
+             display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:#9ca3af">RS</div>
+      </div>
+    </div>`;
+}
+
+/* ─── Build one card ────────────────────────────────────────────────── */
+function makeCard(tier) {
+  const { gradient, accent, accentRgb, premium } = tier;
+
+  // Name style — premium gets a subtle gold text-shadow
+  const nameShadow = premium
+    ? `text-shadow:0 1px 12px rgba(${accentRgb},0.45)`
+    : '';
+
+  // Premium: subtle gold divider line instead of badge text
+  const premiumBadge = premium
+    ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;width:100%">
+        <div style="height:1px;flex:1;background:linear-gradient(90deg,transparent,rgba(${accentRgb},0.5))"></div>
+        <div style="width:6px;height:6px;border-radius:50%;background:${accent}"></div>
+        <div style="height:1px;flex:1;background:linear-gradient(90deg,rgba(${accentRgb},0.5),transparent)"></div>
+      </div>`
+    : '';
+
+  const infoBorderTop = premium
+    ? `border-top:1px solid rgba(${accentRgb},0.35)`
+    : `border-top:1px solid rgba(${accentRgb},0.2)`;
+
+  const photoPaddingTop = premium ? PD/2 + 28 : PD/2 + 18;
+
+  return `
+  <div class="col">
+    <div class="tier-label">${tier.title}</div>
+    <div style="position:relative;width:${W}px;height:${H}px;border-radius:20px;overflow:hidden;
+         box-shadow:${premium
+           ? '0 28px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(212,160,23,0.2)'
+           : '0 24px 64px rgba(0,0,0,0.5)'}">
+
+      <!-- ── White header zone ── -->
+      <div style="position:absolute;top:0;left:0;right:0;height:${WH}px;background:#ffffff;
+           display:flex;flex-direction:column;align-items:center;padding-top:22px;z-index:2;overflow:hidden">
+        ${headerGeo(accent, accentRgb, premium)}
+
+        <img src="/mcn-logo.png" style="height:52px;object-fit:contain;position:relative;z-index:3"
+             onerror="this.style.display='none'" />
+
+        <p style="position:relative;z-index:3;margin-top:10px;font-size:14px;font-weight:900;
+             color:${premium ? '#051e3e' : '#073f78'};text-align:center;letter-spacing:-0.01em;line-height:1.2">
+          Mas Callnet India Pvt. Ltd.
+        </p>
+
+        <p style="position:relative;z-index:3;margin-top:5px;font-size:10px;font-weight:700;
+             color:${premium ? 'rgba(212,160,23,0.7)' : '#94a3b8'};text-transform:uppercase;letter-spacing:0.2em">
+          Employee Identity Card
+        </p>
+
+        <!-- Wave SVG — sits ABOVE header content, forms the divider -->
+        <svg style="position:absolute;bottom:-1px;left:0;width:100%;z-index:4;display:block"
+             viewBox="0 0 ${W} 30" preserveAspectRatio="none">
+          <path d="M0,30 Q${W/2},5 ${W},30 L${W},30 L0,30 Z" fill="${accent}" opacity="0.2"/>
+          <path d="M0,30 Q${W/2},7 ${W},30" stroke="${accent}" stroke-width="2.5" fill="none" opacity="0.7"/>
+          <!-- white fill ensures dark body doesn't bleed into header -->
+          <path d="M0,30 Q${W/2},5 ${W},30 L${W},30 L0,30 Z" fill="white"/>
+        </svg>
+      </div>
+
+      <!-- ── Dark body zone ── -->
+      <div style="position:absolute;top:${WH}px;left:0;right:0;bottom:0;background:${gradient};overflow:hidden">
+        ${bodyGeo(accentRgb, premium)}
+
+        <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;
+             padding-top:${photoPaddingTop}px;padding-left:26px;padding-right:26px;padding-bottom:18px;height:100%">
+
+          <h3 style="font-size:24px;font-weight:900;color:#ffffff;text-align:center;
+               line-height:1.15;letter-spacing:-0.01em;margin-bottom:7px;${nameShadow}">
+            Rahul Sharma
+          </h3>
+
+          <!-- Accent rule -->
+          <div style="width:${premium ? 60 : 48}px;height:3px;margin-bottom:7px;border-radius:2px;
+               background:${premium
+                 ? 'linear-gradient(90deg,#d4a017,#f0c040,#d4a017)'
+                 : accent}"></div>
+
+          <p style="font-size:12px;font-weight:700;
+               color:rgba(${accentRgb},${premium ? '1' : '0.9'});
+               text-align:center;letter-spacing:0.03em;margin-bottom:${premium ? 10 : 18}px">
+            ${tier.designation} — ${tier.department}
+          </p>
+
+          ${premiumBadge}
+
+          <!-- Info rows -->
+          <div style="width:100%;${infoBorderTop};padding-top:14px;display:flex;flex-direction:column;gap:9px">
+            ${[['ID No','MCN-001'],['Emergency','+91 98100 00000'],['Blood Group','B+']].map(([lbl,val]) => `
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:11px;font-weight:800;color:${accent};min-width:90px;letter-spacing:0.03em">${lbl}</span>
+                <span style="font-size:11px;color:rgba(255,255,255,0.25);margin-right:2px">:</span>
+                <span style="font-size:12px;font-weight:600;color:rgba(255,255,255,${premium ? '1' : '0.9'})">${val}</span>
+              </div>`).join('')}
+          </div>
+
+          <!-- QR -->
+          <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center">
+            <div style="padding:6px;background:white;border-radius:11px;
+                 box-shadow:0 0 0 2.5px rgba(${accentRgb},0.6)${premium ? ',0 0 16px rgba(212,160,23,0.25)' : ''}">
+              <div style="width:62px;height:62px;background:#f3f4f6;border-radius:6px;
+                   display:flex;align-items:center;justify-content:center;
+                   font-size:9px;color:#9ca3af;font-weight:700;letter-spacing:0.1em">QR</div>
+            </div>
+            <p style="margin-top:5px;font-size:8.5px;color:rgba(255,255,255,0.3);
+                 text-transform:uppercase;letter-spacing:0.2em">Scan to verify</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Photo circle ── -->
+      ${photoRing(accent, accentRgb, premium)}
+
+    </div>
+  </div>`;
+}
+
+document.getElementById('cards').innerHTML = TIERS.map(makeCard).join('');
+</script>
+</body>
+</html>

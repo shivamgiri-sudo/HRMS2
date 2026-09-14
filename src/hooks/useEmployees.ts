@@ -1,0 +1,493 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { format } from "date-fns";
+
+// Re-export so existing callers that import useDepartments from this file continue to work
+export { useDepartments } from "./useDepartments";
+
+const EMPLOYEE_PAGE_SIZE = 200;
+
+export interface Employee {
+  id: string;
+  employeeCode: string;
+  name: string;
+  email: string;
+  /** Raw `employees.email` — the address the employee gave us, shown in its own column. */
+  personalEmail: string;
+  /** Raw `employees.official_email` — the @teammas address, shown in its own column. */
+  officialEmail: string;
+  phone?: string | null;
+  avatar?: string;
+  department: string;
+  process: string;
+  branch: string;
+  costCentre: string;
+  reportingManager: string;
+  officialEmailCompliant: boolean;
+  designation: string;
+  joinDate: string;
+  /** `employees.salary_start_date`; falls back to date_of_joining server-side when unset. */
+  salaryStartDate: string;
+  status: "active" | "inactive" | "onboarding" | "offboarded";
+  /**
+   * Set by the mapper below from the API's `profile_incomplete`, but never declared here — so
+   * every consumer that tried to read it was told the property did not exist, and the mapper
+   * itself failed to compile.
+   */
+  profileIncomplete: boolean;
+}
+
+export interface EmployeeWithDetails {
+  id: string;
+  employee_code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  designation: string;
+  hire_date: string;
+  status: string;
+  avatar_url: string | null;
+  department: { name: string } | null;
+}
+
+interface EmployeePage {
+  data: RawEmployee[];
+  total: number;
+  page: number;
+  limit: number;
+  stats?: EmployeeStatsResponse;
+  process_breakdown?: EmployeeProcessBreakdown[];
+}
+
+export interface RawEmployee {
+  id: string;
+  employee_code: string;
+  first_name: string;
+  last_name?: string | null;
+  email?: string | null;
+  personal_email?: string | null;
+  official_email?: string | null;
+  mobile?: string | null;
+  avatar_url?: string | null;
+  photo_url?: string | null;
+  department_name?: string | null;
+  designation_name?: string | null;
+  designation?: string | null;
+  date_of_joining?: string | null;
+  salary_start_date?: string | null;
+  employment_status?: string | null;
+  reporting_manager_id?: string | null;
+  reporting_manager_name?: string | null;
+  process_name?: string | null;
+  branch_name?: string | null;
+  cost_centre_name?: string | null;
+  profile_incomplete?: boolean | number | null;
+}
+
+export type EmployeeSortKey = "employeeCode" | "name" | "department" | "process" | "reportingManager" | "designation" | "joinDate" | "status";
+
+export interface EmployeeDirectoryFilters {
+  page: number;
+  limit: number;
+  recordStatus: "active" | "inactive" | "all";
+  status?: string;
+  search?: string;
+  departmentId?: string;
+  processId?: string;
+  branchId?: string;
+  sortBy?: EmployeeSortKey;
+  sortOrder?: "asc" | "desc";
+}
+
+interface EmployeeStatsResponse {
+  total_employees?: number;
+  active_employees?: number;
+  onboarding_employees?: number;
+  new_joiners_90d?: number;
+  inactive_employees?: number;
+  department_count?: number;
+}
+
+export interface EmployeeProcessBreakdown {
+  process_id?: string | null;
+  process_name: string;
+  active_count: number;
+  inactive_count: number;
+  total_count: number;
+}
+
+export interface EmployeeSearchOption {
+  id: string;
+  employee_code: string;
+  name: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name?: string | null;
+  /** Optional because they come from LEFT JOINs — an employee may have neither set. */
+  designation_name?: string | null;
+  branch_name?: string | null;
+}
+
+interface DepartmentRow {
+  id: string;
+  dept_name: string;
+  dept_code: string;
+  description?: string | null;
+  manager_id?: string | null;
+}
+
+interface NamedMasterRow {
+  id: string;
+  process_name?: string;
+  branch_name?: string;
+  employee_count?: number;
+}
+
+export async function fetchAllEmployeeRows(recordStatus: "active" | "inactive" | "all" = "active"): Promise<RawEmployee[]> {
+  const firstPage = await hrmsApi.get<EmployeePage>(
+    `/api/employees?page=1&limit=${EMPLOYEE_PAGE_SIZE}&recordStatus=${recordStatus}`
+  );
+  const rows = firstPage.data ?? [];
+  const totalPages = Math.ceil((firstPage.total ?? rows.length) / EMPLOYEE_PAGE_SIZE);
+
+  if (totalPages <= 1) return rows;
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: totalPages - 1 }, (_, index) =>
+      hrmsApi.get<EmployeePage>(
+        `/api/employees?page=${index + 2}&limit=${EMPLOYEE_PAGE_SIZE}`
+          + `&recordStatus=${recordStatus}`
+      )
+    )
+  );
+
+  return rows.concat(...remainingPages.map((page) => page.data ?? []));
+}
+
+// Directory export used to run against `sortedEmployees` — whatever was already loaded for
+// the current on-screen page (10 rows by default) — so "export" silently produced a file
+// covering a fraction of what the filters actually matched. This fetches every page the
+// current filters match, not just the visible one, reusing the same scoped/authenticated
+// /api/employees endpoint the screen itself uses (so RBAC and row-scope stay identical to
+// the screen — no separate export path to drift out of sync with it).
+//
+// Two guards, both deliberate:
+//  - EXPORT_MAX_ROWS: an export covering all ~58k employees (e.g. recordStatus=all with no
+//    other filter) would fire ~300 requests and hand the browser a PDF/CSV job it has no
+//    business doing inline. Refuses outright above the cap rather than silently truncating,
+//    so "5,000 exported" never reads as "that's everyone."
+//  - EXPORT_PAGE_CONCURRENCY: remaining pages fetch in small batches, not all at once —
+//    a few hundred concurrent requests to one endpoint is not a reasonable thing to ask the
+//    API to absorb just because a browser tab wanted a CSV.
+const EXPORT_PAGE_SIZE = 200;
+const EXPORT_MAX_ROWS = 5000;
+const EXPORT_PAGE_CONCURRENCY = 5;
+
+export class ExportTooLargeError extends Error {
+  constructor(public readonly total: number, public readonly max: number) {
+    super(`Matches ${total} employees; export is capped at ${max}. Narrow the filters (branch, process, department, status) and try again.`);
+    this.name = "ExportTooLargeError";
+  }
+}
+
+export async function fetchAllFilteredEmployeeRows(
+  filters: Omit<EmployeeDirectoryFilters, "page" | "limit">
+): Promise<Employee[]> {
+  const buildUrl = (page: number) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(EXPORT_PAGE_SIZE),
+      recordStatus: filters.recordStatus,
+    });
+    if (filters.status) params.set("status", filters.status);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.departmentId) params.set("departmentId", filters.departmentId);
+    if (filters.processId) params.set("processId", filters.processId);
+    if (filters.branchId) params.set("branchId", filters.branchId);
+    if (filters.sortBy) params.set("sortBy", filters.sortBy);
+    if (filters.sortOrder) params.set("sortOrder", filters.sortOrder);
+    return `/api/employees?${params.toString()}`;
+  };
+
+  const firstPage = await hrmsApi.get<EmployeePage>(buildUrl(1));
+  const total = Number(firstPage.total ?? (firstPage.data ?? []).length);
+  if (total > EXPORT_MAX_ROWS) {
+    throw new ExportTooLargeError(total, EXPORT_MAX_ROWS);
+  }
+
+  const rows = [...(firstPage.data ?? [])];
+  const totalPages = Math.ceil(total / EXPORT_PAGE_SIZE);
+
+  for (let batchStart = 2; batchStart <= totalPages; batchStart += EXPORT_PAGE_CONCURRENCY) {
+    const batchPages = Array.from(
+      { length: Math.min(EXPORT_PAGE_CONCURRENCY, totalPages - batchStart + 1) },
+      (_, i) => batchStart + i
+    );
+    const batchResults = await Promise.all(batchPages.map((page) => hrmsApi.get<EmployeePage>(buildUrl(page))));
+    for (const page of batchResults) rows.push(...(page.data ?? []));
+  }
+
+  return rows.map(mapEmployee);
+}
+
+function formatEmployeeDate(value: unknown): string {
+  if (!value) return "";
+  const datePart = String(value).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (!datePart) return "";
+  const parsed = new Date(`${datePart}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? "" : format(parsed, "MMM d, yyyy");
+}
+
+function normalizeEmployeeStatus(value: unknown): Employee["status"] {
+  const status = String(value ?? "").trim().toLowerCase();
+  if (status === "active" || status === "on notice") return "active";
+  if (status === "onboarding") return "onboarding";
+  if (["terminated", "offboarded", "absconded"].includes(status)) return "offboarded";
+  return "inactive";
+}
+
+function mapEmployee(emp: RawEmployee): Employee {
+  return {
+    id: emp.id,
+    employeeCode: emp.employee_code,
+    name: `${emp.first_name} ${emp.last_name ?? ""}`.trim(),
+    email: emp.email ?? "",
+    personalEmail: emp.personal_email ?? "",
+    officialEmail: emp.official_email ?? "",
+    phone: emp.mobile ?? null,
+    avatar: emp.avatar_url ?? emp.photo_url ?? undefined,
+    department: emp.department_name || "Unassigned",
+    process: emp.process_name || "Unassigned",
+    branch: emp.branch_name || "Unassigned",
+    costCentre: emp.cost_centre_name || "Unassigned",
+    reportingManager: emp.reporting_manager_name || "Unassigned",
+    officialEmailCompliant: /@(teammas\.in|teammas\.co\.in)$/i.test(emp.email ?? ""),
+    designation: emp.designation_name || emp.designation || "",
+    joinDate: formatEmployeeDate(emp.date_of_joining),
+    salaryStartDate: formatEmployeeDate(emp.salary_start_date),
+    status: normalizeEmployeeStatus(emp.employment_status),
+    profileIncomplete: Boolean(emp.profile_incomplete),
+  };
+}
+
+export function useEmployeeDirectory(filters: EmployeeDirectoryFilters) {
+  return useQuery({
+    queryKey: ["employee-directory", filters],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: String(filters.page),
+        limit: String(filters.limit),
+        recordStatus: filters.recordStatus,
+      });
+      if (filters.status) params.set("status", filters.status);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.processId) params.set("processId", filters.processId);
+      if (filters.branchId) params.set("branchId", filters.branchId);
+      if (filters.sortBy) params.set("sortBy", filters.sortBy);
+      if (filters.sortOrder) params.set("sortOrder", filters.sortOrder);
+
+      const response = await hrmsApi.get<EmployeePage>(`/api/employees?${params.toString()}`);
+      return {
+        employees: (response.data ?? []).map(mapEmployee),
+        total: Number(response.total ?? 0),
+        stats: response.stats,
+        processBreakdown: response.process_breakdown ?? [],
+      };
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+  });
+}
+
+export function useEmployeeDirectoryAnalytics(filters: EmployeeDirectoryFilters) {
+  return useQuery({
+    queryKey: ["employee-directory-analytics", filters],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: "1",
+        limit: "1",
+        recordStatus: filters.recordStatus,
+        includeAnalytics: "true",
+      });
+      if (filters.status) params.set("status", filters.status);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.processId) params.set("processId", filters.processId);
+      if (filters.branchId) params.set("branchId", filters.branchId);
+
+      const response = await hrmsApi.get<EmployeePage>(`/api/employees?${params.toString()}`);
+      return {
+        stats: response.stats,
+        processBreakdown: response.process_breakdown ?? [],
+      };
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  });
+}
+
+export function useEmployeeSearchOptions(query: string) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: ["employee-search-options", q],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: EmployeeSearchOption[] }>(
+        `/api/employees/options/search?q=${encodeURIComponent(q)}&limit=8`
+      );
+      return res.data ?? [];
+    },
+    enabled: q.length >= 1,
+    staleTime: 30_000,
+  });
+}
+
+export function useEmployees(recordStatus: "active" | "inactive" | "all" = "active") {
+  return useQuery({
+    queryKey: ["employees", recordStatus],
+    queryFn: async () => {
+      const rows = await fetchAllEmployeeRows(recordStatus);
+      return rows.map(mapEmployee);
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useEmployeeStats() {
+  return useQuery({
+    queryKey: ["employee-stats"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: EmployeeStatsResponse }>("/api/employees/stats");
+      const stats = res.data ?? {};
+      return {
+        total: stats.total_employees ?? 0,
+        active: stats.active_employees ?? 0,
+        onboarding: stats.onboarding_employees ?? stats.new_joiners_90d ?? 0,
+      };
+    },
+  });
+}
+
+export function useEmployeeDirectoryMasters() {
+  return useQuery({
+    queryKey: ["employee-directory-masters"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{
+        data: {
+          processes?: NamedMasterRow[];
+          branches?: NamedMasterRow[];
+        };
+      }>("/api/employees/directory-masters");
+      return {
+        processes: (res.data?.processes ?? []).map((row) => ({
+          id: row.id,
+          name: row.process_name ?? "",
+          employeeCount: Number(row.employee_count ?? 0),
+        })).filter((row) => row.name),
+        branches: (res.data?.branches ?? []).map((row) => ({
+          id: row.id,
+          name: row.branch_name ?? "",
+          employeeCount: Number(row.employee_count ?? 0),
+        })).filter((row) => row.name),
+      };
+    },
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useBulkDeleteEmployees() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ employeeIds, reason }: { employeeIds: string[]; reason: string }) => {
+      // Despite the name this deactivates rather than deletes — the endpoint
+      // clears active_status and erases nothing. The reason is mandatory: this
+      // is the one UI path that has always genuinely revoked access, and it used
+      // to record neither who did it nor why.
+      const errors: string[] = [];
+
+      await Promise.all(
+        employeeIds.map(async (id) => {
+          try {
+            await hrmsApi.delete(`/api/employees/${id}`, { data: { reason } });
+          } catch (err: unknown) {
+            errors.push(`Failed to deactivate employee ${id}: ${err instanceof Error ? err.message : "Unknown error"}`);
+          }
+        })
+      );
+
+      if (errors.length > 0) {
+        throw new Error(errors.join("; "));
+      }
+
+      return { deletedCount: employeeIds.length };
+    },
+    onSuccess: () => {
+      // Invalidate related queries
+      queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["attendance"] });
+      queryClient.invalidateQueries({ queryKey: ["leave-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll"] });
+    },
+  });
+}
+
+/**
+ * Bulk activate/deactivate from the employee directory.
+ *
+ * This sent `{ employment_status: "inactive" }`. The API takes camelCase
+ * `employmentStatus`, and its enum is capitalised — so Zod stripped the unknown
+ * key, the update touched no column, the request still returned 200, and the
+ * page announced "N employees set to inactive" while nothing had happened.
+ * Both the key and the casing are required for the call to do anything at all.
+ *
+ * Results are counted from what actually settled rather than from how many were
+ * requested, for the same reason: reporting the request count as the success
+ * count is how the original bug stayed invisible. Reactivating a deactivated
+ * employee is refused by the API (409) and shows up here as a failure, which is
+ * intended — reactivation goes through /employees/reactivation.
+ */
+export function useBulkUpdateEmployeeStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ employeeIds, status, reason }: {
+      employeeIds: string[];
+      status: "active" | "inactive";
+      reason?: string;
+    }) => {
+      const employmentStatus = status === "active" ? "Active" : "Inactive";
+
+      const settled = await Promise.allSettled(
+        employeeIds.map((id) =>
+          hrmsApi.patch(`/api/employees/${id}`, {
+            employmentStatus,
+            ...(status === "inactive" ? { deactivationReason: reason } : {}),
+          })
+        )
+      );
+
+      const failures = settled.flatMap((r) =>
+        r.status === "rejected"
+          ? [r.reason instanceof Error ? r.reason.message : String(r.reason)]
+          : []
+      );
+
+      return {
+        updatedCount: settled.length - failures.length,
+        failedCount: failures.length,
+        firstError: failures[0],
+        status,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-directory"] });
+      queryClient.invalidateQueries({ queryKey: ["employee-stats"] });
+    },
+  });
+}

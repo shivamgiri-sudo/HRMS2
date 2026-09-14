@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/payroll/payroll-readiness-categories.service.ts",
+    "src/modules/payroll/payroll-readiness-categories.routes.ts",
+    "src/modules/payroll/payroll-governance.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

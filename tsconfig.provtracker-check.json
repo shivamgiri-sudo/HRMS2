@@ -1,0 +1,15 @@
+{
+  // Typecheck for the IT/Admin provisioning queue (/provisioning/it, /provisioning/admin,
+  // /it-provisioning — all three render NativeITProvisioningTracker).
+  //
+  // Scoped because the root tsconfig declares `"files": []` plus project references and so
+  // compiles nothing and exits 0 regardless, while `tsc -p tsconfig.app.json` reports a few
+  // hundred pre-existing errors that bury anything new.
+  //
+  //     npx tsc -p tsconfig.provtracker-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/NativeITProvisioningTracker.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

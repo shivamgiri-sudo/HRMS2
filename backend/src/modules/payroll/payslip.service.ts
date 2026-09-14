@@ -1,0 +1,387 @@
+import { randomUUID } from "crypto";
+import type { Request } from "express";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { queueAutoAwards } from "../engagement/badge.service.js";
+import { resolvePii } from "../../shared/piiCiphertext.js";
+import { resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
+
+export interface PayslipData {
+  id: string;
+  run_id: string;
+  employee_id: string;
+  prep_line_id?: string;
+  payslip_ref: string;
+  generated_at: string;
+  generated_by: string | null;
+  file_url: string | null;
+  acknowledged_at: string | null;
+  cheque_no?: string | null;
+  payment_mode?: string | null;
+  payment_date?: string | null;
+  // From salary_prep_line + employees join
+  employee_code?: string;
+  employee_name?: string;
+  designation?: string;
+  department?: string;
+  epf_number?: string;
+  esi_number?: string;
+  branch_name?: string;
+  location_name?: string;
+  run_month?: string;
+  gross_salary?: number;
+  gross_pay?: number;
+  total_deductions?: number;
+  net_salary?: number;
+  net_pay?: number;
+  pf_employee?: number;
+  esic_employee?: number;
+  professional_tax?: number;
+  pt_amount?: number;
+  tds?: number;
+  tds_amount?: number;
+  basic?: number;
+  hra?: number;
+  other_allowances?: number;
+  lwp_deduction?: number;
+  advance_recovery?: number;
+  working_days?: number;
+  present_days?: number;
+  lwp_days?: number;
+  ctc?: number;
+  ctc_annual?: number;
+  earnings?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+    reason?: string | null;
+  }>;
+  deductions?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+    reason?: string | null;
+  }>;
+  components?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+    reason?: string | null;
+  }>;
+  employer_costs?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+    reason?: string | null;
+  }>;
+}
+
+export const payslipService = {
+  /**
+   * Generate a payslip record for a given employee within a run.
+   * Fetches salary_prep_line data and inserts into salary_payslip.
+   * Logs a sensitive PAYSLIP_GENERATED audit entry.
+   */
+  async generatePayslip(
+    runId: string,
+    employeeId: string,
+    generatedBy: string,
+    req?: Request
+  ): Promise<PayslipData> {
+    // Fetch the prep line
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.*, spr.run_month
+         FROM salary_prep_line spl
+         JOIN salary_prep_run  spr ON spr.id = spl.run_id
+        WHERE spl.run_id = ? AND spl.employee_id = ?
+        LIMIT 1`,
+      [runId, employeeId]
+    );
+    const line = (lineRows as any[])[0];
+    if (!line) {
+      throw new Error("Prep line not found for this run and employee");
+    }
+
+    // Include run_id prefix so correction runs (multiple runs for the same month)
+    // each produce a distinct ref rather than colliding on PS-{month}-{code}.
+    // The short suffix is the first 8 chars of the UUID — unique enough for a
+    // display reference; the true unique key is prep_line_id in the DB.
+    const payslipRef = `PS-${line.run_month}-${line.employee_code}-${runId.slice(0, 8)}`;
+    const id = randomUUID();
+
+    // Upsert: if payslip already exists for this run+employee, overwrite it
+    await db.execute(
+      `INSERT INTO salary_payslip
+         (id, prep_line_id, employee_id, run_month, payslip_ref, generated_by, acknowledged_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL)
+       ON DUPLICATE KEY UPDATE
+         payslip_ref  = VALUES(payslip_ref),
+         run_month    = VALUES(run_month),
+         generated_at = CURRENT_TIMESTAMP,
+         generated_by = VALUES(generated_by),
+         acknowledged_at = NULL`,
+      [id, line.id, employeeId, line.run_month, payslipRef, generatedBy]
+    );
+
+    void logSensitiveAction({
+      actor_user_id: generatedBy,
+      action_type: "PAYSLIP_GENERATED",
+      module_key: "payroll",
+      entity_type: "salary_payslip",
+      entity_id: employeeId,
+      change_summary: { run_id: runId, run_month: line.run_month },
+      req,
+    });
+
+    return this.getPayslip(employeeId, runId);
+  },
+
+  /**
+   * Retrieve a payslip with prep_line data merged in.
+   * Returns text/JSON only — no PDF generation.
+   */
+  async getPayslip(employeeId: string, runId: string): Promise<PayslipData> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(sp.id, spl.id) AS id,
+              spl.employee_id,
+              COALESCE(sp.payslip_ref, CONCAT('CALC-', spr.run_month, '-', spl.employee_code)) AS payslip_ref,
+              sp.generated_at,
+              sp.generated_by,
+              sp.file_url,
+              sp.acknowledged_at,
+              spl.id            AS prep_line_id,
+              spl.run_id,
+              spl.employee_code,
+              spr.run_month,
+              spl.gross_salary   AS gross_pay,
+              spl.gross_salary,
+              spl.total_deductions,
+              spl.net_salary     AS net_pay,
+              spl.net_salary,
+              spl.pf_employee,
+              spl.esic_employee,
+              spl.professional_tax AS pt_amount,
+              spl.professional_tax,
+              -- spl.tds is empty on imported runs; the value lands in tds_amount. Same
+              -- resolution as payroll.routes.ts:1805 and ff-compute.service.ts:367, which
+              -- already read it this way. Selecting spl.tds alone printed TDS 0 on the payslip
+              -- PDF while the deduction had actually been taken - Rs 94,160 across 7 employees
+              -- in 2026-07 - which also understates Form 16.
+              COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds_amount,
+              COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds,
+              spl.basic,
+              spl.hra,
+              spl.special_allowance,
+              spl.special_allowance AS other_allowances,
+              spl.lwp_deduction,
+              spl.advance_recovery,
+              spl.pf_employer,
+              spl.esic_employer,
+              spl.working_days,
+              spl.present_days,
+              spl.leave_days,
+              spl.lwp_days,
+              spl.paid_working_days,
+              spl.eligible_weekoff_days,
+              spl.eligible_holiday_days,
+              spl.final_payable_days,
+              spl.active_calendar_days,
+              e.first_name, e.last_name,
+              COALESCE(esa.ctc_annual, e.ctc) AS ctc_annual,
+              e.ctc,
+              e.pan_number, e.pan_number_encrypted,
+              COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
+              eu.uan AS uan_number,
+              e.esic_number      AS esi_number,
+              -- The account the employee is actually PAID to, masked.
+              --
+              -- This read employees.bank_account_number, which is frozen legacy data with no
+              -- writer anywhere in the application, while every payment path
+              -- (/neft-export, /payment-file) pays from employee_bank_detail. On the 2026-07 run
+              -- the two columns disagree for 13 employees, so the payslip was showing 12 of them
+              -- the last four digits of an account their salary did not go to.
+              --
+              -- account_number is varbinary and roughly a third of rows hold ciphertext, so
+              -- RIGHT() on it would print garbage. Masking therefore happens in JS via
+              -- resolveAccountNumberWithConflict(), and these two columns are selected raw for
+              -- that. Nothing here widens exposure: the caller emits only the last four digits,
+              -- and the full number still exists solely in /payment-file.
+              ebd_pay.account_number      AS pay_account_raw,
+              ebd_pay.account_number_enc  AS pay_account_enc,
+              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+              d.designation_name  AS designation,
+              dept.dept_name      AS department,
+              br.branch_name,
+              loc.location_name,
+              spr.run_month,
+              srd.cheque_no,
+              srd.payment_mode,
+              srd.payment_date
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr
+           ON spr.id = spl.run_id
+         LEFT JOIN salary_payslip sp
+           ON sp.prep_line_id = spl.id
+         LEFT JOIN employees e
+           ON e.id = spl.employee_id
+         LEFT JOIN employee_uan eu
+           ON eu.employee_id = e.id
+           AND eu.is_active = 1
+         LEFT JOIN designation_master d
+           ON d.id = e.designation_id
+         LEFT JOIN department_master dept
+           ON dept.id = e.department_id
+         LEFT JOIN branch_master br
+           ON br.id = e.branch_id
+         LEFT JOIN location_master loc
+           ON loc.id = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_0900_ai_ci
+         LEFT JOIN employee_salary_assignment esa
+           ON esa.employee_id = spl.employee_id AND esa.active_status = 1
+         LEFT JOIN salary_run_disbursal srd
+          ON srd.run_id = spl.run_id
+          AND srd.employee_id = spl.employee_id
+         LEFT JOIN employee_bank_detail ebd_pay
+           ON ebd_pay.employee_id = spl.employee_id
+          AND ebd_pay.is_primary = 1
+          AND ebd_pay.active_status = 1
+        WHERE spl.employee_id = ? AND spl.run_id = ?
+        LIMIT 1`,
+      [employeeId, runId]
+    );
+    const rec = (rows as PayslipData[])[0];
+    if (rec) {
+      // Mask the PAID account here rather than in SQL: employee_bank_detail.account_number is
+      // varbinary and about a third of rows hold ciphertext, so RIGHT() on it in SQL prints
+      // garbage. resolveAccountNumberWithConflict handles both encodings.
+      const raw = (rec as unknown as { pay_account_raw?: Buffer | string | null }).pay_account_raw ?? null;
+      const enc = (rec as unknown as { pay_account_enc?: string | null }).pay_account_enc ?? null;
+      let masked: string | null = null;
+      if (raw || enc) {
+        const resolved = resolveAccountNumberWithConflict({ account_number: raw, account_number_enc: enc });
+        const value = String(resolved?.resolved ?? "").trim();
+        if (value.length >= 4) masked = `XXXX${value.slice(-4)}`;
+      }
+      (rec as unknown as { bank_account_masked: string | null }).bank_account_masked = masked;
+      delete (rec as unknown as Record<string, unknown>).pay_account_raw;
+      delete (rec as unknown as Record<string, unknown>).pay_account_enc;
+    }
+    if (!rec) throw new Error("Payslip not found");
+    (rec as any).pan_number = resolvePii((rec as any).pan_number_encrypted, (rec as any).pan_number).value;
+    delete (rec as any).pan_number_encrypted;
+
+    // paid_working_days / eligible_weekoff_days / final_payable_days were never
+    // populated by the payroll engine — verified 2026-08-28: all 129,696 salary_prep_line
+    // rows ever created carry 0 in these three columns, including ones with real gross_salary.
+    // working_days/present_days/leave_days ARE populated correctly and are what earnings
+    // are actually computed from. This derives a display-only estimate from those real
+    // columns instead of showing an all-zero attendance grid — it does not recompute or
+    // alter any pay figure, all of which are already stored above.
+    const workingDays = Number((rec as any).working_days ?? 0);
+    const presentDays = Number((rec as any).present_days ?? 0);
+    const leaveDays = Number((rec as any).leave_days ?? 0);
+    const calendarDays = Number((rec as any).active_calendar_days ?? 0);
+    const storedPaidDays = Number((rec as any).paid_working_days ?? 0);
+    const storedWeekoffDays = Number((rec as any).eligible_weekoff_days ?? 0);
+    const storedPayableDays = Number((rec as any).final_payable_days ?? 0);
+    if (storedPaidDays === 0 && storedWeekoffDays === 0 && storedPayableDays === 0
+        && (workingDays > 0 || presentDays > 0)) {
+      const derivedWeekoffDays = Math.max(calendarDays - workingDays, 0);
+      // present_days + leave_days is the same fallback the payroll engine itself uses
+      // for paidBase (payrollCalculate.service.ts), but present_days can already run
+      // past the calendar length on this legacy attendance data (e.g. 31 present + 2
+      // leave in a 30-day month) — clamped to calendarDays so the tile never shows more
+      // paid/payable days than the month it is describing actually has.
+      const derivedPaidDays = calendarDays > 0
+        ? Math.min(presentDays + leaveDays, calendarDays)
+        : presentDays + leaveDays;
+      (rec as any).paid_working_days = derivedPaidDays;
+      (rec as any).eligible_weekoff_days = derivedWeekoffDays;
+      // Holidays are not separable from weekoffs in this legacy data — no column
+      // isolates them — so leave null (renders as "—") rather than guessing a split.
+      (rec as any).eligible_holiday_days = null;
+      (rec as any).final_payable_days = calendarDays > 0
+        ? Math.min(derivedPaidDays + derivedWeekoffDays, calendarDays)
+        : derivedPaidDays + derivedWeekoffDays;
+    }
+
+    const [components] = await db.execute<RowDataPacket[]>(
+      `SELECT component_code, component_name, component_type, amount, taxable, reason
+         FROM salary_prep_line_component
+        WHERE line_id = ?
+        ORDER BY component_type, component_code`,
+      [rec.prep_line_id]
+    );
+    // Deduplicate by component_code+type — DB may contain duplicate rows from
+    // recalculations run before the unique key was applied
+    const seenComponents = new Set<string>();
+    rec.components = (components as any[])
+      .filter(c => {
+        const k = `${c.component_code}:${(c.component_type ?? '').toLowerCase()}`;
+        if (seenComponents.has(k)) return false;
+        seenComponents.add(k);
+        return true;
+      })
+      .map((component) => ({
+        ...component,
+        amount: Number(component.amount ?? 0),
+        taxable: Number(component.taxable ?? 0),
+      }));
+    rec.earnings = rec.components
+      .filter((component) => (component.component_type || "").toLowerCase() === "earning")
+    rec.deductions = rec.components
+      .filter((component) => (component.component_type || "").toLowerCase() === "deduction")
+    // component_type is enum('earning','deduction','employer_cost'). The third
+    // member was dropped here, so employer PF, employer ESI and EPF admin charges
+    // — real money the company pays on the employee's behalf, and the largest
+    // single omission from the payslip — reached no UI at all.
+    rec.employer_costs = rec.components
+      .filter((component) => (component.component_type || "").toLowerCase() === "employer_cost")
+    return rec;
+  },
+
+  /**
+   * Acknowledge a payslip — only the owning employee may acknowledge.
+   * Enforces ownership: returns 403 if employeeId does not match.
+   */
+  async acknowledgePayslip(
+    payslipId: string,
+    requestingEmployeeId: string
+  ): Promise<PayslipData> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT sp.*, spl.run_id
+         FROM salary_payslip sp
+         JOIN salary_prep_line spl
+           ON CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+        WHERE sp.id = ?
+        LIMIT 1`,
+      [payslipId]
+    );
+    const rec = (rows as any[])[0];
+    if (!rec) throw new Error("Payslip not found");
+
+    if (rec.employee_id !== requestingEmployeeId) {
+      const err: any = new Error("Forbidden: you may only acknowledge your own payslip");
+      err.statusCode = 403;
+      throw err;
+    }
+
+    await db.execute(
+      "UPDATE salary_payslip SET acknowledged_at = NOW() WHERE id = ?",
+      [payslipId]
+    );
+
+    const payslip = await this.getPayslip(rec.employee_id, rec.run_id);
+    queueAutoAwards(rec.employee_id, "payslip_acknowledged");
+    return payslip;
+  },
+};

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/process-pnl/branch-budget.service.ts",
+    "src/modules/process-pnl/process-pnl.routes.ts"
+  ]
+}

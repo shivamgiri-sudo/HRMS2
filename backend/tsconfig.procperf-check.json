@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/process-performance/**/*.ts"],
+  "compilerOptions": { "noEmit": true }
+}

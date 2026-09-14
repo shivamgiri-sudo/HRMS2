@@ -1,0 +1,318 @@
+import { randomUUID } from "crypto";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { grnSmartService } from "./grn-smart.service.js";
+import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { notifyGrnStage } from "./grn-notify.js";
+
+const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
+
+async function activeOverrides(grnId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT validation_code, override_reason, approved_by, approved_at
+       FROM grn_validation_override
+      WHERE grn_request_id = ? AND active_status = 1`,
+    [grnId]
+  );
+  return new Map(rows.map((row) => [String(row.validation_code), row]));
+}
+
+async function applyOverridesToLatestResults(grnId: string) {
+  const overrides = await activeOverrides(grnId);
+  for (const [code, override] of overrides.entries()) {
+    if (NON_OVERRIDABLE_VALIDATIONS.has(code)) continue;
+    await db.execute(
+      `UPDATE grn_validation_result
+          SET validation_status = 'overridden', is_blocking = 0,
+              overridden_by = ?, override_reason = ?, overridden_at = ?
+        WHERE grn_request_id = ? AND validation_code = ?`,
+      [
+        override.approved_by,
+        override.override_reason,
+        override.approved_at,
+        grnId,
+        code,
+      ]
+    );
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM grn_validation_result
+      WHERE grn_request_id = ?
+      ORDER BY is_blocking DESC, created_at`,
+    [grnId]
+  );
+  return rows as any[];
+}
+
+async function addLobAttributionValidation(grnId: string) {
+  // Auto-resolve processes that have exactly one active LOB before counting
+  // missing attributions. Without this, single-LOB processes block submission
+  // even though there is no ambiguity — the user would have to open the LOB
+  // Attribution Queue just to confirm something the system already knows.
+  const [unresolved] = await db.execute<RowDataPacket[]>(
+    `SELECT a.id AS allocation_id, a.process_id
+       FROM grn_cost_allocation a
+      WHERE a.grn_request_id = ?
+        AND a.process_id IS NOT NULL
+        AND a.process_lob_id IS NULL`,
+    [grnId]
+  );
+  for (const alloc of unresolved as RowDataPacket[]) {
+    const [lobs] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM process_lob_master
+        WHERE process_id = ?
+          AND active_status = 1
+          AND approval_status = 'approved'
+          AND (effective_to IS NULL OR effective_to >= CURDATE())
+          AND effective_from <= CURDATE()`,
+      [alloc.process_id]
+    );
+    if ((lobs as RowDataPacket[]).length === 1) {
+      await db.execute(
+        `UPDATE grn_cost_allocation SET process_lob_id = ? WHERE id = ?`,
+        [(lobs as RowDataPacket[])[0].id, alloc.allocation_id]
+      ).catch(() => undefined);
+    }
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.sequence_no, a.process_id, a.process_lob_id, pm.process_name
+       FROM grn_cost_allocation a
+       LEFT JOIN process_master pm ON pm.id = a.process_id
+      WHERE a.grn_request_id = ?
+        AND a.process_id IS NOT NULL
+        AND a.process_lob_id IS NULL
+      ORDER BY a.sequence_no`,
+    [grnId]
+  );
+  const missing = rows.map((row) => ({
+    sequenceNo: Number(row.sequence_no),
+    processId: String(row.process_id),
+    processName: row.process_name ? String(row.process_name) : null,
+  }));
+  await db.execute(
+    `INSERT INTO grn_validation_result
+      (id, grn_request_id, validation_code, severity, validation_status,
+       is_blocking, message, details_json)
+     VALUES (?, ?, 'LOB_ATTRIBUTION', ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      grnId,
+      missing.length ? "error" : "info",
+      missing.length ? "failed" : "passed",
+      missing.length ? 1 : 0,
+      missing.length
+        ? `${missing.length} process-linked allocation(s) require an exact LOB mapping`
+        : "Every process-linked allocation has an approved LOB mapping",
+      JSON.stringify({ missing }),
+    ]
+  );
+}
+
+async function effectiveValidation(grnId: string) {
+  const fresh = await grnSmartService.revalidate(grnId);
+  await addLobAttributionValidation(grnId);
+  const results = await applyOverridesToLatestResults(grnId);
+  const blocking = results.filter(
+    (item) => Number(item.is_blocking) === 1 && String(item.validation_status) === "failed"
+  );
+  return {
+    ...fresh,
+    results,
+    blocking,
+  };
+}
+
+async function audit(
+  action: string,
+  grnId: string,
+  actorUserId: string,
+  actorRole: string,
+  details: Record<string, unknown>
+) {
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    actor_role: actorRole,
+    action_type: action,
+    module_key: "FINANCE",
+    entity_type: "grn_request",
+    entity_id: grnId,
+    change_summary: details,
+  });
+}
+
+export const grnValidationControlService = {
+  async overrideValidation(
+    grnId: string,
+    validationCode: string,
+    reason: string,
+    actorUserId: string,
+    actorRole: string
+  ) {
+    const normalizedCode = validationCode.trim().toUpperCase();
+    if (!normalizedCode) throw new Error("Validation code is required");
+    if (NON_OVERRIDABLE_VALIDATIONS.has(normalizedCode)) {
+      throw new Error(`${normalizedCode} is a structural attribution control and cannot be overridden`);
+    }
+    if (!reason.trim() || reason.trim().length < 10) {
+      throw new Error("A detailed override reason of at least 10 characters is required");
+    }
+    const [grnRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, status FROM grn_request WHERE id = ? LIMIT 1",
+      [grnId]
+    );
+    if (!grnRows[0]) throw new Error("GRN not found");
+    if (["paid", "approved", "cancelled", "rejected"].includes(String(grnRows[0].status))) {
+      throw new Error("Validation overrides cannot be changed after final closure");
+    }
+    const [validationRows] = await db.execute<RowDataPacket[]>(
+      `SELECT validation_code, validation_status, is_blocking, message
+         FROM grn_validation_result
+        WHERE grn_request_id = ? AND validation_code = ?
+        ORDER BY created_at DESC LIMIT 1`,
+      [grnId, normalizedCode]
+    );
+    if (!validationRows[0]) {
+      throw new Error("Run GRN validation before approving an exception");
+    }
+    if (String(validationRows[0].validation_status) === "passed") {
+      throw new Error("Passed validations do not require an override");
+    }
+
+    await db.execute(
+      `INSERT INTO grn_validation_override
+       (id, grn_request_id, validation_code, override_reason,
+        active_status, approved_by, approved_at)
+       VALUES (?,?,?,?,1,?,NOW())
+       ON DUPLICATE KEY UPDATE
+         override_reason = VALUES(override_reason),
+         active_status = 1,
+         approved_by = VALUES(approved_by),
+         approved_at = NOW(),
+         revoked_by = NULL,
+         revoked_at = NULL,
+         revoke_reason = NULL`,
+      [randomUUID(), grnId, normalizedCode, reason.trim(), actorUserId]
+    );
+    const results = await applyOverridesToLatestResults(grnId);
+    await audit("GRN_VALIDATION_OVERRIDE_APPROVED", grnId, actorUserId, actorRole, {
+      validation_code: normalizedCode,
+      override_reason: reason.trim(),
+      original_message: validationRows[0].message,
+    });
+    return { success: true, validationCode: normalizedCode, results };
+  },
+
+  async revokeOverride(
+    grnId: string,
+    validationCode: string,
+    reason: string,
+    actorUserId: string,
+    actorRole: string
+  ) {
+    if (!reason.trim()) throw new Error("Revoke reason is required");
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE grn_validation_override
+          SET active_status = 0, revoked_by = ?, revoked_at = NOW(), revoke_reason = ?
+        WHERE grn_request_id = ? AND validation_code = ? AND active_status = 1`,
+      [actorUserId, reason.trim(), grnId, validationCode.trim().toUpperCase()]
+    );
+    if (result.affectedRows !== 1) throw new Error("Active validation override not found");
+    await audit("GRN_VALIDATION_OVERRIDE_REVOKED", grnId, actorUserId, actorRole, {
+      validation_code: validationCode.trim().toUpperCase(),
+      revoke_reason: reason.trim(),
+    });
+    return effectiveValidation(grnId);
+  },
+
+  async submit(
+    grnId: string,
+    actorUserId: string,
+    actorRole: string,
+    remarks?: string
+  ) {
+    // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
+    const [typeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year,
+              vendor_name, amount_with_tax, amount
+         FROM grn_request WHERE id = ? LIMIT 1`,
+      [grnId]
+    );
+    if (!typeRows[0]) throw new Error("GRN not found");
+    assertGrnTypeSupported(typeRows[0].grn_type, "Submission");
+    const validation = await effectiveValidation(grnId);
+    if (validation.blocking.length) {
+      throw new Error(
+        `Resolve or obtain Finance override for: ${validation.blocking
+          .map((item) => item.message)
+          .join("; ")}`
+      );
+    }
+    // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not here — see
+    // resolveGrnNumberOnSubmit's caller in grn-smart.service.ts's review(). Submission used to
+    // allocate one (2026-08-27 fix for the two-submit-paths bug, see grn-number-on-submit.ts's
+    // own header), which meant a rejected GRN kept a real number forever. An existing number
+    // (a re-submit after return, or a legacy migrated row) is left exactly as it was — this
+    // method never clears one, only chooses not to mint a new one.
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE grn_request
+          SET status = 'submitted', submitted_by = ?, submitted_at = NOW(),
+              remarks = COALESCE(?, remarks)
+        WHERE id = ? AND status = 'draft'`,
+      [actorUserId, remarks?.trim() || null, grnId]
+    );
+    if (result.affectedRows !== 1) {
+      throw new Error("GRN status changed before submission; refresh and try again");
+    }
+    await audit("GRN_SUBMIT", grnId, actorUserId, actorRole, {
+      validation_score: validation.score,
+      effective_blocking_count: 0,
+      grn_number: typeRows[0].grn_number ?? null,
+      remarks,
+    });
+    // Same fix as grnSmartService.review() — this is the submit path every allocation-aware GRN
+    // actually goes through (requireAllocationsForSubmit hard-blocks anything without
+    // allocations rather than falling through), so it needed the same wiring grn.service.ts's
+    // submit() had but this path never reached. See grn-notify.ts's header.
+    await notifyGrnStage(
+      grnId,
+      typeRows[0].grn_number ? String(typeRows[0].grn_number) : null,
+      typeRows[0].branch_id ? String(typeRows[0].branch_id) : null,
+      typeRows[0].vendor_name ? String(typeRows[0].vendor_name) : null,
+      Number(typeRows[0].amount_with_tax ?? typeRows[0].amount ?? 0) || null,
+      "branch_head",
+    );
+    return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
+  },
+
+  async review(
+    grnId: string,
+    decision: "approved" | "rejected",
+    reviewNote: string | undefined,
+    actorUserId: string,
+    actorRole: string
+  ) {
+    if (decision === "approved") {
+      const validation = await effectiveValidation(grnId);
+      if (validation.blocking.length) {
+        throw new Error(
+          `Approval blocked by: ${validation.blocking
+            .map((item) => item.message)
+            .join("; ")}`
+        );
+      }
+    }
+    return grnSmartService.review(
+      grnId,
+      decision,
+      reviewNote,
+      actorUserId,
+      actorRole
+    );
+  },
+
+  async effectiveValidation(grnId: string) {
+    return effectiveValidation(grnId);
+  },
+};

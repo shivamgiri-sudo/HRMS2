@@ -1,0 +1,1458 @@
+import { randomUUID } from "crypto";
+import { sqlLimitOffset } from "../../db/pagination.js";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { getEffectiveConfig } from "../customization/customization-engine.js";
+import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
+import {
+  assertCostCentresFree,
+  insertRunScope,
+  resolveCostCentreScope,
+  ScopeError,
+} from "./payroll-run-scope.service.js";
+import { leaveService } from "../leave/leave.service.js";
+import { validateTransition, canEdit, type RunStatus } from "./payroll-lifecycle.js";
+import { VOID_RUN_STATUSES_SQL } from "./run-status.js";
+import { notifyPayrollRunStatus, notifyPayslipsReady } from "./payroll.notifications.js";
+import type {
+  BulkAssignInput,
+  BulkAssignResult,
+  EmployeeSalaryAssignment,
+  NetSalaryParams,
+  NetSalaryResult,
+  PaginatedResult,
+  SalaryAdvance,
+  SalaryComponent,
+  SalaryPrepLine,
+  SalaryPrepRun,
+  SalaryStructure,
+} from "./payroll.types.js";
+import type {
+  AdvanceInput,
+  AssignSalaryInput,
+  CreateComponentInput,
+  CreateRunInput,
+  CreateStructureInput,
+  RunFilters,
+  UpdatePrepLineInput,
+  UpdateRunStatusInput,
+} from "./payroll.validation.js";
+
+/**
+ * Currently unused, but kept correct rather than left as a trap.
+ *
+ * "locked" and "disbursed" alone match none of the 66 runs in production — the
+ * closed marker is FINALIZED (51 runs). See the matching set in
+ * payroll-compliance/payrollCalculate.service.ts, where the same values were
+ * guarding recalculation and never once fired. Compare case-insensitively:
+ * MySQL's collation hides the case difference, Set.has() does not.
+ */
+const LOCKED_STATUSES = new Set(["locked", "disbursed", "finalized"]);
+
+/**
+ * `created_by` values that mean "this run was not produced by a payroll process".
+ * Runs written straight into salary_prep_run bypass the payroll window, carry a
+ * MySQL UUID v1 rather than the application's v4, and leave window_close_date
+ * NULL — but they render in the runs list exactly like a real run.
+ */
+export const SYNTHETIC_RUN_CREATORS = ["test-auto-gen"] as const;
+
+export const payrollService = {
+  // ─── Structures ────────────────────────────────────────────────────────────
+
+  async listStructures(): Promise<SalaryStructure[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, structure_code, structure_name, description, basic_pct, hra_pct, active_status, created_at
+       FROM salary_structure_master ORDER BY structure_name ASC`
+    );
+    return rows as SalaryStructure[];
+  },
+
+  async getStructure(id: string): Promise<SalaryStructure> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_structure_master WHERE id = ? LIMIT 1", [id]
+    );
+    const rec = (rows as SalaryStructure[])[0];
+    if (!rec) throw new Error("Structure not found");
+    return rec;
+  },
+
+  async updateStructure(id: string, input: Partial<CreateStructureInput>, _userId: string): Promise<SalaryStructure> {
+    const fields: string[] = [];
+    const params: any[] = [];
+    if (input.structureName !== undefined) { fields.push("structure_name = ?"); params.push(input.structureName); }
+    if (input.description   !== undefined) { fields.push("description = ?");    params.push(input.description ?? null); }
+    if (input.basicPct      !== undefined) { fields.push("basic_pct = ?");      params.push(input.basicPct); }
+    if (input.hraPct        !== undefined) { fields.push("hra_pct = ?");        params.push(input.hraPct); }
+    if (!fields.length) throw Object.assign(new Error("No fields to update"), { statusCode: 400 });
+    fields.push("updated_at = NOW()");
+    params.push(id);
+    await db.execute(`UPDATE salary_structure_master SET ${fields.join(", ")} WHERE id = ?`, params);
+    return this.getStructure(id);
+  },
+
+  async deleteStructure(id: string): Promise<void> {
+    const [inUse] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employee_salary_assignment WHERE structure_id = ? AND active_status = 1 LIMIT 1",
+      [id]
+    );
+    if ((inUse as RowDataPacket[]).length > 0) {
+      throw Object.assign(new Error("Structure is in use by active salary assignments"), { statusCode: 409 });
+    }
+    await db.execute("UPDATE salary_structure_master SET active_status = 0 WHERE id = ?", [id]);
+  },
+
+  async createStructure(input: CreateStructureInput, _userId: string): Promise<SalaryStructure> {
+    const [dup] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM salary_structure_master WHERE structure_code = ? LIMIT 1",
+      [input.structureCode]
+    );
+    if ((dup as RowDataPacket[]).length > 0) throw new Error("Structure code already exists");
+
+    const id = randomUUID();
+    const basicPct = input.basicPct ?? 40;
+    const hraPct = input.hraPct ?? 20;
+    await db.execute(
+      "INSERT INTO salary_structure_master (id, structure_code, structure_name, description, basic_pct, hra_pct) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, input.structureCode, input.structureName, input.description ?? null, basicPct, hraPct]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_structure_master WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as SalaryStructure[])[0];
+  },
+
+  async bulkAssignSalary(
+    input: BulkAssignInput,
+    userId: string,
+    actorRoles: string[] = []
+  ): Promise<BulkAssignResult> {
+    await this.getStructure(input.structureId);
+
+    // ── Salary governance gate ────────────────────────────────────────────────
+    const govInput = input as any;
+    const govResult = await assertSalaryAssignmentAllowed({
+      salarySlabId: govInput.salarySlabId ?? null,
+      salaryProposalId: govInput.salaryProposalId ?? null,
+      approvalReferenceId: govInput.approvalReferenceId ?? null,
+      ctcAnnual: input.ctcAnnual,
+      actorUserId: userId,
+      actorRoles,
+      migrationMode: govInput.migrationMode,
+      reason: govInput.reason ?? null,
+    });
+    if (!govResult.allowed) {
+      throw Object.assign(new Error(govResult.message ?? "Salary assignment blocked"), {
+        statusCode: 400,
+        code: govResult.blockCode,
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const conds = ["e.active_status = 1", "LOWER(e.employment_status) = 'active'"];
+    const params: unknown[] = [];
+    if (input.processId) { conds.push("e.process_id = ?"); params.push(input.processId); }
+    if (input.branchId)  { conds.push("e.branch_id = ?");  params.push(input.branchId); }
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id FROM employees e WHERE ${conds.join(" AND ")}`,
+      params
+    );
+    const employees = empRows as { id: string }[];
+    if (employees.length === 0) return { assigned: 0, skipped: 0 };
+
+    const ids = employees.map(e => e.id);
+    const placeholders = ids.map(() => "?").join(", ");
+
+    // One transaction for the whole batch.
+    //
+    // This deactivated every target employee's assignment in one UPDATE and then
+    // inserted replacements in a loop, with no transaction. A failure partway —
+    // a governance column rejecting a value, a lost connection, a restart — left
+    // those employees with their old assignment switched off and no new one, and
+    // nothing retried or reported it.
+    //
+    // That state is worse than it looks. The payroll engine joins employees to
+    // their assignment, so an employee with none is not paid a wrong amount, they
+    // silently drop out of the run altogether. assignSalary has always been
+    // transactional for exactly this reason; the bulk path, which can leave
+    // hundreds of employees in that state at once, was not.
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Close each superseded row's validity window as well as deactivating it — see
+      // the note in assignSalary. COALESCE preserves any end date already recorded.
+      await conn.execute(
+        `UPDATE employee_salary_assignment
+            SET active_status = 0,
+                effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+          WHERE employee_id IN (${placeholders}) AND active_status = 1`,
+        [input.effectiveFrom, ...ids]
+      );
+
+      for (const emp of employees) {
+        const asgId = randomUUID();
+        await conn.execute(
+          `INSERT INTO employee_salary_assignment
+             (id, employee_id, structure_id, ctc_annual, effective_from,
+              salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            asgId, emp.id, input.structureId, input.ctcAnnual, input.effectiveFrom,
+            govResult.salarySlabId ?? null,
+            govResult.salaryProposalId ?? null,
+            govResult.mode,
+            userId,
+          ]
+        );
+      }
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+
+    return { assigned: employees.length, skipped: 0 };
+  },
+
+  // ─── Components ────────────────────────────────────────────────────────────
+
+  async listComponents(employeeId?: string): Promise<SalaryComponent[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, component_code, component_name, component_type, taxable, active_status, created_at
+       FROM salary_component_master WHERE active_status = 1 ORDER BY component_name ASC`
+    );
+    let components = rows as SalaryComponent[];
+
+    // Apply customizations if employeeId provided
+    if (employeeId) {
+      try {
+        const result = await getEffectiveConfig(employeeId, 'salary_component', null, { components });
+        if (Array.isArray(result.config.additional_components)) {
+          components = [...components, ...result.config.additional_components];
+        } else if (Array.isArray(result.config.components)) {
+          components = result.config.components;
+        }
+      } catch (err) {
+        console.warn('Customization error for salary components:', err);
+      }
+    }
+
+    return components;
+  },
+
+  async createComponent(input: CreateComponentInput, _userId: string): Promise<SalaryComponent> {
+    const id = randomUUID();
+    await db.execute(
+      "INSERT INTO salary_component_master (id, component_code, component_name, component_type, taxable) VALUES (?, ?, ?, ?, ?)",
+      [id, input.componentCode, input.componentName, input.componentType, input.taxable ? 1 : 0]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_component_master WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as SalaryComponent[])[0];
+  },
+
+  // ─── Salary Assignment ─────────────────────────────────────────────────────
+
+  async assignSalary(
+    input: AssignSalaryInput,
+    userId: string,
+    actorRoles: string[] = []
+  ): Promise<EmployeeSalaryAssignment> {
+    // ── Salary governance gate ────────────────────────────────────────────────
+    const govInput = input as any;
+    const govResult = await assertSalaryAssignmentAllowed({
+      employeeId: input.employeeId,
+      salarySlabId: govInput.salarySlabId ?? null,
+      salaryProposalId: govInput.salaryProposalId ?? null,
+      approvalReferenceId: govInput.approvalReferenceId ?? null,
+      ctcAnnual: input.ctcAnnual,
+      actorUserId: userId,
+      actorRoles,
+      migrationMode: govInput.migrationMode,
+      reason: govInput.reason ?? null,
+    });
+    if (!govResult.allowed) {
+      throw Object.assign(new Error(govResult.message ?? "Salary assignment blocked"), {
+        statusCode: 400,
+        code: govResult.blockCode,
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const id = randomUUID();
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
+      // Close the superseded row's validity window, not just its active flag.
+      //
+      // Deactivation previously set active_status alone and left effective_to NULL —
+      // true of all 230 superseded rows in production. A row that says "effective from
+      // 2024-04-01" with no end date cannot answer "what was this employee's CTC on a
+      // given date", which is what reproducing an older payroll run or an audit needs.
+      // COALESCE so an explicitly recorded end date is never overwritten.
+      await conn.execute(
+        `UPDATE employee_salary_assignment
+            SET active_status = 0,
+                effective_to = COALESCE(effective_to, DATE_SUB(?, INTERVAL 1 DAY))
+          WHERE employee_id = ? AND active_status = 1`,
+        [input.effectiveFrom, input.employeeId]
+      );
+      await conn.execute(
+        `INSERT INTO employee_salary_assignment
+           (id, employee_id, structure_id, ctc_annual, effective_from, effective_to,
+            salary_slab_id, salary_proposal_id, governance_mode, assigned_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, input.employeeId, input.structureId, input.ctcAnnual,
+          input.effectiveFrom, input.effectiveTo ?? null,
+          govResult.salarySlabId ?? null,
+          govResult.salaryProposalId ?? null,
+          govResult.mode,
+          userId,
+        ]
+      );
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_salary_assignment WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as EmployeeSalaryAssignment[])[0];
+  },
+
+  async getEmployeeSalary(employeeId: string): Promise<EmployeeSalaryAssignment | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 LIMIT 1",
+      [employeeId]
+    );
+    return (rows as EmployeeSalaryAssignment[])[0] ?? null;
+  },
+
+  // ─── Prep Runs ─────────────────────────────────────────────────────────────
+
+  async createRun(input: CreateRunInput, userId: string): Promise<SalaryPrepRun> {
+    /*
+     * Resolve the selection BEFORE the readiness gate, because the gate has to know which
+     * branches this run actually covers.
+     *
+     * The gate used to ask "is every branch in the company ready". For a company-wide run that is
+     * right. For a scoped run it is exactly the coupling scoped runs exist to remove: a run paying
+     * only HEAD OFFICE was refused because NOIDA was not ready. Verified live on 2026-09-05 - the
+     * first real scoped run came back "The following branches are not ready: Delhi Office, NOIDA,
+     * AHMEDABAD-JALDARSHAN, HEAD OFFICE, NOIDA-2, NOIDA-DIALDESK" when only HEAD OFFICE was
+     * selected.
+     */
+    const scopeRows = input.costCentreIds?.length
+      ? await resolveCostCentreScope(input.costCentreIds)
+      : [];
+    const isScoped = scopeRows.length > 0;
+    const scopedBranchIds = [...new Set(scopeRows.map((r) => r.branchId))];
+
+    // M1 Branch Readiness Gate: every branch this run covers must be ready.
+    try {
+      const { payrollBranchReadinessService } = await import("./payroll-branch-readiness.service.js");
+      const validation = await payrollBranchReadinessService.validatePayrollRunCreation(
+        input.runMonth,
+        isScoped ? scopedBranchIds : undefined,
+      );
+      if (validation.blocked.length > 0) {
+        /*
+         * A ScopeError, not a bare Error. errorHandler.ts reads `statusCode`; a plain Error is
+         * masked as "An unexpected server error occurred. Please quote reference ..." - which is
+         * what this refusal looked like in production, hiding a perfectly actionable message
+         * behind a 500 and a reference number.
+         */
+        throw new ScopeError(
+          "BRANCH_NOT_READY",
+          `Cannot create payroll run. Not ready: ${validation.blocked.join(", ")}. ` +
+          `Freeze attendance and reach a readiness score of 80, or apply an HO override.`,
+          409,
+        );
+      }
+    } catch (err: unknown) {
+      // A refusal propagates; anything else (e.g. the readiness table missing) is logged and the
+      // creation proceeds, which is the pre-existing behaviour.
+      if (err instanceof ScopeError) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[createRun] Branch readiness check skipped:", msg);
+    }
+
+    // Root-caused 2026-08-14: the SELECT-then-INSERT below is a TOCTOU race —
+    // two near-simultaneous create calls for the same (month, branch_filter,
+    // process_filter) can both pass the duplicate check before either INSERTs,
+    // producing the exact "two full-company runs for one month" defect this
+    // audit found live in production (2026-03: a 226-line run and a
+    // 1,140-line run coexisting). The DB-level unique constraint
+    // (uq_run_month_branch_process) cannot close this on its own — MySQL
+    // treats NULL <> NULL in a unique index, and both filter columns are
+    // nullable — so an application-level lock is the fix, not a schema
+    // change.
+    //
+    // GET_LOCK/RELEASE_LOCK are per-CONNECTION (MySQL session-scoped), not
+    // global — acquiring on one pooled connection does nothing to serialize a
+    // check+insert that runs on a different one. Every step here therefore
+    // runs on the single connection this function checks out, matching the
+    // transactional pattern used elsewhere in this file (see
+    // createSalaryAssignment above) — not `db.execute`, which draws a fresh
+    // connection from the pool per call and would silently defeat the lock.
+    const lockKey = `payroll_run_create:${input.runMonth}:${input.branchFilter ?? ""}:${input.processFilter ?? ""}:${[...(input.costCentreIds ?? [])].sort().join(",")}`;
+    const id = randomUUID();
+    const conn = await (db as any).getConnection();
+    try {
+      const [lockRows] = await conn.execute(`SELECT GET_LOCK(?, 10) AS acquired`, [lockKey]);
+      const acquired = Number((lockRows as RowDataPacket[])[0]?.acquired) === 1;
+      if (!acquired) {
+        throw new Error("Another request is creating a payroll run for this month right now. Try again in a moment.");
+      }
+
+      await conn.beginTransaction();
+      try {
+        /*
+         * Validate the selection before anything is written. resolveCostCentreScope refuses an
+         * empty list and resolves each cost centre's branch server-side, so the scope rows every
+         * later query trusts cannot disagree with the cost centre master.
+         */
+        // scopeRows / isScoped were resolved above, before the readiness gate that needs them.
+        if (isScoped) {
+          // Readable refusal naming the clashing run. The UNIQUE key on
+          // (run_month, cost_centre_id) is what actually guarantees one run per cost centre; this
+          // runs on the same connection and inside the same lock so the check and the insert
+          // cannot be split across two pooled connections.
+          await assertCostCentresFree(conn, input.runMonth, scopeRows.map((r) => r.costCentreId));
+        } else {
+          // Company runs stay one-per-month. Scoped runs deliberately do not: a month is expected
+          // to hold several, one per group of cost centres.
+          // A voided run does not occupy its month. Without this the check matched on month,
+          // branch, process and scope_kind but on NO status, so any existing row blocked a new
+          // run forever — reject one and the month became unrunnable, with no way back except
+          // deleting the row and its audit trail with it.
+          const [dup] = await conn.execute(
+            `SELECT id FROM salary_prep_run
+              WHERE run_month = ?
+                AND (branch_filter <=> ?)
+                AND (process_filter <=> ?)
+                AND scope_kind = 'company'
+                AND LOWER(TRIM(COALESCE(status,''))) NOT IN (${VOID_RUN_STATUSES_SQL})
+              LIMIT 1`,
+            [input.runMonth, input.branchFilter ?? null, input.processFilter ?? null]
+          );
+          if ((dup as RowDataPacket[]).length > 0) throw new Error("Payroll run already exists for this month");
+        }
+
+        // Compute payroll window close date: last day of run_month + 30 calendar days
+        const [runYear, runMo] = input.runMonth.split('-').map(Number);
+        const lastDayOfRunMonth = new Date(runYear, runMo, 0); // day=0 of next month = last day of this month
+        lastDayOfRunMonth.setDate(lastDayOfRunMonth.getDate() + 30);
+        const windowCloseDate = lastDayOfRunMonth.toISOString().slice(0, 10);
+
+        await conn.execute(
+          `INSERT INTO salary_prep_run
+             (id, run_month, branch_filter, process_filter, window_close_date, created_by, scope_kind)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, input.runMonth, input.branchFilter ?? null, input.processFilter ?? null,
+           windowCloseDate, userId, isScoped ? "scoped" : "company"]
+        );
+        // Same transaction as the run itself: a run that exists without its scope would select an
+        // unfiltered population, which is every employee in the company.
+        if (isScoped) await insertRunScope(conn, id, input.runMonth, scopeRows);
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        // Best-effort release — a held lock past this connection's release
+        // back to the pool still self-clears when the underlying MySQL
+        // session ends, so a failed RELEASE here is not a leak.
+        await conn.execute(`SELECT RELEASE_LOCK(?)`, [lockKey]).catch(() => {});
+      }
+    } finally {
+      conn.release();
+    }
+    return this.getRun(id);
+  },
+
+  async getRun(id: string): Promise<SalaryPrepRun> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [id]
+    );
+    const rec = (rows as SalaryPrepRun[])[0];
+    if (!rec) throw new Error("Payroll run not found");
+    return rec;
+  },
+
+  async updateRunStatus(id: string, input: UpdateRunStatusInput, userId: string): Promise<SalaryPrepRun> {
+    const run = await this.getRun(id);
+    const result = validateTransition(run.status as RunStatus, input.status as RunStatus);
+    if (!result.valid) {
+      throw new Error(result.reason!);
+    }
+
+    // ── Separation of duties, and Finance sign-off before money can move ──────────────
+    //
+    // Owner ruling 2026-08-16. Preparing, calculating, approving, locking and disbursing were
+    // one effective permission held by 16 people, so the same person could create a run and
+    // walk it all the way to disbursed unaccompanied. And sign-off was a parallel track this
+    // endpoint never consulted: 0 of 66 runs have ever been finance-approved, yet 12 reached
+    // 'approved' — and because the sign-off queue filters on status='processing', those 12
+    // left the queue permanently without anyone signing them.
+    //
+    // Deliberately NOT applied to 'approved': payroll approval is the checker step, and
+    // requiring sign-off before it would make approval impossible for every run. Sign-off is
+    // required at the point money can actually leave — LOCK and DISBURSE.
+    const runRecord = run as unknown as {
+      created_by: string | null;
+      approved_by: string | null;
+      finance_approved_by: string | null;
+      finance_approved_at: string | null;
+    };
+    const breakGlassReason = (input as { breakGlassReason?: string }).breakGlassReason?.trim() || null;
+
+    if (input.status === "approved" && runRecord.created_by && String(runRecord.created_by) === String(userId)) {
+      throw Object.assign(
+        new Error("You prepared this payroll run, so it must be approved by someone else"),
+        { statusCode: 403, code: "PAYROLL_SELF_APPROVAL" },
+      );
+    }
+
+    if (input.status === "locked" || input.status === "disbursed") {
+      // Closing a run is a different capability from preparing one.
+      //
+      // The route gate cannot express this: PATCH /runs/:id/status carries every transition, so
+      // requireRole there is necessarily the union of everyone who moves a run at all — the same
+      // list as POST /runs and POST /runs/:id/calculate. The capability only becomes separable
+      // once the target status is known, which is here.
+      //
+      // 'payroll' and 'finance' prepare. Closing needs a head-level grant. Verified live
+      // 2026-08-16 that this locks nobody out: finance_head (2), payroll_head (1), plus admin (9)
+      // and super_admin (3), against payroll (3) and finance (2) who keep every preparation right
+      // they had. This is also what makes break-glass meaningful — the ruling requires an
+      // "independently authorized actor", and independence alone is not authorisation.
+      const [closerRoles] = await db.execute<RowDataPacket[]>(
+        `SELECT 1
+           FROM user_roles
+          WHERE user_id = ? AND active_status = 1
+            AND role_key IN ('finance_head','payroll_head','admin','super_admin')
+          LIMIT 1`,
+        [userId],
+      );
+      if (closerRoles.length === 0) {
+        throw Object.assign(
+          new Error(
+            `You can prepare and approve payroll, but ${input.status === "locked" ? "locking" : "disbursing"} ` +
+            `a run is reserved for Finance or Payroll heads. Ask a head to complete this step.`,
+          ),
+          { statusCode: 403, code: "PAYROLL_CLOSE_NOT_AUTHORISED" },
+        );
+      }
+
+      // Professional Tax removed 2026-09-11 (stakeholder-confirmed, company-wide,
+      // all states, go-forward only). This gate (owner ruling 2026-08-16, decision
+      // 9) used to block LOCK/DISBURSE while an employee's branch had no state,
+      // because that employee's Professional Tax was unresolvable and the
+      // calculator excluded them from the run rather than invent a figure —
+      // producing a quiet omission the run must not close over.
+      //
+      // resolveProfessionalTax() now unconditionally resolves 0 for every
+      // employee (see payrollCalculate.service.ts), so nobody is excluded from a
+      // run for this reason any more — pt_blocked_employees is permanently
+      // empty. Keeping this query would block real runs over a branch-state gap
+      // that no longer has any statutory consequence, citing a Professional Tax
+      // reason that is no longer true. Removed rather than left to misfire.
+
+      if (!runRecord.finance_approved_at) {
+        if (!breakGlassReason) {
+          throw Object.assign(
+            new Error(
+              `Finance sign-off is required before a run can be ${input.status}. ` +
+              `Obtain sign-off, or supply a break-glass reason if this is an emergency.`,
+            ),
+            { statusCode: 409, code: "PAYROLL_FINANCE_SIGNOFF_REQUIRED" },
+          );
+        }
+        // Break-glass is a third pair of hands, not a way round your own control.
+        const isPreparer = runRecord.created_by && String(runRecord.created_by) === String(userId);
+        const isApprover = runRecord.approved_by && String(runRecord.approved_by) === String(userId);
+        if (isPreparer || isApprover) {
+          throw Object.assign(
+            new Error(
+              "Break-glass must be invoked by someone who neither prepared nor approved this run",
+            ),
+            { statusCode: 403, code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" },
+          );
+        }
+      }
+    }
+
+    const sets = ["status = ?"];
+    const params: unknown[] = [input.status];
+    if (input.status === "approved")  { sets.push("approved_by = ?");  params.push(userId); }
+    if (input.status === "disbursed") { sets.push("disbursed_by = ?", "disbursed_at = NOW()"); params.push(userId); }
+    params.push(id, run.status);
+    // Expected-state predicate: the status read at the top of this function must still be the
+    // status on the row. Two approvers previously both passed validateTransition and both wrote,
+    // each returning 200, with the audit naming two different actors for one transition.
+    const [statusResult] = await db.execute<ResultSetHeader>(
+      `UPDATE salary_prep_run SET ${sets.join(", ")} WHERE id = ? AND status = ?`,
+      params,
+    );
+    if (statusResult.affectedRows !== 1) {
+      throw Object.assign(
+        new Error("This payroll run was changed by someone else — reload and try again"),
+        { statusCode: 409, code: "PAYROLL_RUN_STATE_CHANGED" },
+      );
+    }
+
+    // Audit every transition through this endpoint.
+    //
+    // PATCH /runs/:id/status is what the UI actually calls to approve, lock and
+    // disburse a run — usePayroll.ts, DisbursalManagement.tsx and Payroll.tsx all
+    // post here — and it wrote no audit row at all. The Payroll Audit Trail screen
+    // reads payroll_calculation_audit and sensitive_action_log, so a run could be
+    // locked or marked disbursed with nothing recorded anywhere about who did it.
+    //
+    // approveRunForDisbursement, a second path reaching 'disbursed', has always
+    // logged. Two routes to the same state, one audited, was the gap.
+    //
+    // Awaited rather than fire-and-forget: for a status change the audit row is
+    // part of the action, not a side effect of it. Failing the request is the right
+    // outcome if it cannot be recorded.
+    const { logSensitiveAction } = await import("../../shared/auditLog.js");
+    await logSensitiveAction({
+      actor_user_id: userId,
+      // A break-glass lock or disbursement is not an ordinary transition and must not read
+      // like one in the audit trail. Whoever reviews this later should be able to find every
+      // one of them by action_type alone.
+      action_type: breakGlassReason && (input.status === "locked" || input.status === "disbursed")
+        ? `PAYROLL_RUN_${String(input.status).toUpperCase()}_BREAKGLASS`
+        : `PAYROLL_RUN_${String(input.status).toUpperCase()}`,
+      reason: breakGlassReason ?? undefined,
+      module_key: "payroll",
+      entity_type: "salary_prep_run",
+      entity_id: id,
+      change_summary: {
+        run_id: id,
+        run_month: run.run_month,
+        previous_status: run.status,
+        new_status: input.status,
+        // Approval and finance sign-off are two independent tracks: payroll-signoff.routes.ts
+        // writes finance_approved_by/at and never touches status, while this endpoint writes
+        // status and never checks sign-off. So a run can reach 'approved' — and thereby leave
+        // the pending-sign-off queue, which filters on status='processing' — with sign-off
+        // never given. Recorded rather than blocked: finance_approved_by is NULL on all 66
+        // live runs, so refusing approval without it would make approval impossible for every
+        // run. Whether to harden this into a real precondition is a payroll/finance ruling;
+        // until then the exception is at least visible in the audit trail instead of invisible.
+        ...(input.status === "approved"
+          ? { finance_signed_off: (run as any).finance_approved_by != null }
+          : {}),
+      },
+    });
+
+    // Email notification (fire-and-forget). Run statuses notify finance/payroll
+    // roles; 'disbursed' fans out to one payslip_ready per employee. All shadow,
+    // and payslip_ready is financial: official email only, never CC'd.
+    setImmediate(() => {
+      if (input.status === "disbursed") {
+        void notifyPayslipsReady(id).then((st) =>
+          console.log(`[payroll-notify] run ${id}: ${st.employees} payslips`),
+        );
+      } else {
+        void notifyPayrollRunStatus(id, input.status);
+      }
+    });
+
+    // On manual lock: lapse any pending leave requests for this month's employees
+    if (input.status === "locked") {
+      const [lineRows] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT employee_id FROM salary_prep_line WHERE run_id = ?`,
+        [id],
+      );
+      const employeeIds = (lineRows as any[]).map((r: any) => String(r.employee_id));
+      if (employeeIds.length > 0) {
+        await leaveService.lapseUnresolvedLeaves(id, run.run_month, employeeIds)
+          .catch((e: unknown) => console.error('[payroll-service] lapseUnresolvedLeaves error:', e));
+      }
+    }
+
+    // On disbursal: reconcile each employee's loan ledger against the loan_emi the
+    // calculator already put on their payslip. Isolated — a failure here must never
+    // fail the disbursal transition itself, since the money has already moved. See
+    // loans.service.ts for why this is hooked here and not at 'finalized'.
+    if (input.status === "disbursed") {
+      const { applyPayrollDeductions } = await import("./loans.service.js");
+      await applyPayrollDeductions(id, userId)
+        .catch((e: unknown) => console.error('[payroll-service] applyPayrollDeductions error:', e));
+    }
+
+    return this.getRun(id);
+  },
+
+  async listRuns(filters: RunFilters): Promise<PaginatedResult<SalaryPrepRun>> {
+    const { page, limit, runMonth, status } = filters;
+    const offset = (page - 1) * limit;
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (runMonth) { conds.push("run_month = ?"); params.push(runMonth); }
+    if (status)   { conds.push("status = ?");    params.push(status); }
+
+    // Hide runs that no payroll process created.
+    //
+    // A Jul-2026 run written directly into salary_prep_run by 'test-auto-gen'
+    // sits beside the real one and renders identically — "Jul 2026 —
+    // processing", 1,288 lines, INR 1.22 Cr net. The CEO UAT of 31-Jul-2026
+    // reported "Jul 2026 - processing" appearing twice, and there is nothing on
+    // screen to say which of the two is real.
+    //
+    // Filtered rather than deleted: removing 6,537 production payroll rows is
+    // the payroll owner's call, and scripts/purge-synthetic-payroll-run.sql is
+    // ready for when they make it. This takes the run off screen today without
+    // touching the data, and is reversible by deleting these two lines.
+    //
+    // Not a general "hide test data" switch — it names the one creator that has
+    // ever written a run this way. Anything else stays visible, including runs
+    // that are empty or broken, because those are real and someone must see them.
+    conds.push(`(created_by IS NULL OR created_by NOT IN (${SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ")}))`);
+    params.push(...SYNTHETIC_RUN_CREATORS);
+
+    // Apply scope filter from middleware
+    if ((filters as any).scopeFilter) {
+      const scopeFilter = (filters as any).scopeFilter;
+      // scopeFilter is {sql: string, params: unknown[]} from buildScopeWhereClause
+      if (typeof scopeFilter === 'object' && scopeFilter.sql) {
+        const { sql, params: scopeParams } = scopeFilter;
+        if (sql === "1=0") {
+          // User has no access - return empty result immediately
+          return { data: [], total: 0, page, limit };
+        }
+        if (sql && sql !== "1=1") {
+          // Add scope filter SQL (already without WHERE prefix)
+          conds.push(`(${sql})`);
+          // Merge scope params into main params array
+          params.push(...(scopeParams || []));
+        }
+        // If sql === "1=1", user has full access - no additional filter needed
+      }
+    }
+
+    // Aliased `spr` deliberately: payroll.secure.routes.ts builds this route's scope filter
+    // with column names "spr.branch_id" / "spr.process_id", so the table MUST carry that alias
+    // or every branch-scoped user gets ER_BAD_FIELD_ERROR ("Unknown column 'spr.branch_id' in
+    // 'where clause'") instead of their runs. It did, on live traffic, repeatedly.
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.* FROM salary_prep_run spr ${where} ORDER BY spr.run_month DESC LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM salary_prep_run spr ${where}`, params
+    );
+    return { data: rows as SalaryPrepRun[], total: (countRows as any)[0]?.total ?? 0, page, limit };
+  },
+
+  // ─── Prep Lines ────────────────────────────────────────────────────────────
+
+  async listLines(runId: string, page: number = 1, limit: number = 50, search?: string): Promise<{ lines: SalaryPrepLine[]; total: number; page: number; limit: number }> {
+    const offset = (page - 1) * limit;
+
+    const baseSelect = `
+      SELECT
+        spl.*,
+        spl.gross_salary     AS gross_pay,
+        spl.net_salary       AS net_pay,
+        spl.professional_tax AS pt_amount,
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+        sp.id AS payslip_id,
+        CASE
+          WHEN sp.acknowledged_at IS NOT NULL THEN 'acknowledged'
+          WHEN sp.id IS NOT NULL              THEN 'generated'
+          ELSE NULL
+        END AS payslip_status
+      FROM salary_prep_line spl
+      LEFT JOIN employees e        ON e.id = spl.employee_id
+      LEFT JOIN salary_payslip sp  ON sp.prep_line_id = spl.id
+      WHERE spl.run_id = ?`;
+
+    const params: any[] = [runId];
+
+    let whereExtra = "";
+    if (search) {
+      whereExtra += " AND (spl.employee_code LIKE ? OR CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR spl.employee_id LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    const query = baseSelect + whereExtra + ` ORDER BY spl.employee_code ASC ${sqlLimitOffset(limit, offset)}`;
+
+    const [rows] = await db.execute<RowDataPacket[]>(query, params);
+
+    const countParams: any[] = [runId];
+    let countExtra = "";
+    if (search) {
+      countExtra += " AND (spl.employee_code LIKE ? OR CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR spl.employee_id LIKE ?)";
+      countParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM salary_prep_line spl
+      LEFT JOIN employees e ON e.id = spl.employee_id
+      WHERE spl.run_id = ?` + countExtra;
+    const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
+    const total = (countRows as any[])[0]?.total ?? 0;
+
+    return { lines: rows as SalaryPrepLine[], total, page, limit };
+  },
+
+  async getLine(id: string): Promise<SalaryPrepLine> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_line WHERE id = ? LIMIT 1", [id]
+    );
+    const rec = (rows as SalaryPrepLine[])[0];
+    if (!rec) throw new Error("Prep line not found");
+    return rec;
+  },
+
+  async updateLine(id: string, input: UpdatePrepLineInput, userId: string): Promise<SalaryPrepLine> {
+    const line = await this.getLine(id);
+    const [runRows] = await db.execute<RowDataPacket[]>("SELECT status FROM salary_prep_run WHERE id = ? LIMIT 1", [(line as any).run_id]);
+    const runStatus = (runRows as any[])[0]?.status as RunStatus | undefined;
+    if (runStatus && !canEdit(runStatus)) {
+      throw new Error(`Cannot edit line — run is in "${runStatus}" status`);
+    }
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    // Before/after accumulators, filled in lockstep with the SET clauses below so the
+    // audited values can never drift from what was actually written.
+    const oldValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+    const track = (column: string, next: unknown) => {
+      oldValues[column] = (line as any)[column] ?? null;
+      newValues[column] = next;
+    };
+    if (input.presentDays  !== undefined) { sets.push("present_days = ?");  params.push(input.presentDays);      track("present_days", input.presentDays); }
+    if (input.lwpDays      !== undefined) { sets.push("lwp_days = ?");      params.push(input.lwpDays);          track("lwp_days", input.lwpDays); }
+    if (input.lateMark     !== undefined) { sets.push("late_marks = ?");    params.push(input.lateMark);         track("late_marks", input.lateMark); }
+    if (input.dialerHours  !== undefined) { sets.push("dialer_hours = ?");  params.push(input.dialerHours);      track("dialer_hours", input.dialerHours); }
+    if (input.remarks      !== undefined) { sets.push("remarks = ?");       params.push(input.remarks ?? null);  track("remarks", input.remarks ?? null); }
+    if (sets.length > 0) {
+      params.push(id);
+      await db.execute(`UPDATE salary_prep_line SET ${sets.join(", ")} WHERE id = ?`, params);
+
+      // The actor id was received and discarded (`_userId`, unused), so an edit to a
+      // payroll line's attendance-derived inputs left no record of who made it —
+      // present_days and lwp_days feed straight into payable days. Mirrors the audit
+      // updateRunStatus writes a few methods above, and is awaited for the same reason:
+      // on a money path the audit row is part of the action, not a side effect of it.
+      // Written only when something was actually changed, and only for the fields the
+      // caller changed, so the log carries the edit rather than the whole line.
+      const { logSensitiveAction } = await import("../../shared/auditLog.js");
+      await logSensitiveAction({
+        actor_user_id: userId,
+        action_type: "PAYROLL_LINE_UPDATE",
+        module_key: "payroll",
+        entity_type: "salary_prep_line",
+        entity_id: id,
+        employee_id: (line as any).employee_id,
+        old_value_json: oldValues,
+        new_value_json: newValues,
+      });
+    }
+    return this.getLine(id);
+  },
+
+  // ─── Advances ──────────────────────────────────────────────────────────────
+
+  async createAdvance(input: AdvanceInput, _userId: string): Promise<SalaryAdvance> {
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO salary_advance_log (id, employee_id, advance_date, amount, recovery_months, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, input.employeeId, input.advanceDate, input.amount, input.recoveryMonths, input.notes ?? null]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_advance_log WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as SalaryAdvance[])[0];
+  },
+
+  async listAdvances(employeeId: string): Promise<SalaryAdvance[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_advance_log WHERE employee_id = ? ORDER BY advance_date DESC",
+      [employeeId]
+    );
+    return rows as SalaryAdvance[];
+  },
+
+  // ─── Statutory Config ──────────────────────────────────────────────────────
+
+  async getStatutoryConfig(): Promise<Record<string, number>> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT config_key, config_value FROM statutory_config WHERE is_active = 1"
+    );
+    const map: Record<string, number> = {};
+    for (const row of rows as { config_key: string; config_value: number }[]) {
+      map[row.config_key] = row.config_value;
+    }
+    return map;
+  },
+
+  // ─── Salary Calculator (pure, no DB) ───────────────────────────────────────
+
+  calculateNetSalary(p: NetSalaryParams): NetSalaryResult {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+
+    // LWP ratio: earn (workingDays - lwpDays) / workingDays of each CTC component
+    const attendanceRatio = (p.workingDays - p.lwpDays) / p.workingDays;
+
+    // Fixed CTC components (scaled by attendance)
+    const basic = r2(p.grossMonthlyCTC * (p.basicPct / 100) * attendanceRatio);
+    const hra = r2(p.grossMonthlyCTC * (p.hraPct / 100) * attendanceRatio);
+    const special = r2(p.grossMonthlyCTC * attendanceRatio - basic - hra);
+
+    // Variable allowances (night shift, incentives, etc.) — paid as-is, not scaled by LWP
+    const allowances = p.allowances ?? [];
+    const allowancesTotal = r2(allowances.reduce((s, a) => s + a.amount, 0));
+
+    const gross = r2(basic + hra + special + allowancesTotal);
+
+    // PF: on Basic only, capped at pfWageLimit (statutory ceiling ₹15,000)
+    // Variable allowances intentionally excluded from PF base
+    // Skipped entirely when employee has an approved PF opt-out (voluntary declaration).
+    const pfBase = Math.min(basic, p.pfWageLimit);
+    const pfEmp = p.pfOptOut ? 0 : r2(pfBase * (p.pfEmployeePct / 100));
+
+    // Employer PF: EPF 3.67% + EPS 8.33% of min(Basic, ₹15,000 EPS ceiling)
+    const epsCeiling = 15000;
+    const epsBase = Math.min(basic, epsCeiling);
+    const pfEmrEpf = p.pfOptOut ? 0 : r2(pfBase * 0.0367);
+    const pfEmrEps = p.pfOptOut ? 0 : r2(epsBase * 0.0833);
+    const pfEmr = r2(pfEmrEpf + pfEmrEps);
+
+    // ESIC: on full gross (including allowances), skip when gross > esicWageLimit
+    // Also skipped when employee has an approved ESI opt-out (voluntary declaration).
+    // esicContinuityOverride (ESI Act s.2(6A)/Reg 3): an employee covered at the
+    // start of their contribution period stays covered even after crossing the
+    // ceiling mid-period. Opt-out still wins over continuity — the && binds
+    // tighter than the ||, so esicOptOut=true short-circuits regardless.
+    const esicApplicable = !p.esicOptOut && (gross <= p.esicWageLimit || p.esicContinuityOverride === true);
+    const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
+    const esicEmrPct = (p.esicEmployerPct ?? 3.25) / 100;
+    const esicEmr = esicApplicable ? r2(gross * esicEmrPct) : 0;
+
+    // Gratuity: configurable % of Basic — employer cost, not employee deduction
+    // Always require configuration; no hardcoded 4.81% fallback (B5 fix: load from statutory_config)
+    const gratuityPct = (p.gratuityPct ?? 0) / 100;
+    const gratuity = r2(basic * gratuityPct);
+
+    // PT removed 2026-09-11 per user decision — full company-wide removal. This function
+    // stays a generic calculator taking p.professionalTax as an explicit input rather than
+    // hardcoding 0 here, because every real caller (payrollCalculate.service.ts x2,
+    // running-salary.service.ts, holiday-work-auto.service.ts) now resolves it to 0 at the
+    // source. Kept parameterised so nothing here needs to change if that ever changes.
+    const totalDed = r2(pfEmp + esicEmp + p.professionalTax + p.tds);
+    const net = r2(gross - totalDed);
+    const ctcMonthly = r2(gross + pfEmr + esicEmr + gratuity);
+
+    return {
+      basic,
+      hra,
+      special_allowance: special,
+      allowances,
+      allowances_total: allowancesTotal,
+      gross_salary: gross,
+      pf_employee: pfEmp,
+      esic_employee: esicEmp,
+      professional_tax: p.professionalTax,
+      tds: p.tds,
+      total_deductions: totalDed,
+      net_salary: net,
+      pf_employer: pfEmr,
+      pf_employer_epf: pfEmrEpf,
+      pf_employer_eps: pfEmrEps,
+      esic_employer: esicEmr,
+      gratuity,
+      ctc_monthly: ctcMonthly,
+    };
+  },
+
+  async getEmployeeSalaryHistory(employeeId: string): Promise<any[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.run_month,
+              spl.gross_salary AS gross_pay, spl.net_salary AS net_pay,
+              spl.basic AS basic_pay, spl.hra, spl.special_allowance AS conveyance,
+              spl.pf_employee, spl.esic_employee AS esi_employee,
+              spl.professional_tax, spl.tds AS tds_deducted,
+              spl.total_deductions, spl.paid_working_days AS days_payable,
+              spl.lwp_days AS lop_days, spl.status
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+       WHERE spl.employee_id = ?
+       ORDER BY spr.run_month DESC LIMIT 24`,
+      [employeeId]
+    );
+    return Array.isArray(rows) ? rows : [];
+  },
+
+  async listPayrollRecords(filters: {
+    page?: number; limit?: number; runMonth?: string; month?: number; year?: number;
+    search?: string; status?: string; branchId?: string; processId?: string;
+    departmentId?: string; scopeFilter?: { sql: string; params: unknown[] };
+  }): Promise<{ data: any[]; total: number; page: number; limit: number }> {
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(1000, filters.limit ?? 50);
+    const offset = (page - 1) * limit;
+    const innerParams: any[] = [];
+    const innerConds: string[] = [];
+
+    // Support independent month/year filters as well as combined runMonth
+    if (filters.runMonth) {
+      innerConds.push("spr.run_month = ?"); innerParams.push(filters.runMonth);
+    } else if (filters.month !== undefined && filters.year !== undefined) {
+      innerConds.push("spr.run_month = ?");
+      innerParams.push(`${filters.year}-${String(filters.month).padStart(2, "0")}`);
+    } else if (filters.month !== undefined) {
+      innerConds.push("CAST(SUBSTRING(spr.run_month, 6, 2) AS UNSIGNED) = ?");
+      innerParams.push(filters.month);
+    } else if (filters.year !== undefined) {
+      innerConds.push("LEFT(spr.run_month, 4) = ?");
+      innerParams.push(String(filters.year));
+    }
+    if (filters.status) {
+      const normalizedStatus = String(filters.status).trim().toLowerCase();
+      if (normalizedStatus === "paid") {
+        innerConds.push("LOWER(COALESCE(spr.status, '')) IN ('disbursed', 'finalized', 'finalised', 'paid')");
+      } else if (normalizedStatus === "processing") {
+        innerConds.push("(LOWER(COALESCE(spr.status, '')) IN ('processing', 'reviewed', 'approved', 'locked') OR LOWER(COALESCE(spl.status, '')) = 'calculated')");
+      } else if (normalizedStatus === "pending") {
+        innerConds.push("(LOWER(COALESCE(spr.status, '')) NOT IN ('disbursed', 'finalized', 'finalised', 'paid', 'processing', 'reviewed', 'approved', 'locked') AND LOWER(COALESCE(spl.status, '')) <> 'calculated')");
+      } else {
+        innerConds.push("(LOWER(COALESCE(spr.status, '')) = ? OR LOWER(COALESCE(spl.status, '')) = ?)");
+        innerParams.push(normalizedStatus, normalizedStatus);
+      }
+    }
+    if (filters.branchId) { innerConds.push("e.branch_id = ?");   innerParams.push(filters.branchId); }
+    if (filters.processId){ innerConds.push("e.process_id = ?");  innerParams.push(filters.processId); }
+    if (filters.departmentId) { innerConds.push("e.department_id = ?"); innerParams.push(filters.departmentId); }
+    if (filters.search) {
+      // Escape SQL LIKE wildcards to prevent injection via search terms
+      const escaped = filters.search.replace(/[%_\\]/g, ch => "\\" + ch);
+      innerConds.push(
+        "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\' OR e.email LIKE ? ESCAPE '\\\\'" +
+        " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
+      );
+      const s = `%${escaped}%`;
+      innerParams.push(s, s, s, s);
+    }
+
+    // scope enforcement — use 1=0 deny-all when no scope provided rather than fallback to open
+    const scopeSql = filters.scopeFilter?.sql ?? "1=0";
+    const scopeParams = filters.scopeFilter?.params ?? [];
+    innerConds.push(`(${scopeSql})`);
+
+    const whereClause = innerConds.length ? innerConds.join(" AND ") : "1=1";
+    const allParams = [...innerParams, ...scopeParams];
+
+    const baseSql = `
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      LEFT JOIN employees e    ON e.id = spl.employee_id
+      LEFT JOIN branch_master bm   ON bm.id = e.branch_id
+      LEFT JOIN process_master pm  ON pm.id = e.process_id
+      LEFT JOIN department_master dm ON dm.id = e.department_id
+      LEFT JOIN designation_master dsg ON dsg.id = e.designation_id
+      WHERE ${whereClause}`;
+
+    // COUNT(*) doesn't need branch_master/process_master/department_master/designation_master —
+    // those joins exist only to supply display columns (branch_name, process_name, etc.) in the
+    // SELECT below. Every filter and scope condition here resolves against salary_prep_line,
+    // salary_prep_run or employees (e.*) only — verified against payroll.routes.ts's
+    // buildScopeWhereClause call, which passes branchId/processId as "e.branch_id"/"e.process_id".
+    // Dropping the four unused joins cuts this from a measured 2.6s to 0.8s on the unfiltered
+    // "All Months" history query (70k+ rows) without changing which rows are counted.
+    const countBaseSql = `
+      FROM salary_prep_line spl
+      JOIN salary_prep_run spr ON spr.id = spl.run_id
+      LEFT JOIN employees e    ON e.id = spl.employee_id
+      WHERE ${whereClause}`;
+
+    const selectSql = `
+      SELECT
+        spl.id,
+        spl.run_id,
+        spl.employee_id,
+        COALESCE(spl.employee_code, e.employee_code) AS employee_code,
+        COALESCE(NULLIF(TRIM(e.full_name),''),
+                 TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
+                 spl.employee_code) AS employee_name,
+        e.email AS employee_email,
+        e.avatar_url AS employee_avatar,
+        spr.run_month,
+        spr.status AS run_status,
+        spr.disbursed_at,
+        spl.status AS line_status,
+        COALESCE(spl.basic, 0)             AS basic,
+        COALESCE(spl.hra, 0)               AS hra,
+        COALESCE(spl.special_allowance, 0) AS special_allowance,
+        COALESCE(spl.gross_salary, 0)      AS gross_salary,
+        COALESCE(spl.incentive_total, 0)   AS incentive_total,
+        COALESCE(spl.total_deductions, 0)  AS total_deductions,
+        COALESCE(spl.net_salary, 0)        AS net_salary,
+        COALESCE(spl.working_days, 0)           AS working_days,
+        COALESCE(spl.present_days, 0)           AS present_days,
+        COALESCE(spl.leave_days, 0)             AS leave_days,
+        COALESCE(spl.lwp_days, 0)               AS lwp_days,
+        GREATEST(0, COALESCE(spl.working_days, 0)
+          - COALESCE(spl.present_days, 0)
+          - COALESCE(spl.leave_days, 0)
+          - COALESCE(spl.lwp_days, 0))          AS absent_days,
+        COALESCE(spl.eligible_weekoff_days, 0)  AS eligible_weekoff_days,
+        COALESCE(spl.eligible_holiday_days, 0)  AS eligible_holiday_days,
+        COALESCE(spl.paid_working_days, 0)      AS paid_working_days,
+        COALESCE(spl.final_payable_days, 0)     AS final_payable_days,
+        COALESCE(spl.pf_employee, 0)            AS pf_employee,
+        COALESCE(spl.pf_employer, 0)            AS pf_employer,
+        COALESCE(spl.esic_employee, 0)          AS esic_employee,
+        COALESCE(spl.esic_employer, 0)          AS esic_employer,
+        COALESCE(spl.professional_tax, 0)       AS professional_tax,
+        COALESCE(spl.tds, 0)                    AS tds,
+        COALESCE(spl.lwp_deduction, 0)          AS lwp_deduction,
+        COALESCE(spl.advance_recovery, 0)       AS advance_recovery,
+        COALESCE(spl.other_deductions, 0)       AS other_deductions,
+        bm.branch_name,
+        pm.process_name,
+        dm.dept_name AS department_name,
+        dsg.designation_name AS designation`;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `${selectSql} ${baseSql} ORDER BY spr.run_month DESC, employee_name ASC ${sqlLimitOffset(limit, offset)}`,
+      allParams
+    );
+    const [countRow] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as total ${countBaseSql}`,
+      allParams
+    );
+
+    // Batch-fetch component breakdown for all payroll lines (eliminates N+1 queries)
+    const lineIds = (rows as any[]).map((r: any) => r.id).filter(Boolean);
+    if (lineIds.length > 0) {
+      const placeholders = lineIds.map(() => "?").join(",");
+      const [allComponents] = await db.execute<RowDataPacket[]>(
+        `SELECT line_id, component_code, component_name, component_type, amount, taxable
+         FROM salary_prep_line_component
+         WHERE line_id IN (${placeholders})
+         ORDER BY line_id,
+           CASE component_type
+             WHEN 'earning' THEN 1
+             WHEN 'deduction' THEN 2
+             ELSE 3
+           END,
+           component_code`,
+        lineIds
+      );
+
+      const componentsByLine = new Map<string, { earnings: any[]; deductions: any[]; employer_costs: any[] }>();
+      for (const comp of allComponents as any[]) {
+        const lineId = String(comp.line_id);
+        if (!componentsByLine.has(lineId)) {
+          componentsByLine.set(lineId, { earnings: [], deductions: [], employer_costs: [] });
+        }
+        const group = componentsByLine.get(lineId)!;
+        if (comp.component_type === "earning") group.earnings.push(comp);
+        else if (comp.component_type === "deduction") group.deductions.push(comp);
+        else group.employer_costs.push(comp);
+      }
+
+      for (const line of rows as any[]) {
+        const comps = componentsByLine.get(String(line.id)) || { earnings: [], deductions: [], employer_costs: [] };
+        line.earnings = comps.earnings;
+        line.deductions = comps.deductions;
+        line.employer_costs = comps.employer_costs;
+      }
+    } else {
+      for (const line of rows as any[]) {
+        line.earnings = [];
+        line.deductions = [];
+        line.employer_costs = [];
+      }
+    }
+
+    return {
+      data: Array.isArray(rows) ? rows : [],
+      total: (countRow as any[])[0]?.total ?? 0,
+      page,
+      limit,
+    };
+  },
+
+  async getPayrollOverview(runMonth: string): Promise<any> {
+    // Pick the single canonical run for the month: prefer most-progressed status, then newest
+    const [runRow] = await db.execute<RowDataPacket[]>(
+      `SELECT id, run_month, status, total_employees, total_gross, total_net
+         FROM salary_prep_run
+        WHERE run_month = ?
+        ORDER BY
+          -- 'finalized' previously fell through to ELSE (lowest priority), so a month with
+          -- both a stale draft run and its real finalized run would show the draft's figures.
+          CASE status
+            WHEN 'disbursed'  THEN 1
+            WHEN 'finalized'  THEN 2
+            WHEN 'locked'     THEN 3
+            WHEN 'approved'   THEN 4
+            WHEN 'completed'  THEN 5
+            WHEN 'processing' THEN 6
+            WHEN 'draft'      THEN 7
+            ELSE 8
+          END,
+          created_at DESC
+        LIMIT 1`,
+      [runMonth]
+    );
+    let run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
+    let isFallback = false;
+    let effectiveRunId: string | null = run ? String(run.id) : null;
+    let effectiveRunMonth = runMonth;
+
+    // If no run exists for requested month, fall back to the most recent completed run
+    if (!run) {
+      const [fallbackRow] = await db.execute<RowDataPacket[]>(
+        `SELECT id, run_month, status, total_employees, total_gross, total_net
+           FROM salary_prep_run
+          WHERE status IN ('disbursed','finalized','locked','approved','completed','processing','draft')
+          ORDER BY run_month DESC, created_at DESC
+          LIMIT 1`
+      );
+      if (Array.isArray(fallbackRow) && fallbackRow.length) {
+        run = fallbackRow[0];
+        effectiveRunId = String(run.id);
+        effectiveRunMonth = String(run.run_month);
+        isFallback = true;
+      }
+    }
+
+    const [stats] = effectiveRunId
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(DISTINCT spl.employee_id) AS employee_count,
+                  SUM(spl.basic)             AS total_basic,
+                  SUM(COALESCE(spl.hra,0) + COALESCE(spl.special_allowance,0) + COALESCE(spl.incentive_total,0)) AS total_allowances,
+                  SUM(spl.gross_salary)      AS total_gross,
+                  SUM(spl.net_salary)        AS total_net,
+                  SUM(spl.total_deductions)  AS total_deductions,
+                  SUM(spl.pf_employee)       AS total_pf,
+                  SUM(spl.esic_employee)     AS total_esi,
+                  SUM(spl.tds)               AS total_tds,
+                  CASE WHEN COUNT(DISTINCT spl.employee_id) > 0
+                       THEN ROUND(SUM(spl.net_salary) / COUNT(DISTINCT spl.employee_id), 2)
+                       ELSE 0 END            AS avg_net
+           FROM salary_prep_line spl
+           WHERE spl.run_id = ?
+             AND spl.status NOT IN ('excluded', 'blocked')`,
+          [effectiveRunId]
+        )
+      : [[null]];
+
+    const isDraft = run?.status === 'draft' || run?.status === 'processing';
+
+    return {
+      run,
+      stats: Array.isArray(stats) && stats.length ? stats[0] : null,
+      runMonth: effectiveRunMonth,
+      isFallback,
+      isDraft,
+    };
+  },
+
+  async updateOvertime(
+    lineId: string,
+    data: { overtimeHours?: number; overtimeAmount?: number },
+    _updatedBy: string
+  ): Promise<any> {
+    const fields: string[] = [];
+    const params: any[] = [];
+    if (data.overtimeHours  !== undefined) { fields.push("overtime_hours = ?");  params.push(data.overtimeHours); }
+    if (data.overtimeAmount !== undefined) { fields.push("overtime_amount = ?"); params.push(data.overtimeAmount); }
+    if (!fields.length) throw Object.assign(new Error("No overtime fields to update"), { statusCode: 400 });
+
+    // Enforce overtime eligibility: check if this employee's process allows OT
+    const [lineEmp] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id FROM salary_prep_line spl
+       JOIN employees e ON e.id = spl.employee_id
+       WHERE spl.id = ? LIMIT 1`,
+      [lineId]
+    );
+    const processId = (lineEmp as any[])?.[0]?.process_id;
+    if (processId) {
+      const [cfgRows] = await db.execute<RowDataPacket[]>(
+        `SELECT config_value FROM payroll_config_flags
+         WHERE process_id = ? AND config_key = 'overtime_allowed' LIMIT 1`,
+        [processId]
+      );
+      const allowed = (cfgRows as any[])?.[0]?.config_value;
+      if (allowed !== 'true') {
+        throw Object.assign(
+          new Error("Overtime is not allowed for this employee's process. Enable it in Overtime Configuration first."),
+          { statusCode: 403 }
+        );
+      }
+      // Enforce monthly cap if configured
+      if (data.overtimeHours !== undefined && data.overtimeHours > 0) {
+        const [capRows] = await db.execute<RowDataPacket[]>(
+          `SELECT config_value FROM payroll_config_flags
+           WHERE process_id = ? AND config_key = 'overtime_monthly_cap_hours' LIMIT 1`,
+          [processId]
+        );
+        const capHours = parseFloat((capRows as any[])?.[0]?.config_value || '0');
+        if (capHours > 0 && data.overtimeHours > capHours) {
+          throw Object.assign(
+            new Error(`Overtime hours (${data.overtimeHours}) exceed monthly cap of ${capHours}h for this process.`),
+            { statusCode: 400 }
+          );
+        }
+      }
+      // Apply rounding rules: minimum threshold + floor to rounding unit
+      if (data.overtimeHours !== undefined && data.overtimeHours > 0) {
+        const [roundCfg] = await db.execute<RowDataPacket[]>(
+          `SELECT config_key, config_value FROM payroll_config_flags
+           WHERE process_id = ? AND config_key IN ('overtime_minimum_hours', 'overtime_rounding_unit')`,
+          [processId]
+        );
+        const cfgMap: Record<string, string> = {};
+        for (const row of roundCfg as any[]) cfgMap[row.config_key] = row.config_value;
+        // Fall back to global defaults if process-level not set
+        if (!cfgMap['overtime_minimum_hours'] || !cfgMap['overtime_rounding_unit']) {
+          const [globalRound] = await db.execute<RowDataPacket[]>(
+            `SELECT config_key, config_value FROM payroll_config_flags
+             WHERE process_id IS NULL AND branch_id IS NULL
+             AND config_key IN ('overtime_minimum_hours', 'overtime_rounding_unit')`
+          );
+          for (const row of globalRound as any[]) {
+            if (!cfgMap[row.config_key]) cfgMap[row.config_key] = row.config_value;
+          }
+        }
+        const minHours = parseFloat(cfgMap['overtime_minimum_hours'] || '0');
+        const roundUnit = parseFloat(cfgMap['overtime_rounding_unit'] || '0');
+        if (minHours > 0 && data.overtimeHours < minHours) {
+          data.overtimeHours = 0;
+          data.overtimeAmount = 0;
+        } else if (roundUnit > 0) {
+          data.overtimeHours = Math.floor(data.overtimeHours / roundUnit) * roundUnit;
+        }
+        if (data.overtimeHours === 0) {
+          data.overtimeAmount = 0;
+        }
+        // Rebuild fields/params with rounded values
+        fields.length = 0;
+        params.length = 0;
+        fields.push("overtime_hours = ?");  params.push(data.overtimeHours);
+        fields.push("overtime_amount = ?"); params.push(data.overtimeAmount ?? 0);
+      }
+    } else {
+      // No process assigned — check global default
+      const [globalRows] = await db.execute<RowDataPacket[]>(
+        `SELECT config_value FROM payroll_config_flags
+         WHERE process_id IS NULL AND branch_id IS NULL AND config_key = 'overtime_allowed' LIMIT 1`
+      );
+      const globalAllowed = (globalRows as any[])?.[0]?.config_value;
+      if (globalAllowed !== 'true') {
+        throw Object.assign(
+          new Error("Overtime is not allowed globally. Enable it for the relevant process in Overtime Configuration."),
+          { statusCode: 403 }
+        );
+      }
+    }
+
+    fields.push("updated_at = NOW()");
+    params.push(lineId);
+    await db.execute(`UPDATE salary_prep_line SET ${fields.join(", ")} WHERE id = ?`, params);
+    const [updated] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM salary_prep_line WHERE id = ? LIMIT 1",
+      [lineId]
+    );
+    return Array.isArray(updated) && updated.length ? updated[0] : null;
+  },
+};
+
+export function breakSpecialAllowance(
+  specialAmount: number,
+  convDefault?: number,
+  maDefault?: number,
+): { conv: number; ma: number; pa: number } {
+  // B5 fix: Load from statutory_config, no hardcoded defaults
+  // If config values are missing, return zero breakup to force configuration
+  const CONV_DEFAULT = convDefault ?? 0;
+  const MA_DEFAULT = maDefault ?? 0;
+  const totalDefault = CONV_DEFAULT + MA_DEFAULT;
+
+  if (specialAmount <= 0 || totalDefault <= 0) return { conv: 0, ma: 0, pa: specialAmount > 0 ? specialAmount : 0 };
+
+  if (specialAmount >= totalDefault) {
+    return {
+      conv: CONV_DEFAULT,
+      ma: MA_DEFAULT,
+      pa: Math.round((specialAmount - totalDefault) * 100) / 100,
+    };
+  }
+
+  const conv = Math.round((specialAmount * CONV_DEFAULT / totalDefault) * 100) / 100;
+  const ma = Math.round((specialAmount * MA_DEFAULT / totalDefault) * 100) / 100;
+  const pa = Math.round((specialAmount - conv - ma) * 100) / 100;
+  return { conv, ma, pa };
+};
+
+// ── Finance Approval ──────────────────────────────────────────────────────────
+export async function approveRunForDisbursement(
+  runId: string,
+  approverUserId: string
+): Promise<{ success: boolean; run_id: string; status: string }> {
+  // Verify run exists and is in 'locked' status
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, status FROM salary_prep_run WHERE id = ? LIMIT 1`,
+    [runId]
+  );
+  const run = (runRows as any[])[0];
+  if (!run) {
+    throw new Error(`Run ${runId} not found`);
+  }
+  if (run.status !== "locked") {
+    throw new Error(`Run must be in 'locked' status to approve for disbursement (current: ${run.status})`);
+  }
+
+  // Update run status to 'disbursed' + record approver
+  await db.execute(
+    `UPDATE salary_prep_run
+        SET status = 'disbursed',
+            finance_approved_by = ?,
+            finance_approved_at = NOW()
+      WHERE id = ?`,
+    [approverUserId, runId]
+  );
+
+  // Email notification (fire-and-forget) — this is a second entry point to the
+  // 'disbursed' state (the other is updateRunStatus) and must notify identically,
+  // per the same payslip_ready fan-out. Previously this path disbursed silently.
+  setImmediate(() => {
+    void notifyPayslipsReady(runId).then((st) =>
+      console.log(`[payroll-notify] run ${runId}: ${st.employees} payslips (finance approval)`),
+    );
+  });
+
+  // Log audit
+  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  await logSensitiveAction({
+    actor_user_id: approverUserId,
+    action_type: "FINANCE_APPROVAL",
+    module_key: "payroll",
+    entity_type: "salary_prep_run",
+    entity_id: runId,
+    change_summary: { run_id: runId, new_status: "disbursed" },
+  });
+
+  return { success: true, run_id: runId, status: "disbursed" };
+}

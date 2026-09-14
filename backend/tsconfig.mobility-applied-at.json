@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true },
+  "include": ["src/modules/mobility/mobility.service.ts","src/db/runPendingMigrations.ts"] }

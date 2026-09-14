@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en" translate="no">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+
+    <!-- Browser Tab Logo -->
+    <!-- mcn-logo.png is the 246x89 wordmark banner; pointing tab icons at it made
+         the browser squash the whole lockup into a square slot, so it rendered as
+         an unreadable smudge. mcn-icon.png is the circular MAS mark cropped square. -->
+    <link rel="icon" type="image/png" sizes="512x512" href="/mcn-icon.png?v=7" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=7" />
+    <link rel="shortcut icon" type="image/png" href="/mcn-icon.png?v=7" />
+    <link rel="apple-touch-icon" href="/mcn-icon.png?v=7" />
+
+    <!-- GRN Management (/finance/grn) opts into IBM Plex Sans/Mono for its own components only —
+         font-sans elsewhere still resolves to Inter/system fonts; loading the family here doesn't
+         change anything outside the GRN page since nothing else references it by name. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Mas Callnet HRMS" />
+
+    <!-- Browser Tab Name -->
+    <title>Mas Callnet HRMS</title>
+
+    <meta
+      name="description"
+      content="Mas Callnet HRMS employee self-service and HR operations portal."
+    />
+
+    <meta name="author" content="Mas Callnet HRMS" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Mas Callnet HRMS" />
+    <meta
+      property="og:description"
+      content="Employee self-service and HR operations portal."
+    />
+    <meta property="og:image" content="/mcn-logo.png" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Mas Callnet HRMS" />
+    <meta
+      name="twitter:description"
+      content="Employee self-service and HR operations portal."
+    />
+    <meta name="twitter:image" content="/mcn-logo.png" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

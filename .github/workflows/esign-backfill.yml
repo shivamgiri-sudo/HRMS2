@@ -1,0 +1,213 @@
+# eSign backfill for joining kits the provider signed but never pushed back.
+#
+# WHY THIS IS MANUAL-ONLY AND NOT SCHEDULED
+# Every run — including a dry run — issues one billed Luckpay checkESignStatus
+# call per eligible transaction, because there is no way to learn a signature
+# state without asking the provider. A run with mode=confirm goes further and
+# writes to signed legal document records (it attaches the provider's signed
+# artefact to employee_document rows and appends audit rows). Neither the spend
+# nor the write is something a cron should decide to do on its own, so the only
+# trigger is a human pressing "Run workflow".
+#
+# WHY THE SELF-HOSTED RUNNER
+# Two hard constraints, either of which alone rules out a hosted runner:
+#   1. Luckpay whitelists the deploy host's egress IP (192.168.11.225). A call
+#      from a GitHub-hosted runner is rejected at the edge before it is billed.
+#   2. /var/www/HRMS2/backend/.env — the Luckpay credentials and the DB
+#      connection — exists only on that host, and there is no SSH into it. The
+#      runner is the only process that can read that file.
+#
+# The script is already on the box: backend/tsconfig.json includes
+# scripts/backfill-stranded-joining-kits.ts, so every `npm run build` in
+# deploy.yml emits dist/scripts/backfill-stranded-joining-kits.js alongside the
+# server. This workflow therefore builds nothing and installs nothing; it runs
+# the deployed artifact.
+
+name: eSign Backfill (stranded joining kits)
+
+on:
+  workflow_dispatch:
+    inputs:
+      actor_user_id:
+        description: "auth_user.id to attribute this remediation to (recorded in the audit trail; the script refuses to run without it)"
+        required: true
+        type: string
+      mode:
+        description: "dry-run inspects and writes nothing (still spends billed provider calls); confirm writes to document records"
+        required: true
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - confirm
+      kit_id:
+        description: "Optional: restrict the run to a single joining kit id. Leave empty to sweep every eligible kit."
+        required: false
+        type: string
+
+# Serialised, and deliberately never cancelled mid-flight. Two concurrent runs
+# would poll the same transactions and double the billed call count while
+# producing the same result, and cancelling a confirm run partway would leave
+# the operator guessing which kits were already written.
+concurrency:
+  group: esign-backfill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: Backfill on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 30
+
+    steps:
+      # Stated up front so the run log itself is the record of what was
+      # requested — the summary at the end is written after the fact, and a
+      # cancelled run would never reach it.
+      - name: Announce the run
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          KIT_ID: ${{ inputs.kit_id }}
+        run: |
+          set -euo pipefail
+          echo "mode:         ${MODE}"
+          echo "actor user:   ${ACTOR_USER_ID}"
+          echo "kit filter:   ${KIT_ID:-<none — all eligible kits>}"
+          if [[ "${MODE}" == "confirm" ]]; then
+            echo "WRITES:       YES — signed artefacts will be attached and audit rows appended."
+          else
+            echo "WRITES:       no — inspection only. Provider status calls are still billed."
+          fi
+
+      # The artifact comes from the deploy pipeline, not from this workflow, so
+      # its absence means main has not been deployed since the script landed.
+      # Failing here with that instruction is cheaper than a confusing MODULE_NOT_FOUND.
+      - name: Verify the deployed script exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="/var/www/HRMS2/backend/dist/scripts/backfill-stranded-joining-kits.js"
+          if [[ ! -f "$SCRIPT" ]]; then
+            echo "::error::$SCRIPT is missing."
+            echo "This workflow runs the deployed build; it does not compile anything."
+            echo "Run the 'Deploy to Production' workflow on main first, then re-run this."
+            exit 1
+          fi
+          echo "Found $SCRIPT"
+
+      - name: Run the backfill
+        id: run
+        shell: bash
+        # backend/src/config/env.ts resolves .env from process.cwd() before
+        # anything else, so the cwd IS how the script finds its credentials and
+        # DB. Running from anywhere else fails env validation at import time.
+        working-directory: /var/www/HRMS2/backend
+        # Inputs arrive as environment variables and are expanded by bash, never
+        # spliced into the script text by the expression evaluator: a kit id or
+        # actor id containing shell metacharacters is then just an argument
+        # value, with no path to command injection on the production host.
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          KIT_ID: ${{ inputs.kit_id }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p logs
+          REPORT="/var/www/HRMS2/backend/logs/esign-backfill-$(date -u +%Y%m%dT%H%M%SZ)-run${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.csv"
+
+          # An array, so each element is exactly one argv entry regardless of
+          # whitespace or quoting inside it.
+          ARGS=(dist/scripts/backfill-stranded-joining-kits.js)
+          ARGS+=(--actor-user-id "$ACTOR_USER_ID")
+          if [[ -n "${KIT_ID// /}" ]]; then
+            ARGS+=(--kit-id "$KIT_ID")
+          fi
+          # Always requested. The CSV is the only durable per-kit record of what
+          # a run classified and what it did; stdout is lost when the run is
+          # pruned.
+          ARGS+=(--report "$REPORT")
+          if [[ "$MODE" == "confirm" ]]; then
+            ARGS+=(--confirm)
+          fi
+
+          echo "+ node ${ARGS[*]}"
+
+          # The script exits 1 when any kit classified as 'error'. That is a
+          # partial-success signal, not a crash: the other kits were still
+          # processed and the CSV explains each one. Letting the step die here
+          # would skip the summary and the artifact upload — the two things the
+          # operator needs to act on the failure — so the code is carried to a
+          # later step and re-raised there.
+          CODE=0
+          node "${ARGS[@]}" || CODE=$?
+
+          echo "exit_code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "report_path=${REPORT}" >> "$GITHUB_OUTPUT"
+          echo "Script exited ${CODE}; report at ${REPORT}"
+
+      # always(): the report is most valuable precisely on the runs that failed.
+      - name: Publish report to run summary
+        if: always()
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          KIT_ID: ${{ inputs.kit_id }}
+          REPORT_PATH: ${{ steps.run.outputs.report_path }}
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## eSign backfill — ${MODE}"
+            echo ""
+            echo "- **Actor user id:** \`${ACTOR_USER_ID}\`"
+            echo "- **Kit filter:** ${KIT_ID:-_none — all eligible kits_}"
+            echo "- **Script exit code:** \`${EXIT_CODE:-<script did not run>}\`"
+            echo "- **Report:** \`${REPORT_PATH:-<none>}\`"
+            echo "- **Host:** 192.168.11.225"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -n "${REPORT_PATH:-}" && -f "${REPORT_PATH}" ]]; then
+            {
+              echo "### Per-kit report"
+              echo ""
+              echo '```csv'
+              cat "${REPORT_PATH}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_No report file was produced — the script failed before it could write one. See the step log._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Kept beyond the summary because the summary is not downloadable and gets
+      # truncated on a large sweep.
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: esign-backfill-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.run.outputs.report_path }}
+          if-no-files-found: warn
+          retention-days: 90
+
+      # The job's real verdict, deferred until after the report was surfaced.
+      - name: Fail if any kit errored
+        if: always() && steps.run.outputs.exit_code != '0'
+        shell: bash
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          REPORT_PATH: ${{ steps.run.outputs.report_path }}
+        run: |
+          set -euo pipefail
+          echo "::error::Backfill exited ${EXIT_CODE} — at least one kit was classified as 'error'."
+          echo "Read the report for the per-kit reason before re-running: ${REPORT_PATH:-<no report>}"
+          echo "It is also attached to this run as an artifact and printed in the run summary."
+          echo "A re-run is safe for the kits that succeeded, but it re-bills a provider status call for every kit it examines."
+          exit 1

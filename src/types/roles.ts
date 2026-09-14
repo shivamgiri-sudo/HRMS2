@@ -1,0 +1,35 @@
+export type AppRole =
+  | "super_admin"
+  | "admin"
+  | "ceo"
+  // HO-level functional heads
+  | "it_head"
+  | "finance_head"
+  | "tq_head"
+  | "accounts_head"
+  // HR & payroll tiers
+  | "hr"
+  | "payroll_head"
+  | "payroll_admin"
+  | "payroll_hr"
+  // Operations hierarchy
+  | "branch_head"
+  | "branch_admin"
+  | "process_manager"
+  | "manager"
+  | "assistant_manager"
+  | "team_leader"
+  | "tl"
+  // Functional
+  | "wfm"
+  | "finance"
+  | "payroll"
+  | "qa"
+  | "trainer"
+  | "recruiter"
+  | "it"
+  | "it_admin"
+  | "branch_it"
+  | "quality_analyst"
+  | "operations_manager"
+  | "employee";

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/finance/cost-centre-management.service.ts",
+    "src/modules/finance/cost-centre-management.routes.ts"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  // Typecheck for Phase 2 (Batch 4/5's audit fix): Payroll.tsx's Finance-Approve role narrowing
+  // and NativePayrollHOQueues.tsx's UI-level gating on Bank-Change/Manual-TDS/Cheque-Validation.
+  // Scoped per the pattern in tsconfig.budgettopup-check.json / tsconfig.disbursalcenter-check.json
+  // — the root tsconfig has `"files": []` and exits 0 regardless.
+  //
+  //     npx tsc -p tsconfig.phase2rbac-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/Payroll.tsx",
+    "src/pages/NativePayrollHOQueues.tsx",
+    "src/hooks/useUserRole.ts",
+    "src/vite-env.d.ts"
+  ]
+}

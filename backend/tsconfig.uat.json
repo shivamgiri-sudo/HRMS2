@@ -1,0 +1,20 @@
+{
+  "//": [
+    "Scoped typecheck for the UAT governance module.",
+    "",
+    "Running the full backend `tsc` on this machine has repeatedly timed out and left",
+    "unkillable ~350MB orphan processes that starve the box. This config checks only",
+    "src/modules/uat-pipeline plus whatever it imports (tsc follows imports), which is",
+    "the part a change to this module can actually break, and it finishes in seconds.",
+    "",
+    "  npx tsc --noEmit -p tsconfig.uat.json",
+    "",
+    "It does NOT replace the full typecheck in CI — it is the fast local gate."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/modules/uat-pipeline/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

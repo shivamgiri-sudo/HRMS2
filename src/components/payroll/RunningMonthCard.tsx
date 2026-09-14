@@ -1,0 +1,210 @@
+import type { ReactNode } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useRunningSalary } from "@/hooks/useAttendanceHub";
+import { formatLastSynced } from "@/lib/utils";
+
+/**
+ * The single running-month salary card.
+ *
+ * Every surface that shows mid-month earned salary renders THIS component —
+ * Attendance Hub (Salary tab), Running Payroll Breakdown and the employee
+ * Payslip viewer. Before this existed, each page rendered its own subset of the
+ * same API payload with its own month derivation and its own visibility rules,
+ * so the three disagreed about both the number and when to show it.
+ *
+ * All figures are earned-till-date. Projection fields are deliberately not
+ * rendered: `projected_*` assumes every remaining calendar day is worked, which
+ * reads as a promise of pay rather than an estimate. The API still returns them.
+ */
+
+const INR = (v: number | null | undefined) =>
+  `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Current payroll month as YYYY-MM.
+ *
+ * Payroll months are IST months. Deriving this from the browser's local clock
+ * showed the wrong month to anyone outside IST around the month boundary,
+ * which made the running-month salary look inconsistent with Payroll.
+ *
+ * On the 1st–3rd of a new month, salary_prep_run for the new month does not
+ * exist yet and attendance data is empty, so the API returns ₹0 earned for
+ * the new month. The backend resolveDefaultRunMonth helper catches this via a
+ * DB query; this client-side function mirrors the same heuristic so the
+ * query key is already correct before the first API response arrives.
+ */
+export function getIstRunMonth(): string {
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date()); // "YYYY-MM-DD"
+  const dayOfMonth = parseInt(istDate.slice(8, 10), 10);
+  const currentMonth = istDate.slice(0, 7);
+
+  // During the first 3 days of a new month, default to the previous month.
+  // The backend will override with the correct month once the first run is created.
+  if (dayOfMonth <= 3) {
+    const [y, m] = currentMonth.split("-").map(Number);
+    const prevM = m === 1 ? 12 : m - 1;
+    const prevY = m === 1 ? y - 1 : y;
+    return `${prevY}-${String(prevM).padStart(2, "0")}`;
+  }
+  return currentMonth;
+}
+
+interface RunningMonthCardProps {
+  /** Employee to show. May be null while the caller is still resolving it. */
+  employeeId: string | null;
+  /** YYYY-MM. Defaults to the current IST payroll month. */
+  month?: string;
+  /**
+   * Read via the self-service endpoint. Required for employees: the
+   * `/running-summary/:employeeId` route is role-gated and 403s for them.
+   */
+  self?: boolean;
+  /**
+   * Wraps every currency amount before rendering. Used by the payslip page to
+   * apply its blur / "View salary" masking. Defaults to rendering as-is.
+   */
+  renderAmount?: (value: ReactNode) => ReactNode;
+}
+
+export function RunningMonthCard({
+  employeeId,
+  month,
+  self = false,
+  renderAmount,
+}: RunningMonthCardProps) {
+  const runMonth = month ?? getIstRunMonth();
+  const { data: rs, isLoading, isError, error, refetch, dataUpdatedAt } =
+    useRunningSalary(employeeId, runMonth, { self });
+  const amount = renderAmount ?? ((value: ReactNode) => value);
+
+  if (isLoading) return <Skeleton className="h-40 rounded-2xl" />;
+
+  // A failure must not read as "this employee earned nothing". The per-employee
+  // endpoint authorizes a narrower set of roles than either page that renders
+  // this card gates on (wfm and payroll_admin reach the pages but get 403), so
+  // a denial here is a live possibility, not a theoretical one.
+  if (isError) {
+    return (
+      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-6 text-center">
+        <p className="text-sm font-semibold text-rose-800">Running salary could not be loaded.</p>
+        <p className="mt-1 text-xs text-rose-700">
+          {(error as Error)?.message || "The running salary request failed."}
+        </p>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="mt-3 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!rs) return <div className="rounded-2xl border border-slate-200 p-6 text-center text-sm text-slate-500">No running salary data for {runMonth}.</div>;
+
+  /**
+   * APR provenance.
+   *
+   * Operations Executives are meant to be judged on dialler net login, but the
+   * attendance engine falls back to the biometric punch on any day APR has
+   * nothing for — without that, the ~626 of 829 who never appear in the feed
+   * would read as absent every day. The fallback is right for pay and was
+   * invisible here, so the headline now counts only APR-verified days and the
+   * rest is stated plainly underneath.
+   *
+   * Everyone else, and every finalized month, renders exactly as before.
+   */
+  const aprGated = rs.apr_eligible === true;
+  const verifiedDays = Number(rs.apr_verified_payable_days ?? 0);
+  const fallbackDays = Number(rs.fallback_payable_days ?? 0);
+  const fallbackAmount = Number(rs.fallback_salary_till_date ?? 0);
+  const noDataDays = Number(rs.apr_no_data_days ?? 0);
+  const headlineAmount = aprGated ? rs.apr_verified_salary_till_date : rs.earned_salary_till_date;
+  // Zero would read as "earned nothing" rather than "not evidenced", which is
+  // the exact misreading this card exists to prevent.
+  const nothingVerified = aprGated && verifiedDays === 0;
+
+  return (
+    <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white via-white to-[#e8f2fc] p-5 shadow-sm">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+            Running Month Earned{aprGated ? " · APR-verified" : ""}
+          </p>
+          {nothingVerified ? (
+            <p className="mt-1 text-lg font-bold text-amber-700">No APR data for this month</p>
+          ) : (
+            <p className="mt-1 text-2xl font-bold text-slate-950">{amount(INR(headlineAmount))}</p>
+          )}
+          <p className="text-xs text-slate-500 mt-0.5">
+            Net (after deductions){aprGated && fallbackDays > 0 ? ", all days" : ""}:{" "}
+            <span className="font-semibold text-slate-800">{amount(INR(rs.earned_net_till_date))}</span>
+          </p>
+          {/* Says only what is known. These days carry no APR evidence; most came
+              from a biometric punch, but some are only labelled dialler by a lookup
+              that found nothing, so naming the source would overstate it. */}
+          {aprGated && fallbackDays > 0 && (
+            <p className="mt-1 text-xs font-medium text-amber-700">
+              {fallbackDays} {fallbackDays === 1 ? "day" : "days"} not APR-verified —{" "}
+              {amount(INR(fallbackAmount))} paid without a dialler record.
+            </p>
+          )}
+          {aprGated && noDataDays > 0 && (
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {noDataDays} {noDataDays === 1 ? "day" : "days"} with neither APR nor a punch — awaiting WFM resolution, not yet deducted.
+            </p>
+          )}
+          {dataUpdatedAt > 0 && (
+            <p className="text-[10px] text-slate-400 mt-1">
+              {rs.is_finalized && !rs.is_draft
+                ? `Finalised · ${formatLastSynced(dataUpdatedAt)}`
+                : rs.is_draft
+                  ? `Draft (calculated) · ${formatLastSynced(dataUpdatedAt)}`
+                  : `Live estimate · ${formatLastSynced(dataUpdatedAt)}`}
+            </p>
+          )}
+        </div>
+        <div className="rounded-xl bg-[#e8f2fc] px-3 py-1.5 text-xs font-semibold text-[#1B6AB5]">
+          {runMonth}
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-3 text-center border-t border-indigo-100 pt-4">
+        {[
+          {
+            label: aprGated ? "Payable Days (APR)" : "Payable Days",
+            value: aprGated ? verifiedDays : rs.earned_payable_days,
+            sub: aprGated && fallbackDays > 0 ? `+${fallbackDays} unverified` : null,
+          },
+          { label: "Eligible Weekoffs", value: rs.eligible_weekoff_till_date, sub: null },
+          { label: "Eligible Holidays", value: rs.eligible_holiday_till_date, sub: null },
+          { label: "LWP (MTD)", value: rs.lwp_till_date ?? 0, sub: null },
+        ].map(item => (
+          <div key={item.label}>
+            <p className="text-base font-bold text-slate-800">{item.value}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">{item.label}</p>
+            {item.sub && <p className="text-[10px] font-medium text-amber-700 mt-0.5">{item.sub}</p>}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3 text-center border-t border-indigo-100 pt-3 mt-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-700">{amount(INR(rs.pf_employee))}</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">PF (Employee)</p>
+        </div>
+        <div>
+          {rs.esic_applicable === false ? (
+            <p className="text-xs font-medium text-slate-400 italic">Not applicable</p>
+          ) : (
+            <p className="text-sm font-semibold text-slate-700">{amount(INR(rs.esic_employee))}</p>
+          )}
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            ESIC{rs.esic_applicable === false ? " (above ceiling)" : ""}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

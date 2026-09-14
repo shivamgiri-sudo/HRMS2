@@ -1,0 +1,1525 @@
+/**
+ * Employee Creation Orchestrator
+ *
+ * Single source of truth for creating employees from candidates
+ * Enforces all 10 business rules confirmed 2026-07-16
+ *
+ * Business Rules:
+ * 1. Role-based BGV validation (manual review workflow)
+ * 2. Salary lock validation (Payroll HR + Branch Head + Exceptions)
+ * 3. Consent validation (recruitment + onboarding + bgv)
+ * 4. Idempotency (return existing if bridge exists)
+ * 5. Employee code gaps allowed
+ * 6. Reporting manager validation
+ * 7. No duplicate mobile/email blocking
+ * 8. Full transaction rollback on failure
+ * 9. Provisioning failure doesn't block creation
+ * 10. Statutory validation (PAN + Aadhaar duplicate check, format validation)
+ *
+ * Rule 10 widened 2026-08-08. It matched only employee_statutory_info, which
+ * covers 36 of 1,125 active employees (3.2%), and Aadhaar had no duplicate check
+ * at all — so an already-employed person could be converted into a SECOND
+ * employee record. That happened: MAS63086 was raised on 2026-08-05, with a full
+ * joining kit and e-sign chase, for someone already working under MAS62457 whose
+ * attendance runs through 2026-08-06. Both IDs are now checked against the
+ * employees table too (Aadhaar 93% coverage, PAN 81%).
+ *
+ * Rule 7 is unchanged: mobile and email still do NOT block. Mobile is on 100% of
+ * active employees but is shared within families and mistyped constantly; PAN and
+ * Aadhaar identify a person, a phone number identifies a handset.
+ */
+
+import { PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { randomUUID } from 'crypto';
+import { db } from '../../db/mysql.js';
+import { checkBgvReadiness, getBgvReadinessSummary } from '../ats/bgv-readiness.service.js';
+import { PAN_REGEX, AADHAAR_REGEX } from '../ats/bgv-config.js';
+import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
+import { activateIfJoiningDateReached } from './employee-activation.service.js';
+import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
+import { autoGenerateJoiningDocuments } from './employeeJoiningDocuments.service.js';
+import { queueJoiningKit, dispatchJoiningKit } from './joiningKitDispatch.service.js';
+import { generateEmployeeCode } from './employee-code.service.js';
+import { appendJourneyEvent } from '../employees/journeyLog.service.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
+import { issueCandidatePortalAccess } from '../ats/interview.service.js';
+import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
+import { cropFaceForProfilePhoto } from './face-crop.util.js';
+import { normalizeBloodGroup } from './bloodGroup.util.js';
+import { normalizeMaritalStatus } from './maritalStatus.util.js';
+import { writeEmployeePhotoBuffer } from './employee.photo.compat.routes.js';
+import { env } from '../../config/env.js';
+import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
+import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
+import { registerEmployeeInCosec } from "../integrations/cosec/cosec-registration.service.js";
+import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
+import { inboxService } from "../inbox/inbox.service.js";
+import { encryptField } from "../../shared/fieldEncryption.js";
+import { computeAccountBlindIndex } from "../../shared/bankAccountDuplicate.js";
+
+export interface EmployeeCreationInput {
+  candidateId: string;
+  offerId: string;
+  approverId: string;
+}
+
+export interface EmployeeCreationResult {
+  success: boolean;
+  employeeId: string | null;
+  employeeCode: string | null;
+  alreadyExisted: boolean;
+  blockers: Array<{
+    type: string;
+    reason: string;
+    severity: 'critical' | 'warning';
+  }>;
+  warnings: string[];
+  bgvStatus: string;
+  provisioningStatus: {
+    dispatched: boolean;
+    tasksFailed: string[];
+  };
+}
+
+/**
+ * Main orchestrator function - creates employee from approved offer
+ */
+export async function createEmployeeFromCandidate(
+  input: EmployeeCreationInput
+): Promise<EmployeeCreationResult> {
+  const { candidateId, offerId, approverId } = input;
+
+  const result: EmployeeCreationResult = {
+    success: false,
+    employeeId: null,
+    employeeCode: null,
+    alreadyExisted: false,
+    blockers: [],
+    warnings: [],
+    bgvStatus: 'pending',
+    provisioningStatus: {
+      dispatched: false,
+      tasksFailed: [],
+    },
+  };
+
+  const conn: PoolConnection = await db.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // RULE 4: Idempotency - Check if employee already exists
+    const [bridgeRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT employee_id, employee_code FROM ats_onboarding_bridge
+       WHERE candidate_id = ? FOR UPDATE`,
+      [candidateId]
+    );
+
+    if (bridgeRows.length > 0 && (bridgeRows[0] as any).employee_id) {
+      const existing = bridgeRows[0] as any;
+      result.success = true;
+      result.employeeId = existing.employee_id;
+      result.employeeCode = existing.employee_code;
+      result.alreadyExisted = true;
+      result.warnings.push('Employee already created for this candidate');
+
+      await conn.commit();
+      return result;
+    }
+
+    // Get offer details
+    const [offerRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT * FROM ats_employment_offer WHERE id = ? FOR UPDATE`,
+      [offerId]
+    );
+
+    if (offerRows.length === 0) {
+      throw new Error('Offer not found');
+    }
+
+    const offer = offerRows[0] as any;
+
+    // RULE 2: Salary Lock Validation
+    const salaryValidation = await validateSalaryLock(conn, candidateId, offerId);
+    if (!salaryValidation.locked) {
+      result.blockers.push({
+        type: 'salary_not_locked',
+        reason: salaryValidation.reason,
+        severity: 'critical',
+      });
+      await conn.rollback();
+      return result;
+    }
+
+    // RULE 3: Consent Validation
+    const consentValidation = await validateConsents(conn, candidateId);
+    if (!consentValidation.valid) {
+      result.blockers.push(...consentValidation.blockers);
+      // ALLOW creation but flag for manual review
+      result.warnings.push('Consent issues detected - manual review required');
+    }
+
+    // RULE 1: BGV Validation (manual review workflow - doesn't block)
+    //
+    // Failing to COMPUTE readiness must not be more blocking than a negative
+    // readiness result, which only ever warns. It was: the query inside read
+    // three columns that exist in no schema, and the ER_BAD_FIELD_ERROR
+    // travelled out of this transaction, past approveOffer's blocker handling
+    // (which only reacts to a returned result, never a throw) and into the
+    // generic 500 handler. Every branch head approving on /ats/offer-approvals
+    // got "An unexpected server error occurred. Please quote reference …", with
+    // the decision row already written and no employee behind it.
+    //
+    // The query is fixed; this catch is here so the next missing column costs a
+    // warning rather than the whole hire. It cannot hide a *negative* readiness
+    // verdict — that path still runs below and is still surfaced.
+    try {
+      const bgvReadiness = await checkBgvReadiness(candidateId, offer.designation_id);
+      result.bgvStatus = getBgvReadinessSummary(bgvReadiness);
+
+      if (!bgvReadiness.ready) {
+        result.warnings.push(`BGV not complete: ${bgvReadiness.blockers.map(b => b.reason).join(', ')}`);
+        // Employee creation proceeds - manual review workflow
+      }
+
+      if (bgvReadiness.manualReviewRequired) {
+        result.warnings.push('BGV manual review required before activation');
+      }
+    } catch (bgvErr) {
+      const message = bgvErr instanceof Error ? bgvErr.message : String(bgvErr);
+      console.error('[EmployeeOrchestrator] BGV readiness could not be evaluated:', { candidateId, message });
+      result.bgvStatus = 'unknown';
+      result.warnings.push(
+        `BGV readiness could not be evaluated (${message}) — verify the candidate's checks manually before activation.`,
+      );
+    }
+
+    // RULE 11: an unresolved fraud alert stops the conversion.
+    //
+    // This is the only place any fraud signal has a consequence. Everything
+    // else is advisory: the six alerts in production are all open with no
+    // reviewer, overall_status='hold' is computed and read by nobody, and BGV
+    // readiness above explicitly does not block. Detection without a
+    // consequence is not a control.
+    //
+    // It gates creation rather than onboarding submission on purpose. A false
+    // positive — a married-name change, an OCR misread — still lets the
+    // candidate finish all ten steps, and Payroll HR clears it before the offer
+    // converts. Blocking the form would strand real people with no way out.
+    const fraudCheck = await validateNoOpenFraudAlerts(conn, candidateId);
+    if (!fraudCheck.valid) {
+      result.blockers.push(...fraudCheck.blockers);
+      await conn.rollback();
+      return result;
+    }
+
+    // RULE 10: Statutory Validation
+    const statutoryValidation = await validateStatutoryInfo(conn, candidateId);
+    if (!statutoryValidation.valid) {
+      result.blockers.push(...statutoryValidation.blockers);
+      await conn.rollback();
+      return result;
+    }
+
+    // RULE 11: minimum employment age. A critical blocker with a rollback, the
+    // same shape as the statutory check above — an underage hire is not a
+    // "manual review" case, it is one that must not be created.
+    const ageCheck = await resolveVerifiedDob(candidateId, offer?.date_of_joining ?? null);
+    if (ageCheck.isMinor) {
+      result.blockers.push({
+        type: 'underage_candidate',
+        reason: ageCheck.reason,
+        severity: 'critical',
+      });
+      await conn.rollback();
+      return result;
+    }
+    if (ageCheck.conflicts.length > 0) {
+      // Sources disagree on the date of birth. Not a blocker — but HR should see
+      // it rather than have one source silently win.
+      result.warnings.push(
+        `Date of birth differs between sources (${ageCheck.source} says ${ageCheck.dob}); verify before activation.`,
+      );
+    }
+
+    // RULE 6: Reporting Manager Validation
+    if (offer.reporting_manager_id) {
+      const managerValid = await validateReportingManager(conn, offer.reporting_manager_id);
+      if (!managerValid) {
+        result.blockers.push({
+          type: 'invalid_manager',
+          reason: 'Reporting manager does not exist or is inactive',
+          severity: 'critical',
+        });
+        await conn.rollback();
+        return result;
+      }
+    }
+
+    // RULE 5 & 8: Generate employee code (gaps allowed, transaction rollback on failure)
+    const employeeCode = await generateEmployeeCode(conn, offer.emp_type);
+    const employeeId = randomUUID();
+
+    // Get candidate data
+    const [candRows] = await conn.execute<RowDataPacket[]>(
+      // Identity, contact and posting all come from the candidate. The offer
+      // carries none of them — it has no full_name, email, mobile or branch
+      // column — so reading them off `offer` produced blank names and NULL
+      // branch/process on every employee.
+      `SELECT
+         c.full_name,
+         c.mobile,
+         -- applied_for_branch / applied_for_process are VARCHAR(255) and hold a
+         -- branch_master id on some rows and a branch *name* on others. Both
+         -- employees.branch_id and .process_id are foreign keys, so assigning
+         -- the raw value either violates the constraint or silently stores
+         -- NULL. Resolve it to a real id, accepting id or name, and leave it
+         -- NULL only when neither matches.
+         (SELECT b.id FROM branch_master b
+           WHERE b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch
+           LIMIT 1) AS branch_id,
+         (SELECT pm.id FROM process_master pm
+           WHERE pm.id = c.applied_for_process OR pm.process_name = c.applied_for_process
+           LIMIT 1) AS process_id,
+         c.education,
+         COALESCE(p.gender, c.gender) AS gender,
+         COALESCE(p.date_of_birth, c.date_of_birth) AS date_of_birth,
+         COALESCE(p.personal_email_id, c.email) AS personal_email,
+         c.mobile AS personal_phone,
+         p.alt_mobile_number AS alternate_mobile,
+         -- PAN and Aadhaar come from the candidate only. The onboarding profile
+         -- stores them masked (pan_number_masked / aadhaar_number_masked), and a
+         -- masked value written into employee_statutory_info would be worse than
+         -- an absent one — it looks like a real identifier and cannot be filed.
+         c.pan_number,
+         c.aadhar_number,
+         COALESCE(p.uan_number, p.uan, c.uan_number) AS uan_number,
+         COALESCE(p.present_address, c.current_address) AS current_address,
+         COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
+         -- The statutory forms need these; they were collected and then dropped.
+         COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
+         p.marital_status,
+         -- Collected on the Onboarding form and then dropped here, exactly like the
+         -- emergency contact below: the INSERT never named the column, so every employee
+         -- created through this path reached their ID card with a blank Blood Group even
+         -- though the candidate had already supplied it. 15,263 onboarding profiles hold
+         -- a real value. ats_candidate has no blood_group column, so the profile is the
+         -- only source.
+         p.blood_group,
+         -- Form 11 PF opt-out election captured during onboarding
+         COALESCE(p.pf_opt_out_elected, 0) AS pf_opt_out_elected,
+         -- Emergency contact captured on the Onboarding form (OnboardingSteps1to5.tsx).
+         -- Never carried over before: employee_emergency_contact (what the ID card, the
+         -- HR emergency-contact editor and the employee self-service editor all read) got
+         -- no row from conversion, so every new employee's card showed the "Contact HR"
+         -- fallback until someone manually re-typed what the candidate already gave.
+         p.emergency_contact_name,
+         p.emergency_contact_relation,
+         p.emergency_contact_mobile
+       FROM ats_candidate c
+       LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       WHERE c.id = ? LIMIT 1`,
+      [candidateId]
+    );
+
+    const candRow = candRows[0] as any;
+
+    // The candidate is the only source of the name; `offer.full_name` does not
+    // exist, so this used to split undefined and create every employee with a
+    // blank first_name and a generated full_name of a single space.
+    const nameParts = String(candRow?.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+    if (nameParts.length === 0) {
+      throw new Error('Cannot create an employee: the candidate has no name.');
+    }
+    const firstName = nameParts[0];
+    const lastName = nameParts.slice(1).join(' ') || firstName;
+
+    const salaryStartDate = offer.date_of_salary ?? offer.date_of_joining;
+
+    /**
+     * Cost centre — captured at onboarding, and until now dropped here.
+     *
+     * The offer form makes "Cost Centre" a required field and stores the chosen
+     * cost_centre_master.id on ats_employment_offer.cost_centre, which is then mirrored to
+     * ats_payroll_hr_validation.cost_centre_id. Neither reached the employee: this INSERT
+     * never named the column, and no other creation path writes it either, so
+     * employees.cost_centre_id arrived only if someone opened the Edit Employee dialog by
+     * hand. 185 active employees were NULL on 2026-08-15 because of this.
+     *
+     * Resolved rather than assigned straight through, for two reasons:
+     *   - ats_employment_offer.cost_centre is VARCHAR(100) with NO foreign key, while
+     *     employees.cost_centre_id is CHAR(36) WITH one. Passing an unmatched value would
+     *     raise ER_NO_REFERENCED_ROW and roll back the whole conversion — turning a blank
+     *     field into a candidate who cannot be onboarded at all. A cost centre that cannot
+     *     be resolved must leave the employee unassigned, exactly as today, not block them.
+     *   - the same defensive shape is already used above for branch_id and process_id,
+     *     which hold an id on some rows and a name on others.
+     *
+     * The validation row is consulted as a fallback because the payroll-HR path can write
+     * ats_payroll_hr_validation.cost_centre_id directly.
+     */
+    const rawCostCentre = offer.cost_centre ?? null;
+    const [ccRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT cm.id, cm.cost_centre_code, cm.process_id, cm.branch_id
+         FROM cost_centre_master cm
+        WHERE cm.id = COALESCE(
+                ?,
+                (SELECT v.cost_centre_id FROM ats_payroll_hr_validation v
+                  WHERE v.candidate_id = ? LIMIT 1)
+              )
+        LIMIT 1`,
+      [rawCostCentre, candidateId]
+    );
+    const ccRow = ccRows[0] as { id?: string; cost_centre_code?: string; process_id?: string; branch_id?: string } | undefined;
+    const costCentreId   = ccRow?.id ?? null;
+    const costCentreCode = ccRow?.cost_centre_code ?? null;
+    // Inherit process_id and branch_id from cost_centre if candidate data is missing
+    const resolvedProcessId = candRow?.process_id ?? ccRow?.process_id ?? null;
+    const resolvedBranchId  = candRow?.branch_id ?? ccRow?.branch_id ?? null;
+    if (!costCentreId) {
+      result.warnings.push(
+        'No cost centre could be resolved for this employee; it must be set manually.'
+      );
+    }
+
+    // Create employee record (active_status=0, no auth_user yet)
+    await conn.execute(
+      // employment_status must be written explicitly: the column defaults to
+      // 'Active', and the nightly activation job only selects 'preboarding',
+      // so a future-dated joiner left on the default is never activated.
+      `INSERT INTO employees
+         (id, employee_code, first_name, last_name, email, official_email, mobile,
+          personal_email, personal_phone, alternate_mobile,
+          gender, date_of_birth, father_name, marital_status, blood_group,
+          address1, permanent_address1,
+          -- Carried from the candidate at conversion (owner decision 2026-09-02). These
+          -- two columns were never written here, so every employee created through this
+          -- path had NULL PAN/Aadhaar while 83% / 94% of the existing workforce carried
+          -- them from legacy import. ESI registration reads employees.pan_number and had
+          -- nothing to read for anyone onboarded through the current flow.
+          pan_number, aadhaar_number,
+          branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
+          date_of_joining, salary_start_date, employment_type, reporting_manager_id,
+          user_id, active_status, employment_status)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+      [
+        employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
+        candRow?.personal_email ?? null,
+        candRow?.mobile ?? null,
+        candRow?.personal_email ?? null,
+        candRow?.personal_phone ?? null,
+        candRow?.alternate_mobile ?? null,
+        candRow?.gender ?? null,
+        candRow?.date_of_birth ?? null,
+        toStoredName(candRow?.father_name),
+        normalizeMaritalStatus(candRow?.marital_status),
+        // Normalised, never stored raw: the onboarding field is free text and holds the
+        // same 'NA' / 'B+ve' shapes as the legacy employee rows. An unrecognisable value
+        // becomes NULL so the card prints an honest blank instead of a fake reading.
+        normalizeBloodGroup(candRow?.blood_group),
+        candRow?.current_address ?? null,
+        candRow?.permanent_address ?? null,
+        // Same validated-or-null rule the onboarding capture uses: a malformed or masked
+        // value is stored as NULL rather than written into a column downstream readers
+        // treat as a filable identifier.
+        /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(String(candRow?.pan_number ?? "").trim().toUpperCase())
+          ? String(candRow?.pan_number).trim().toUpperCase()
+          : null,
+        /^[0-9]{12}$/.test(String(candRow?.aadhar_number ?? "").replace(/\D/g, ""))
+          ? String(candRow?.aadhar_number).replace(/\D/g, "")
+          : null,
+        resolvedBranchId,
+        resolvedProcessId,
+        offer.department_id ?? null,
+        offer.designation_id ?? null,
+        costCentreId,
+        costCentreCode,
+        offer.date_of_joining,
+        salaryStartDate,
+        offer.emp_type,
+        offer.reporting_manager_id ?? null,
+      ]
+    );
+
+    // Create related records (statutory, salary, nominee, leave, pf-opt-out)
+    await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow, approverId);
+
+    // Link the bridge. The idempotency guard above reads this row, so if the
+    // update matches nothing the guard is silently defeated and a second
+    // approval would create a second employee — insert the row rather than
+    // letting the UPDATE no-op.
+    const [bridgeUpdate] = await conn.execute<ResultSetHeader>(
+      `UPDATE ats_onboarding_bridge
+       SET employee_id = ?, employee_code = ?, converted_at = NOW()
+       WHERE candidate_id = ?`,
+      [employeeId, employeeCode, candidateId]
+    );
+    if (bridgeUpdate.affectedRows === 0) {
+      await conn.execute(
+        `INSERT INTO ats_onboarding_bridge (id, candidate_id, employee_id, employee_code, converted_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE employee_id = VALUES(employee_id),
+                                 employee_code = VALUES(employee_code),
+                                 converted_at = VALUES(converted_at)`,
+        [randomUUID(), candidateId, employeeId, employeeCode]
+      );
+    }
+
+    // Update offer status. The ENUM is ('draft','submitted','bh_approved',
+    // 'bh_rejected') — 'approved' is not a member and was rejected outright.
+    await conn.execute(
+      `UPDATE ats_employment_offer SET status = 'bh_approved', approved_at = NOW() WHERE id = ?`,
+      [offerId]
+    );
+
+    // Update candidate status
+    await conn.execute(
+      `UPDATE ats_candidate SET profile_status = 'onboarded', employee_code = ? WHERE id = ?`,
+      [employeeCode, candidateId]
+    );
+
+    await conn.commit();
+
+    result.success = true;
+    result.employeeId = employeeId;
+    result.employeeCode = employeeCode;
+
+    // Payroll Head mandatory review gate (migration 1541/1542). Post-commit,
+    // fire-and-forget — mirrors the AML screening block below, and must never
+    // be able to affect whether this hire itself succeeded.
+    //
+    // priority raised 'normal' -> 'high' 2026-09-06: this notification WAS
+    // firing correctly (verified live — 141 real rows in work_inbox_item,
+    // spanning three weeks) but sat unread. Root cause wasn't a missing or
+    // broken producer, it was sort order: /api/inbox/my-pending orders
+    // FIELD(priority,'urgent','high','normal','low'), and the two active
+    // payroll_head users each carry 24-87 higher-priority items ahead of
+    // these in their combined queue — normal-priority items were being
+    // correctly delivered and then permanently buried. The sibling
+    // rejection notification for the same review (payroll_head_review_rejected,
+    // below in this module) was already 'high'; this is the same signal at
+    // the other end of the same review and belongs at the same priority —
+    // an employee excluded from every payroll run until this is actioned is
+    // not a routine item.
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key = 'payroll_head'`
+    ).then(async ([rows]) => {
+      const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
+      await Promise.allSettled(
+        userIds.map((userId) =>
+          inboxService.createItem({
+            user_id: userId,
+            type: 'payroll_head_review_pending',
+            title: `Salary review needed: ${candRow?.full_name ?? employeeCode}`,
+            description: `New employee ${employeeCode} is waiting on salary/document/BGV/bank review before payroll can build their salary.`,
+            entity_type: 'employee',
+            entity_id: employeeId,
+            action_url: `/payroll/salary-review/${employeeId}`,
+            priority: 'high',
+          })
+        )
+      );
+    }).catch((error) => {
+      console.error(`[EmployeeOrchestrator] Could not notify payroll_head of new review for ${employeeCode}:`, (error as Error)?.message);
+    });
+
+    // Payroll HR notification: complete salary component assignment in ATS.
+    // Without this step, the employee will have no basic/HRA/gross breakdown
+    // and payroll cannot build their salary line even if the Payroll Head approves.
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key IN ('payroll_hr','payroll','payroll_admin')`
+    ).then(async ([rows]) => {
+      const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
+      await Promise.allSettled(
+        userIds.map((userId) =>
+          inboxService.createItem({
+            user_id: userId,
+            type: 'payroll_hr_salary_component_pending',
+            title: `Salary components needed: ${candRow?.full_name ?? employeeCode}`,
+            description: `New employee ${employeeCode} joined on ${offer?.date_of_joining ?? 'N/A'}. `
+              + `Complete the salary component assignment (basic / HRA / gross breakdown) in ATS `
+              + `so their salary can be built in this month's payroll run.`,
+            entity_type: 'employee',
+            entity_id: employeeId,
+            action_url: `/ats/candidates/${candidateId}/salary-assignment`,
+            priority: 'high',
+          })
+        )
+      );
+    }).catch((error) => {
+      console.error(`[EmployeeOrchestrator] Could not notify payroll_hr of salary component pending for ${employeeCode}:`, (error as Error)?.message);
+    });
+
+    // AML screening, once the employee code exists and the hire is committed.
+    //
+    // Deliberately here rather than during onboarding: this screens someone who
+    // has been hired, and a slow or failing provider must never be able to
+    // reverse that. Which designations need it is decided by the existing
+    // per-role policy, so an executive role is skipped without a new rule being
+    // written for it.
+    await queueAmlScreening({ candidateId, employeeId, designationId: offer.designation_id ?? null })
+      .catch((error) => {
+        result.warnings.push('AML screening could not be queued — raise it with Payroll HR');
+        console.error(`[EmployeeOrchestrator] AML screening not queued for ${employeeCode}:`, (error as Error)?.message);
+      });
+
+    // Promote the candidate's mandatory onboarding Live Selfie to employee
+    // avatar_url/photo_url. Previously this read ats_candidate.selfie_url — the
+    // legacy short-form's flat field, not the real onboarding document — and
+    // self-admittedly no-op'd whenever that value was an auth-gated
+    // /api/files/candidate/ URL, which is the normal case. The correct source is
+    // the candidate_onboarding_document row (doc_type "Live Selfie") the
+    // mandatory-gate onboarding flow writes.
+    //
+    // Genuinely fire-and-forget now, not just labelled that way. This block was
+    // commented "(non-blocking)" while still sitting behind an `await` — the two
+    // AWAITED calls inside it, cropFaceForProfilePhoto -> detectFaceBbox, run a
+    // TensorFlow.js/WASM face-detection model (@vladmandic/face-api) that lazily
+    // loads three neural nets from disk and initializes the WASM backend on the
+    // FIRST call after every process restart. That cold load routinely takes
+    // 10-30+ seconds — and while it runs, it also occupies Node's single event
+    // loop, so unrelated concurrent requests (a reject on a different offer, a
+    // second approve) queue up behind it too, not just this one. That is
+    // Branch Head's "offer approve/reject take a long time, sometimes 30s
+    // timeout" on /ats/offer-approvals. dispatchJoinProvisioningTasks just below
+    // was already moved off this same blocking pattern for exactly this
+    // failure mode ("was causing 30+ second timeouts for Branch Head") — this
+    // step is the one survivor of that fix.
+    (async () => {
+      try {
+        const [selfieDocRows] = await db.execute<RowDataPacket[]>(
+          `SELECT file_path FROM candidate_onboarding_document
+            WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
+            ORDER BY uploaded_at DESC LIMIT 1`,
+          [candidateId]
+        );
+        const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
+        const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
+
+        if (resolvedPath) {
+          const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
+          await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
+          console.log(`[EmployeeOrchestrator] Onboarding Live Selfie auto-cropped and promoted to employee avatar for ${employeeCode}`);
+        } else if (storedPath) {
+          // Row exists but the file isn't reachable on this machine (see
+          // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
+          // path-resolution class of already-missing files).
+          console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
+        }
+      } catch (selfieErr) {
+        console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
+      }
+    })();
+
+    // RULE 9: Provisioning failure doesn't block creation — fire-and-forget so
+    // sequential SMTP sends inside dispatchJoinProvisioningTasks do not hold
+    // the HTTP response open (was causing 30+ second timeouts for Branch Head).
+    dispatchJoinProvisioningTasks({
+      employeeId,
+      employeeCode,
+      // Name and branch live on the candidate; the offer has neither column.
+      employeeName: candRow?.full_name ?? null,
+      branchId: candRow?.branch_id ?? null,
+      actorUserId: approverId,
+      triggerEventId: offerId,
+      joiningDate: offer.date_of_joining,
+    }).catch((provErr: unknown) => {
+      console.error('[EmployeeOrchestrator] Provisioning dispatch failed:', provErr instanceof Error ? provErr.message : provErr);
+    });
+    result.provisioningStatus.dispatched = true;
+
+    // Non-blocking LMS provisioning — errors do not block employee creation
+    provisionLmsIdentityForEmployee({
+      employeeCode,
+      createdBy: approverId ?? "system",
+    }).catch((err) => {
+      console.error('[EmployeeOrchestrator] LMS auto-provisioning failed:', err);
+    });
+
+    // Non-blocking COSEC biometric registration — errors do not block employee creation
+    registerEmployeeInCosec(employeeId, employeeCode).catch((err) => {
+      console.error('[EmployeeOrchestrator] COSEC registration failed:', err);
+    });
+
+    // ── Post-code steps ────────────────────────────────────────────────────
+    // These previously existed only in approveOfferLegacy (marked DO NOT USE),
+    // so the live path never ran them: no joining-document pack was ever
+    // created, no journey event, no audit row, and Payroll HR was never told.
+    // All are fire-and-forget — the employee is already committed and must not
+    // be rolled back by a downstream notification failure.
+
+    appendJourneyEvent({
+      employeeId,
+      eventType: 'hiring',
+      eventDate: offer.date_of_joining,
+      description: `Joined through ATS as ${employeeCode}`,
+      module: 'ATS',
+      triggeredBy: approverId,
+      metadata: { candidate_id: candidateId, offer_id: offerId },
+    }).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Journey log failed for employee', employeeId, ':', err instanceof Error ? err.message : String(err));
+    });
+
+    // No auth_user or password at this stage — IT provisioning creates the
+    // account with the official email later.
+    logSensitiveAction({
+      actor_user_id: approverId,
+      action_type: 'employee_created_preboarding',
+      module_key: 'ats',
+      entity_type: 'employee',
+      entity_id: employeeId,
+      employee_id: employeeId,
+      change_summary: {
+        candidate_id: candidateId,
+        employee_code: employeeCode,
+        active_status: 0,
+        awaiting_it_provisioning: true,
+      },
+    }).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Sensitive action log failed:', err instanceof Error ? err.message : String(err));
+    });
+
+    // Build the joining-document checklist and pre-filled drafts, then
+    // automatically queue and dispatch the eSign kit so the candidate receives
+    // the sign link without HR needing to click "Send for eSign" manually.
+    autoGenerateJoiningDocuments(employeeId, candidateId, approverId)
+      .then(() => {
+        // Auto-dispatch the eSign kit: fire-and-forget, blocked reason is logged.
+        // `hr_fill_pending` block is expected when HR-filled docs aren't ready yet —
+        // HR can re-send manually from the control room once they fill those fields.
+        return queueJoiningKit({
+          employeeId,
+          candidateId: candidateId ?? null,
+          actorUserId: approverId,
+          triggerSource: 'auto_employee_creation',
+        }).then(({ kitId }) => dispatchJoiningKit(kitId, approverId))
+          .then(outcome => {
+            console.log(`[EmployeeOrchestrator] Auto joining kit dispatch: ${outcome.status}`, {
+              employeeCode,
+              blockedReason: outcome.blockedReason ?? null,
+            });
+          });
+      })
+      .catch((err: unknown) => {
+        console.error('[EmployeeOrchestrator] Auto joining document/kit failed:', {
+          employeeCode,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+
+    // Tell Payroll HR there is a pack to issue.
+    void notifyPayrollHrToIssueJoiningDocuments({
+      employeeId,
+      employeeCode,
+      employeeName: candRow?.full_name ?? null,
+      candidateId,
+      branchId: candRow?.branch_id ?? null,
+    });
+
+    // Candidate-portal credentials, deliberately deferred to here rather than
+    // interview selection — see issueCandidatePortalAccess for why.
+    issueCandidatePortalAccess(candidateId).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Portal access issuance failed:', {
+        employeeCode,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // Consent and BGV problems are deliberately non-blocking, but the warnings
+    // were only ever returned in the HTTP response and then discarded — a
+    // "manual review required" that no system tracked and nobody was assigned.
+    void raiseManualReviewWorkItem(employeeId, candidateId, employeeCode, result.warnings);
+
+    // Real-time activation: if joining date is today or past, activate immediately
+    if (result.employeeId && offer.date_of_joining) {
+      try {
+        const activated = await activateIfJoiningDateReached(
+          result.employeeId,
+          offer.date_of_joining,
+          approverId
+        );
+        if (activated) {
+          result.warnings.push('Employee activated immediately - joining date is today');
+        }
+      } catch (activationErr) {
+        // Non-blocking - cron will handle it
+        console.warn('[EmployeeOrchestrator] Real-time activation failed, cron will handle:', activationErr);
+      }
+    }
+
+    return result;
+
+  } catch (err) {
+    // RULE 8: Full rollback on failure
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+/**
+ * Record consent/BGV warnings as an assignable work item.
+ *
+ * Without this the warnings existed only in the API response for one request,
+ * so an employee could be created with withdrawn DPDP consent or incomplete BGV
+ * and nothing downstream would ever surface it.
+ */
+async function raiseManualReviewWorkItem(
+  employeeId: string,
+  candidateId: string,
+  employeeCode: string,
+  warnings: string[],
+): Promise<void> {
+  if (!warnings.length) return;
+  try {
+    await db.execute(
+      `INSERT INTO work_item (id,item_type,title,description,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at)
+       VALUES (UUID(),'EMPLOYEE_ONBOARDING_MANUAL_REVIEW',?,?,'employees','employee',?,'hr','high','pending',NOW())
+       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+      [
+        `Manual review required for ${employeeCode}`,
+        `Employee created with unresolved warnings (candidate ${candidateId}):\n- ${warnings.join('\n- ')}`,
+        employeeId,
+      ],
+    );
+  } catch (err: unknown) {
+    console.error('[EmployeeOrchestrator] Failed to raise manual-review work item:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Tell Payroll HR in the joiner's branch that a joining-document pack is ready
+ * to issue. Entirely non-blocking: the employee already exists, and a missing
+ * mailbox must never surface as a creation failure.
+ */
+async function notifyPayrollHrToIssueJoiningDocuments(params: {
+  employeeId: string;
+  employeeCode: string;
+  employeeName: string;
+  candidateId: string;
+  branchId: string | null;
+}): Promise<void> {
+  try {
+    const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+    // The name comes from employees, not auth_user: auth_user has no full_name
+    // column (id, email, password_hash, …), so selecting u.full_name threw
+    // ER_BAD_FIELD_ERROR and no Payroll HR was ever told a pack was ready. The
+    // employees row is already joined here, and it is where the name lives.
+    const [hrRows] = await db.execute<RowDataPacket[]>(
+      `SELECT u.email, e.full_name
+         FROM auth_user u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+        WHERE ur.role_key = 'payroll_hr'
+          AND (? IS NULL OR e.branch_id = ?)
+        LIMIT 3`,
+      [params.branchId, params.branchId],
+    );
+
+    if ((hrRows as RowDataPacket[]).length === 0) {
+      console.warn(`[EmployeeOrchestrator] No payroll_hr users found for branch ${params.branchId}, employee ${params.employeeCode}`);
+      return;
+    }
+
+    for (const hr of hrRows as RowDataPacket[]) {
+      await sendPayrollHrJoiningDocNotification({
+        to: hr.email,
+        hrName: hr.full_name,
+        employeeCode: params.employeeCode,
+        employeeName: params.employeeName,
+        joiningDocUrl: `${baseUrl}/employees/${params.employeeId}/joining-documents`,
+        candidateId: params.candidateId,
+      }).catch((err: unknown) => console.error('[EmployeeOrchestrator] payroll-hr email failed', err));
+    }
+  } catch (err: unknown) {
+    console.error('[EmployeeOrchestrator] Payroll HR notification failed:', {
+      employeeCode: params.employeeCode,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Validate salary is locked and ready
+ */
+async function validateSalaryLock(
+  conn: PoolConnection,
+  candidateId: string,
+  offerId: string
+): Promise<{ locked: boolean; reason: string }> {
+  // Check Branch Head approval (joined via payroll_validation → candidate)
+  const [bhApproval] = await conn.execute<RowDataPacket[]>(
+    `SELECT bha.approval_status
+     FROM ats_branch_head_approval bha
+     JOIN ats_payroll_hr_validation pv ON pv.id = bha.payroll_validation_id
+     WHERE pv.candidate_id = ?
+     ORDER BY bha.approved_at DESC LIMIT 1`,
+    [candidateId]
+  );
+
+  if (bhApproval.length === 0 || (bhApproval[0] as any).approval_status !== 'approved') {
+    return { locked: false, reason: 'Branch Head approval pending' };
+  }
+
+  // Check Payroll HR validation
+  const [payrollValidation] = await conn.execute<RowDataPacket[]>(
+    `SELECT validation_status FROM ats_payroll_hr_validation
+     WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [candidateId]
+  );
+
+  if (payrollValidation.length === 0 || (payrollValidation[0] as any).validation_status !== 'validated') {
+    return { locked: false, reason: 'Payroll HR validation pending' };
+  }
+
+  // Check salary exceptions
+  const [exceptions] = await conn.execute<RowDataPacket[]>(
+    `SELECT status FROM salary_exception_proposal
+     WHERE candidate_id = ? AND status = 'pending' LIMIT 1`,
+    [candidateId]
+  );
+
+  if (exceptions.length > 0) {
+    return { locked: false, reason: 'Salary exception approval pending' };
+  }
+
+  return { locked: true, reason: 'Salary locked and approved' };
+}
+
+/**
+ * Validate mandatory consents
+ */
+async function validateConsents(
+  conn: PoolConnection,
+  candidateId: string
+): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> }> {
+  const blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> = [];
+
+  const requiredConsents = ['recruitment', 'onboarding', 'bgv'];
+
+  for (const purposeCode of requiredConsents) {
+    // Use dpdp_consent_register (actual table — confirmed 2026-07-16)
+    const [consentRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT consent_status FROM dpdp_consent_register
+       WHERE candidate_id = ? AND purpose_code = ?
+       ORDER BY updated_at DESC LIMIT 1`,
+      [candidateId, purposeCode]
+    );
+
+    if (consentRows.length === 0) {
+      blockers.push({
+        type: `consent_${purposeCode}_missing`,
+        reason: `${purposeCode} consent not recorded`,
+        severity: 'warning',
+      });
+    } else if ((consentRows[0] as any).consent_status === 'withdrawn') {
+      blockers.push({
+        type: `consent_${purposeCode}_withdrawn`,
+        reason: `${purposeCode} consent was withdrawn - manual review required`,
+        severity: 'warning',
+      });
+    }
+  }
+
+  return { valid: blockers.filter(b => b.severity === 'critical').length === 0, blockers };
+}
+
+/**
+ * Refuse conversion while a fraud alert is still open against the candidate.
+ *
+ * Only `critical` and `high` block. `medium` covers FRAUD_CHECK_FAILED — a
+ * check that could not complete, which merits a look but is not evidence
+ * against the person, and blocking on it would punish candidates for our own
+ * outages.
+ *
+ * Clearing an alert is a reviewer action that sets its status away from 'open',
+ * so a resolved case simply stops matching here. Every blocking alert type is
+ * named in the message: a blocker nobody can act on gets overridden blindly.
+ *
+ * Exported so the gate can be tested directly; the orchestrator's own path is
+ * covered by a contract test that also checks this is not wrapped in a
+ * try/catch, which is how BGV readiness ended up unable to block anything.
+ */
+/**
+ * Screen the new employee for AML, if their designation calls for it.
+ *
+ * Runs after the employee record exists, never inside the creation
+ * transaction. AML is slow and provider-dependent, and this is screening for
+ * someone already hired — letting a provider outage unwind a completed hire
+ * would be the wrong trade in every case.
+ *
+ * The decision is not invented here. getBgvRequirementsByDesignation() already
+ * returns an `aml` flag per role, already read by the readiness service, true
+ * for six designations and false by default — so an executive role is skipped
+ * exactly as intended, and the policy stays in one place.
+ *
+ * There is no AML provider configured today (nothing in org_settings matches
+ * `aml` or `prescreen`). Rather than pass quietly, that records a manual_review
+ * check saying so — the same rule applied to face match, because an
+ * unconfigured provider must never look like a clean candidate.
+ */
+async function queueAmlScreening(input: {
+  candidateId: string;
+  employeeId: string;
+  designationId: string | null;
+}): Promise<void> {
+  if (!input.designationId) return;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`,
+    [input.designationId],
+  );
+  const designationName = String((rows as RowDataPacket[])[0]?.designation_name ?? "").trim();
+  if (!designationName) return;
+
+  const { getBgvRequirementsByDesignation } = await import("../ats/bgv-config.js");
+  if (!getBgvRequirementsByDesignation(designationName).aml) return;
+
+  const [cfg] = await db.execute<RowDataPacket[]>(
+    `SELECT setting_value FROM org_settings
+      WHERE setting_key IN ('aml_api_url', 'prescreening_api_url')
+        AND setting_value IS NOT NULL AND setting_value <> ''
+      LIMIT 1`,
+  ).catch(() => [[] as RowDataPacket[]]);
+
+  const configured = (cfg as RowDataPacket[]).length > 0;
+  try {
+    await db.execute(
+      `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
+       VALUES (?, ?, 'aml', ?, 'manual_review', ?, CAST(? AS JSON))`,
+      [
+        randomUUID(),
+        input.candidateId,
+        configured ? "prescreening" : "system",
+        configured
+          ? `AML screening required for ${designationName} — queued.`
+          : `AML screening is required for ${designationName}, but no AML provider is configured. A human must clear this.`,
+        JSON.stringify({ designation: designationName, providerConfigured: configured, employeeId: input.employeeId }),
+      ],
+    );
+  } catch (error) {
+    // check_type is an ENUM and does not list 'aml' until sql/1060 is applied,
+    // and production runs SKIP_MIGRATIONS=true. Under STRICT mode that INSERT
+    // throws. Named explicitly rather than left as a generic SQL error,
+    // because "AML silently recorded nothing" is precisely the failure this
+    // whole change exists to stop.
+    const message = (error as Error)?.message ?? String(error);
+    if (/check_type/i.test(message) || /Data truncated/i.test(message)) {
+      throw new Error(
+        `AML screening could not be recorded for ${designationName}: candidate_bgv_check.check_type `
+        + `does not accept 'aml' yet. Apply backend/sql/1060_bgv_check_type_aml.sql. (${message})`,
+      );
+    }
+    throw error;
+  }
+}
+
+export async function validateNoOpenFraudAlerts(
+  conn: PoolConnection,
+  candidateId: string,
+): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' | 'warning' }> }> {
+  const [rows] = await conn.execute<RowDataPacket[]>(
+    `SELECT id, alert_type, severity
+       FROM candidate_fraud_alert
+      WHERE candidate_id = ?
+        AND LOWER(COALESCE(status, 'open')) = 'open'
+        AND LOWER(COALESCE(severity, '')) IN ('critical', 'high')
+      ORDER BY created_at ASC`,
+    [candidateId],
+  );
+
+  // The severity filter is applied here as well as in the query. Leaving it
+  // only in the SQL means the rule that decides whether someone can be hired
+  // exists nowhere a reader or a test can see it, and a later edit to the
+  // WHERE clause would silently widen what blocks.
+  const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
+  const open = (rows as RowDataPacket[]).filter((row) =>
+    BLOCKING_SEVERITIES.has(String(row.severity ?? '').toLowerCase()));
+  if (!open.length) return { valid: true, blockers: [] };
+
+  const types = [...new Set(open.map((row) => String(row.alert_type)))];
+  return {
+    valid: false,
+    blockers: [{
+      type: 'FRAUD_ALERT_OPEN',
+      severity: 'critical',
+      reason:
+        `${open.length} unresolved fraud alert(s) on this candidate: ${types.join(', ')}. `
+        + `Payroll HR must review and clear them before an employee record can be created.`,
+    }],
+  };
+}
+
+/**
+ * Validate statutory info (PAN format, duplicate check)
+ */
+async function validateStatutoryInfo(
+  conn: PoolConnection,
+  candidateId: string
+): Promise<{ valid: boolean; blockers: Array<{ type: string; reason: string; severity: 'critical' }> }> {
+  const blockers: Array<{ type: string; reason: string; severity: 'critical' }> = [];
+
+  // PAN and Aadhaar come from the candidate only — the same rule the employee
+  // INSERT above already follows. candidate_onboarding_profile has no
+  // pan_number or aadhar_number column at all; it stores pan_number_masked,
+  // pan_number_hash, pan_number_encrypted and aadhaar_number_masked. So
+  // COALESCE(p.pan_number, ...) was not a fallback, it was
+  // ER_BAD_FIELD_ERROR: Unknown column 'p.pan_number' in 'field list' on every
+  // approval — the same 500 as c.fresher, one query further along the path.
+  //
+  // Reading the masked column instead would be worse than reading nothing: a
+  // masked PAN passes the format check, gets stored as though it were real, and
+  // cannot be filed with anyone.
+  const [candRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT c.pan_number, c.aadhar_number
+     FROM ats_candidate c
+     WHERE c.id = ? LIMIT 1`,
+    [candidateId]
+  );
+
+  const panNumber = (candRows[0] as any)?.pan_number?.trim();
+  const aadhaarNumber = (candRows[0] as any)?.aadhar_number?.trim();
+
+  // Validate PAN format
+  if (panNumber) {
+    if (!PAN_REGEX.test(panNumber)) {
+      blockers.push({
+        type: 'invalid_pan_format',
+        reason: `Invalid PAN format: ${panNumber}`,
+        severity: 'critical',
+      });
+    } else {
+      // Check PAN duplicate (RULE 10)
+      //
+      // This used to read employee_statutory_info ALONE, and that made it a
+      // guard in name only. Measured 2026-08-08: the table holds 33,436 rows,
+      // but only 36 of the 1,125 ACTIVE employees join to one carrying a PAN —
+      // 3.2% coverage, so 97% of the workforce could be re-onboarded without
+      // tripping it. The employees table itself is the populated source:
+      // pan_number on 915 of 1,125 active (81%), aadhaar_number on 1,043 (93%).
+      // Both are consulted now; statutory_info stays because the few rows it
+      // does have are still true.
+      const existing = await findActiveEmployeeByStatutoryId(conn, 'pan', panNumber);
+      if (existing) {
+        blockers.push({
+          type: 'duplicate_pan',
+          reason: `PAN ${panNumber} already registered to ACTIVE employee ${existing.employee_code} (${existing.full_name}). This candidate is already employed — converting them would create a second employee record for one person. If this is a genuine rehire, close the existing employment first.`,
+          severity: 'critical',
+        });
+      }
+    }
+  }
+
+  // Validate Aadhaar format
+  if (aadhaarNumber && !AADHAAR_REGEX.test(aadhaarNumber)) {
+    blockers.push({
+      type: 'invalid_aadhaar_format',
+      reason: `Invalid Aadhaar format: must be 12 digits`,
+      severity: 'critical',
+    });
+  } else if (aadhaarNumber) {
+    // Aadhaar had NO duplicate check at all — only a format test. It is the
+    // better key of the two here: 93% of active employees carry one against
+    // PAN's 81%. This is the check that would have stopped MAS63086, a full
+    // joining kit and e-sign chase raised on 2026-08-05 for someone already
+    // working under MAS62457 with attendance through 2026-08-06.
+    const existing = await findActiveEmployeeByStatutoryId(conn, 'aadhaar', aadhaarNumber);
+    if (existing) {
+      blockers.push({
+        type: 'duplicate_aadhaar',
+        reason: `Aadhaar already registered to ACTIVE employee ${existing.employee_code} (${existing.full_name}). This candidate is already employed — converting them would create a second employee record for one person. If this is a genuine rehire, close the existing employment first.`,
+        severity: 'critical',
+      });
+    }
+  }
+
+  return { valid: blockers.length === 0, blockers };
+}
+
+/**
+ * The employee, if any, currently ACTIVE under this PAN or Aadhaar.
+ *
+ * Keyed on active_status = 1 deliberately, so a genuine rehire still converts:
+ * a resigned or previously-onboarding record is active_status = 0 and does not
+ * block. It also means a half-finished conversion cannot block its own retry —
+ * a freshly created employee is still `preboarding` / active_status = 0.
+ *
+ * Reads the candidate's raw value against the employees table and against
+ * employee_statutory_info. Deliberately NOT pan_blind_index: that column is
+ * present but empty on every one of the 1,125 active employees, so joining on it
+ * would silently match nothing and reinstate the hole this closes.
+ */
+async function findActiveEmployeeByStatutoryId(
+  conn: PoolConnection,
+  kind: 'pan' | 'aadhaar',
+  value: string
+): Promise<{ employee_code: string; full_name: string } | null> {
+  const employeeColumn = kind === 'pan' ? 'e.pan_number' : 'e.aadhaar_number';
+  // employee_statutory_info spells it aadhaar_id, not aadhaar_number — the two
+  // tables disagree, and guessing the employees-table name here would throw
+  // ER_BAD_FIELD_ERROR on every conversion. Verified against live schema.
+  const statutoryColumn = kind === 'pan' ? 's.pan_number' : 's.aadhaar_id';
+
+  try {
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `SELECT e.employee_code,
+              TRIM(CONCAT_WS(' ', e.first_name, e.last_name)) AS full_name
+         FROM employees e
+    LEFT JOIN employee_statutory_info s ON s.employee_id = e.id
+        WHERE e.active_status = 1
+          AND ( (${employeeColumn} IS NOT NULL AND ${employeeColumn} <> '' AND ${employeeColumn} = ?)
+             OR (${statutoryColumn} IS NOT NULL AND ${statutoryColumn} <> '' AND ${statutoryColumn} = ?) )
+        LIMIT 1`,
+      [value, value]
+    );
+    const hit = rows[0] as { employee_code?: string; full_name?: string } | undefined;
+    return hit?.employee_code
+      ? { employee_code: String(hit.employee_code), full_name: String(hit.full_name ?? '').trim() }
+      : null;
+  } catch (error) {
+    // employee_statutory_info.aadhaar_number may not exist on every environment.
+    // A duplicate check that throws must not fail OPEN — that is how the
+    // original guard came to pass everything — so fall back to the employees
+    // table, which is the source with real coverage, and only give up if that
+    // also fails.
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `SELECT employee_code, TRIM(CONCAT_WS(' ', first_name, last_name)) AS full_name
+         FROM employees
+        WHERE active_status = 1
+          AND ${employeeColumn.replace('e.', '')} IS NOT NULL
+          AND ${employeeColumn.replace('e.', '')} <> ''
+          AND ${employeeColumn.replace('e.', '')} = ?
+        LIMIT 1`,
+      [value]
+    );
+    const hit = rows[0] as { employee_code?: string; full_name?: string } | undefined;
+    return hit?.employee_code
+      ? { employee_code: String(hit.employee_code), full_name: String(hit.full_name ?? '').trim() }
+      : null;
+  }
+}
+
+/**
+ * Validate reporting manager exists and is active
+ */
+async function validateReportingManager(
+  conn: PoolConnection,
+  managerId: string
+): Promise<boolean> {
+  const [managerRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT active_status FROM employees WHERE id = ? LIMIT 1`,
+    [managerId]
+  );
+
+  return managerRows.length > 0 && (managerRows[0] as any).active_status === 1;
+}
+
+
+/**
+ * Create related employee records (statutory, salary, nominee, leave)
+ */
+async function createRelatedEmployeeRecords(
+  conn: PoolConnection,
+  employeeId: string,
+  candidateId: string,
+  offer: any,
+  candRow: any,
+  actorUserId: string
+): Promise<void> {
+  const panNumber = String(candRow?.pan_number ?? '').trim() || null;
+  const aadhaarNumber = String(candRow?.aadhar_number ?? '').trim() || null;
+  const uanNumber = String(candRow?.uan_number ?? '').trim() || null;
+
+  // Statutory info. The column is `aadhaar_id`, not `aadhaar_number`.
+  if (panNumber || aadhaarNumber || uanNumber) {
+    await conn.execute(
+      // pan_number_encrypted / pan_blind_index are written alongside the plaintext. This is
+      // the writer for EVERY new employee, so it is the one that decides whether the table's
+      // encryption coverage holds or decays from here. Plaintext stays until the readers are
+      // migrated — the duplicate-employee guard below still matches on s.pan_number.
+      // panNumber is already String(...).trim() (line above), which is exactly the
+      // normalisation scripts/statutory-identifier-encrypt-backfill.ts applies, so a row
+      // written here and a row written by that backfill land in the same index space.
+      `INSERT INTO employee_statutory_info
+         (id, employee_id, pan_number, pan_number_encrypted, pan_blind_index, aadhaar_id, uan_number,
+          pf_eligible, esi_eligible)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+      [
+        randomUUID(), employeeId, panNumber,
+        encryptPanForSync(panNumber, "employee-creation"),
+        blindIndexPan(panNumber, "employee-creation"),
+        aadhaarNumber, uanNumber,
+      ]
+    );
+  }
+
+  // Salary snapshot. `snapshot_date` is NOT NULL with no default and must be
+  // supplied; the effective column is `effective_date`, not `effective_from`.
+  await conn.execute(
+    // gross and net_in_hand were omitted, and every column on this table
+    // DEFAULTs to 0 — so the snapshot recorded a gross of 0.00 while basic, HRA
+    // and CTC came through correctly. The employment contract reads
+    // salary.monthly_gross from here, so the agreement emailed to the candidate
+    // stated their remuneration as "0 (Zero)". 16,136 of 33,443 snapshots carry
+    // a zero gross.
+    //
+    // Every figure below already exists on the offer that was just approved;
+    // none is derived or assumed. Note the two renames: the offer calls them
+    // pf_employee/pf_employer, this table calls them epf_*.
+    `INSERT INTO employee_salary_snapshot
+       (id, employee_id, snapshot_date, effective_date,
+        ctc_offered, offered_ctc, basic, hra, conveyance, da,
+        special_allowance, other_allowance, bonus, gross, net_in_hand,
+        epf_employee, epf_employer, esic_employee, esic_employer,
+        professional_tax, gratuity, admin_charges, pli,
+        pay_mode, salary_payment_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      employeeId,
+      offer.date_of_joining,
+      offer.date_of_joining,
+      offer.offered_ctc ?? 0,
+      offer.offered_ctc ?? 0,
+      offer.basic ?? 0,
+      offer.hra ?? 0,
+      offer.conveyance ?? 0,
+      offer.da ?? 0,
+      offer.special_allowance ?? 0,
+      offer.other_allowance ?? 0,
+      offer.bonus ?? 0,
+      offer.gross ?? 0,
+      offer.net_in_hand ?? 0,
+      offer.pf_employee ?? 0,
+      offer.pf_employer ?? 0,
+      offer.esic_employee ?? 0,
+      offer.esic_employer ?? 0,
+      offer.professional_tax ?? 0,
+      offer.gratuity ?? 0,
+      offer.admin_charges ?? 0,
+      offer.pli ?? 0,
+      offer.pay_mode ?? null,
+      offer.salary_payment_mode ?? null,
+    ]
+  );
+
+  // Opening leave balance. The ledger tracks allocated/used/adjusted days per
+  // `balance_year` — there is no `balance` column — and the lookup column on
+  // leave_type_master is `leave_code`.
+  //
+  // The table carries a unique key on (employee_id, leave_type, year), so a
+  // retry would raise ER_DUP_ENTRY *inside the transaction* and roll the entire
+  // conversion back. Leave an existing balance untouched rather than failing:
+  // whatever is already allocated is more authoritative than this opening row.
+  await conn.execute(
+    `INSERT INTO leave_balance_ledger
+       (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+     SELECT ?, ?, lt.id, YEAR(?), 1, 0, 0
+       FROM leave_type_master lt
+      WHERE lt.leave_code = 'CL'
+      LIMIT 1
+     ON DUPLICATE KEY UPDATE employee_id = leave_balance_ledger.employee_id`,
+    [randomUUID(), employeeId, offer.date_of_joining]
+  );
+
+  // Form 11 PF opt-out: if the candidate elected PF opt-out during onboarding
+  // (Form 11 — only valid for first employment / never-a-PF-member declarations),
+  // create a pre-approved employee_statutory_override so payroll does not deduct
+  // PF from the very first run. Without this, the onboarding election is silently
+  // dropped and PF is deducted until a separate manual request is raised and
+  // approved through the Payroll HO queue.
+  //
+  // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
+  // (employee_id, override_type, status) prevents a second approved row.
+  if (Boolean(candRow?.pf_opt_out_elected)) {
+    const joiningDate: Date = offer.date_of_joining instanceof Date
+      ? offer.date_of_joining
+      : new Date(String(offer.date_of_joining));
+    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, '0')}`;
+
+    await conn.execute(
+      `INSERT IGNORE INTO employee_statutory_override
+         (id, employee_id, override_type, status,
+          requested_by, declaration_text,
+          approved_by, approved_at, effective_from_month, audit_note)
+       VALUES (UUID(), ?, 'pf_opt_out', 'approved',
+               ?, 'PF opt-out elected by employee on Form 11 during onboarding',
+               ?, NOW(), ?,
+               'Auto-approved from Form 11 election — no Payroll HO review required for first-employment declarations')`,
+      [employeeId, actorUserId, actorUserId, effectiveFromMonth]
+    );
+  }
+
+  // PF/ESIC opt-out elected by Payroll HR at offer creation (owner ruling 2026-08-17: the
+  // candidate does not make this decision — Payroll HR does, when the offer is drafted).
+  // Mirrors the Form 11 block above but sources from ats_employment_offer.pf_opt_out /
+  // esic_opt_out rather than the candidate's own onboarding profile, and names the offer as
+  // its own approval record: the offer already went through Branch Head approval before this
+  // function runs, so a second approval through the Payroll HO queue would be redundant, not
+  // additional scrutiny — the decision was already reviewed.
+  //
+  // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
+  // (employee_id, override_type, status) prevents a second approved row, and also means this
+  // is naturally idempotent alongside the Form 11 block above if both happened to be true for
+  // the same employee (first write for a given override_type wins; the two paths never disagree
+  // about approval, only about provenance).
+  const offerOptOuts: Array<{ flag: unknown; overrideType: 'pf_opt_out' | 'esic_opt_out'; label: string }> = [
+    { flag: offer.pf_opt_out, overrideType: 'pf_opt_out', label: 'PF' },
+    { flag: offer.esic_opt_out, overrideType: 'esic_opt_out', label: 'ESIC' },
+  ];
+  for (const { flag, overrideType, label } of offerOptOuts) {
+    if (!Boolean(Number(flag))) continue;
+    const joiningDate: Date = offer.date_of_joining instanceof Date
+      ? offer.date_of_joining
+      : new Date(String(offer.date_of_joining));
+    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, '0')}`;
+
+    await conn.execute(
+      `INSERT IGNORE INTO employee_statutory_override
+         (id, employee_id, override_type, status,
+          requested_by, declaration_text,
+          approved_by, approved_at, effective_from_month, audit_note)
+       VALUES (UUID(), ?, ?, 'approved',
+               ?, ?,
+               ?, NOW(), ?, ?)`,
+      [
+        employeeId, overrideType,
+        actorUserId, `${label} opt-out elected by Payroll HR at offer creation`,
+        actorUserId, effectiveFromMonth,
+        `Auto-approved from offer ${offer.id ?? ''} — Branch Head already approved this offer, ` +
+          `which included the ${label} opt-out election; no separate Payroll HO review required.`,
+      ]
+    );
+  }
+
+  // Salary assignment. Gives payroll a structure to run against from day one.
+  // effective_from uses salary_start_date (offer.date_of_salary) if HR set one,
+  // otherwise falls back to date_of_joining — mirrors the salary_start_date column
+  // written on the employees row at line ~323. INSERT IGNORE is idempotent on retry.
+  {
+    const annualCtc = Number(offer.offered_ctc ?? 0) * 12;
+    const salaryEffectiveFrom = offer.date_of_salary ?? offer.date_of_joining;
+    // structure_id is left NULL: 'ss-std-001' only exists in demo data and
+    // would throw ER_NO_REFERENCED_ROW_2 on production, 500ing every approval.
+    // Payroll HR assigns the correct structure via the salary-increment workflow.
+    await conn.execute(
+      `INSERT IGNORE INTO employee_salary_assignment
+         (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
+       VALUES (UUID(), ?, NULL, ?, ?, 1)`,
+      [employeeId, annualCtc, salaryEffectiveFrom]
+    );
+  }
+
+  // Payroll Head mandatory salary/journey review gate (migration 1541). One row per
+  // employee, starting pending_review the moment they're created — payrollCalculate
+  // .service.ts excludes any employee with a non-approved row here from every payroll
+  // run until a payroll_head user reviews and approves them. INSERT IGNORE on the
+  // unique employee_id key mirrors the idempotency pattern used throughout this
+  // function, so a retried transaction can't create a second row or reset an
+  // already-reviewed employee back to pending.
+  await conn.execute(
+    `INSERT IGNORE INTO employee_payroll_head_review (id, employee_id, candidate_id, status)
+     VALUES (UUID(), ?, ?, 'pending_review')`,
+    [employeeId, candidateId]
+  );
+
+  // Emergency contact carried over from Onboarding (candidate_onboarding_profile), so the ID
+  // card and every other reader of employee_emergency_contact show what the candidate actually
+  // gave instead of "Contact HR" until someone re-enters it post-hire. `name` and `mobile` are
+  // NOT NULL on this table, so only write when onboarding actually captured both; a mobile with
+  // no name (or neither) is left for the existing HR/self-service emergency-contact editors,
+  // same as before this change. ON DUPLICATE KEY UPDATE on (employee_id, contact_seq) mirrors
+  // the self-service upsert at employee.routes.ts's PUT /me/emergency-contact, so a retried
+  // conversion never raises ER_DUP_ENTRY and never overwrites a value someone already entered.
+  const onboardingEmergencyName = String(candRow?.emergency_contact_name ?? '').trim();
+  const onboardingEmergencyMobile = String(candRow?.emergency_contact_mobile ?? '').trim();
+  if (onboardingEmergencyName && onboardingEmergencyMobile) {
+    await conn.execute(
+      `INSERT INTO employee_emergency_contact (id, employee_id, contact_seq, is_primary, name, relationship, mobile)
+       VALUES (?, ?, 1, 1, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = IF(employee_emergency_contact.name = '', VALUES(name), employee_emergency_contact.name),
+         mobile = IF(employee_emergency_contact.mobile = '', VALUES(mobile), employee_emergency_contact.mobile)`,
+      [
+        randomUUID(), employeeId,
+        toStoredNameRequired(onboardingEmergencyName),
+        String(candRow?.emergency_contact_relation ?? '').trim() || null,
+        onboardingEmergencyMobile,
+      ]
+    );
+  }
+
+  // Verified bank account carried over from the onboarding penny-drop check
+  // (onboarding_penny_drop_requests), so payroll's Bank Readiness has something to read from
+  // day one. Before this, a successful onboarding penny drop verified an account that then went
+  // nowhere: onboarding_penny_drop_requests is candidate-scoped and nothing ever copied it into
+  // employee_bank_detail, which is the only table bank-payment-readiness.service.ts (and payroll
+  // itself) reads. Every new hire showed MISSING regardless of what was verified during hiring.
+  //
+  // Only the latest 'success' row is used, and only when the employee doesn't already have an
+  // active primary bank row — this runs inside employee creation, so on the very first call that
+  // is always true, but the guard keeps this block idempotent on a retried transaction too.
+  // account_seq starts at 1 for the same reason: this is necessarily the employee's first-ever
+  // bank_detail row.
+  // CORRECTED 2026-09-02. This block existed but could never fire, and would have written
+  // an unusable row if it had. Both faults are fixed here, measured against live data:
+  //
+  //   1. WRONG SOURCE TABLE. It read onboarding_penny_drop_requests, which is the orphaned
+  //      third penny-drop store: no frontend calls /api/onboarding/penny-drop/initiate at
+  //      all, so that table is effectively empty and `verifiedAccount` was always
+  //      undefined. The penny drop the onboarding form actually runs writes to
+  //      candidate_bank_verification (via POST /api/ats/bgv/verify/bank). Result: of 42
+  //      candidates who passed a real penny drop and became employees, 41 had NO
+  //      employee_bank_detail row at all.
+  //
+  //   2. WRONG COLUMN. It wrote account_number_enc but never account_number. The plaintext
+  //      account_number column is what payroll disbursement and the ESI export read
+  //      (13,151 of 13,180 existing rows carry it). A row with only the encrypted form
+  //      reads as MISSING to every consumer, so the employee still cannot be paid.
+  //
+  // The full account number comes from ats_candidate.bank_account_no: the onboarding save
+  // mirrors it there in plaintext and it is populated for all 42 of those candidates,
+  // whereas candidate_bank_verification stores only last4 and a hash. Still gated on a
+  // genuinely verified penny drop, per the owner's rule that an account is only carried
+  // once verification is positive.
+  const [pennyDropRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT c.bank_account_no AS account_no,
+            COALESCE(NULLIF(v.ifsc_code, ''), c.bank_ifsc) AS ifsc_code,
+            COALESCE(NULLIF(v.input_account_holder_name, ''), c.full_name) AS account_holder_name
+       FROM candidate_bank_verification v
+       JOIN ats_candidate c ON c.id = v.candidate_id
+      WHERE v.candidate_id = ?
+        AND v.verification_status = 'verified'
+        AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
+      ORDER BY v.verified_at DESC, v.created_at DESC
+      LIMIT 1`,
+    [candidateId]
+  );
+  const verifiedAccount = pennyDropRows[0];
+  if (verifiedAccount?.account_no) {
+    const [existingPrimary] = await conn.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
+      [employeeId]
+    );
+    if (!existingPrimary.length) {
+      const accountNoStr = String(verifiedAccount.account_no).trim();
+      await conn.execute(
+        `INSERT INTO employee_bank_detail
+           (id, employee_id, is_primary, account_seq, account_holder_name,
+            account_number, account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
+         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
+        [
+          randomUUID(), employeeId,
+          verifiedAccount.account_holder_name ?? null,
+          accountNoStr,
+          encryptField(accountNoStr),
+          computeAccountBlindIndex(accountNoStr),
+          verifiedAccount.ifsc_code ?? null,
+        ]
+      );
+    }
+  }
+}

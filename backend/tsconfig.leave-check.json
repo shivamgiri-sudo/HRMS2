@@ -1,0 +1,8 @@
+{
+  // Scoped typecheck for the leave module. Root tsconfig has "files": [] so `npm run typecheck`
+  // is a no-op, and compiling the whole backend buries new errors under pre-existing ones.
+  //   npx tsc -p backend/tsconfig.leave-check.json
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/leave", "src/shared/leaveChargeableDays.ts"],
+  "compilerOptions": { "noEmit": true, "types": ["node", "vitest/globals"] }
+}

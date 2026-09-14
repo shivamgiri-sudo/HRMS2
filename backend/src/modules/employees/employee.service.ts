@@ -1,0 +1,1125 @@
+import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { normalizeBloodGroup } from "./bloodGroup.util.js";
+import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
+import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
+import type { Employee, PaginatedResult } from "./employee.types.js";
+import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
+import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
+import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
+import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
+import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
+import { appendJourneyEvent } from "./journeyLog.service.js";
+
+// Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
+// but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
+// name/department/..." only ever reordered whatever page was already loaded, not the real
+// dataset. Whitelisted expressions only: sortBy is validated against this same key set by
+// employeeFiltersSchema, but the lookup here is the actual guard against SQL injection —
+// never interpolate the raw column name.
+const EMPLOYEE_SORT_COLUMNS: Record<string, string> = {
+  employeeCode: "e.employee_code",
+  name: "COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))",
+  department: "dept.dept_name",
+  process: "pm.process_name",
+  reportingManager: "reporting_manager_name",
+  designation: "desig.designation_name",
+  joinDate: "e.date_of_joining",
+  status: "e.employment_status",
+};
+
+const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: string; label: string }> = [
+  { inputKey: "branchId",           dbCol: "branch_id",           label: "Branch" },
+  { inputKey: "departmentId",       dbCol: "department_id",       label: "Department" },
+  { inputKey: "processId",          dbCol: "process_id",          label: "Process" },
+  { inputKey: "designationId",      dbCol: "designation_id",      label: "Designation" },
+  { inputKey: "reportingManagerId", dbCol: "reporting_manager_id",label: "Reporting Manager" },
+  { inputKey: "employmentStatus",   dbCol: "employment_status",   label: "Employment Status" },
+  { inputKey: "employmentType",     dbCol: "employment_type",     label: "Employment Type" },
+  // Previously outside this list entirely: admin edits to these wrote silently, with no
+  // before/after audit row at all, unlike every field above. dateOfJoining in particular
+  // feeds payroll/tenure calculations elsewhere, and officialEmail is the login identity.
+  { inputKey: "dateOfJoining",      dbCol: "date_of_joining",     label: "Date of Joining" },
+  { inputKey: "firstName",          dbCol: "first_name",          label: "First Name" },
+  { inputKey: "lastName",           dbCol: "last_name",           label: "Last Name" },
+  { inputKey: "officialEmail",      dbCol: "official_email",      label: "Official Email" },
+  { inputKey: "mobile",             dbCol: "mobile",              label: "Mobile" },
+  { inputKey: "personalEmail",      dbCol: "personal_email",      label: "Personal Email" },
+  { inputKey: "dateOfBirth",        dbCol: "date_of_birth",       label: "Date of Birth" },
+  { inputKey: "gender",             dbCol: "gender",              label: "Gender" },
+  { inputKey: "bloodGroup",         dbCol: "blood_group",         label: "Blood Group" },
+  { inputKey: "address1",           dbCol: "address1",            label: "Address" },
+  { inputKey: "city",               dbCol: "city",                label: "City" },
+];
+
+const assignSalary = async (employeeId: string, structureId: string, ctcAnnual: number, effectiveFrom: string) => {
+  await db.execute(
+    "UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1",
+    [employeeId]
+  );
+  const asgId = randomUUID();
+  await db.execute(
+    "INSERT INTO employee_salary_assignment (id, employee_id, structure_id, ctc_annual, effective_from) VALUES (?, ?, ?, ?, ?)",
+    [asgId, employeeId, structureId, ctcAnnual, effectiveFrom]
+  );
+};
+
+/**
+ * Auto-create auth_user for employee with valid email.
+ * Links employees.user_id to auth_user.id so employee can login via password reset.
+ */
+const createAuthUserForEmployee = async (employeeId: string, email: string): Promise<string | null> => {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // Check if auth_user already exists for this email
+  const [existingAuth] = await db.execute<RowDataPacket[]>(
+    'SELECT id, is_blocked FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1',
+    [normalizedEmail]
+  );
+
+  if (existingAuth.length > 0) {
+    const authUser = existingAuth[0];
+    if (Number(authUser.is_blocked ?? 0) === 1) {
+      return null; // Don't link to blocked accounts
+    }
+    // Link existing auth_user to this employee
+    await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [authUser.id, employeeId]);
+    return String(authUser.id);
+  }
+
+  // Create new auth_user with random password (user must reset via "Forgot Password")
+  const userId = randomUUID();
+  const randomPassword = randomUUID(); // Secure random password
+  const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+  await db.execute(
+    'INSERT INTO auth_user (id, email, password_hash, must_change_password, is_blocked) VALUES (?, ?, ?, 1, 0)',
+    [userId, normalizedEmail, passwordHash]
+  );
+
+  // Link employee to auth_user
+  await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, employeeId]);
+
+  // Assign default "employee" role if exists
+  try {
+    const [roleCheck] = await db.execute<RowDataPacket[]>(
+      'SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1',
+      ['employee']
+    );
+    if (roleCheck.length > 0) {
+      // System grant: no human actor, so granted_by stays NULL while granted_at is
+      // stamped. NULL granted_by + non-NULL granted_at reads as "attached by the
+      // platform"; both NULL means the row predates migration 1614.
+      //
+      // The reactivation branch is GUARDED on active_status = 0, and the order of the
+      // assignments is load-bearing. This runs on EVERY login, so an unconditional
+      // re-stamp would reset granted_at to the last sign-in and blank out a granted_by
+      // that an administrator had deliberately set — turning the provenance column into
+      // a login timestamp. MySQL evaluates ON DUPLICATE KEY UPDATE assignments left to
+      // right and a bare column reference yields its not-yet-updated value, so both
+      // IF()s must appear BEFORE `active_status = 1` to still see the OLD status.
+      // Reordering them silently disables the guard.
+      await db.execute(
+        `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
+         VALUES (UUID(), ?, ?, 1, NULL, NOW())
+         ON DUPLICATE KEY UPDATE
+           granted_at = IF(active_status = 0, NOW(), granted_at),
+           granted_by = IF(active_status = 0, NULL, granted_by),
+           active_status = 1`,
+        [userId, 'employee']
+      );
+    }
+  } catch {
+    // Non-fatal - role assignment failure shouldn't block employee creation
+  }
+
+  return userId;
+};
+
+export const employeeService = {
+  async createEmployee(input: CreateEmployeeInput, _userId: string): Promise<Employee> {
+    const [dup] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE employee_code = ? LIMIT 1",
+      [input.employeeCode]
+    );
+    if ((dup as RowDataPacket[]).length > 0) throw new Error("Employee code already exists");
+
+    // Dedup checks: PAN, Aadhaar, email, mobile against both employees and
+    // employee_statutory_info — mirrors the ATS orchestrator path so that a
+    // manual HR entry cannot create a second record for an existing employee.
+    if (input.panNumber) {
+      const pan = String(input.panNumber).trim().toUpperCase();
+      const [panDup] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employees e WHERE e.pan_number = ? AND e.active_status = 1 LIMIT 1`,
+        [pan]
+      );
+      if ((panDup as RowDataPacket[]).length > 0)
+        throw new Error(`PAN ${pan} already registered under employee ${(panDup as RowDataPacket[])[0].employee_code}`);
+      const [panStat] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employee_statutory_info si JOIN employees e ON e.id = si.employee_id WHERE si.pan_number = ? AND e.active_status = 1 LIMIT 1`,
+        [pan]
+      );
+      if ((panStat as RowDataPacket[]).length > 0)
+        throw new Error(`PAN ${pan} already registered under employee ${(panStat as RowDataPacket[])[0].employee_code}`);
+    }
+    if (input.aadhaarNumber) {
+      const aadhaar = String(input.aadhaarNumber).trim();
+      const [aaDup] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code FROM employee_statutory_info si JOIN employees e ON e.id = si.employee_id WHERE si.aadhaar_id = ? AND e.active_status = 1 LIMIT 1`,
+        [aadhaar]
+      );
+      if ((aaDup as RowDataPacket[]).length > 0)
+        throw new Error(`Aadhaar already registered under employee ${(aaDup as RowDataPacket[])[0].employee_code}`);
+    }
+    if (input.email) {
+      const emailNorm = String(input.email).toLowerCase().trim();
+      const [emailDup] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code FROM employees WHERE (LOWER(email) = ? OR LOWER(official_email) = ?) AND active_status = 1 LIMIT 1`,
+        [emailNorm, emailNorm]
+      );
+      if ((emailDup as RowDataPacket[]).length > 0)
+        throw new Error(`Email ${emailNorm} already registered under employee ${(emailDup as RowDataPacket[])[0].employee_code}`);
+    }
+    if (input.mobile) {
+      const mobile = String(input.mobile).trim();
+      const [mobDup] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code FROM employees WHERE mobile = ? AND active_status = 1 LIMIT 1`,
+        [mobile]
+      );
+      if ((mobDup as RowDataPacket[]).length > 0)
+        throw new Error(`Mobile ${mobile} already registered under employee ${(mobDup as RowDataPacket[])[0].employee_code}`);
+    }
+
+    const id = randomUUID();
+    // salary_start_date defaults to date_of_joining when not explicitly set
+    const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
+
+    // Resolve branch_id and process_id from cost_centre if not explicitly provided
+    let resolvedBranchId = input.branchId ?? null;
+    let resolvedProcessId = input.processId ?? null;
+    const costCentreId = input.costCentreId;
+    if (costCentreId && (!resolvedBranchId || !resolvedProcessId)) {
+      const [ccRows] = await db.execute<RowDataPacket[]>(
+        `SELECT branch_id, process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+        [costCentreId]
+      );
+      if (ccRows.length > 0) {
+        resolvedBranchId = resolvedBranchId ?? ccRows[0].branch_id ?? null;
+        resolvedProcessId = resolvedProcessId ?? ccRows[0].process_id ?? null;
+      }
+    }
+
+    await db.execute(
+      // cost_centre_id is written here because updateEmployee already accepts costCentreId:
+      // without it, an employee added through this path could not have a cost centre until
+      // someone reopened them in the Edit dialog and set it by hand. Same field, same
+      // request shape, two different answers depending on which screen created the row.
+      `INSERT INTO employees
+         (id, employee_code, first_name, last_name, email, mobile, gender,
+          date_of_birth, date_of_joining, salary_start_date, employment_type,
+          branch_id, department_id, process_id, designation_id, cost_centre_id, cost_center_code,
+          reporting_manager_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1),
+         ?)`,
+      [
+        id,
+        input.employeeCode,
+        toStoredNameRequired(input.firstName),
+        toStoredName(input.lastName),
+        input.email ?? null,
+        input.mobile ?? null,
+        input.gender ?? null,
+        input.dateOfBirth ?? null,
+        input.dateOfJoining,
+        salaryStartDate,
+        input.employmentType ?? "Full Time",
+        resolvedBranchId,
+        input.departmentId ?? null,
+        resolvedProcessId,
+        input.designationId ?? null,
+        costCentreId,
+        costCentreId,
+        input.reportingManagerId ?? null,
+      ]
+    );
+
+    // CRITICAL FIX: Auto-create auth_user if employee has valid email
+    // This ensures employees can login via "Forgot Password" flow immediately
+    if (input.email && input.email.includes('@') && input.email.toLowerCase() !== 'n/a') {
+      try {
+        await createAuthUserForEmployee(id, input.email);
+      } catch (error) {
+        // Log but don't block employee creation if auth fails
+        console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
+      }
+    }
+
+    const employee = await this.getEmployee(id);
+
+    // Auto-assign salary when structureId + ctcAnnual provided at creation
+    if (input.structureId && input.ctcAnnual) {
+      const salaryDate = input.salaryStartDate ?? input.dateOfJoining;
+      await assignSalary(id, input.structureId, input.ctcAnnual, salaryDate);
+    }
+
+    try {
+      const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: input.employeeCode, createdBy: _userId });
+      if (lmsResult.message) {
+        console.warn(`[WARN] LMS provisioning for ${input.employeeCode}: ${lmsResult.message}`);
+      }
+    } catch (error) {
+      console.error(`[WARN] Failed to provision LMS identity for employee ${input.employeeCode}:`, error);
+    }
+
+    // Dispatch IT/WFM/Admin/HR provisioning tasks (same as ATS orchestrator path)
+    dispatchJoinProvisioningTasks({
+      employeeId: id,
+      employeeCode: input.employeeCode,
+      employeeName: employee.full_name,
+      branchId: employee.branch_id ?? null,
+      actorUserId: _userId,
+      triggerEventId: null,
+      joiningDate: input.dateOfJoining,
+    }).catch(err => console.error(`[WARN] Failed to dispatch provisioning tasks for ${input.employeeCode}:`, err));
+
+    return employee;
+  },
+
+  async getEmployee(id: string): Promise<Employee> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT *, COALESCE(NULLIF(TRIM(official_email),''), email) AS email FROM employees WHERE id = ? LIMIT 1", [id]
+    );
+    const rec = (rows as Employee[])[0];
+    if (!rec) throw new Error("Employee not found");
+    return rec;
+  },
+
+  async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
+    const offset = (page - 1) * limit;
+
+    // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
+    // employeeFiltersSchema, sent by the directory page and threaded through the controller —
+    // and then never read. So /employees with the status filter on Inactive issued
+    // `active_status = 1 AND employment_status = 'Inactive'` and returned 0 rows, for all
+    // 57,517 inactive employees. Offboarded was the same. An accepted-and-ignored parameter
+    // reads as supported from every layer above it, which is why this survived.
+    const recordStatusCond =
+      recordStatus === "inactive" ? "e.active_status = 0"
+      : recordStatus === "all"    ? null
+      :                             "e.active_status = 1";
+
+    // Filters shared between the row-fetching query and the analytics aggregates below.
+    // Deliberately excludes recordStatusCond: the directory page's Active/Inactive metric
+    // cards (PaginatedResult.stats) are meant to show both counts side by side within the
+    // caller's other filters, regardless of which value the recordStatus toggle itself
+    // currently holds — otherwise selecting "Inactive" would always show "Active: 0".
+    const filterConds: string[] = [];
+    const filterParams: unknown[] = [];
+
+    if (status)       { filterConds.push("e.employment_status = ?"); filterParams.push(status); }
+    if (processId)    { filterConds.push("e.process_id = ?");        filterParams.push(processId); }
+    if (branchId)     { filterConds.push("e.branch_id = ?");         filterParams.push(branchId); }
+    if (departmentId) { filterConds.push("e.department_id = ?");     filterParams.push(departmentId); }
+    if (designationId){ filterConds.push("e.designation_id = ?");    filterParams.push(designationId); }
+    if (search) {
+      // PERF (2026-08-18): this used to be a 7-column leading-wildcard LIKE OR-chain —
+      // unindexable by any B-tree index, confirmed live against production at 12-22
+      // SECONDS per query (57,517-row inactive population), on an endpoint shared by
+      // 18+ pages (Exit Management, Loan Management, NOC, Offer Letter Generation,
+      // Reactivation, ...).
+      //
+      // The obvious port of /hr-hub's search (FULLTEXT MATCH OR'd with a LIKE
+      // fallback for terms >= 3 chars) turned out NOT to fix this: measured live,
+      // MySQL will not index-merge a FULLTEXT match with a B-tree-indexable OR
+      // condition — EXPLAIN kept showing a full `employee_code` index scan
+      // (`type: index`) filtering every row in WHERE, same cost class as the
+      // original bug, still 8-23s under load. MATCH() run ALONE (no OR) reliably
+      // gets `type: fulltext` and 16-216ms. So the two paths are kept fully
+      // separate rather than OR'd together:
+      //   - term.length < 3 (below innodb_ft_min_token_size, MATCH can't help):
+      //     prefix-only LIKE ('term%', not '%term%') on first_name/last_name/
+      //     employee_code — these have their own real B-tree indexes, so a
+      //     prefix match can range-scan instead of full-scanning.
+      //   - term.length >= 3: MATCH() alone against ft_emp_search
+      //     (full_name, employee_code, official_email). No derived-name LIKE
+      //     fallback: employees.full_name is a GENERATED COLUMN, CONCAT of
+      //     first_name (NOT NULL) + last_name, so it can never be blank the way
+      //     the /hr-hub comment this was ported from was written to guard
+      //     against (verified live: 0 employees have a blank full_name) — the
+      //     fallback that comment justified doesn't apply to this table.
+      // Personal `email` substring search is dropped: it was part of the same
+      // unindexable OR-chain and no consuming page's UI advertises searching by
+      // personal email (every one is labelled "search by name or employee code").
+      const term = search.trim();
+      const isCodeSearch = /^MAS/i.test(term);
+      if (isCodeSearch) {
+        filterConds.push("e.employee_code LIKE ?");
+        filterParams.push(`${term.toUpperCase()}%`);
+      } else if (term.length < 3) {
+        filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
+        filterParams.push(`${term}%`, `${term}%`, `${term}%`);
+      } else {
+        filterConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
+        filterParams.push(`${term}*`);
+      }
+    }
+
+    // Apply scope filter from middleware
+    if (scopeFilter?.sql) {
+      const scopeClause = scopeFilter.sql.replace(/^WHERE\s+/i, '').trim();
+      if (scopeClause) {
+        filterConds.push(`(${scopeClause})`);
+        filterParams.push(...(scopeFilter.params ?? []));
+      }
+    }
+
+    const conds = recordStatusCond ? [recordStatusCond, ...filterConds] : [...filterConds];
+    const params = [...filterParams];
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const filterWhere = filterConds.length ? `WHERE ${filterConds.join(" AND ")}` : "";
+
+    // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
+    const orderExpr = (sortBy && EMPLOYEE_SORT_COLUMNS[sortBy]) || EMPLOYEE_SORT_COLUMNS.employeeCode;
+    const orderDir = sortOrder === "desc" ? "DESC" : "ASC";
+    // Secondary tiebreak on employee_code keeps pagination stable across pages when the
+    // primary sort column has duplicate/NULL values (e.g. many employees share a department).
+    const orderClause = orderExpr === EMPLOYEE_SORT_COLUMNS.employeeCode
+      ? `ORDER BY ${orderExpr} ${orderDir}`
+      : `ORDER BY ${orderExpr} ${orderDir}, e.employee_code ASC`;
+
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id, e.employee_code,
+           e.first_name, e.last_name,
+           e.mobile, e.avatar_url, e.photo_url,
+           e.date_of_joining, e.salary_start_date, e.employment_status, e.employment_type,
+           e.active_status, e.date_of_exit,
+           e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
+           e.reporting_manager_id,
+           COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+           -- The directory now shows personal and official addresses in their own columns,
+           -- alongside the coalesced email alias above (which the existing mapper still uses for
+           -- the row subtitle and the officialEmailCompliant test).
+           --
+           -- Personal prefers personal_email over the legacy email column: personal_email is what
+           -- updateEmployee writes (input.personalEmail) and is the better populated of the two
+           -- (live, active employees: 1068 vs 976; only 15 rows disagree). email still backfills
+           -- the 6 rows that have it and no personal_email.
+           COALESCE(NULLIF(TRIM(e.personal_email),''), e.email) AS personal_email,
+           e.official_email AS official_email,
+           -- gender is captured by both onboarding paths' first step (candidate journey's
+           -- EmployeeForm and the new EmployeeProfileCompletion flow) and by nothing else,
+           -- so its absence is a cheap, join-free proxy for "never completed a profile step"
+           (e.gender IS NULL) AS profile_incomplete,
+           desig.designation_name,
+           dept.dept_name        AS department_name,
+           cc.cost_centre_name,
+           pm.process_name,
+           bm.branch_name,
+           CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
+         FROM employees e
+         LEFT JOIN designation_master  desig ON desig.id = e.designation_id
+         LEFT JOIN department_master   dept  ON dept.id  = e.department_id
+         LEFT JOIN cost_centre_master  cc    ON cc.id    = e.cost_centre_id
+         LEFT JOIN process_master      pm    ON pm.id    = e.process_id
+         LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
+         LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
+         ${where} ${orderClause} LIMIT ${limit} OFFSET ${offset}`,
+        params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM employees e ${where}`, params
+      ),
+    ]);
+    const result: PaginatedResult<Employee> = {
+      data: rows as Employee[],
+      total: (countRows as any)[0]?.total ?? 0,
+      page,
+      limit,
+    };
+
+    // Analytics are a separate, deliberately low-frequency call (see useEmployeeDirectoryAnalytics
+    // on the frontend, which fetches page=1&limit=1) — skip the extra aggregate queries on every
+    // ordinary page navigation. Both queries reuse filterWhere/filterParams, i.e. every filter the
+    // caller applied except recordStatus, for the reason documented above filterConds.
+    if (includeAnalytics) {
+      const [[statsRows], [breakdownRows]] = await Promise.all([
+        db.execute<RowDataPacket[]>(
+          `SELECT
+             COUNT(*) AS total_employees,
+             SUM(e.active_status = 1) AS active_employees,
+             SUM(e.active_status = 0) AS inactive_employees,
+             COUNT(DISTINCT e.department_id) AS department_count
+           FROM employees e
+           ${filterWhere}`,
+          filterParams,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT
+             pm.id AS process_id,
+             COALESCE(pm.process_name, 'Unassigned') AS process_name,
+             SUM(e.active_status = 1) AS active_count,
+             SUM(e.active_status = 0) AS inactive_count,
+             COUNT(*) AS total_count
+           FROM employees e
+           LEFT JOIN process_master pm ON pm.id = e.process_id
+           ${filterWhere}
+           GROUP BY pm.id, pm.process_name
+           ORDER BY total_count DESC
+           LIMIT 100`,
+          filterParams,
+        ),
+      ]);
+      const s = (statsRows as any[])[0] ?? {};
+      result.stats = {
+        total_employees: Number(s.total_employees ?? 0),
+        active_employees: Number(s.active_employees ?? 0),
+        inactive_employees: Number(s.inactive_employees ?? 0),
+        department_count: Number(s.department_count ?? 0),
+      };
+      result.process_breakdown = (breakdownRows as any[]).map((r) => ({
+        process_id: r.process_id ?? null,
+        process_name: r.process_name,
+        active_count: Number(r.active_count ?? 0),
+        inactive_count: Number(r.inactive_count ?? 0),
+        total_count: Number(r.total_count ?? 0),
+      }));
+    }
+
+    return result;
+  },
+
+  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string): Promise<Employee> {
+    // Snapshot current sensitive field values before update for audit trail
+    const [snapRows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id, department_id, process_id, designation_id,
+              reporting_manager_id, employment_status, employment_type, active_status,
+              date_of_joining, first_name, last_name, official_email, mobile,
+              personal_email, date_of_birth, gender, blood_group, address1, city
+       FROM employees WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const snap = snapRows[0] ?? {};
+
+    // employment_status and active_status are two different columns describing one
+    // fact, and this endpoint only ever wrote the first. HR marking a leaver
+    // "Inactive" in the employee directory therefore dropped them from payroll
+    // (which reads employment_status) while leaving every access gate — login,
+    // token refresh, requireAuth — reading active_status = 1 and letting them in.
+    // Measured 2026-08-10: 1 employee sat in exactly that split state, and 10 sat
+    // in the mirror image, labelled active with their login already dead.
+    const nextStatus = input.employmentStatus?.trim().toLowerCase();
+    const isDeactivating = nextStatus === "inactive";
+    const wasActive = Number(snap.active_status ?? 1) === 1;
+    const deactivationReason = (input as { deactivationReason?: string }).deactivationReason?.trim();
+
+    // Cutting someone's access is not an ordinary field edit, and until now it
+    // left no trace of why. Of the five employment-status audit rows ever
+    // written, all five are 'active' → 'Active' case flips from the edit dialog
+    // re-saving an unchanged value — not one records an actual deactivation.
+    if (isDeactivating && wasActive && (!deactivationReason || deactivationReason.length < 10)) {
+      throw Object.assign(
+        new Error("A reason of at least 10 characters is required to deactivate an employee."),
+        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" }
+      );
+    }
+
+    // Reactivation is a governed flow — a reason, branch-head approval, then HR
+    // confirmation (employee-reactivation.routes.ts). Letting a plain profile save
+    // restore a leaver by flipping a dropdown would route around all of it, so the
+    // Active direction is refused here rather than silently synced. Setting "Active"
+    // on someone who is already active stays a no-op: the edit dialog sends the
+    // field on every save, and rejecting that would break ordinary profile edits.
+    //
+    // Refused only when the request actually CHANGES the label to Active. Ten
+    // employees on production are already labelled Active while carrying
+    // active_status = 0 — they joined 7-8 June and the activation job never ran
+    // for them. Keying this off active_status alone locked HR out of editing
+    // those records at all, because the dialog resends the unchanged "Active" on
+    // every save. Re-sending a value that is already stored grants nothing:
+    // active_status is untouched here, so those employees stay signed out until
+    // the reactivation flow or the activation job puts them right.
+    const wasStatusActive = String(snap.employment_status ?? "").trim().toLowerCase() === "active";
+    if (nextStatus === "active" && !wasActive && !wasStatusActive) {
+      throw Object.assign(
+        new Error(
+          "This employee is deactivated. Reactivation must go through Employees → Reactivation (/employees/reactivation), which records a reason and takes branch head approval and HR confirmation. It cannot be done from a profile edit."
+        ),
+        { statusCode: 409, code: "REACTIVATION_REQUIRES_APPROVAL" }
+      );
+    }
+
+    const sets: string[] = [];
+    const params: unknown[] = [];
+
+    if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(toStoredNameRequired(input.firstName)); }
+    if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(toStoredName(input.lastName)); }
+    if (input.email             !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
+    if (input.officialEmail     !== undefined) { sets.push("official_email = ?");       params.push(input.officialEmail ?? null); }
+    if (input.mobile            !== undefined) { sets.push("mobile = ?");               params.push(input.mobile ?? null); }
+    if (input.personalEmail     !== undefined) { sets.push("personal_email = ?");       params.push(input.personalEmail ?? null); }
+    if (input.personalMobile    !== undefined) { sets.push("personal_phone = ?");       params.push(input.personalMobile ?? null); }
+    if (input.gender            !== undefined) { sets.push("gender = ?");               params.push(input.gender); }
+    // Normalised on the way in even though the schema already restricts it to the eight
+    // canonical groups, so this path can never re-introduce the free-text values the
+    // backfill migration cleans up.
+    if (input.bloodGroup        !== undefined) { sets.push("blood_group = ?");          params.push(normalizeBloodGroup(input.bloodGroup)); }
+    if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
+    if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
+    if (input.salaryStartDate   !== undefined) { sets.push("salary_start_date = ?");    params.push(input.salaryStartDate ?? null); }
+    if (input.dateOfExit        !== undefined) { sets.push("date_of_exit = ?");         params.push(input.dateOfExit ?? null); }
+    if (input.employmentType    !== undefined) { sets.push("employment_type = ?");      params.push(input.employmentType); }
+    if (input.employmentStatus  !== undefined) { sets.push("employment_status = ?");    params.push(input.employmentStatus); }
+    if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
+    if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
+    if (input.processId         !== undefined) { sets.push("process_id = ?");           params.push(input.processId ?? null); }
+    if (input.costCentreId !== undefined) {
+      sets.push("cost_centre_id = ?");
+      params.push(input.costCentreId ?? null);
+      sets.push("cost_center_code = (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1)");
+      params.push(input.costCentreId ?? null);
+    }
+    if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
+    if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
+    if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }
+    if (input.designationName   !== undefined) { sets.push("designation = ?");          params.push(input.designationName ?? null); }
+    if (input.address1          !== undefined) { sets.push("address1 = ?");             params.push(input.address1 ?? null); }
+    if (input.city              !== undefined) { sets.push("city = ?");                 params.push(input.city ?? null); }
+    if (input.workingHoursStart !== undefined) { sets.push("working_hours_start = ?");  params.push(input.workingHoursStart ?? null); }
+    if (input.workingHoursEnd   !== undefined) { sets.push("working_hours_end = ?");    params.push(input.workingHoursEnd ?? null); }
+    if (input.workingDays       !== undefined) { sets.push("working_days = ?");         params.push(input.workingDays ? JSON.stringify(input.workingDays) : null); }
+    if (input.annualIncome      !== undefined) { sets.push("annual_income = ?");        params.push(input.annualIncome ?? null); }
+    if (input.countOfDependents !== undefined) { sets.push("count_of_dependents = ?");  params.push(input.countOfDependents ?? null); }
+
+    // Carry the deactivation across to the column the access gates actually read,
+    // in the same statement, so the two can never disagree again.
+    if (isDeactivating && wasActive) { sets.push("active_status = 0"); }
+
+    if (sets.length > 0) {
+      params.push(id);
+      await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
+
+      /**
+       * A manager change is recorded as HISTORY, not just as an audit line.
+       *
+       * The audit row below says "this field changed"; it cannot answer "who managed this
+       * person on 12 June", which is the question attrition and shrinkage actually depend on.
+       * Without an effective-dated record, every exit re-attributes itself to whoever holds
+       * the pointer today — so a manager inheriting a team also inherits its entire past
+       * attrition, and the previous manager's record silently empties. See
+       * manager-attribution.service.ts and migration 1624.
+       *
+       * Deliberately not awaited and never allowed to throw: the profile edit is the user's
+       * action and must not fail because a history row could not be written.
+       */
+      const managerMoved = input.reportingManagerId !== undefined &&
+        String(input.reportingManagerId ?? "") !== String(snap.reporting_manager_id ?? "");
+      const processMoved = input.processId !== undefined &&
+        String(input.processId ?? "") !== String(snap.process_id ?? "");
+      const branchMoved = input.branchId !== undefined &&
+        String(input.branchId ?? "") !== String(snap.branch_id ?? "");
+
+      // Any of the three moves the person under different accountability, so all three open a
+      // new supervisory period. Only the changed fields are passed; the rest carry forward.
+      if (managerMoved || processMoved || branchMoved) {
+        void recordSupervisoryChange({
+          employeeId: id,
+          ...(managerMoved ? { managerId: input.reportingManagerId ?? null } : {}),
+          ...(processMoved ? { processId: input.processId ?? null } : {}),
+          ...(branchMoved ? { branchId: input.branchId ?? null } : {}),
+          changedBy: actorUserId ?? null,
+          reason: deactivationReason ?? null,
+        });
+      }
+
+      // Log cost-centre / branch transfer with effective month for payroll traceability.
+      const ccMoved = input.costCentreId !== undefined &&
+        String(input.costCentreId ?? "") !== String((snap as any).cost_centre_id ?? "");
+      const effectiveMonth = (input as any).transferEffectiveMonth as string | null | undefined;
+      if ((ccMoved || branchMoved) && effectiveMonth) {
+        const eventDate = `${effectiveMonth}-01`;
+        void appendJourneyEvent({
+          employeeId: id,
+          eventType: ccMoved ? "COST_CENTRE_TRANSFER" : "BRANCH_TRANSFER",
+          eventDate,
+          description: [
+            ccMoved ? `Cost Centre changed for payroll month ${effectiveMonth}` : null,
+            branchMoved ? `Branch changed for payroll month ${effectiveMonth}` : null,
+          ].filter(Boolean).join("; "),
+          oldValue: JSON.stringify({
+            ...(ccMoved ? { cost_centre_id: (snap as any).cost_centre_id ?? null } : {}),
+            ...(branchMoved ? { branch_id: (snap as any).branch_id ?? null } : {}),
+          }),
+          newValue: JSON.stringify({
+            ...(ccMoved ? { cost_centre_id: input.costCentreId ?? null } : {}),
+            ...(branchMoved ? { branch_id: input.branchId ?? null } : {}),
+          }),
+          module: "employees",
+          triggeredBy: actorUserId ?? undefined,
+          metadata: { effective_month: effectiveMonth },
+        });
+      }
+
+      // Audit any sensitive field changes
+      const changedSensitive = SENSITIVE_FIELDS.filter(
+        (f) => input[f.inputKey] !== undefined && String(input[f.inputKey] ?? "") !== String(snap[f.dbCol] ?? "")
+      );
+      if (changedSensitive.length > 0) {
+        const oldVals: Record<string, unknown> = {};
+        const newVals: Record<string, unknown> = {};
+        for (const f of changedSensitive) {
+          oldVals[f.label] = snap[f.dbCol] ?? null;
+          newVals[f.label] = input[f.inputKey] ?? null;
+        }
+        void logSensitiveAction({
+          actor_user_id: actorUserId,
+          action_type: "EMPLOYEE_PROFILE_UPDATED",
+          module_key: "employees",
+          entity_type: "employee",
+          entity_id: id,
+          employee_id: id,
+          change_summary: { fields: changedSensitive.map((f) => f.label) },
+          old_value_json: oldVals,
+          new_value_json: newVals,
+          reason: deactivationReason,
+        });
+      }
+
+      // Same reasoning as the deactivate endpoint: clearing active_status stops
+      // the next login and the next refresh, not the token already issued.
+      if (isDeactivating && wasActive) {
+        // EMPLOYEE_DEACTIVATED is the canonical "this person's access was taken
+        // away" marker, and both deactivation paths must emit it — the daily
+        // activation job keys its re-activation guard off exactly this
+        // action_type. The EMPLOYEE_PROFILE_UPDATED row above records the field
+        // change but does not distinguish a deactivation from any other edit,
+        // so keying the guard off that would either miss deactivations or catch
+        // every ordinary profile save.
+        void logSensitiveAction({
+          actor_user_id: actorUserId,
+          action_type: "EMPLOYEE_DEACTIVATED",
+          module_key: "employees",
+          entity_type: "employee",
+          entity_id: id,
+          employee_id: id,
+          change_summary: { fields: ["Employment Status", "Active Status"], via: "profile_update" },
+          old_value_json: { "Employment Status": snap.employment_status ?? null, "Active Status": 1 },
+          new_value_json: { "Employment Status": "Inactive", "Active Status": 0 },
+          reason: deactivationReason,
+        });
+
+        await revokeSessionsForEmployee(id, "employment_status_set_inactive");
+
+        // Deactivating from the directory is how ~2,650 of the last 2,652
+        // departures were recorded, so the consequences of leaving cannot live
+        // only in the exit flow. LMS access and future leave are withdrawn here
+        // too. Deliberately NOT full & final: that is keyed to an exit_request
+        // and belongs to payroll, and manufacturing a settlement record from a
+        // profile edit would be worse than not having one.
+        const deprovision = await deprovisionEmployeeAccess(id, "employment_status_set_inactive");
+        if (deprovision.failures.length > 0) {
+          process.stderr.write(JSON.stringify({
+            level: "error", module: "employees", event: "DEPROVISION_INCOMPLETE",
+            employee_id: id, failures: deprovision.failures,
+            timestamp: new Date().toISOString(),
+          }) + "\\n");
+        }
+      }
+    }
+
+    // Sync auth_user.email = official_email when official_email updated
+    if (input.officialEmail) {
+      const newEmail = input.officialEmail.toLowerCase().trim();
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        'SELECT user_id FROM employees WHERE id = ? LIMIT 1', [id]
+      );
+      const userId = (empRows as any[])[0]?.user_id;
+      if (userId) {
+        const [conflict] = await db.execute<RowDataPacket[]>(
+          'SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1', [newEmail, userId]
+        );
+        if (!(conflict as any[]).length) {
+          await db.execute('UPDATE auth_user SET email = ? WHERE id = ?', [newEmail, userId]);
+        }
+      }
+    }
+
+    return this.getEmployee(id);
+  },
+
+  async deactivateEmployee(id: string, actorUserId: string, reason?: string): Promise<void> {
+    const existing = await this.getEmployee(id);
+
+    // This endpoint recorded nothing at all — the actor argument was received as
+    // `_userId` and discarded, so the single UI path that genuinely revoked
+    // access was also the only one with no audit trail and no stated reason.
+    const trimmedReason = reason?.trim();
+    if (!trimmedReason || trimmedReason.length < 10) {
+      throw Object.assign(
+        new Error("A reason of at least 10 characters is required to deactivate an employee."),
+        { statusCode: 400, code: "DEACTIVATION_REASON_REQUIRED" }
+      );
+    }
+
+    await db.execute(
+      "UPDATE employees SET active_status = 0, employment_status = 'Inactive' WHERE id = ?",
+      [id]
+    );
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: "EMPLOYEE_DEACTIVATED",
+      module_key: "employees",
+      entity_type: "employee",
+      entity_id: id,
+      employee_id: id,
+      change_summary: { fields: ["Employment Status", "Active Status"] },
+      old_value_json: {
+        "Employment Status": (existing as { employment_status?: unknown }).employment_status ?? null,
+        "Active Status": (existing as { active_status?: unknown }).active_status ?? null,
+      },
+      new_value_json: { "Employment Status": "Inactive", "Active Status": 0 },
+      reason: trimmedReason,
+    });
+    // Clearing active_status stops the next login and the next token refresh, but
+    // not the access token already issued — that stayed good for up to 24h. Cut
+    // the live sessions too, so "deactivated" means access ends now.
+    await revokeSessionsForEmployee(id, "employee_deactivated");
+    await deprovisionEmployeeAccess(id, "employee_deactivated");
+  },
+
+  // ── Org Chart tree endpoint ──────────────────────────────────────────────
+  async getOrgTree(params: {
+    userId: string;
+    processId?: string;
+    branchId?: string;
+    departmentId?: string;
+  }): Promise<{
+    nodes: OrgTreeServiceNode[];
+    totalCount: number;
+    renderedCount: number;
+    selfEmployeeId: string | null;
+    unassigned: OrgTreeServiceNode[];
+    dataIssues: OrgTreeDataIssue[];
+  }> {
+    const { userId, processId, branchId, departmentId } = params;
+
+    // Resolve requester roles
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+      [userId]
+    );
+    const roles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
+
+    const isSuperAdmin = roles.includes("super_admin");
+    const isAdmin      = roles.includes("admin");
+    const isCeo        = roles.includes("ceo");
+    const isHr         = roles.includes("hr");
+    const isBranchHead = roles.includes("branch_head");
+    const isProcMgr    = roles.includes("process_manager") || roles.includes("manager");
+    const isWfm        = roles.includes("wfm") || roles.includes("operations_manager");
+
+    // Resolve own employee record for scope lookups
+    const [selfRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, branch_id, process_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId]
+    );
+    const self = (selfRows as { id: string; branch_id: string | null; process_id: string | null }[])[0];
+
+    // Build scope WHERE
+    const wheres: string[] = ["e.active_status = 1"];
+    const qp: unknown[] = [];
+
+    if (isSuperAdmin || isAdmin || isCeo || isHr) {
+      if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
+      if (branchId)     { wheres.push("e.branch_id = ?");     qp.push(branchId); }
+      if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+    } else if (isBranchHead) {
+      const scopeBranch = self?.branch_id;
+      if (!scopeBranch) return EMPTY_ORG_TREE(self?.id ?? null);
+      wheres.push("e.branch_id = ?");
+      qp.push(scopeBranch);
+    } else if (isProcMgr || isWfm) {
+      const scopeProcess = self?.process_id;
+      if (!scopeProcess) return EMPTY_ORG_TREE(self?.id ?? null);
+      wheres.push("e.process_id = ?");
+      qp.push(scopeProcess);
+    } else {
+      // Employee / executive / agent: scope to own process
+      const scopeProcess = self?.process_id;
+      if (scopeProcess) {
+        wheres.push("e.process_id = ?");
+        qp.push(scopeProcess);
+      } else if (self?.id) {
+        wheres.push("e.id = ?");
+        qp.push(self.id);
+      } else {
+        return EMPTY_ORG_TREE(self?.id ?? null);
+      }
+    }
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `${ORG_TREE_SELECT}
+      WHERE ${wheres.join(" AND ")}
+      ORDER BY e.date_of_joining ASC`,
+      qp
+    );
+
+    const employees = empRows as OrgTreeServiceNode[];
+
+    // The requester's own reporting line frequently leaves the scoped set — a Noida
+    // agent's Process Manager can sit in a different process. Without the chain the
+    // requester renders as a detached root and "where do I sit" is unanswerable, which
+    // is the whole point of the page. Pull the ancestors in explicitly and mark them.
+    if (self?.id) {
+      const scopedIdsForChain = new Set(employees.map((e) => e.id));
+      const chain: OrgTreeServiceNode[] = [];
+      const seenChain = new Set<string>([self.id]);
+      let cursor: string | null =
+        employees.find((e) => e.id === self.id)?.reporting_manager_id ?? null;
+
+      if (!scopedIdsForChain.has(self.id)) {
+        const [ownRows] = await db.execute<RowDataPacket[]>(
+          `${ORG_TREE_SELECT} WHERE e.id = ? LIMIT 1`, [self.id]
+        );
+        const own = (ownRows as OrgTreeServiceNode[])[0];
+        if (own) { employees.push(own); scopedIdsForChain.add(own.id); cursor = own.reporting_manager_id; }
+      }
+
+      // Bounded walk — the guard is `seenChain`, so a cycle in the data terminates here
+      // instead of looping forever.
+      while (cursor && !seenChain.has(cursor) && chain.length < 25) {
+        seenChain.add(cursor);
+        if (scopedIdsForChain.has(cursor)) {
+          cursor = employees.find((e) => e.id === cursor)?.reporting_manager_id ?? null;
+          continue;
+        }
+        const [mgrRows] = await db.execute<RowDataPacket[]>(
+          `${ORG_TREE_SELECT} WHERE e.id = ? AND e.active_status = 1 LIMIT 1`, [cursor]
+        );
+        const mgr = (mgrRows as OrgTreeServiceNode[])[0];
+        if (!mgr) break;
+        mgr.is_reporting_line = 1;
+        chain.push(mgr);
+        scopedIdsForChain.add(mgr.id);
+        cursor = mgr.reporting_manager_id;
+      }
+      employees.push(...chain);
+    }
+
+    const totalCount = employees.length;
+    const built = buildOrgForest(employees, self?.id ?? null);
+
+    return {
+      nodes: built.roots,
+      totalCount,
+      renderedCount: built.renderedCount,
+      selfEmployeeId: self?.id ?? null,
+      unassigned: built.unassigned,
+      dataIssues: built.dataIssues,
+    };
+  },
+};
+
+// Internal type for org tree — not exported to avoid polluting Employee types
+export interface OrgTreeServiceNode {
+  id: string;
+  employee_code: string;
+  name: string;
+  designation: string | null;
+  process_name: string | null;
+  branch_name: string | null;
+  department_name: string | null;
+  avatar_url: string | null;
+  reporting_manager_id: string | null;
+  role_key: string | null;
+  active_status: number;
+  /** 1 when the row was pulled in only to complete the requester's reporting line. */
+  is_reporting_line?: number;
+  /** Filled by buildOrgForest — the client needs both counts to label a collapsed branch. */
+  direct_reports?: number;
+  total_reports?: number;
+  children: OrgTreeServiceNode[];
+}
+
+/**
+ * A reporting-data defect the tree builder had to work around. Surfaced to the client
+ * rather than swallowed: the previous builder dropped these rows silently, which is how
+ * 900 of 1,120 active employees came to be missing from the live chart while the header
+ * still counted them.
+ */
+interface OrgTreeDataIssue {
+  type: "self_manager" | "cycle" | "missing_manager";
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  detail: string;
+}
+
+const ORG_TREE_SELECT = `SELECT
+         e.id,
+         e.employee_code,
+         TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+         d.designation_name AS designation,
+         p.process_name,
+         b.branch_name,
+         dept.dept_name AS department_name,
+         e.process_id,
+         e.branch_id AS emp_branch_id,
+         COALESCE(NULLIF(TRIM(e.avatar_url), ''), NULLIF(TRIM(e.photo_url), '')) AS avatar_url,
+         COALESCE(e.reporting_manager_id, e.manager_id) AS reporting_manager_id,
+         (SELECT ur2.role_key FROM user_roles ur2
+          WHERE ur2.user_id = e.user_id AND ur2.active_status = 1
+          ORDER BY FIELD(ur2.role_key,
+            'super_admin','admin','ceo','hr','branch_head',
+            'process_manager','manager','team_leader','tl',
+            'assistant_manager','employee') LIMIT 1
+         ) AS role_key,
+         e.active_status
+       FROM employees e
+       LEFT JOIN designation_master d    ON d.id    = e.designation_id
+       LEFT JOIN process_master    p     ON p.id    = e.process_id
+       LEFT JOIN branch_master     b     ON b.id    = e.branch_id
+       LEFT JOIN department_master dept  ON dept.id = e.department_id`;
+
+function EMPTY_ORG_TREE(selfEmployeeId: string | null) {
+  return {
+    nodes: [] as OrgTreeServiceNode[],
+    totalCount: 0,
+    renderedCount: 0,
+    selfEmployeeId,
+    unassigned: [] as OrgTreeServiceNode[],
+    dataIssues: [] as OrgTreeDataIssue[],
+  };
+}
+
+/**
+ * Builds the reporting forest, and — unlike the previous implementation — guarantees every
+ * scoped employee appears exactly once in the output.
+ *
+ * The old builder treated a row as a root only when its manager was absent from the scoped
+ * set, and otherwise pushed it under that manager. Three employees are recorded as their own
+ * manager, so they were never roots and no root could reach them; they and the 900 people
+ * beneath them vanished from the chart with no error while the header still counted them.
+ * Anything sitting on a longer cycle would disappear the same way.
+ *
+ * Here, a row whose manager chain does not terminate at a genuine root is promoted to a root
+ * and the broken edge is reported in `dataIssues`. Correcting the underlying rows is still
+ * the right answer — but a data defect must not silently delete 80% of the org.
+ */
+export function buildOrgForest(
+  employees: OrgTreeServiceNode[],
+  selfEmployeeId: string | null,
+): {
+  roots: OrgTreeServiceNode[];
+  unassigned: OrgTreeServiceNode[];
+  renderedCount: number;
+  dataIssues: OrgTreeDataIssue[];
+} {
+  const byId = new Map<string, OrgTreeServiceNode>();
+  for (const emp of employees) {
+    if (byId.has(emp.id)) continue; // the reporting-line merge can re-add an already scoped row
+    byId.set(emp.id, { ...emp, children: [] });
+  }
+
+  const dataIssues: OrgTreeDataIssue[] = [];
+  const issueFor = (n: OrgTreeServiceNode, type: OrgTreeDataIssue["type"], detail: string) =>
+    dataIssues.push({ type, employeeId: n.id, employeeCode: n.employee_code, name: n.name, detail });
+
+  // Resolve each row's effective parent. Start from the recorded manager, then repair the
+  // edges that make the graph something other than a forest.
+  const effectiveParent = new Map<string, string | null>();
+  for (const node of byId.values()) {
+    const mgr = node.reporting_manager_id;
+    if (mgr === node.id) {
+      // Three live rows are recorded as their own manager. Left alone, such a row can never
+      // be a root and no root can reach it, so it and everyone beneath it disappears.
+      effectiveParent.set(node.id, null);
+      issueFor(node, "self_manager", "Recorded as their own reporting manager");
+    } else if (!mgr || !byId.has(mgr)) {
+      effectiveParent.set(node.id, null);
+    } else {
+      effectiveParent.set(node.id, mgr);
+    }
+  }
+
+  // Break any remaining cycle at exactly one edge — the node the walk re-enters. Cutting the
+  // edge for every node whose chain merely passes through a cycle would flatten the whole
+  // subtree into roots, which is a different way of destroying the chart.
+  const resolution = new Map<string, "visiting" | "resolved">();
+  for (const startId of byId.keys()) {
+    if (resolution.has(startId)) continue;
+    const stack: string[] = [];
+    let cursor: string | null = startId;
+    while (cursor) {
+      const state = resolution.get(cursor);
+      if (state === "resolved") break;
+      if (state === "visiting") {
+        const node = byId.get(cursor)!;
+        const throughName = byId.get(effectiveParent.get(cursor) ?? "")?.name ?? "their manager";
+        effectiveParent.set(cursor, null);
+        issueFor(node, "cycle", `Reporting line loops back through ${throughName}`);
+        break;
+      }
+      resolution.set(cursor, "visiting");
+      stack.push(cursor);
+      cursor = effectiveParent.get(cursor) ?? null;
+    }
+    for (const id of stack) resolution.set(id, "resolved");
+  }
+
+  const roots: OrgTreeServiceNode[] = [];
+  for (const node of byId.values()) {
+    const parentId = effectiveParent.get(node.id) ?? null;
+    if (parentId) byId.get(parentId)!.children.push(node);
+    else roots.push(node);
+  }
+
+  // Depth-first subtree count. Cycles are already broken above, so this cannot recurse forever.
+  const countSubtree = (n: OrgTreeServiceNode): number => {
+    let total = 0;
+    for (const child of n.children) total += 1 + countSubtree(child);
+    n.direct_reports = n.children.length;
+    n.total_reports = total;
+    return total;
+  };
+  let renderedCount = 0;
+  for (const r of roots) renderedCount += 1 + countSubtree(r);
+
+  // Sort so the org reads top-down: biggest teams first, then alphabetically.
+  const sortTree = (nodes: OrgTreeServiceNode[]) => {
+    nodes.sort((a, b) =>
+      (b.total_reports ?? 0) - (a.total_reports ?? 0) || a.name.localeCompare(b.name));
+    for (const n of nodes) sortTree(n.children);
+  };
+  sortTree(roots);
+
+  // A root with no reports is not a hierarchy — rendering 170 lone cards side by side is what
+  // makes the chart unreadably wide. They go to their own tray instead, and the viewer's own
+  // card always stays on the canvas so the page can still answer "where do I sit".
+  const unassigned: OrgTreeServiceNode[] = [];
+  const realRoots: OrgTreeServiceNode[] = [];
+  for (const r of roots) {
+    const isSelf = selfEmployeeId != null && r.id === selfEmployeeId;
+    if (r.children.length === 0 && !isSelf) {
+      unassigned.push(r);
+      issueFor(
+        r,
+        "missing_manager",
+        r.reporting_manager_id
+          ? "Reporting manager is not an active employee in this view"
+          : "No reporting manager recorded",
+      );
+    } else {
+      realRoots.push(r);
+    }
+  }
+
+  return { roots: realRoots, unassigned, renderedCount, dataIssues };
+}

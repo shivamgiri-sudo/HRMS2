@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/payroll/payroll-attendance-control.service.ts",
+    "src/modules/payroll/payroll-more.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

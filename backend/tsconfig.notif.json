@@ -1,0 +1,29 @@
+{
+  // Scoped typecheck for the notification build.
+  //
+  // Only files with shallow import graphs belong here. Adding a module-level file such as
+  // dispatch.service.ts, all-workers.ts or server.ts pulls in the whole app graph: the
+  // check then runs 7+ minutes and leaves an unkillable ~130MB orphan when interrupted.
+  // Verify those with vitest and targeted greps instead.
+  //
+  // Usage: npx tsc -p tsconfig.notif.json     (completes in seconds)
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/shared/email-domains.ts",
+    "src/shared/recipient-resolver.ts",
+    "src/shared/recipient-resolver.types.ts",
+    "src/shared/worker-config.ts",
+    "src/modules/communication/notification.gateway.ts",
+    "src/modules/roster/roster.notifications.ts",
+    "src/modules/leave/leave.notifications.ts",
+    "src/modules/wfm/attendance.notifications.ts",
+    "src/modules/payroll/payroll.notifications.ts",
+    "src/modules/exit/exit.notifications.ts",
+    "src/modules/salary-increment/salaryIncrement.notifications.ts",
+    "src/modules/governance/tat.service.ts",
+    "src/workers/tat-escalation.worker.ts",
+    "src/workers/report-subscription.worker.ts",
+    "src/modules/communication/email.service.ts"
+  ]
+}

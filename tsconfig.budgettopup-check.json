@@ -1,0 +1,21 @@
+{
+  // Typecheck for Group D: the cost-centre split editor + new-line mode in BudgetTopupPanel
+  // (/finance/branch-budget, Top-ups tab).
+  //
+  // `npm run typecheck` runs `tsc --noEmit` against the root tsconfig, which declares
+  // `"files": []` plus project references — so it compiles nothing and exits 0 no matter what is
+  // broken. Use this instead when touching this panel or its host workspace page:
+  //
+  //     npx tsc -p tsconfig.budgettopup-check.json
+  //
+  // Scoped rather than repo-wide because `tsc -p tsconfig.app.json` currently reports a few
+  // hundred pre-existing errors elsewhere, which buries anything just introduced here. Follows
+  // the same pattern as tsconfig.grn-check.json.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/budget",
+    "src/pages/finance/BranchBudgetManagementWorkspace.tsx",
+    "src/hooks/useBranchBudget.ts",
+    "src/vite-env.d.ts"
+  ]
+}

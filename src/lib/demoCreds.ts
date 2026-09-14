@@ -1,0 +1,248 @@
+import {
+  getRolePageCodes,
+  ROLE_DASHBOARD_PAGE_CODES,
+} from "@/lib/rbacPageMatrix";
+
+/**
+ * Demo credentials for role-based testing.
+ * Each entry creates a local mock session — backend API only.
+ * Local-only demo passwords are placeholders, enabled only by explicit demo mode.
+ */
+
+export interface DemoCred {
+  email: string;
+  password: string;
+  role: string;
+  label: string;
+  userId: string;
+  fullName: string;
+  employeeId: string;
+  employeeCode: string;
+  /** page codes this role can access */
+  pages: string[];
+}
+
+const ALL_PAGES = [
+  "ATS_DASHBOARD","ATS_RECRUITER_QUEUE","ATS_RECRUITER_WORKSPACE","ATS_WAITING_QUEUE",
+  "ATS_CANDIDATE_MASTER","ATS_ONBOARDING_BRIDGE","ATS_EXTENSIONS",
+  "LMS_MY_LEARNING","LMS_COORDINATOR","LMS_ADMIN","LMS_MANAGEMENT_DASHBOARD","LMS_INTEGRATION",
+  "WFM_ROSTER","WFM_LIVE_TRACKER","WFM_EXTENSIONS",
+  "QUALITY_DASHBOARD","OPERATIONS_DASHBOARD","RECRUITER_DASHBOARD","WORKFORCE_COMMAND_CENTER",
+  "SUPER_ADMIN_DASHBOARD","CEO_DASHBOARD","PAYROLL_HR_DASHBOARD","WFM_DASHBOARD",
+  "WFM_ATTENDANCE_DASHBOARD","HR_DASHBOARD","IT_MANAGER_DASHBOARD","EMPLOYEE_SELF_DASHBOARD",
+  "ACCESS_CONTROL","ASSETS_MANAGER","HELPDESK","LETTERS","EMPLOYEE_LIFECYCLE",
+  "ORG_MASTERS","WORKFLOW_ADMIN","MANAGEMENT_DASHBOARD","BENEFITS","CAREER_PLANNING",
+  "PIP_MANAGEMENT","ERP","GOALS","WORK_INBOX","MOBILITY","JOBS_PORTAL",
+  "ADVANCED_REPORTS","STATUTORY_COMPLIANCE","LABOUR_COMPLIANCE","DPDP_COMPLIANCE",
+  "INTEGRATION_HUB","CLIENT_MASTER","PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL",
+  "STATUTORY_CONFIG","KPI_CONFIG","OPERATIONS_KPI","PORTAL_DATA_MANAGER","PROCESS_CONFIG",
+  "LEAVE_TYPES","RTA_BOARD",
+  "MY_PROFILE","ATTENDANCE_REGULARIZATION","MY_EXPENSES","EXPENSE_CREATE","MY_KPI",
+  "RESIGNATION_MY_REQUEST","DPDP_WITHDRAWAL",
+  // Routed and referenced but previously absent here and from page_catalog (see 604), so
+  // no role could be granted them and the routes were unreachable.
+  "EMPLOYEE_STAT_CARD","WFM_BRANCH_SPOC_CONFIG",
+  // COMMON_USER_PAGE_CODES gained UAT_FEEDBACK but this list did not, which broke the
+  // demo-access contract: getRolePageCodes("super_admin", ALL_PAGES) returns ALL_PAGES
+  // verbatim without unioning the common pages, so any common code missing here drops out
+  // of the super-admin demo credential. /uat/feedback is a real route gated on this code.
+  "UAT_FEEDBACK",
+  // The other three UAT pages, for the same reason one step further on. A real super_admin
+  // reaches every ACTIVE page_catalog row through getUserPageAccess(); a DEMO super_admin
+  // never calls that API at all and gets exactly this list. So without these three, the
+  // triage console, release board and checklist admin are unreachable on any demo login.
+  //
+  // UAT_CHECKLIST_ADMIN is the sharp one: it is granted to no role on purpose (segregation
+  // of duties — whoever views the guardrails should not be the population approving work
+  // evaluated under them), so super_admin is the ONLY way in. Omitting it here left it
+  // reachable by nobody at all under demo mode.
+  "UAT_TRIAGE_CONSOLE", "UAT_RELEASE_BOARD", "UAT_CHECKLIST_ADMIN",
+  // Same gap as the others above: migration 1676 seeds this into the real
+  // page_catalog for real users, but a demo login never calls that API, so
+  // without it here the Process KPI Dashboard is unreachable under demo mode.
+  "PROCESS_KPI_DASHBOARD",
+  "PROCESS_DATA_SOURCE",
+  "KPI_STUDIO",
+  "DASHBOARD_BUILDER",
+  // Same gap as the others above, one entry further on: PROCESS_OPERATIONS was
+  // registered in page_catalog by migration 1693 but never added here, so it
+  // was unreachable under any demo login despite being live for real users.
+  "PROCESS_OPERATIONS",
+];
+
+const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);
+
+export const DEMO_CREDENTIALS: DemoCred[] = [
+  {
+    email:        "superadmin@mascallnet.com",
+    password:     "local-demo-superadmin",
+    role:         "super_admin",
+    label:        "Super Admin",
+    userId:       "demo-super-admin-id",
+    fullName:     "Super Admin",
+    employeeId:   "demo-emp-superadmin",
+    employeeCode: "EMP-SA-001",
+    pages:        getRolePageCodes("super_admin", ALL_PAGES),
+  },
+  {
+    email:        "admin@mascallnet.com",
+    password:     "local-demo-admin",
+    role:         "admin",
+    label:        "Admin",
+    userId:       "demo-admin-id",
+    fullName:     "Arjun Sharma",
+    employeeId:   "demo-emp-admin",
+    employeeCode: "EMP-ADM-001",
+    pages:        ADMIN_DEMO_PAGES,
+  },
+  {
+    email:        "hr@mascallnet.com",
+    password:     "local-demo-hr",
+    role:         "hr",
+    label:        "HR Manager",
+    userId:       "demo-hr-id",
+    fullName:     "Priya Nair",
+    employeeId:   "demo-emp-hr",
+    employeeCode: "EMP-HR-001",
+    pages:        getRolePageCodes("hr", ALL_PAGES),
+  },
+  {
+    email:        "recruiter@mascallnet.com",
+    password:     "local-demo-recruiter",
+    role:         "recruiter",
+    label:        "Recruiter",
+    userId:       "demo-recruiter-id",
+    fullName:     "Ravi Kumar",
+    employeeId:   "demo-emp-recruiter",
+    employeeCode: "EMP-REC-001",
+    pages:        getRolePageCodes("recruiter", ALL_PAGES),
+  },
+  {
+    email:        "manager@mascallnet.com",
+    password:     "local-demo-manager",
+    role:         "process_manager",
+    label:        "Process Manager",
+    userId:       "demo-manager-id",
+    fullName:     "Sunita Reddy",
+    employeeId:   "demo-emp-manager",
+    employeeCode: "EMP-MGR-001",
+    pages:        getRolePageCodes("process_manager", ALL_PAGES),
+  },
+  {
+    email:        "tl@mascallnet.com",
+    password:     "local-demo-team-lead",
+    role:         "team_leader",
+    label:        "Team Leader",
+    userId:       "demo-tl-id",
+    fullName:     "Vikram Mehta",
+    employeeId:   "demo-emp-tl",
+    employeeCode: "EMP-TL-001",
+    pages:        getRolePageCodes("team_leader", ALL_PAGES),
+  },
+  {
+    email:        "qa@mascallnet.com",
+    password:     "local-demo-quality",
+    role:         "qa",
+    label:        "QA Analyst",
+    userId:       "demo-qa-id",
+    fullName:     "Deepa Iyer",
+    employeeId:   "demo-emp-qa",
+    employeeCode: "EMP-QA-001",
+    pages:        getRolePageCodes("qa", ALL_PAGES),
+  },
+  {
+    email:        "wfm@mascallnet.com",
+    password:     "local-demo-workforce",
+    role:         "wfm",
+    label:        "WFM Analyst",
+    userId:       "demo-wfm-id",
+    fullName:     "Karan Gupta",
+    employeeId:   "demo-emp-wfm",
+    employeeCode: "EMP-WFM-001",
+    pages:        getRolePageCodes("wfm", ALL_PAGES),
+  },
+  {
+    email:        "finance@mascallnet.com",
+    password:     "local-demo-finance",
+    role:         "finance",
+    label:        "Finance",
+    userId:       "demo-finance-id",
+    fullName:     "Meera Joshi",
+    employeeId:   "demo-emp-finance",
+    employeeCode: "EMP-FIN-001",
+    pages:        getRolePageCodes("finance", ALL_PAGES),
+  },
+  {
+    email:        "employee@mascallnet.com",
+    password:     "local-demo-employee",
+    role:         "employee",
+    label:        "Employee (Self-service)",
+    userId:       "demo-employee-id",
+    fullName:     "Ananya Singh",
+    employeeId:   "demo-emp-employee",
+    employeeCode: "EMP-STF-001",
+    pages:        getRolePageCodes("employee", ALL_PAGES),
+  },
+  {
+    email:        "ceo@mascallnet.com",
+    password:     "local-demo-ceo",
+    role:         "ceo",
+    label:        "CEO / Leadership",
+    userId:       "demo-ceo-id",
+    fullName:     "Rajesh Kapoor",
+    employeeId:   "demo-emp-ceo",
+    employeeCode: "EMP-CEO-001",
+    pages:        getRolePageCodes("ceo", ALL_PAGES),
+  },
+  {
+    email:        "trainer@mascallnet.com",
+    password:     "local-demo-trainer",
+    role:         "trainer",
+    label:        "Trainer / L&D",
+    userId:       "demo-trainer-id",
+    fullName:     "Pooja Bansal",
+    employeeId:   "demo-emp-trainer",
+    employeeCode: "EMP-TRN-001",
+    pages:        getRolePageCodes("trainer", ALL_PAGES),
+  },
+  // Legacy alias — stays for backward compat
+  {
+    email:        "demo@mascallnet.com",
+    password:     "local-demo-generic",
+    role:         "admin",
+    label:        "Demo (legacy)",
+    userId:       "demo-user-id",
+    fullName:     "Demo Admin",
+    employeeId:   "demo-employee-id",
+    employeeCode: "EMP-DEMO-001",
+    pages:        ADMIN_DEMO_PAGES,
+  },
+];
+
+/** Look up a demo credential by email — O(1) via Map */
+const _byEmail = new Map(DEMO_CREDENTIALS.map(c => [c.email.toLowerCase(), c]));
+
+export function getDemoCred(email: string): DemoCred | undefined {
+  return _byEmail.get(email.toLowerCase());
+}
+
+export function resolveActiveDemoCredential(
+  user: { id: string; email?: string | null } | null | undefined,
+  demoLoginEnabled: boolean,
+): DemoCred | undefined {
+  if (!demoLoginEnabled || !user?.id || !user.email) return undefined;
+
+  const credential = getDemoCred(user.email);
+  return credential?.userId === user.id ? credential : undefined;
+}
+
+/** Build demo session for localStorage — plain shape, no external auth types */
+export function buildDemoSession(cred: DemoCred) {
+  return {
+    access_token: `mock-token-${cred.role}`,
+    user: {
+      id:    cred.userId,
+      email: cred.email,
+    },
+  };
+}

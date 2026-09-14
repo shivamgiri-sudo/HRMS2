@@ -1,0 +1,648 @@
+import { useEffect, useRef, useState, useMemo, Fragment } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { MapPin, Users, RefreshCw, AlertCircle, Search, X, Clock } from "lucide-react";
+import { useUserRole } from "@/hooks/useUserRole";
+
+// Fix Leaflet default marker icons broken by Vite bundler
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
+interface LiveEmployee {
+  employee_id: string;
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  captured_at: string;
+  full_name: string;
+  branch_name: string | null;
+  process_name: string | null;
+  designation: string | null;
+  stale?: number | boolean; // 1/true when last fix is older than the online window
+}
+
+// A worker is "offline" when their last fix is older than the 15-min online window.
+// Prefer the server-computed flag; fall back to comparing captured_at client-side.
+const ONLINE_WINDOW_MS = 15 * 60_000;
+function isStale(e: LiveEmployee): boolean {
+  if (e.stale != null) return e.stale === 1 || e.stale === true;
+  return Date.now() - new Date(e.captured_at).getTime() > ONLINE_WINDOW_MS;
+}
+
+// A fix is "approximate" when its GPS accuracy is worse than this — i.e. a
+// cell-tower / Wi-Fi fallback rather than a precise satellite fix. Below this,
+// the dot is effectively the worker's exact spot.
+const HIGH_ACCURACY_METERS = 100;
+function isApproximate(e: LiveEmployee): boolean {
+  return e.accuracy != null && Number(e.accuracy) > HIGH_ACCURACY_METERS;
+}
+
+// Colored map pin (SVG divIcon) — green = online, grey = offline/last-known.
+function pinIcon(color: string): L.DivIcon {
+  return L.divIcon({
+    className: "",
+    html: `<svg width="26" height="38" viewBox="0 0 26 38" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13 0C5.82 0 0 5.82 0 13c0 9.75 13 25 13 25s13-15.25 13-25C26 5.82 20.18 0 13 0z" fill="${color}"/>
+      <circle cx="13" cy="13" r="5" fill="#ffffff"/>
+    </svg>`,
+    iconSize: [26, 38],
+    iconAnchor: [13, 38],
+    popupAnchor: [0, -34],
+  });
+}
+const ONLINE_ICON = pinIcon("#22c55e");
+const OFFLINE_ICON = pinIcon("#9ca3af");
+
+interface BranchOption {
+  id: string;
+  branch_name: string;
+  latitude: string | null;
+  longitude: string | null;
+}
+
+interface ProcessOption {
+  id: string;
+  process_name: string;
+  branch_id: string | null;
+}
+
+function minutesAgo(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (diff < 1) return "just now";
+  if (diff === 1) return "1 min ago";
+  if (diff < 60) return `${diff} min ago`;
+  const hrs = Math.floor(diff / 60);
+  if (hrs < 24) return hrs === 1 ? "1 hr ago" : `${hrs} hrs ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+// Haversine formula — returns distance in km between two lat/lng points
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Returns human-readable travel time estimate at ~40 km/h average city speed
+function travelTimeLabel(distKm: number): string {
+  const minutes = Math.round((distKm / 40) * 60);
+  if (minutes < 1) return "< 1 min";
+  if (minutes < 60) return `~${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `~${h}h ${m}min` : `~${h}h`;
+}
+
+// Fit map bounds ONCE on initial load only — never re-fit on polls
+function BoundsFitter({ employees }: { employees: LiveEmployee[] }) {
+  const map = useMap();
+  const fittedRef = useRef(false);
+  useEffect(() => {
+    if (fittedRef.current || !employees.length) return;
+    fittedRef.current = true;
+    const bounds = L.latLngBounds(
+      employees.map((e) => [Number(e.latitude), Number(e.longitude)])
+    );
+    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 14 });
+  }, [employees]);
+  return null;
+}
+
+// Captures the Leaflet map instance for programmatic flyTo
+function MapRefCapture({ onMap }: { onMap: (m: L.Map) => void }) {
+  const map = useMap();
+  useEffect(() => { onMap(map); }, [map]);
+  return null;
+}
+
+export default function LiveLocationMap() {
+  const [selectedId, setSelectedId]       = useState<string | null>(null);
+  const [searchQuery, setSearchQuery]     = useState("");
+  const [branchFilter, setBranchFilter]   = useState("");
+  const [processFilter, setProcessFilter] = useState("");
+  const [showOffline, setShowOffline]     = useState(false); // false = online only, true = include last-known
+  const [trailId, setTrailId]             = useState<string | null>(null); // employee whose day-route is shown
+  const mapRef     = useRef<L.Map | null>(null);
+  const markerRefs = useRef<Record<string, L.Marker>>({});
+
+  // Determine if the current user is super_admin — scoped roles must pass branch_id.
+  const { data: roleData } = useUserRole();
+  const isSuperAdmin = (roleData?.roleKeys ?? []).includes("super_admin");
+
+  // Live location data — polls every 30s.
+  // window=online → last 15 min; window=all → last 24h (offline workers at last-known spot).
+  const liveWindow = showOffline ? "all" : "online";
+  const { data: liveData, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
+    queryKey: ["live-location", liveWindow, branchFilter],
+    queryFn: async () => {
+      let url = `/api/location/live?window=${liveWindow}`;
+      // Scoped roles require branch_id. Resolve the id from allBranches (populated by
+      // the org-branches query below). If allBranches is not yet loaded or no branch is
+      // selected, we skip the param and let the backend return an appropriate error —
+      // the super_admin path never reaches this branch so it is unaffected.
+      if (!isSuperAdmin && branchFilter) {
+        // allBranches is initialised from the sibling useQuery further down; access it
+        // through a closure ref so we don't create a circular dependency.
+        const branchList = branchDataRef.current;
+        const found = branchList?.find((b) => b.branch_name === branchFilter);
+        if (found) {
+          url += `&branch_id=${encodeURIComponent(found.id)}`;
+        }
+      }
+      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>(url);
+      return res.data ?? [];
+    },
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: true, // keep polling even when tab is not focused
+    staleTime: 15_000,
+  });
+
+  // Ref that lets the liveData queryFn read the branch list without a dependency cycle.
+  const branchDataRef = useRef<BranchOption[]>([]);
+
+  // All active branches — includes lat/lng for travel-time calc
+  const { data: branchData } = useQuery({
+    queryKey: ["org-branches-live-map"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: BranchOption[] }>("/api/org/branches?active_status=1&limit=500");
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  // All active processes — for process dropdown
+  const { data: processData } = useQuery({
+    queryKey: ["org-processes-live-map"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: ProcessOption[] }>("/api/org/processes?active_status=1&limit=500");
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  // Today's movement trail for the selected employee (only fetched when a route is toggled on)
+  const { data: trailData } = useQuery({
+    queryKey: ["location-trail", trailId],
+    enabled: !!trailId,
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { latitude: number; longitude: number; captured_at: string }[] }>(
+        `/api/location/history/${trailId}`,
+      );
+      return res.data ?? [];
+    },
+    staleTime: 60_000,
+  });
+
+  const employees    = liveData ?? [];
+  const allBranches  = branchData ?? [];
+  const allProcesses = processData ?? [];
+
+  // Keep branchDataRef in sync so the liveData queryFn can read it in closures.
+  useEffect(() => { branchDataRef.current = allBranches; }, [allBranches]);
+
+  // Build a lookup: branch_name → { lat, lng } for travel-time calculation
+  const branchCoords = useMemo(() => {
+    const map: Record<string, { lat: number; lng: number }> = {};
+    for (const b of allBranches) {
+      if (b.latitude && b.longitude) {
+        map[b.branch_name] = { lat: Number(b.latitude), lng: Number(b.longitude) };
+      }
+    }
+    return map;
+  }, [allBranches]);
+
+  // Filter processes by selected branch (branch_id FK on process_master)
+  const filteredProcesses = useMemo(() => {
+    if (!branchFilter) return allProcesses;
+    const selectedBranch = allBranches.find((b) => b.branch_name === branchFilter);
+    if (!selectedBranch) return allProcesses;
+    return allProcesses.filter((p) => p.branch_id === selectedBranch.id);
+  }, [allProcesses, allBranches, branchFilter]);
+
+  // Reset process filter when branch changes
+  useEffect(() => { setProcessFilter(""); }, [branchFilter]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return employees.filter((e) => {
+      if (branchFilter && e.branch_name !== branchFilter) return false;
+      if (processFilter && e.process_name !== processFilter) return false;
+      if (q && !e.full_name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [employees, searchQuery, branchFilter, processFilter]);
+
+  const onlineCount  = useMemo(() => filteredEmployees.filter((e) => !isStale(e)).length, [filteredEmployees]);
+  const offlineCount = filteredEmployees.length - onlineCount;
+
+  const trailPositions = useMemo<[number, number][]>(
+    () => (trailData ?? []).map((p) => [Number(p.latitude), Number(p.longitude)]),
+    [trailData],
+  );
+  const trailEmployee = trailId ? employees.find((e) => e.employee_id === trailId) : null;
+
+  const lastUpdate = dataUpdatedAt
+    ? new Date(dataUpdatedAt).toLocaleTimeString("en-IN")
+    : "—";
+
+  function getTravelInfo(emp: LiveEmployee): { distKm: number; label: string } | null {
+    if (!emp.branch_name) return null;
+    const coords = branchCoords[emp.branch_name];
+    if (!coords) return null;
+    const distKm = haversineKm(Number(emp.latitude), Number(emp.longitude), coords.lat, coords.lng);
+    return { distKm, label: travelTimeLabel(distKm) };
+  }
+
+  function flyToEmployee(emp: LiveEmployee) {
+    setSelectedId(emp.employee_id);
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([Number(emp.latitude), Number(emp.longitude)], 16, { duration: 1 });
+      setTimeout(() => {
+        const marker = markerRefs.current[emp.employee_id];
+        if (marker) marker.openPopup();
+      }, 1100);
+    }
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="flex flex-col" style={{ height: "calc(100vh - 64px)" }}>
+
+        {/* ── Top header ── */}
+        <div className="bg-white border-b px-5 py-3 shrink-0">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-xs text-gray-500 flex items-center gap-1 mb-0.5">
+                <MapPin className="w-3.5 h-3.5" />
+                Admin / Live Location
+              </p>
+              <h1 className="text-lg font-bold text-gray-900 leading-tight">
+                Live Employee Location
+              </h1>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap text-xs">
+              {/* Online / All toggle — All includes offline workers at their last-known spot */}
+              <div className="flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5">
+                <button
+                  onClick={() => setShowOffline(false)}
+                  className={`px-3 py-1 rounded-full font-medium transition-colors ${
+                    !showOffline ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Online
+                </button>
+                <button
+                  onClick={() => setShowOffline(true)}
+                  className={`px-3 py-1 rounded-full font-medium transition-colors ${
+                    showOffline ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  All (24h)
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-full px-3 py-1 text-green-700 font-medium">
+                <Users className="w-3.5 h-3.5" />
+                <span>{onlineCount} online</span>
+              </div>
+              {showOffline && offlineCount > 0 && (
+                <div className="flex items-center gap-1.5 bg-gray-100 border border-gray-200 rounded-full px-3 py-1 text-gray-600 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-gray-400" />
+                  <span>{offlineCount} offline</span>
+                </div>
+              )}
+              <button
+                onClick={() => void refetch()}
+                className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
+                title="Refresh now"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                <span>{lastUpdate}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Body: sidebar + map ── */}
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* ── Left sidebar ── */}
+          <div className="w-72 shrink-0 flex flex-col border-r bg-gray-50 overflow-hidden">
+
+            {/* Filters */}
+            <div className="p-3 border-b bg-white space-y-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by employee name…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-7 py-1.5 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Branch dropdown — all active branches from branch_master */}
+              <select
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="">All Branches</option>
+                {allBranches.map((b) => (
+                  <option key={b.id} value={b.branch_name}>{b.branch_name}</option>
+                ))}
+              </select>
+
+              {/* Process dropdown — filtered by selected branch */}
+              <select
+                value={processFilter}
+                onChange={(e) => setProcessFilter(e.target.value)}
+                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="">All Processes</option>
+                {filteredProcesses.map((p) => (
+                  <option key={p.id} value={p.process_name}>{p.process_name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Online employee list */}
+            <div className="flex-1 overflow-y-auto">
+              {isLoading && employees.length === 0 && (
+                <div className="flex items-center justify-center h-24 text-gray-400 text-sm">
+                  Loading…
+                </div>
+              )}
+
+              {!isLoading && filteredEmployees.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-24 text-gray-400 text-xs px-4 text-center">
+                  <MapPin className="w-6 h-6 mb-1" />
+                  {employees.length === 0
+                    ? "No employees online right now"
+                    : "No match for current filters"}
+                </div>
+              )}
+
+              {filteredEmployees.map((emp) => {
+                const travel = getTravelInfo(emp);
+                return (
+                  <button
+                    key={emp.employee_id}
+                    onClick={() => flyToEmployee(emp)}
+                    className={`w-full text-left px-3 py-2.5 border-b border-gray-100 hover:bg-blue-50 transition-colors ${
+                      selectedId === emp.employee_id
+                        ? "bg-blue-50 border-l-2 border-l-blue-500"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${isStale(emp) ? "bg-gray-400" : "bg-green-500"}`} />
+                      <div className="min-w-0 w-full">
+                        <p className="text-sm font-medium text-gray-900 truncate">{emp.full_name}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {[emp.branch_name, emp.process_name].filter(Boolean).join(" · ") || "—"}
+                        </p>
+                        {emp.designation && (
+                          <p className="text-xs text-gray-400 truncate">{emp.designation}</p>
+                        )}
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className="text-xs text-gray-400 flex items-center gap-1">
+                            {minutesAgo(emp.captured_at)}
+                            {isApproximate(emp) && (
+                              <span
+                                className="text-amber-600"
+                                title={`Approximate fix · ±${Math.round(Number(emp.accuracy))}m`}
+                              >
+                                · approx
+                              </span>
+                            )}
+                          </p>
+                          {travel && (
+                            <span className="flex items-center gap-0.5 text-xs text-amber-600 font-medium">
+                              <Clock className="w-3 h-3" />
+                              {travel.label} to office
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Map panel ── */}
+          <div className="flex-1 relative overflow-hidden">
+            {isError && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded-lg shadow">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                Failed to load live locations
+              </div>
+            )}
+
+            {trailId && (
+              <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 bg-blue-600 text-white text-xs px-3 py-1.5 rounded-lg shadow">
+                <span className="w-3 h-0.5 bg-white/80 rounded" />
+                <span>
+                  Route today — {trailEmployee?.full_name ?? "employee"} · {trailPositions.length} pts
+                </span>
+                <button
+                  onClick={() => setTrailId(null)}
+                  className="ml-1 hover:text-blue-100"
+                  title="Clear route"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {!isLoading && !isError && employees.length === 0 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 z-[500] pointer-events-none">
+                <MapPin className="w-10 h-10 mb-2" />
+                <p className="text-sm font-medium">
+                  {showOffline
+                    ? "No location data in the last 24 hours"
+                    : "No employees online in the last 15 minutes"}
+                </p>
+                <p className="text-xs mt-1">
+                  {showOffline
+                    ? "Switch a worker's tracking on, or check back after their next shift"
+                    : "Employees send a heartbeat every 30 seconds when logged in"}
+                </p>
+              </div>
+            )}
+
+            <MapContainer
+              center={[20.5937, 78.9629]}
+              zoom={5}
+              style={{ width: "100%", height: "100%" }}
+              zoomControl
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+                maxZoom={19}
+              />
+
+              <MapRefCapture onMap={(m) => { mapRef.current = m; }} />
+              <BoundsFitter employees={filteredEmployees} />
+
+              {trailId && trailPositions.length > 1 && (
+                <Polyline
+                  positions={trailPositions}
+                  pathOptions={{ color: "#2563eb", weight: 4, opacity: 0.75 }}
+                />
+              )}
+
+              {filteredEmployees.map((emp) => {
+                const travel = getTravelInfo(emp);
+                const approx = isApproximate(emp);
+                // Show the ±accuracy circle where it matters: approximate fixes always,
+                // and the currently-selected worker so you can judge that dot's precision.
+                const showRadius = emp.accuracy != null && (approx || selectedId === emp.employee_id);
+                return (
+                  <Fragment key={emp.employee_id}>
+                  {showRadius && (
+                    <Circle
+                      center={[Number(emp.latitude), Number(emp.longitude)]}
+                      radius={Number(emp.accuracy)}
+                      pathOptions={{
+                        color: approx ? "#f59e0b" : "#3b82f6",
+                        weight: 1,
+                        opacity: 0.5,
+                        fillColor: approx ? "#f59e0b" : "#3b82f6",
+                        fillOpacity: 0.1,
+                      }}
+                    />
+                  )}
+                  <Marker
+                    position={[Number(emp.latitude), Number(emp.longitude)]}
+                    icon={isStale(emp) ? OFFLINE_ICON : ONLINE_ICON}
+                    opacity={isStale(emp) ? 0.7 : 1}
+                    ref={(m) => {
+                      if (m) markerRefs.current[emp.employee_id] = m;
+                      else delete markerRefs.current[emp.employee_id];
+                    }}
+                    eventHandlers={{ click: () => setSelectedId(emp.employee_id) }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: 190, fontSize: 13 }}>
+                        <strong style={{ display: "block", marginBottom: 2 }}>
+                          {emp.full_name}
+                        </strong>
+                        <span style={{
+                          display: "block",
+                          marginBottom: 4,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: isStale(emp) ? "#6b7280" : "#16a34a",
+                        }}>
+                          {isStale(emp) ? "● Offline · last known" : "● Online"}
+                        </span>
+                        {emp.branch_name && (
+                          <span style={{ color: "#555", display: "block" }}>
+                            {emp.branch_name}
+                            {emp.process_name ? ` · ${emp.process_name}` : ""}
+                          </span>
+                        )}
+                        {emp.designation && (
+                          <span style={{ color: "#777", display: "block", fontSize: 11 }}>
+                            {emp.designation}
+                          </span>
+                        )}
+                        <span style={{ color: "#888", fontSize: 11, display: "block", marginTop: 4 }}>
+                          Last seen: {minutesAgo(emp.captured_at)}
+                        </span>
+                        {emp.accuracy != null && (
+                          <span style={{
+                            display: "inline-block",
+                            marginTop: 4,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                            color: isApproximate(emp) ? "#b45309" : "#15803d",
+                            background: isApproximate(emp) ? "#fef3c7" : "#dcfce7",
+                          }}>
+                            {isApproximate(emp) ? "Approximate" : "Exact GPS"} · ±{Math.round(Number(emp.accuracy))}m
+                          </span>
+                        )}
+                        {travel && (
+                          <div style={{
+                            marginTop: 8,
+                            paddingTop: 8,
+                            borderTop: "1px solid #eee",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            color: "#b45309",
+                            fontWeight: 600,
+                            fontSize: 12,
+                          }}>
+                            <span>🕐</span>
+                            <span>{travel.label} to office</span>
+                            <span style={{ fontWeight: 400, color: "#999", fontSize: 10 }}>
+                              ({travel.distKm.toFixed(1)} km est.)
+                            </span>
+                          </div>
+                        )}
+                        {emp.branch_name && !branchCoords[emp.branch_name] && (
+                          <div style={{ marginTop: 8, fontSize: 10, color: "#aaa" }}>
+                            Travel time unavailable — add branch coordinates in Org Masters
+                          </div>
+                        )}
+                        <button
+                          onClick={() =>
+                            setTrailId(trailId === emp.employee_id ? null : emp.employee_id)
+                          }
+                          style={{
+                            marginTop: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: "#2563eb",
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {trailId === emp.employee_id ? "Hide today's route" : "Show today's route"}
+                        </button>
+                      </div>
+                    </Popup>
+                  </Marker>
+                  </Fragment>
+                );
+              })}
+            </MapContainer>
+          </div>
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}

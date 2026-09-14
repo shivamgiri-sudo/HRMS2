@@ -1,0 +1,628 @@
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { Link, useSearchParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
+import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { useCeoOverview } from "@/hooks/useCeoOverview";
+import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
+import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
+import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
+import { PnlCostLeakagePanel } from "@/components/finance/pnl/PnlCostLeakagePanel";
+import { PnlDailyTrendChart } from "@/components/finance/pnl/PnlDailyTrendChart";
+import { PnlSeatForecastCard } from "@/components/finance/pnl/PnlSeatForecastCard";
+import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
+import { PnlTrendCharts } from "@/components/finance/pnl/PnlTrendCharts";
+import { PnlReceivablesAgeingPanel } from "@/components/finance/pnl/PnlReceivablesAgeingPanel";
+import { PnlSeatBillabilityPanel } from "@/components/finance/pnl/PnlSeatBillabilityPanel";
+import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
+import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
+import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
+import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
+
+const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
+
+const matrixPresets: ProcessPnlMatrixPreset[] = ["summary", "revenue", "cost", "profitability", "budget-risk", "full"];
+const matrixStatusFilters: ProcessPnlStatusFilter[] = ["all", "profitable", "at-risk", "loss-making"];
+const matrixIssueFilters: ProcessPnlIssueFilter[] = [
+  "all",
+  "revenue-at-risk",
+  "delivery-missing",
+  "budget-exceeded",
+  "high-receivable",
+  "accounting-fallback",
+];
+const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
+
+const tabTriggerClass =
+  "rounded-none border-b-[3px] border-transparent px-4 py-3 text-[13px] font-extrabold text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
+
+/**
+ * The month the page opens on.
+ *
+ * It used to open on the CURRENT calendar month, which on 4 August meant August 2026: Rs 6.05 lakh
+ * of invoicing, no payroll run at all, Rs 2.00 lakh of GRN. A CEO opening the P&L saw revenue
+ * against no cost and concluded the arithmetic was broken, when the month had simply barely
+ * started — payroll runs at month end and invoicing lags delivery.
+ *
+ * Opens on the previous month instead, which is the month a finance review is actually about.
+ * The picker is unchanged, so any month is still one click away.
+ */
+function defaultPeriod() {
+  const now = new Date();
+  const previous = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
+  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function shiftMonth(period: string, delta: number): string {
+  const [y, m] = period.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatCurrency(value: number | null | undefined, compact = false) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    notation: compact ? "compact" : "standard",
+    maximumFractionDigits: compact ? 1 : 0,
+  }).format(value ?? 0);
+}
+
+export default function ProcessPnlPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const period = searchParams.get("period") ?? defaultPeriod();
+  const branchId = searchParams.get("branchId") ?? "";
+  const clientId = searchParams.get("clientId") ?? "";
+  const search = searchParams.get("search") ?? "";
+  const [draftSearch, setDraftSearch] = useState(search);
+  const [activeTab, setActiveTab] = useState<"overview" | "live" | "matrix" | "statement" | "alerts">("overview");
+  const [statementViewBy, setStatementViewBy] = useState<PnlStatementViewBy>("process");
+  const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
+  const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
+  const [issueFilter, setIssueFilter] = useState<ProcessPnlIssueFilter>("all");
+  const [matrixDensity, setMatrixDensity] = useState<ProcessPnlDensity>("comfortable");
+  const [matrixViewReady, setMatrixViewReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(MATRIX_VIEW_STORAGE_KEY) ?? "null") as Partial<{
+        preset: ProcessPnlMatrixPreset;
+        status: ProcessPnlStatusFilter;
+        issue: ProcessPnlIssueFilter;
+        density: ProcessPnlDensity;
+      }> | null;
+      if (saved?.preset && matrixPresets.includes(saved.preset)) setMatrixPreset(saved.preset);
+      if (saved?.status && matrixStatusFilters.includes(saved.status)) setStatusFilter(saved.status);
+      if (saved?.issue && matrixIssueFilters.includes(saved.issue)) setIssueFilter(saved.issue);
+      if (saved?.density && matrixDensities.includes(saved.density)) setMatrixDensity(saved.density);
+    } catch {
+      // Ignore malformed or unavailable browser storage and use defaults.
+    }
+    setMatrixViewReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!matrixViewReady) return;
+    try {
+      window.localStorage.setItem(MATRIX_VIEW_STORAGE_KEY, JSON.stringify({
+        preset: matrixPreset,
+        status: statusFilter,
+        issue: issueFilter,
+        density: matrixDensity,
+      }));
+    } catch {
+      console.debug("Unable to persist matrix view preferences");
+    }
+  }, [matrixDensity, matrixPreset, matrixViewReady, issueFilter, statusFilter]);
+
+  const filters = {
+    period,
+    branchId: branchId || undefined,
+    clientId: clientId || undefined,
+    search: search || undefined,
+  };
+  const bpoQuery = useBpoProcessPnl(filters);
+  const statementQuery = usePnlStatement(filters, statementViewBy);
+  const [showYtd, setShowYtd] = useState(false);
+  const ytdQuery = useQuery({
+    queryKey: ["pnl-ytd-summary", period],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?upTo=${period}`);
+      // hrmsApi returns the envelope itself, so the payload is one level in. Typing data as
+      // `any` meant the extra unwrap here type-checked while still being undefined at runtime,
+      // which is why this one survived the sweep that fixed the rest.
+      return response.data;
+    },
+    enabled: showYtd,
+    staleTime: 5 * 60_000,
+  });
+  const summary = bpoQuery.data;
+  const rows = summary?.rows ?? [];
+  /*
+   * Filter options accumulate; they are never rebuilt from the filtered rows alone.
+   *
+   * `rows` is the API response for the CURRENT filters, so deriving the dropdowns from it made
+   * them self-narrowing: choosing Mumbai collapsed the branch list to ["All branches", "Mumbai"],
+   * and reaching Pune meant going back through "All branches" and waiting out the query twice —
+   * on a page whose own comment records it taking 16-23s.
+   *
+   * Everything seen since the page mounted stays selectable. An option that no longer matches
+   * any row simply returns nothing when chosen, which is the same outcome as any other empty
+   * filter, and far better than being unable to select it at all.
+   */
+  const seenBranches = useRef(new Map<string, string>());
+  const seenClients = useRef(new Map<string, string>());
+  for (const row of rows) {
+    if (row.branchId) seenBranches.current.set(row.branchId as string, row.branchName ?? "Unassigned");
+    if (row.clientId) seenClients.current.set(row.clientId as string, row.clientName ?? "Unmapped");
+  }
+  const byLabel = (a: [string, string], b: [string, string]) => a[1].localeCompare(b[1]);
+  const branches = Array.from(seenBranches.current.entries()).sort(byLabel);
+  const clients = Array.from(seenClients.current.entries()).sort(byLabel);
+
+  function updateFilters(next: { period?: string; branchId?: string; clientId?: string; search?: string }) {
+    const params = new URLSearchParams(searchParams);
+    const entries = { period, branchId, clientId, search, ...next };
+    Object.entries(entries).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    });
+    setSearchParams(params);
+  }
+
+  /*
+   * FALLBACK: use the statement's figures when the process engine has nothing to say.
+   *
+   * The headline KPIs come from bpoPnlService, which is driven by process_revenue_rule,
+   * process_delivery_actual, process_revenue_component and process_monthly_plan. All four hold
+   * ZERO rows today, so it returns headcount and nothing else — 975 active staff in June against
+   * Rs 0 revenue, Rs 0 EBITDA, Rs 0 PAT — identically in every month, including the open one.
+   *
+   * Rs 0 is not the cautious answer here, it is a false one: June invoiced Rs 344.26 lakh, and
+   * the statement knows it. A tab named "CEO Overview" that reports no revenue for a company
+   * with 975 people on payroll is worse than one that reports the real figure from a second
+   * source, so when the process engine returns nothing we fall back to the statement.
+   *
+   * Never silently: `kpiSource` drives a badge saying where the numbers came from. Otherwise
+   * this quietly hides that the process-level configuration was never done, and nobody ever
+   * fills those four tables in.
+   */
+  const statementTotal = (componentKey: string): number | null => {
+    const rows = statementQuery.data?.rows;
+    const columns = statementQuery.data?.columns;
+    if (!rows || !columns) return null;
+    const row = rows.find((r) => r.componentKey === componentKey);
+    if (!row) return null;
+    return columns.reduce((total, column) => total + Number(row.values[column.id] ?? 0), 0);
+  };
+
+  const bpoHasMoney = Boolean(summary) && [
+    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
+    summary?.kpis.dsc, summary?.kpis.bmc,
+  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
+
+  const fallbackRevenue = statementTotal("recognized_revenue");
+  const useStatementFallback = Boolean(summary) && !bpoHasMoney
+    && fallbackRevenue !== null && Math.abs(fallbackRevenue) > 0.5;
+  const kpiSource: "process" | "statement" = useStatementFallback ? "statement" : "process";
+
+  const pct = (part: number | null, whole: number | null) =>
+    part !== null && whole !== null && whole !== 0 ? (part / whole) * 100 : 0;
+
+  /*
+   * Component keys, verified against finance_pnl_component_master rather than assumed. The cost
+   * lines are total_dsc / total_bmc — there is no plain "dsc" or "bmc" component, and reading
+   * those would have yielded 0, showing full revenue against no support cost and a hugely
+   * overstated Operating Profit. Operating Profit uses total_cost, which already includes IDC,
+   * instead of adding the three people lines and quietly dropping it.
+   */
+  const agentSalaryV = useStatementFallback ? (statementTotal("agent_salary") ?? 0) : summary?.kpis.agentSalary ?? 0;
+  const dscV = useStatementFallback ? (statementTotal("total_dsc") ?? 0) : summary?.kpis.dsc ?? 0;
+  const bmcV = useStatementFallback ? (statementTotal("total_bmc") ?? 0) : summary?.kpis.bmc ?? 0;
+  const revenueV = useStatementFallback ? (fallbackRevenue ?? 0) : summary?.kpis.recognizedRevenue ?? 0;
+  const opV = useStatementFallback
+    ? revenueV - (statementTotal("total_cost") ?? 0)
+    : summary?.kpis.operatingProfit ?? 0;
+
+  const kpiItems = summary
+    ? [
+        { label: "Recognized revenue", value: revenueV, kind: "currency" as const, tone: "good" as const },
+        { label: "Agent salary", value: agentSalaryV, kind: "currency" as const },
+        { label: "Agent salary / revenue", value: useStatementFallback ? pct(agentSalaryV, revenueV) : summary.kpis.agentSalaryPctRevenue ?? 0, kind: "percent" as const },
+        { label: "Direct Service Cost", value: dscV, kind: "currency" as const, tone: "warning" as const },
+        { label: "DSC / revenue", value: useStatementFallback ? pct(dscV, revenueV) : summary.kpis.dscPctRevenue ?? 0, kind: "percent" as const },
+        { label: "Branch Management Cost", value: bmcV, kind: "currency" as const, tone: "warning" as const },
+        { label: "BMC / revenue", value: useStatementFallback ? pct(bmcV, revenueV) : summary.kpis.bmcPctRevenue ?? 0, kind: "percent" as const },
+        // EBITDA and its margin come from the engine the fallback exists BECAUSE it returns
+        // nothing, so under the fallback they are ~0 while Revenue and Operating Profit beside
+        // them are real. That is the same contradiction the PBT/PAT note below was written to
+        // avoid, one tile to the left: a strip reading "Revenue Rs 3.44 Cr, Operating profit
+        // positive, EBITDA Rs 0, EBITDA margin 0.0%". Omitted under the fallback for the same
+        // reason, rather than printed as a confident zero.
+        ...(useStatementFallback ? [] : [
+          {
+            label: "EBITDA",
+            value: summary.kpis.ebitda,
+            kind: "currency" as const,
+            tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
+          },
+          {
+            label: "EBITDA margin",
+            value: summary.kpis.ebitdaMarginPct ?? 0,
+            kind: "percent" as const,
+            tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
+          },
+        ]),
+        {
+          label: "Operating profit",
+          value: opV,
+          kind: "currency" as const,
+          tone: opV >= 0 ? ("good" as const) : ("danger" as const),
+        },
+        // PBT and PAT need finance cost and tax, which the statement fallback has no source for.
+        // Showing them as Rs 0 beside a real Operating Profit would read as "we made a profit and
+        // then lost all of it", so they are omitted entirely when the fallback is in use.
+        ...(useStatementFallback ? [] : [
+          { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
+          { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
+        ]),
+      ]
+    : [];
+
+  return (
+    <DashboardLayout>
+      <div className="flex h-full flex-col bg-background text-foreground">
+        {/* Page header — dense finance masthead, styled after the Process P&L reference:
+            MAS Blue primary accent and standard shadcn foreground/muted tokens, uppercase eyebrow over a large title. */}
+        <div
+          className="flex flex-col gap-2 border-b border-border bg-muted px-4 py-3 shrink-0 sm:flex-row sm:items-end sm:justify-between"
+          aria-label="Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT"
+        >
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
+              Finance · Profitability command centre
+            </p>
+            <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-foreground">Process P&amp;L</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {summary && (
+              <>
+                <div className="border-l-[3px] border-primary pl-2.5">
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground">Recognized revenue</p>
+                  <p className="text-lg font-extrabold tabular-nums text-foreground">{formatCurrency(revenueV, true)}</p>
+                </div>
+                {kpiSource === "statement" && (
+                  // Never switch engines silently: without this the process-level configuration
+                  // looks complete because the numbers look right.
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+                    title="Process-level revenue rules, delivery actuals, revenue components and monthly plans hold no rows, so the process engine reports zero. These figures come from the P&L Statement (invoiced revenue and payroll) instead. Configure the process tables to drive them from delivery."
+                  >
+                    from P&amp;L Statement
+                  </span>
+                )}
+                {(summary.kpis.lossMakingProcesses ?? 0) > 0 && (
+                  <span className="bg-primary px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.06em] text-primary-foreground">
+                    {summary.kpis.lossMakingProcesses} at risk
+                  </span>
+                )}
+              </>
+            )}
+            {bpoQuery.dataUpdatedAt > 0 && (
+              <span className="text-[11px] text-muted-foreground">
+                Data as of {new Date(bpoQuery.dataUpdatedAt).toLocaleTimeString()}
+                {" · "}
+                <button type="button" className="underline hover:text-foreground" onClick={() => void bpoQuery.refetch()}>Refresh</button>
+              </span>
+            )}
+            <Button size="sm" variant="outline" className="h-8 rounded-none border-foreground/30 text-foreground hover:bg-muted" onClick={() => void downloadBpoPnlExport(filters)}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export
+            </Button>
+            <Button size="sm" asChild className="h-8 rounded-none bg-primary text-primary-foreground hover:bg-primary/90">
+              <Link to={`/finance/branch-budget?period=${period}`}>Branch budget</Link>
+            </Button>
+          </div>
+        </div>
+
+        {/* Filter bar */}
+        <div className="flex flex-wrap items-center gap-2 border-b-2 border-border bg-card px-4 py-2 shrink-0">
+          <div className="flex items-center gap-1">
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-muted" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <MonthYearPicker
+              value={period}
+              onChange={(v) => updateFilters({ period: v })}
+              className="w-52"
+            />
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-muted" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <select
+            className="flex h-8 rounded-none border border-input bg-card px-2 py-0 text-xs"
+            value={branchId}
+            onChange={(e) => updateFilters({ branchId: e.target.value || undefined })}
+          >
+            <option value="">All branches</option>
+            {branches.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <select
+            className="flex h-8 rounded-none border border-input bg-card px-2 py-0 text-xs"
+            value={clientId}
+            onChange={(e) => updateFilters({ clientId: e.target.value || undefined })}
+          >
+            <option value="">All clients</option>
+            {clients.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <Input
+            className="h-8 w-48 rounded-none text-xs"
+            placeholder="Search process..."
+            value={draftSearch}
+            onChange={(e) => setDraftSearch(e.target.value)}
+          />
+          <Button
+            size="sm"
+            className="h-8 rounded-none bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={() => updateFilters({ search: draftSearch || undefined })}
+          >
+            Apply
+          </Button>
+        </div>
+
+        {/* Always-visible KPI strip */}
+        <div className="border-b-2 border-border bg-muted shrink-0 overflow-x-auto">
+          {bpoQuery.isLoading ? (
+            <div className="flex gap-2 p-2">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-36 rounded-xl shrink-0" />)}
+            </div>
+          ) : bpoQuery.isError ? (
+            <p className="p-2 text-sm text-rose-600">
+              Could not load P&amp;L data for {period}.{" "}
+              <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
+            </p>
+          ) : (
+            <PnlExecutiveKpiStrip items={kpiItems} />
+          )}
+        </div>
+
+        {/* Tab layout: CEO Overview (default) + Process Matrix + Alerts & Reconciliation */}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
+          <TabsList className="h-auto w-full shrink-0 justify-start gap-0 rounded-none border-b-2 border-border bg-card px-4 py-0">
+            <TabsTrigger value="overview" className={tabTriggerClass}>CEO Overview</TabsTrigger>
+            <TabsTrigger value="live" className={tabTriggerClass}>Live P&amp;L</TabsTrigger>
+            <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
+            <TabsTrigger value="statement" className={tabTriggerClass}>P&amp;L Statement</TabsTrigger>
+            <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
+            <TabsTrigger value="leakage" className={tabTriggerClass}>Cost Leakage</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
+            {/*
+              NOT gated on bpoQuery. That query takes 16-23 seconds and this tab no longer reads a
+              single field from it — but it was still waiting on it, so the whole view sat behind
+              skeletons for twenty seconds and looked like it had never been rebuilt at all.
+              CeoOverviewPanel fetches its own data in about two seconds and renders its own
+              loading state.
+            */}
+            {(
+              <div className="flex flex-col gap-5">
+                {/*
+                  The CEO view, read from what actually happened — invoiced revenue, the payroll
+                  run and GRN spend.
+
+                  The process-level command centre is deliberately NOT rendered here, after being
+                  measured rather than assumed.
+
+                  bpoPnlService now falls back to invoiced revenue, which fixed a real artefact —
+                  it had been reporting Rs 242 lakh of cost against Rs 0 revenue once the
+                  information_schema fix revived the cost side. But PROCESS is not a grain this
+                  data supports yet:
+
+                    revenue   Rs 249.30L of Rs 370.84L, across 18 of 66 processes
+                    indirect  Rs  62.02L of Rs  77.00L
+                    people    most processes, but zero-paid and no-process staff fall outside
+
+                  Three lines each covering a different subset of the business subtract to a figure
+                  belonging to no real entity, and it would sit on this page disagreeing with the
+                  branch view by Rs 121 lakh. Branch works as a grain precisely because revenue,
+                  payroll and spend each resolve to a branch for essentially all of their value.
+
+                  The fix is process_id mapping on cost centres and employees — data, not more
+                  plumbing. CeoCommandCenter.tsx is untouched and still mounted nowhere else, so
+                  remounting it here is a one-line change once that mapping exists.
+                */}
+                <CeoOverviewPanel
+                  period={period}
+                  branchId={branchId || undefined}
+                  onBranchChange={(id) => updateFilters({ branchId: id })}
+                />
+
+                {/* Cost mix — Agent salary / DSC / BMC as a share of recognized revenue, from the
+                    same kpiItems figures already computed above (statement-fallback aware, so it
+                    never shows a mix built from mismatched sources). Real data, zero new backend
+                    calls: this is the same agentSalaryV/dscV/bmcV/revenueV already on the page. */}
+                {summary && revenueV > 0 && (
+                  <div className="border border-border bg-card px-4 py-3">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
+                      Cost mix (% of recognized revenue)
+                    </p>
+                    <div className="mt-2 flex h-6 w-full overflow-hidden rounded-sm border border-border">
+                      {[
+                        { label: "Agent salary", value: agentSalaryV, fill: "bg-primary" },
+                        { label: "DSC", value: dscV, fill: "bg-amber-500" },
+                        { label: "BMC", value: bmcV, fill: "bg-rose-500" },
+                      ].map((seg) => (
+                        <div
+                          key={seg.label}
+                          className={seg.fill}
+                          style={{ width: `${Math.max(0, Math.min(100, pct(seg.value, revenueV)))}%` }}
+                          title={`${seg.label}: ${pct(seg.value, revenueV).toFixed(1)}% of revenue (${formatCurrency(seg.value, true)})`}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                      <span><span className="inline-block h-2 w-2 rounded-full bg-primary" /> Agent salary {pct(agentSalaryV, revenueV).toFixed(1)}%</span>
+                      <span><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> DSC {pct(dscV, revenueV).toFixed(1)}%</span>
+                      <span><span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> BMC {pct(bmcV, revenueV).toFixed(1)}%</span>
+                      <span>Operating profit {pct(opV, revenueV).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Revenue/cost/margin trend + headcount-vs-revenue trend, over the real months
+                    of invoicing data only (see PnlTrendCharts's own doc comment). */}
+                <PnlTrendCharts filters={{ branchId: branchId || undefined }} />
+
+                {/* YTD summary strip */}
+                <div className="rounded-2xl border border-slate-200 bg-card px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Year-to-Date Summary {ytdQuery.data ? `(FY ${ytdQuery.data.fy} · ${ytdQuery.data.months.length} month${ytdQuery.data.months.length !== 1 ? "s" : ""})` : ""}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowYtd((v) => !v)}
+                    >
+                      {showYtd ? "Hide YTD" : `Show YTD (Apr–${period})`}
+                    </Button>
+                  </div>
+
+                  {showYtd && (
+                    <div className="mt-4">
+                      {ytdQuery.isLoading ? (
+                        <div className="flex gap-3">
+                          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 flex-1 rounded-xl" />)}
+                        </div>
+                      ) : ytdQuery.isError ? (
+                        <p className="text-sm text-rose-600">Failed to load YTD summary. <button className="underline" onClick={() => ytdQuery.refetch()}>Retry</button></p>
+                      ) : ytdQuery.data ? (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+                            {[
+                              { label: "Revenue", value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
+                              { label: "People Cost", value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
+                              { label: "Indirect Cost", value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
+                              { label: "Operating Profit", value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
+                              { label: "Budget (allocated)", value: ytdQuery.data.totalBudget, tone: "text-blue-700" },
+                            ].map((item) => (
+                              <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{item.label}</p>
+                                <p className={`mt-1 text-lg tabular-nums ${item.tone}`}>{formatCurrency(item.value, true)}</p>
+                              </div>
+                            ))}
+                          </div>
+                          {ytdQuery.data.marginPct != null && (
+                            <p className="text-xs text-slate-500">
+                              YTD operating margin: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
+                              {" · "}Budget consumed: <span className="font-semibold text-slate-700">{ytdQuery.data.totalBudget > 0 ? `${((ytdQuery.data.totalIndirectCost / ytdQuery.data.totalBudget) * 100).toFixed(1)}%` : "—"}</span>
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="live" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <PnlReconciliationPanel period={period} branchId={branchId || undefined} />
+          </TabsContent>
+
+          <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <PnlCostLeakagePanel period={period} />
+          </TabsContent>
+
+          <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <ProcessPnlMatrixToolbar
+              preset={matrixPreset}
+              status={statusFilter}
+              issue={issueFilter}
+              density={matrixDensity}
+              issueCounts={getIssueCounts(rows)}
+              onPresetChange={setMatrixPreset}
+              onStatusChange={setStatusFilter}
+              onIssueChange={setIssueFilter}
+              onDensityChange={setMatrixDensity}
+            />
+            {bpoQuery.isLoading ? (
+              <Skeleton className="h-96 rounded-3xl" />
+            ) : bpoQuery.isError ? (
+              <p className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-6 text-center text-sm text-rose-600">
+                Could not load the process matrix for {period}.{" "}
+                <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
+              </p>
+            ) : (
+              <div className="flex flex-col gap-5">
+                <BpoPnlMatrixTable
+                  rows={rows}
+                  period={period}
+                  preset={matrixPreset}
+                  status={statusFilter}
+                  issue={issueFilter}
+                  density={matrixDensity}
+                  search={search}
+                  alerts={summary?.alerts}
+                />
+                <PnlSeatBillabilityPanel filters={{ branchId: branchId || undefined }} />
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="statement" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <div className="mb-4 space-y-4">
+              <PnlSeatForecastCard period={period} branchId={branchId || undefined} />
+              <PnlDailyTrendChart period={period} branchId={branchId || undefined} />
+            </div>
+            <PnlStatementView
+              statement={statementQuery.data}
+              isLoading={statementQuery.isLoading}
+              isError={statementQuery.isError}
+              onRetry={() => void statementQuery.refetch()}
+              viewBy={statementViewBy}
+              onViewByChange={setStatementViewBy}
+              period={filters.period}
+            />
+          </TabsContent>
+
+          <TabsContent value="alerts" className="flex-1 overflow-auto px-4 py-3 m-0">
+            {bpoQuery.isLoading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-28 rounded-md" />
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-72 rounded-md" />)}
+                </div>
+              </div>
+            ) : bpoQuery.isError ? (
+              <p className="rounded-md border border-rose-200 bg-rose-50 px-4 py-6 text-center text-sm text-rose-600">
+                Could not load alerts &amp; reconciliation for {period}.{" "}
+                <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
+              </p>
+            ) : summary ? (
+              <div className="flex flex-col gap-5">
+                <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
+                <PnlReceivablesAgeingPanel filters={{ branchId: branchId || undefined }} />
+              </div>
+            ) : null}
+          </TabsContent>
+        </Tabs>
+      </div>
+    </DashboardLayout>
+  );
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/break-management/break-management.service.ts",
+    "src/modules/break-management/break-desk.routes.ts",
+    "src/middleware/errorHandler.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

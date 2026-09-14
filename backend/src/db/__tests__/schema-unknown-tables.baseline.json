@@ -1,0 +1,81 @@
+{
+  "db/__tests__/schema-column-refs.test.ts": [
+    "leave_requests"
+  ],
+  "modules/finance/client-payment-tracking.service.ts": [
+    "client_invoice_payment_log",
+    "client_invoice_payment_status"
+  ],
+  "modules/finance/mandate-seat-tracking.service.ts": [
+    "mandate_seat_history"
+  ],
+  "modules/salary-dispute/salary-dispute.service.ts": [
+    "email_queue",
+    "salary_dispute_attachment",
+    "salary_dispute_audit"
+  ],
+  "modules/salary-change/salary-change.service.ts": [
+    "employee_salary_change_log"
+  ],
+  "modules/assets/exit-pass.service.ts": [
+    "exit_pass_approvals",
+    "exit_pass_audit_logs",
+    "exit_pass_items",
+    "exit_pass_requests"
+  ],
+  "modules/ats/mock-digilocker.routes.ts": [
+    "ats_bgv_check"
+  ],
+  "modules/finance/grn.routes.ts": [
+    "vendor_debit_note"
+  ],
+  "modules/integrations/cosec/cosec-registration.service.ts": [
+    "mx_usermst"
+  ],
+  "modules/lms/lms-provisioning.service.ts": [
+    "trainee_master"
+  ],
+  "modules/lms/lms.routes.ts": [
+    "portal_sessions"
+  ],
+  "modules/mcnmeet/mcnmeet.cron.ts": [
+    "mcnmeet_meeting"
+  ],
+  "modules/mcnmeet/mcnmeet.service.ts": [
+    "mcnmeet_meeting",
+    "mcnmeet_meeting_audience",
+    "mcnmeet_meeting_event",
+    "mcnmeet_meeting_invitee"
+  ],
+  "modules/org-chart/org-chart.audit.ts": [
+    "org_chart_access_log"
+  ],
+  "modules/org-chart/org-chart.validation.ts": [
+    "org_chart_data_issue"
+  ],
+  "modules/payroll/bank-payment-readiness.routes.ts": [
+    "payroll_bank_exception"
+  ],
+  "modules/payroll/esi-reg-docs.routes.ts": [
+    "payroll_audit_trail"
+  ],
+  "modules/payroll/payroll-statutory-filing.routes.ts": [
+    "statutory_filing_record"
+  ],
+  "modules/performance-feedback/quality-upload.service.ts": [
+    "quality_audit"
+  ],
+  "modules/performance-scorecard/performance-scorecard-snapshot.service.ts": [
+    "employee_performance_daily_snapshot"
+  ],
+  "modules/portal/client.service.ts": [
+    "bulk_operation_jobs"
+  ],
+  "modules/reporting/report-access-grants.routes.ts": [
+    "role_report_permissions",
+    "user_report_permissions"
+  ],
+  "modules/sales-upload/sales-upload.service.ts": [
+    "db_masmis"
+  ]
+}

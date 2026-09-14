@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/db/pagination.ts",
+    "src/db/__tests__/pagination.test.ts",
+    "src/modules/account-control/account.control.service.ts",
+    "src/modules/analytics/top-performers.service.ts",
+    "src/modules/auth/auth-launch.routes.ts",
+    "src/modules/control-tower/control-tower.service.ts",
+    "src/modules/engagement/daily-tips.service.ts",
+    "src/modules/engagement/engagement-health.service.ts",
+    "src/modules/legacy/legacy-analyzer.service.ts",
+    "src/modules/payroll/payroll-recalc-drainer.service.ts",
+    "src/modules/portal/client.service.ts",
+    "src/modules/portal/enhanced-portal-user.service.ts",
+    "src/modules/quality-dashboard/objection-analysis.service.ts",
+    "src/modules/quality-dashboard/quality-dashboard.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

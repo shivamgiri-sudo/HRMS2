@@ -1,0 +1,34 @@
+-- Migration 1603: Clamp negative employee_loans.pending_amount to 0
+--
+-- 11 rows carry pending_amount < 0, all legacy-import artifacts (the app's own
+-- record-payment handler already clamps at Math.max(0, pending - paid) and could
+-- never produce these). Verified live 2026-08-25, exact rows affected:
+--
+--   id                                    | employee_code | status    | pending_amount
+--   f31433a6-9d3d-11f1-8f5c-00155d0ab410 | MAS36816       | active    | -20000.00
+--   f31a171a-9d3d-11f1-8f5c-00155d0ab410 | MAS45853       | active    | -20000.00
+--   178eb689-d96b-46aa-9987-b30d7ff57313 | MAS00175       | completed | -15000.00
+--   32382131-04e6-4672-ba0a-cd595a320083 | MAS08226       | completed | -15000.00
+--   33ceb077-2ce7-4f75-9541-460bfd8757b6 | MAS29986       | completed | -15000.00
+--   35124ed2-b08a-4d95-b8bd-0a4714618c49 | MAS00257       | completed | -15000.00
+--   077711e5-9fd4-47f1-8d49-f452e17c8b25 | MAS22912       | completed | -12000.00
+--   cdc0362d-754d-4b0f-8c38-8dbc605fc50c | MAS04461       | completed | -2333.31
+--   f37c815e-9d3d-11f1-8f5c-00155d0ab410 | MAS38964       | active    | -0.02
+--   f3895531-9d3d-11f1-8f5c-00155d0ab410 | MAS47782       | active    | -0.02
+--   f38f69ef-9d3d-11f1-8f5c-00155d0ab410 | MAS38040       | active    | -0.02
+--
+-- Use scripts/loan-negative-pending-cleanup.ts instead of running this raw SQL
+-- directly — it does the same UPDATE but first writes one logSensitiveAction row
+-- per affected loan capturing the pre-cleanup value, so the change is traceable
+-- the same way any other loan mutation in this app is. Dry-run by default; pass
+-- --apply to actually clamp + write the audit rows. This .sql file is kept for
+-- the migration manifest/history, not meant to be run standalone.
+--
+-- APPLIED against production 2026-08-25 via scripts/loan-negative-pending-cleanup.ts
+-- --apply, with explicit user approval. All 11 rows above confirmed clamped to 0;
+-- 11 matching rows written to sensitive_action_log (action_type
+-- 'loan_negative_pending_cleanup'). Kept here (idempotent — WHERE pending_amount < 0
+-- matches nothing once applied) for the migration manifest/history.
+
+UPDATE employee_loans SET pending_amount = 0
+ WHERE pending_amount < 0;

@@ -1,0 +1,679 @@
+/**
+ * Task Completion Handlers
+ *
+ * Syncs master data when provisioning tasks are marked complete.
+ * Uses EXISTING database tables — no duplicate table creation.
+ *
+ * Table mapping (verified 2026-07-16):
+ *   IT task   → employees.official_email + auth_user + asset_master/asset_assignment
+ *   Admin     → employee_biometric_enrollment + employee_documents (id_card)
+ *   WFM       → employees.process_id + employee_roster_preference
+ *   DPDP      → dpdp_consent_register (not candidate_dpdp_consent)
+ */
+
+import { randomUUID } from 'crypto';
+import { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { activateIfJoiningDateReached } from '../employees/employee-activation.service.js';
+import { emailService } from '../communication/email.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
+import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
+
+function _frontendUrl(path: string) {
+  const base = String(process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+export const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
+
+interface TaskRow {
+  id: string;
+  employee_id: string;
+  task_code: string;
+  assigned_role: string;
+  status: string;
+}
+
+async function getTask(taskId: string): Promise<TaskRow> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_id, task_code, assigned_role, status
+     FROM it_provisioning_request WHERE id = ? LIMIT 1`,
+    [taskId]
+  );
+  if (!(rows as any[]).length) {
+    throw Object.assign(new Error('Provisioning task not found'), { statusCode: 404 });
+  }
+  return rows[0] as TaskRow;
+}
+
+async function triggerActivationCheck(employeeId: string, actorUserId: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const joiningDate = (rows[0] as any)?.date_of_joining;
+  if (joiningDate) {
+    await activateIfJoiningDateReached(employeeId, joiningDate, actorUserId).catch(err => {
+      console.warn('[TaskCompletion] Activation check skipped:', err instanceof Error ? err.message : String(err));
+    });
+  }
+}
+
+// ── IT Email, Domain & Asset ───────────────────────────────────────────────────
+
+export interface ItCompletionInput {
+  official_email: string;
+  domain_account: string;
+  asset_tag?: string;
+  asset_type?: string;
+  evidence_note?: string;
+}
+
+export async function completeItProvisioningTask(
+  taskId: string,
+  input: ItCompletionInput,
+  actorUserId: string
+): Promise<void> {
+  // Official email is now OPTIONAL (owner decision) — domain_account is the only hard
+  // requirement for this task. When officialEmail is blank, everything below that depends on
+  // it (employees.official_email, auth_user creation/update) is skipped rather than run with
+  // an empty value: auth_user.email is NOT NULL and UNIQUE, so writing '' for a second
+  // email-less employee would crash on the duplicate key rather than merely "work without an
+  // email". Login still works without ever reaching this branch — authService.login() already
+  // accepts employee_code as an alternate identifier to email (auth.service.ts) — but an
+  // auth_user row (and its password) has to exist first, so an employee with neither an
+  // official email nor a pre-existing user_id simply has login-account creation deferred until
+  // one is supplied (e.g. by reopening this task later).
+  const officialEmail = input.official_email.trim().toLowerCase();
+  const domainAccount = input.domain_account.trim();
+
+  if (!domainAccount) {
+    throw Object.assign(
+      new Error('domain_account is required for IT tasks'),
+      { statusCode: 400 }
+    );
+  }
+  if (officialEmail && !OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
+    throw Object.assign(
+      new Error('official_email must end with @teammas.in or @teammas.co.in'),
+      { statusCode: 400 }
+    );
+  }
+
+  const task = await getTask(taskId);
+  const conn = await db.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // 1. Update employees.official_email — only when one was actually given. An empty write
+    // here would stomp a real address the employee already has on file for no reason.
+    if (officialEmail) {
+      await conn.execute(
+        `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
+        [officialEmail, task.employee_id]
+      );
+    }
+
+    // 2. Get employee's current user_id
+    const [empRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT user_id, first_name, last_name, employee_code FROM employees WHERE id = ? LIMIT 1`,
+      [task.employee_id]
+    );
+    const emp = empRows[0] as any;
+    const existingUserId = emp?.user_id;
+    // Non-blocking: the frontend already asks the operator to confirm this exact
+    // mismatch before it submits, so reaching here with one is either a confirmed
+    // exception or a caller that bypassed the UI (CSV bulk upload, direct API call).
+    // Logged rather than rejected — domain_account is operator-entered free text, not
+    // a value this system controls, so refusing to save it would be a new failure mode
+    // of its own. See the 2026-09-09 incident this guards against.
+    if (emp?.employee_code && domainAccount.toUpperCase() !== String(emp.employee_code).toUpperCase()) {
+      console.warn(
+        `[TaskCompletion] IT_EMAIL_DOMAIN_ASSET domain_account "${domainAccount}" does not match employee_code "${emp.employee_code}" for employee ${task.employee_id} (task ${taskId})`
+      );
+    }
+    // Tracks whether a NEW auth_user was created below, so the profile-photo email further
+    // down (which only makes sense once someone can actually log in) fires on the right
+    // condition rather than on "no email was given, so we skipped account creation".
+    let createdNewAuthUser = false;
+
+    if (existingUserId) {
+      // Update existing auth_user email to official email — only if one was given. Employee
+      // already has login access via employee_code (auth.service.ts's login() accepts either),
+      // so leaving their current auth_user.email untouched when IT submits without one is
+      // correct, not a gap.
+      if (officialEmail) {
+        await conn.execute(
+          `UPDATE auth_user SET email = ?, updated_at = NOW() WHERE id = ?`,
+          [officialEmail, existingUserId]
+        );
+      }
+    } else if (officialEmail) {
+      // Create auth_user with official email — this is the employee's first login credential.
+      // Only reachable with a non-empty officialEmail: auth_user.email is NOT NULL and UNIQUE,
+      // so this path is skipped entirely (not run with '') when no email was given — see the
+      // comment on officialEmail above for why. The employee's login account creation is
+      // deferred until an email is supplied, e.g. by reopening this task later.
+      const bcrypt = await import('bcryptjs');
+      const newAuthUserId = randomUUID();
+      // Temp password: Mas@XXXXXX — employee must change on first login
+      const tempPassword = `Mas@${Math.floor(100000 + Math.random() * 900000)}`;
+      const passwordHash = await bcrypt.default.hash(tempPassword, 12);
+
+      await conn.execute(
+        `INSERT INTO auth_user (id, email, password_hash, must_change_password, created_at)
+         VALUES (?, ?, ?, 1, NOW())`,
+        [newAuthUserId, officialEmail, passwordHash]
+      );
+
+      await conn.execute(
+        `UPDATE employees SET user_id = ?, updated_at = NOW() WHERE id = ?`,
+        [newAuthUserId, task.employee_id]
+      );
+      createdNewAuthUser = true;
+
+      // Store credential hint in employee_documents (doc_type = 'it_credentials')
+      // This gives IT a record that credentials were issued without storing plaintext.
+      //
+      // Was .catch(() => console.warn(...)) — swallowed on this same conn, inside the
+      // transaction this whole function runs in (beginTransaction above, commit below).
+      // A failure here didn't roll back or rethrow, so auth_user still got created, the
+      // task still got marked 'actioned', and the route still returned success — with the
+      // one write whose own comment says it exists specifically so IT has a record
+      // credentials were issued silently missing. Left unguarded so a failure here rolls
+      // back the same way every other statement in this transaction already does, and
+      // surfaces as a real error instead of a false success.
+      await conn.execute(
+        `INSERT INTO employee_documents
+           (id, employee_id, doc_type, doc_category, doc_name, file_url,
+            uploaded_by, created_at, verified, verified_by, verification_date)
+         VALUES (?, ?, 'it_credentials', 'other', ?, NULL, ?, NOW(), 1, ?, NOW())
+         ON DUPLICATE KEY UPDATE uploaded_by = VALUES(uploaded_by), verification_date = NOW()`,
+        [
+          randomUUID(), task.employee_id,
+          `IT credentials issued — official email: ${officialEmail}`,
+          actorUserId, actorUserId,
+        ]
+      );
+    }
+    // else: no existingUserId and no officialEmail — nothing to do here. Domain account and
+    // asset assignment (below) still proceed; login-account creation is deferred.
+
+    // 3. Asset allocation using existing asset_master + asset_assignment tables
+    if (input.asset_tag) {
+      // Find or create asset in asset_master by asset_code (asset_tag)
+      const [assetRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT id FROM asset_master WHERE asset_code = ? LIMIT 1`,
+        [input.asset_tag]
+      );
+      let assetId: string;
+
+      if ((assetRows as any[]).length > 0) {
+        assetId = (assetRows[0] as any).id;
+        // Update asset status to assigned
+        await conn.execute(
+          `UPDATE asset_master SET status = 'assigned', updated_at = NOW() WHERE id = ?`,
+          [assetId]
+        );
+      } else {
+        // Create new asset record
+        assetId = randomUUID();
+        await conn.execute(
+          `INSERT INTO asset_master
+             (id, asset_code, asset_name, asset_category, asset_type, status, created_at)
+           VALUES (?, ?, ?, 'IT Equipment', ?, 'assigned', NOW())`,
+          [assetId, input.asset_tag, `${input.asset_type ?? 'Laptop'} - ${input.asset_tag}`, input.asset_type ?? 'Laptop']
+        );
+      }
+
+      // Create asset_assignment record (existing table)
+      await conn.execute(
+        `INSERT INTO asset_assignment
+           (id, asset_id, employee_id, assigned_date, assigned_by, notes, created_at)
+         VALUES (?, ?, ?, CURDATE(), ?, ?, NOW())`,
+        [
+          randomUUID(), assetId, task.employee_id, actorUserId,
+          input.evidence_note ?? `Assigned during IT provisioning task ${taskId}`,
+        ]
+      );
+    }
+
+    // 4. Mark task actioned with structured fields. officialEmail || null so an
+    // email-less completion records NULL rather than '' — this column is nullable and
+    // unconstrained (unlike auth_user.email above), but NULL still reads better than ''.
+    await conn.execute(
+      `UPDATE it_provisioning_request
+       SET status = 'actioned', actioned_by = ?, actioned_at = NOW(),
+           official_email = ?, domain_account = ?,
+           asset_tag = COALESCE(?, asset_tag),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [actorUserId, officialEmail || null, domainAccount, input.asset_tag ?? null, taskId]
+    );
+
+    await conn.commit();
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: 'it_provisioning_email_set',
+      module_key: 'it_provisioning',
+      entity_type: 'employee',
+      entity_id: task.employee_id,
+      employee_id: task.employee_id,
+      change_summary: {
+        task_id: taskId,
+        official_email: officialEmail || null,
+        domain_account: domainAccount,
+        auth_user_created: createdNewAuthUser,
+        asset_assigned: !!input.asset_tag,
+      },
+    });
+
+    await triggerActivationCheck(task.employee_id, actorUserId);
+
+    // When a new auth_user account was just created, send the profile photo
+    // upload email now — the employee can finally log in and act on it.
+    // dispatchJoinProvisioningTasks defers this email when user_id is null.
+    // Gated on createdNewAuthUser rather than !existingUserId: an email-less completion can
+    // leave existingUserId falsy too (login-account creation deferred, not done), and that
+    // case must not fire a "log in now" email for an account that doesn't exist yet.
+    if (createdNewAuthUser) {
+      try {
+        const [photoCheckRows] = await db.execute<RowDataPacket[]>(
+          `SELECT user_id, photo_url, personal_email, official_email, email, first_name FROM employees WHERE id = ? LIMIT 1`,
+          [task.employee_id]
+        );
+        const empData = (photoCheckRows as any[])[0];
+        if (empData && !empData.photo_url) {
+          const toEmail = empData.personal_email || empData.official_email || empData.email;
+          const empName: string = empData.first_name || 'Employee';
+          const photoUrl = _frontendUrl('/profile');
+          if (toEmail) {
+            await emailService.send({
+              to: toEmail,
+              subject: 'Action Required: Upload your profile photo — ID card pending',
+              html: `<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">
+                <h2 style="color:#0f766e">Upload Your Profile Photo</h2>
+                <p>Dear ${empName},</p>
+                <p>Welcome to MAS Callnet! Your HRMS account is now active. Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.</p>
+                <p>Please log in to HRMS and upload your photo from your Profile page.</p>
+                <p><a href="${photoUrl}" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Upload Profile Photo</a></p>
+                <p style="color:#64748b;font-size:12px;margin-top:16px">If the button does not work: ${photoUrl}</p>
+              </div>`,
+            });
+          }
+          if (empData.user_id) {
+            await inboxService.createItem({
+              user_id: empData.user_id,
+              type: 'profile_photo_required',
+              title: 'Upload your profile photo',
+              description: 'Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page.',
+              entity_type: 'employee',
+              entity_id: task.employee_id,
+              action_url: '/profile',
+              priority: 'high',
+            });
+          }
+        }
+      } catch (photoErr) {
+        console.warn('[handleITCompletion] Non-fatal: failed to send profile photo notification after account creation:', photoErr);
+      }
+    }
+
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+// ── Admin Biometric & ID Card ──────────────────────────────────────────────────
+
+export interface AdminCompletionInput {
+  biometric_enrolled: boolean;
+  biometric_device_id?: string;    // biometric_device_master.id
+  cosec_user_id?: string;          // cosec system user ID
+  id_card_printed: boolean;
+  id_card_number?: string;
+  evidence_note?: string;
+}
+
+export async function completeAdminProvisioningTask(
+  taskId: string,
+  input: AdminCompletionInput,
+  actorUserId: string
+): Promise<void> {
+  const task = await getTask(taskId);
+  const conn = await db.getConnection();
+
+  // Fetch employee_code and photo_url
+  const [empCodeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code, photo_url FROM employees WHERE id = ? LIMIT 1`,
+    [task.employee_id]
+  );
+  const empRow = (empCodeRows as RowDataPacket[])[0] as any;
+  const empCode: string = empRow?.employee_code ?? task.employee_id;
+
+  // Block ID card completion if employee has no photo
+  if (input.id_card_printed && !empRow?.photo_url) {
+    conn.release();
+    throw Object.assign(
+      new Error("Employee photo is required before the ID card can be issued. Ask the employee to upload their profile photo first."),
+      { statusCode: 422 }
+    );
+  }
+
+  try {
+    await conn.beginTransaction();
+
+    // 1. Biometric enrollment — use existing employee_biometric_enrollment table
+    if (input.biometric_enrolled) {
+      const cosecUserId = input.cosec_user_id ?? empCode;
+      const [existingEnroll] = await conn.execute<RowDataPacket[]>(
+        `SELECT id FROM employee_biometric_enrollment WHERE employee_id = ? LIMIT 1`,
+        [task.employee_id]
+      );
+
+      // Non-blocking, and deliberately scoped to a FIRST-time enrollment only: many
+      // legacy employees carry a genuinely different, pre-existing cosec_user_id
+      // (an older device-numbering scheme, e.g. "AHMH2854") that has nothing to do
+      // with their employee_code and is correct as-is — warning on every later update
+      // to one of those rows would just be permanent, meaningless noise. A brand-new
+      // enrollment has no such history: it should always start out equal to the
+      // employee's own code (that's the ?? empCode fallback above), so an operator
+      // explicitly typing something else here is exactly the 2026-09-09 mistake this
+      // guards against, and the frontend already confirms it before submitting.
+      if (
+        (existingEnroll as any[]).length === 0 &&
+        input.cosec_user_id &&
+        input.cosec_user_id.toUpperCase() !== empCode.toUpperCase()
+      ) {
+        console.warn(
+          `[TaskCompletion] ADMIN_BIOMETRIC_ID_CARD cosec_user_id "${input.cosec_user_id}" does not match employee_code "${empCode}" for a first-time enrollment, employee ${task.employee_id} (task ${taskId})`
+        );
+      }
+
+      if ((existingEnroll as any[]).length > 0) {
+        await conn.execute(
+          `UPDATE employee_biometric_enrollment
+           SET cosec_user_id = ?, device_id = COALESCE(?, device_id),
+               enrolled_by = ?, is_active = 1, last_sync_at = NOW()
+           WHERE employee_id = ?`,
+          [cosecUserId, input.biometric_device_id ?? null, actorUserId, task.employee_id]
+        );
+      } else {
+        await conn.execute(
+          `INSERT INTO employee_biometric_enrollment
+             (id, employee_id, cosec_user_id, cosec_user_name, device_id, enrolled_by, enrolled_at, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, NOW(), 1)`,
+          [
+            randomUUID(), task.employee_id, cosecUserId,
+            empCode,
+            input.biometric_device_id ?? null,
+            actorUserId,
+          ]
+        );
+      }
+    }
+
+    // 2. ID Card — store in employee_documents with doc_type = 'id_card'
+    if (input.id_card_printed) {
+      const [existingDoc] = await conn.execute<RowDataPacket[]>(
+        `SELECT id FROM employee_documents WHERE employee_id = ? AND doc_type = 'id_card' LIMIT 1`,
+        [task.employee_id]
+      );
+
+      if ((existingDoc as any[]).length > 0) {
+        await conn.execute(
+          `UPDATE employee_documents
+           SET doc_name = ?, verified = 1, verified_by = ?,
+               verification_date = NOW(), verification_remarks = ?
+           WHERE employee_id = ? AND doc_type = 'id_card'`,
+          [
+            input.id_card_number ? `ID Card No: ${input.id_card_number}` : 'ID Card Issued',
+            actorUserId,
+            input.evidence_note ?? 'Issued by Admin team',
+            task.employee_id,
+          ]
+        );
+      } else {
+        await conn.execute(
+          `INSERT INTO employee_documents
+             (id, employee_id, doc_type, doc_category, doc_name, file_url,
+              uploaded_by, created_at, verified, verified_by, verification_date, verification_remarks)
+           VALUES (?, ?, 'id_card', 'identity', ?, NULL, ?, NOW(), 1, ?, NOW(), ?)`,
+          [
+            randomUUID(), task.employee_id,
+            input.id_card_number ? `ID Card No: ${input.id_card_number}` : 'Employee ID Card',
+            actorUserId, actorUserId,
+            input.evidence_note ?? 'Issued by Admin team during joining provisioning',
+          ]
+        );
+      }
+    }
+
+    // 3. Mark task actioned
+    await conn.execute(
+      `UPDATE it_provisioning_request
+       SET status = 'actioned', actioned_by = ?, actioned_at = NOW(),
+           biometric_enrolled = ?, id_card_printed = ?,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [actorUserId, input.biometric_enrolled ? 1 : 0, input.id_card_printed ? 1 : 0, taskId]
+    );
+
+    await conn.commit();
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: 'admin_provisioning_complete',
+      module_key: 'it_provisioning',
+      entity_type: 'employee',
+      entity_id: task.employee_id,
+      employee_id: task.employee_id,
+      change_summary: {
+        task_id: taskId,
+        biometric_enrolled: input.biometric_enrolled,
+        cosec_user_id: input.cosec_user_id ?? empCode,
+        id_card_printed: input.id_card_printed,
+        id_card_number: input.id_card_number ?? null,
+      },
+    });
+
+    await triggerActivationCheck(task.employee_id, actorUserId);
+
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+// ── WFM Process Alignment ─────────────────────────────────────────────────────
+
+export interface WfmCompletionInput {
+  process_id: string;
+  shift_id?: string;
+  roster_effective_date: string;
+  week_off_day?: string;  // 'Sunday' | 'Monday' etc — matches existing ENUM
+  attendance_effective_date: string;
+  biometric_mapping_ref?: string;
+  evidence_note?: string;
+}
+
+export async function completeWfmAlignmentTask(
+  taskId: string,
+  input: WfmCompletionInput,
+  actorUserId: string
+): Promise<void> {
+  if (!input.process_id) {
+    throw Object.assign(new Error('process_id is required for WFM alignment'), { statusCode: 400 });
+  }
+  if (!input.roster_effective_date || !input.attendance_effective_date) {
+    throw Object.assign(
+      new Error('roster_effective_date and attendance_effective_date are required'),
+      { statusCode: 400 }
+    );
+  }
+
+  const task = await getTask(taskId);
+  const conn = await db.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // 1. Update employee process_id
+    await conn.execute(
+      `UPDATE employees SET process_id = ?, updated_at = NOW() WHERE id = ?`,
+      [input.process_id, task.employee_id]
+    );
+    // Process reassignment moves the person under a different process manager, so the
+    // supervisory period must close and reopen — see manager-attribution.service.ts.
+    void recordSupervisoryChange({
+      employeeId: String(task.employee_id),
+      processId: input.process_id ? String(input.process_id) : null,
+      changedBy: null, reason: "Process assigned during IT provisioning",
+    });
+
+    // 2. Create/update employee_roster_preference (existing table)
+    const [existingPref] = await conn.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_roster_preference WHERE employee_id = ? LIMIT 1`,
+      [task.employee_id]
+    );
+
+    if ((existingPref as any[]).length > 0) {
+      await conn.execute(
+        `UPDATE employee_roster_preference
+         SET preferred_shift_id = COALESCE(?, preferred_shift_id),
+             preferred_week_off = COALESCE(?, preferred_week_off),
+             effective_from = ?,
+             status = 'approved',
+             approved_by = ?,
+             approved_at = NOW(),
+             updated_at = NOW()
+         WHERE employee_id = ?`,
+        [
+          input.shift_id ?? null,
+          input.week_off_day ?? null,
+          input.roster_effective_date,
+          actorUserId,
+          task.employee_id,
+        ]
+      );
+    } else {
+      await conn.execute(
+        `INSERT INTO employee_roster_preference
+           (id, employee_id, preferred_shift_id, preferred_week_off,
+            flexibility, effective_from, status, approved_by, approved_at, created_by, created_at)
+         VALUES (?, ?, ?, ?, 'fixed', ?, 'approved', ?, NOW(), ?, NOW())`,
+        [
+          randomUUID(), task.employee_id,
+          input.shift_id ?? null,
+          input.week_off_day ?? null,
+          input.roster_effective_date,
+          actorUserId, actorUserId,
+        ]
+      );
+    }
+
+    // 3. If biometric_mapping_ref provided, update cosec mapping
+    if (input.biometric_mapping_ref) {
+      await conn.execute(
+        `UPDATE employee_biometric_enrollment
+         SET cosec_user_id = ?, last_sync_at = NOW()
+         WHERE employee_id = ?`,
+        [input.biometric_mapping_ref, task.employee_id]
+      ).catch(() => {
+        // Non-blocking if no enrollment record yet
+      });
+    }
+
+    // 4. Mark task actioned
+    await conn.execute(
+      `UPDATE it_provisioning_request
+       SET status = 'actioned', actioned_by = ?, actioned_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [actorUserId, taskId]
+    );
+
+    await conn.commit();
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: 'wfm_alignment_complete',
+      module_key: 'it_provisioning',
+      entity_type: 'employee',
+      entity_id: task.employee_id,
+      employee_id: task.employee_id,
+      change_summary: {
+        task_id: taskId,
+        process_id: input.process_id,
+        shift_id: input.shift_id ?? null,
+        roster_effective_date: input.roster_effective_date,
+        attendance_effective_date: input.attendance_effective_date,
+      },
+    });
+
+    await triggerActivationCheck(task.employee_id, actorUserId);
+
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+// ── Dispatcher: routes to correct handler by task_code ────────────────────────
+
+export async function dispatchTaskCompletion(
+  taskId: string,
+  body: Record<string, unknown>,
+  actorUserId: string
+): Promise<void> {
+  const task = await getTask(taskId);
+
+  switch (task.task_code) {
+    case 'IT_EMAIL_DOMAIN_ASSET':
+      await completeItProvisioningTask(taskId, {
+        official_email: String(body.official_email ?? ''),
+        domain_account: String(body.domain_account ?? ''),
+        asset_tag: body.asset_tag ? String(body.asset_tag) : undefined,
+        asset_type: body.asset_type ? String(body.asset_type) : undefined,
+        evidence_note: body.evidence_note ? String(body.evidence_note) : undefined,
+      }, actorUserId);
+      break;
+
+    case 'ADMIN_BIOMETRIC_ID_CARD':
+      await completeAdminProvisioningTask(taskId, {
+        biometric_enrolled: Boolean(body.biometric_enrolled),
+        biometric_device_id: body.biometric_device_id ? String(body.biometric_device_id) : undefined,
+        cosec_user_id: body.cosec_user_id ? String(body.cosec_user_id) : undefined,
+        id_card_printed: Boolean(body.id_card_printed),
+        id_card_number: body.id_card_number ? String(body.id_card_number) : undefined,
+        evidence_note: body.evidence_note ? String(body.evidence_note) : undefined,
+      }, actorUserId);
+      break;
+
+    case 'WFM_PROCESS_ALIGNMENT':
+      await completeWfmAlignmentTask(taskId, {
+        process_id: String(body.process_id ?? ''),
+        shift_id: body.shift_id ? String(body.shift_id) : undefined,
+        roster_effective_date: String(body.roster_effective_date ?? ''),
+        week_off_day: body.week_off_day ? String(body.week_off_day) : undefined,
+        attendance_effective_date: String(body.attendance_effective_date ?? ''),
+        biometric_mapping_ref: body.biometric_mapping_ref ? String(body.biometric_mapping_ref) : undefined,
+        evidence_note: body.evidence_note ? String(body.evidence_note) : undefined,
+      }, actorUserId);
+      break;
+
+    default:
+      // APPOINTMENT_LETTER_ESIGN and any other task codes
+      // Handled by existing actionProvisioningRequest — just mark actioned
+      break;
+  }
+}

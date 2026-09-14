@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/call-master/call-master.service.ts",
+    "src/modules/quality-dashboard/inbound-quality.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

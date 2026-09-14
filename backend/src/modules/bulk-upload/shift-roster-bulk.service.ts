@@ -1,0 +1,633 @@
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { logRosterChange } from "../roster/roster-change-log.js";
+import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
+import { applyRestDecision, isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
+
+const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+
+/**
+ * Parse timing strings like:
+ *   09:00am-06:00pm   09:00AM-06:00PM
+ *   09:00-18:00       21:00-06:00
+ *   09:00pm-06:00am
+ * Returns { startTime: "HH:MM:SS", endTime: "HH:MM:SS" } or null if unparseable.
+ */
+function parseShiftTiming(raw: string): { startTime: string; endTime: string } | null {
+  const s = raw.trim().toLowerCase().replace(/\s+/g, "");
+  const match = s.match(/^(\d{1,2}:\d{2}(?:am|pm)?)-(\d{1,2}:\d{2}(?:am|pm)?)$/);
+  if (!match) return null;
+
+  const to24 = (t: string): string | null => {
+    const m = t.match(/^(\d{1,2}):(\d{2})(am|pm)?$/);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const suffix = m[3];
+    if (suffix === "pm" && h !== 12) h += 12;
+    if (suffix === "am" && h === 12) h = 0;
+    if (h < 0 || h > 23) return null;
+    return `${String(h).padStart(2, "0")}:${min}:00`;
+  };
+
+  const startTime = to24(match[1]);
+  const endTime = to24(match[2]);
+  if (!startTime || !endTime) return null;
+  return { startTime, endTime };
+}
+
+type Conn = {
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+};
+
+/**
+ * Find existing shift template by start+end time, or auto-create one.
+ */
+async function resolveShiftTemplate(
+  conn: Conn,
+  startTime: string,
+  endTime: string,
+  rawCell: string,
+  userId: string
+): Promise<string> {
+  const [rows] = await conn.execute<RowDataPacket[]>(
+    "SELECT id FROM wfm_shift_template WHERE start_time = ? AND end_time = ? AND active_status = 1 LIMIT 1",
+    [startTime, endTime]
+  );
+  if ((rows as RowDataPacket[]).length) {
+    return (rows as RowDataPacket[])[0].id as string;
+  }
+
+  // Auto-create a shift template keyed by timing string
+  const shiftCode = rawCell.trim().toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^0-9:apm-]/g, "")
+    .slice(0, 50);
+
+  // Check if shift_code already exists (different start/end — shouldn't happen but guard it)
+  const [codeRows] = await conn.execute<RowDataPacket[]>(
+    "SELECT id FROM wfm_shift_template WHERE shift_code = ? AND active_status = 1 LIMIT 1",
+    [shiftCode]
+  );
+  if ((codeRows as RowDataPacket[]).length) {
+    return (codeRows as RowDataPacket[])[0].id as string;
+  }
+
+  // Determine if night shift (end_time < start_time)
+  const nightShift = endTime < startTime ? 1 : 0;
+
+  const id = randomUUID();
+  await conn.execute(
+    `INSERT INTO wfm_shift_template
+       (id, shift_code, shift_name, start_time, end_time, night_shift,
+        productive_minutes, grace_minutes, break_entitlement, effective_from, active_status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 480, 5, 30, CURDATE(), 1, ?)`,
+    [id, shiftCode, `Shift ${startTime.slice(0, 5)}-${endTime.slice(0, 5)}`, startTime, endTime, nightShift, userId]
+  );
+  return id;
+}
+
+export async function importShiftRosterBatch(
+  batchId: string,
+  userId: string
+): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  // Same transaction rationale as roster-assignment-bulk.service.ts: every write below
+  // used to autocommit independently, so a mid-run crash left an arbitrary subset of
+  // this batch's rows in wfm_roster_assignment while upload_batch never got marked
+  // imported. Row-level validation failures still just record and continue — only an
+  // unexpected throw rolls the whole batch back.
+  const conn = await db.getConnection();
+  let imported = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  try {
+    await conn.beginTransaction();
+
+    const [batchRows] = await conn.execute<RowDataPacket[]>(
+      "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
+      [batchId]
+    );
+
+    /*
+     * Performance rework (owner request — imports were taking ~1.8s/row: 67s for a 240-row
+     * file that only produced 38 real assignments). The per-row, per-day loop below used to
+     * make 3 separate DB round trips PER DAY it touched — an employee lookup, a payroll-lock
+     * check, and a shift-template lookup — none of which can actually differ between rows in
+     * the same file for the parts that are safe to batch. Three of those are now resolved ONCE
+     * up front instead of once per day:
+     *
+     *   1. Employee lookup — was one query per ROW; now one query for every employee_code in
+     *      the file.
+     *   2. Payroll-lock check — was one query per DAY; now one query for every
+     *      (employee, date) pair the file could possibly touch (computed from each row's own
+     *      week_start_date, same as the per-day loop already does).
+     *   3. Shift-template resolution — was one query per DAY, re-resolving the identical
+     *      "09:00-18:00"-style timing over and over; now cached in memory per distinct timing
+     *      for the life of this one import run.
+     *
+     * What is deliberately NOT batched: minimum-rest-policy resolution and the
+     * previous/next-shift lookup it depends on (resolveRestPolicy / findAdjacentShifts /
+     * validateMinimumRest / applyRestDecision, still called once per day exactly as before).
+     * Those depend on state that can change AS this same run writes earlier rows for the same
+     * employee (a multi-week file has one row per week per employee), and on this exact
+     * employee/process/branch/date combination in a way that isn't safe to pre-compute without
+     * risking a different compliance decision than today. This rework changes nothing about
+     * what gets approved, rejected or warned — only how many round trips it costs to get there.
+     */
+    const parsedRows = (batchRows as RowDataPacket[]).map((batchRow) => ({
+      batchRow,
+      raw: (typeof batchRow.normalized_data === "string"
+        ? JSON.parse(batchRow.normalized_data)
+        : batchRow.normalized_data) as Record<string, string>,
+    }));
+
+    // 1. Batch employee resolution — one query for the whole file instead of one per row.
+    const employeeCodes = [...new Set(
+      parsedRows.map((p) => String(p.raw.employee_code ?? "").trim()).filter(Boolean)
+    )];
+    const employeeByCode = new Map<string, { id: string; process_id: string | null; branch_id: string | null }>();
+    if (employeeCodes.length > 0) {
+      const [empRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT employee_code, id, process_id, branch_id FROM employees
+          WHERE employee_code IN (${employeeCodes.map(() => "?").join(",")}) AND employment_status = 'active'`,
+        employeeCodes
+      );
+      for (const r of empRows as RowDataPacket[]) {
+        employeeByCode.set(String(r.employee_code), {
+          id: r.id as string,
+          process_id: r.process_id as string | null,
+          branch_id: r.branch_id as string | null,
+        });
+      }
+    }
+
+    /** Same YYYY-MM-DD / DD-MM-YYYY parsing the main loop uses below, duplicated here (not
+     *  extracted) so this pre-pass has zero chance of silently drifting from the loop's own
+     *  validation — both must agree on what "a valid week_start_date" means. */
+    function parseWeekStartDate(value: string): Date | null {
+      let d: Date;
+      if (/^\d{2}-\d{2}-\d{4}$/.test(value)) {
+        const [dd, mm, yy] = value.split("-");
+        d = new Date(`${yy}-${mm}-${dd}`);
+      } else {
+        d = new Date(value);
+      }
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    // 2. Batch the payroll-lock check — one query for every (employee, date) pair this file
+    // could touch, instead of one query per day. Only rows that will actually reach the
+    // lock-check step in the main loop below (real employee_code, resolvable employee,
+    // parseable week_start_date) contribute pairs — a row that will error out earlier for its
+    // own reasons costs nothing here.
+    const lockCandidatePairs = new Map<string, { employeeId: string; date: string }>();
+    for (const { raw } of parsedRows) {
+      const employeeCode = String(raw.employee_code ?? "").trim();
+      if (!employeeCode || !raw.week_start_date) continue;
+      const emp = employeeByCode.get(employeeCode);
+      if (!emp) continue;
+      const startDate = parseWeekStartDate(raw.week_start_date);
+      if (!startDate) continue;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startDate);
+        d.setDate(d.getDate() + i);
+        const dateStr = d.toISOString().slice(0, 10);
+        lockCandidatePairs.set(`${emp.id}|${dateStr}`, { employeeId: emp.id, date: dateStr });
+      }
+    }
+    const lockedPairSet = new Set<string>();
+    {
+      const pairs = [...lockCandidatePairs.values()];
+      const LOCK_CHECK_CHUNK = 500;
+      for (let i = 0; i < pairs.length; i += LOCK_CHECK_CHUNK) {
+        const slice = pairs.slice(i, i + LOCK_CHECK_CHUNK);
+        if (!slice.length) continue;
+        const [lockRows] = await conn.execute<RowDataPacket[]>(
+          `SELECT employee_id, record_date, is_locked FROM attendance_daily_record
+            WHERE (employee_id, record_date) IN (${slice.map(() => "(?,?)").join(",")})`,
+          slice.flatMap((p) => [p.employeeId, p.date])
+        );
+        for (const r of lockRows as RowDataPacket[]) {
+          if (Number(r.is_locked) === 1) {
+            lockedPairSet.add(`${r.employee_id}|${String(r.record_date).slice(0, 10)}`);
+          }
+        }
+      }
+    }
+    // Same result shape and message text as roster-lock-guard.ts's checkEmployeeDateNotLocked
+    // (the async DB call this pre-fetch replaces), just answered from the Set above instead of
+    // a query — every call site below reads identically to before.
+    function checkLockFromPrefetch(employeeId: string, rosterDate: string): { blocked: true; error: string } | { blocked: false } {
+      if (lockedPairSet.has(`${employeeId}|${rosterDate}`)) {
+        return {
+          blocked: true,
+          error: "This roster date's attendance is already locked for payroll and can no longer be edited through the normal roster-write path. Use the payroll correction/reopen workflow instead.",
+        };
+      }
+      return { blocked: false };
+    }
+
+    // 3. Shift-template cache — resolveShiftTemplate() below already does its own
+    // find-or-create against wfm_shift_template; this only stops the SAME "09:00-18:00"-style
+    // timing from being looked up (or, on a lucky race, created) again for every day/row that
+    // shares it. resolveShiftTemplate is itself still called normally on a cache miss, so a
+    // genuinely new timing behaves exactly as it did before this change.
+    const shiftTemplateCache = new Map<string, string>();
+
+    const rowStatusUpdates: { id: string; status: string; errors?: string[]; targetRecordIds: string[] }[] = [];
+
+    for (const { batchRow, raw } of parsedRows) {
+      const { employee_code, week_start_date, notes } = raw;
+
+      if (!employee_code || !week_start_date) {
+        const msg = `Row ${batchRow.row_no}: employee_code and week_start_date are required`;
+        errors.push(msg);
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+          [JSON.stringify([msg]), batchRow.id]
+        );
+        skipped++;
+        continue;
+      }
+
+      // Resolve employee and get process_id/branch_id for cycle — from the batch lookup above,
+      // not a per-row query.
+      const employee = employeeByCode.get(String(employee_code).trim());
+      if (!employee) {
+        const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
+        errors.push(msg);
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+          [JSON.stringify([msg]), batchRow.id]
+        );
+        skipped++;
+        continue;
+      }
+      const employeeId = employee.id;
+      const employeeProcessId = employee.process_id;
+      const employeeBranchId = employee.branch_id;
+
+      // Validate employee has process_id (required for weekly_roster_cycle)
+      if (!employeeProcessId) {
+        const msg = `Row ${batchRow.row_no}: employee '${employee_code}' has no process_id assigned`;
+        errors.push(msg);
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+          [JSON.stringify([msg]), batchRow.id]
+        );
+        skipped++;
+        continue;
+      }
+
+      // Parse week_start_date — accept YYYY-MM-DD or DD-MM-YYYY
+      let startDate: Date;
+      if (/^\d{2}-\d{2}-\d{4}$/.test(week_start_date)) {
+        const [d, m, y] = week_start_date.split("-");
+        startDate = new Date(`${y}-${m}-${d}`);
+      } else {
+        startDate = new Date(week_start_date);
+      }
+      if (isNaN(startDate.getTime())) {
+        const msg = `Row ${batchRow.row_no}: invalid week_start_date '${week_start_date}' (use YYYY-MM-DD or DD-MM-YYYY)`;
+        errors.push(msg);
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+          [JSON.stringify([msg]), batchRow.id]
+        );
+        skipped++;
+        continue;
+      }
+
+      // Find or create roster cycle for this week
+      const weekEnd = new Date(startDate);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const weekStartStr = startDate.toISOString().slice(0, 10);
+      const weekEndStr = weekEnd.toISOString().slice(0, 10);
+
+      // Find or create weekly roster cycle for this employee's process
+      const [cycleRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT id FROM weekly_roster_cycle WHERE week_start_date = ? AND week_end_date = ? AND process_id = ? LIMIT 1",
+        [weekStartStr, weekEndStr, employeeProcessId]
+      );
+      let cycleId: string;
+      if ((cycleRows as RowDataPacket[]).length) {
+        cycleId = (cycleRows as RowDataPacket[])[0].id as string;
+      } else {
+        cycleId = randomUUID();
+        await conn.execute(
+          `INSERT INTO weekly_roster_cycle
+             (id, week_start_date, week_end_date, status, created_by, process_id, branch_id)
+           VALUES (?, ?, ?, 'draft', ?, ?, ?)`,
+          [cycleId, weekStartStr, weekEndStr, userId, employeeProcessId, employeeBranchId]
+        );
+      }
+
+      // Process each day, then insert THIS employee's whole week under their
+      // own advisory lock (closure item #2b, 2026-08-13). Previously every
+      // employee's days across the WHOLE batch were collected into one array
+      // and inserted together in a single statement at the very end — which
+      // meant employee A's rest-check here could pass, and a moment later a
+      // completely unrelated concurrent request for employee A (a second
+      // upload, a manual assignment) could ALSO pass its own check, before
+      // either had actually written anything. Locking per-employee (not
+      // per-day — all of one employee's days still share one INSERT) closes
+      // that the same way roster-assignment-bulk.service.ts's per-row lock
+      // already does. Preserves the exact existing partial-week semantics:
+      // a day-level error (bad timing, locked date, insufficient rest) skips
+      // that day and is recorded in rowErrors, but days that DID succeed are
+      // still written — the row's own upload_batch_row status is 'error' if
+      // ANY day failed, independent of whether other days were inserted.
+      let dayImported = 0;
+      const rowErrors: string[] = [];
+      let rowAssignmentIds: string[] = [];
+      const restPolicyFeatureActive = await isRestPolicyFeatureActive(conn);
+
+      await withEmployeeRosterLock(employeeId, async () => {
+        const weekAssignments: {
+          id: string; cycle_id: string; employee_id: string; roster_date: string;
+          shift_template_id: string | null; is_week_off: number; system_decision_reason: string | null;
+          shift_start_time: string | null; shift_end_time: string | null; scheduled_minutes: number | null;
+        }[] = [];
+        // Area 2: the most recently collected working day for THIS employee within
+        // THIS row's 7-day loop. Days are processed Monday->Sunday in order, so this
+        // is always the nearest preceding day already staged in weekAssignments — the
+        // one case a database-only adjacency check (findAdjacentShifts, which only
+        // sees already-committed rows) cannot catch: two new days in the SAME upload
+        // that are adjacent to each other (e.g. a late Monday shift followed by an
+        // early Tuesday shift, both new).
+        let lastCollectedShift: { date: string; time: string } | null = null;
+
+        for (let i = 0; i < DAYS.length; i++) {
+          const dayKey = `${DAYS[i]}_shift`;
+          const cellValue = (raw[dayKey] || "").trim();
+          if (!cellValue) continue;
+
+          const upper = cellValue.toUpperCase();
+          const isWeekOff = upper === "WO" || upper === "WEEKOFF" || upper === "OFF" || upper === "W/O";
+
+          const rosterDate = new Date(startDate);
+          rosterDate.setDate(rosterDate.getDate() + i);
+          const rosterDateStr = rosterDate.toISOString().slice(0, 10);
+
+          // Closure item #2b: shared attendance/payroll lock guard, checked
+          // for every day (including a week-off day — reassigning someone
+          // OFF on an already-locked date is still a mutation of a locked
+          // record). Checked before shift-timing parsing since there's no
+          // point resolving a shift template for a day this path is about
+          // to refuse anyway.
+          const dateLockResult = checkLockFromPrefetch(employeeId, rosterDateStr);
+          if (dateLockResult.blocked) {
+            rowErrors.push(`${DAYS[i].toUpperCase()}: ${dateLockResult.error}`);
+            continue;
+          }
+
+          let shiftTemplateId: string | null = null;
+          let shiftStartTime: string | null = null;
+          let shiftEndTime: string | null = null;
+
+          if (!isWeekOff) {
+            const parsed = parseShiftTiming(cellValue);
+            if (!parsed) {
+              rowErrors.push(`${DAYS[i].toUpperCase()}: '${cellValue}' is not a valid timing (use 09:00am-06:00pm or 09:00-18:00) or WO`);
+              continue;
+            }
+            try {
+              const templateCacheKey = `${parsed.startTime}|${parsed.endTime}`;
+              const cachedTemplateId = shiftTemplateCache.get(templateCacheKey);
+              if (cachedTemplateId) {
+                shiftTemplateId = cachedTemplateId;
+              } else {
+                shiftTemplateId = await resolveShiftTemplate(conn, parsed.startTime, parsed.endTime, cellValue, userId);
+                shiftTemplateCache.set(templateCacheKey, shiftTemplateId);
+              }
+            } catch (e) {
+              rowErrors.push(`${DAYS[i].toUpperCase()}: failed to resolve shift template — ${(e as Error).message}`);
+              continue;
+            }
+            // parsed.startTime/endTime is what the uploaded cell literally said, so it's
+            // used directly for the snapshot rather than re-reading it back off the
+            // (possibly pre-existing, possibly reused) shift template row. parseShiftTiming
+            // returns "HH:MM:SS" (8 chars); wfm_roster_assignment.shift_start_time/
+            // shift_end_time are varchar(5) ("HH:MM"). Truncated here, once, so the
+            // INSERT below (via weekAssignments) gets the same 5-char value the .slice(0,5)
+            // calls a few lines down already use for the rest-policy check — before this,
+            // every row with a resolved (non-week-off) shift died with "Data too long for
+            // column 'shift_start_time'" (ER_DATA_TOO_LONG), the same bug fixed in
+            // roster-assignment-bulk.service.ts, live-reproduced there directly.
+            shiftStartTime = parsed.startTime.slice(0, 5);
+            shiftEndTime = parsed.endTime.slice(0, 5);
+          }
+
+          // Area 2: minimum-rest validation. BLOCKS with no override path, same as
+          // roster-assignment-bulk.service.ts — an override needs an individual,
+          // deliberate approval a CSV upload can't legitimately grant.
+          if (!isWeekOff && shiftStartTime && shiftEndTime && restPolicyFeatureActive) {
+            const candidateStart = { date: rosterDateStr, time: shiftStartTime.slice(0, 5) };
+            if (lastCollectedShift) {
+              const gapWithinBatch = restGapMinutes(lastCollectedShift, candidateStart);
+              const policy = await resolveRestPolicy(
+                { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr }, conn
+              );
+              if (policy && gapWithinBatch < policy.minimumRestMinutes) {
+                rowErrors.push(`${DAYS[i].toUpperCase()}: only ${gapWithinBatch}min rest against the shift on ${lastCollectedShift.date} in this same upload (minimum ${policy.minimumRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+                continue;
+              }
+            }
+            const restCheck = await validateMinimumRest(
+              { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr },
+              { startTime: shiftStartTime.slice(0, 5), endTime: shiftEndTime.slice(0, 5) },
+              null, conn
+            );
+            // Same shared decision as every other roster write path. In WARN the row is
+            // accepted and a REST_GAP_WARNING is recorded against it; in BLOCK it is refused
+            // exactly as before. Bulk upload still has no emergency-override path — WARN is a
+            // policy state, not an override.
+            const restDecision = await applyRestDecision(
+              restCheck,
+              { employeeId: String(employeeId), rosterDate: rosterDateStr },
+              conn,
+            );
+            if (!restCheck.ok && !restDecision.allowed) {
+              rowErrors.push(restCheck.reason === "REST_POLICY_MISSING"
+                ? `${DAYS[i].toUpperCase()}: no minimum-rest policy configured for this employee/process/branch/organization`
+                : `${DAYS[i].toUpperCase()}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+              continue;
+            }
+            lastCollectedShift = { date: rosterDateStr, time: shiftEndTime.slice(0, 5) };
+          }
+
+          // Collect assignment for this employee's per-week insert (below, still under the lock)
+          const assignmentId = randomUUID();
+          weekAssignments.push({
+            id: assignmentId,
+            cycle_id: cycleId,
+            employee_id: employeeId,
+            roster_date: rosterDateStr,
+            shift_template_id: shiftTemplateId,
+            is_week_off: isWeekOff ? 1 : 0,
+            system_decision_reason: notes ?? null,
+            shift_start_time: shiftStartTime,
+            shift_end_time: shiftEndTime,
+            scheduled_minutes: shiftStartTime && shiftEndTime
+              ? computeScheduledMinutes(shiftStartTime.slice(0, 5), shiftEndTime.slice(0, 5))
+              : null,
+          });
+          rowAssignmentIds.push(assignmentId);
+          dayImported++;
+        }
+
+        // Per-employee insert — parameterized rather than the previous manual
+        // string-concatenation + single-quote-doubling escape, which was an incomplete
+        // defense against injection through the uploaded CSV's free-text notes field.
+        //
+        // Before the overwrite: capture what each date this employee's week touches
+        // currently holds, so a same employee+date re-upload leaves a trace in
+        // roster_change_log instead of silently replacing the prior shift with no
+        // record of what it used to be.
+        if (weekAssignments.length > 0) {
+          const pairPlaceholders = weekAssignments.map(() => "(?,?)").join(",");
+          const pairParams = weekAssignments.flatMap((a) => [a.employee_id, a.roster_date]);
+          const [existingRows] = await conn.execute<RowDataPacket[]>(
+            `SELECT id, employee_id, roster_date, shift_template_id, is_week_off
+               FROM wfm_roster_assignment
+              WHERE (employee_id, roster_date) IN (${pairPlaceholders})`,
+            pairParams,
+          );
+          const before = new Map<string, { id: string; shift_template_id: string | null; is_week_off: number }>();
+          for (const row of existingRows as RowDataPacket[]) {
+            before.set(`${row.employee_id}|${String(row.roster_date).slice(0, 10)}`, {
+              id: row.id as string,
+              shift_template_id: row.shift_template_id as string | null,
+              is_week_off: Number(row.is_week_off),
+            });
+          }
+
+          // shift_version_id/scheduled_minutes only exist once migration
+          // 1200_shift_versioning.sql has been applied — probe rather than assume,
+          // same pattern as the live engine (auto-roster-synced.service.ts) and
+          // roster-assignment-bulk.service.ts.
+          const raCols = await rosterAssignmentColumns(conn);
+          const hasScheduledMinutes = raCols.has("scheduled_minutes");
+          const hasShiftVersionId = raCols.has("shift_version_id");
+
+          const rowCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
+            "shift_start_time", "shift_end_time"];
+          const rowPlaceholderParts = ["?", "?", "?", "?", "?", "?", "?", "?"];
+          const updateClauses = [
+            "shift_template_id = VALUES(shift_template_id)",
+            "is_week_off = VALUES(is_week_off)",
+            "shift_start_time = VALUES(shift_start_time)",
+            "shift_end_time = VALUES(shift_end_time)",
+          ];
+          if (hasShiftVersionId) {
+            rowCols.push("shift_version_id");
+            rowPlaceholderParts.push("?");
+            updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+          }
+          if (hasScheduledMinutes) {
+            rowCols.push("scheduled_minutes");
+            rowPlaceholderParts.push("?");
+            updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+          }
+          rowCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
+          rowPlaceholderParts.push("'published'", "'published'", "'bulk_upload'", "?");
+          updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = CURRENT_TIMESTAMP");
+
+          const placeholders = weekAssignments.map(() => `(${rowPlaceholderParts.join(",")})`).join(",");
+          // Built in the exact same order as rowCols/rowPlaceholderParts, per row —
+          // shift_version_id uses the shift_template_id (an already-immutable,
+          // append-only id — see the resolveShiftTemplate comment) as its stable
+          // reference, matching the null value for week-off rows.
+          const params = weekAssignments.flatMap((a) => {
+            const row = [a.id, a.cycle_id, a.employee_id, a.roster_date, a.shift_template_id, a.is_week_off,
+              a.shift_start_time, a.shift_end_time];
+            if (hasShiftVersionId) row.push(a.shift_template_id);
+            if (hasScheduledMinutes) row.push(a.scheduled_minutes);
+            row.push(a.system_decision_reason);
+            return row;
+          });
+          await conn.execute(
+            `INSERT INTO wfm_roster_assignment
+               (${rowCols.join(", ")})
+             VALUES ${placeholders}
+             ON DUPLICATE KEY UPDATE
+               ${updateClauses.join(",\n               ")}`,
+            params,
+          );
+
+          for (const a of weekAssignments) {
+            const prior = before.get(`${a.employee_id}|${a.roster_date}`);
+            if (prior && (prior.shift_template_id !== a.shift_template_id || Boolean(prior.is_week_off) !== Boolean(a.is_week_off))) {
+              await logRosterChange(conn, {
+                entityType: "wfm_roster_assignment",
+                entityId: prior.id,
+                changedBy: userId,
+                reason: `Bulk shift-roster upload (batch ${batchId})`,
+                cycleId: a.cycle_id,
+                oldValue: { shift_template_id: prior.shift_template_id, is_week_off: Boolean(prior.is_week_off) },
+                newValue: { shift_template_id: a.shift_template_id, is_week_off: Boolean(a.is_week_off) },
+              });
+            }
+          }
+        }
+      });
+
+      if (rowErrors.length > 0) {
+        errors.push(`Row ${batchRow.row_no} (${employee_code}): ${rowErrors.join("; ")}`);
+        rowStatusUpdates.push({ id: batchRow.id, status: 'error', errors: rowErrors, targetRecordIds: [] });
+        skipped++;
+      } else {
+        rowStatusUpdates.push({ id: batchRow.id, status: 'imported', targetRecordIds: rowAssignmentIds });
+        imported += dayImported > 0 ? 1 : 0;
+      }
+    }
+
+    // Batch update row statuses. target_record_id was previously never set here
+    // (unlike roster-assignment-bulk.service.ts), so there was no way to trace a
+    // specific wfm_roster_assignment row back to the batch/row that imported it —
+    // a row can cover up to 7 assignments (one per day), so the first is recorded
+    // as the representative link.
+    for (const update of rowStatusUpdates) {
+      if (update.status === 'error') {
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+          [JSON.stringify(update.errors), update.id]
+        );
+      } else {
+        // target_record_id was never a real column on upload_batch_row — migration
+        // 1522 named the pair created_entity_type/created_entity_id instead. This
+        // threw ER_BAD_FIELD_ERROR on the first row of every batch that produced at
+        // least one successful day-assignment, and rolled the whole batch back with
+        // it (single shared transaction). Live-confirmed via PREPARE, and matches a
+        // real stuck batch: BATCH-1784051881054 (236 rows) sits at
+        // batch_status='validated', imported_rows=0 despite its row-level statuses
+        // already showing 178 imported / 58 error from an earlier, non-transactional
+        // version of this code.
+        await conn.execute(
+          "UPDATE upload_batch_row SET row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=? WHERE id=?",
+          [update.targetRecordIds[0] ?? null, update.id]
+        );
+      }
+    }
+
+    // imported_by and imported_at are added by migration 1134. They did not exist
+    // when this statement was first written, which is why naming them meant a batch
+    // was never marked imported at all - imported_rows stayed unset and
+    // batch_status stayed at whatever it was before.
+    await conn.execute(
+      `UPDATE upload_batch SET batch_status=?, imported_rows=?, imported_by=?, imported_at=NOW(), updated_at=NOW()
+       WHERE id=?`,
+      [errors.length > 0 ? "imported_with_errors" : "imported", imported, userId ?? null, batchId]
+    );
+
+    await conn.commit();
+    return { imported, skipped, errors };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+}

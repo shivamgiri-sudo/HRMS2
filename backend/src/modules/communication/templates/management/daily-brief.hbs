@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Team Briefing</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f3f4f6; font-family:Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:680px; max-width:680px; background-color:#ffffff; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#111827; padding:20px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="color:#ffffff; font-size:18px; font-weight:bold;">Daily Team Briefing</td>
+                  <td align="right" style="color:#9ca3af; font-size:12px;">{{generatedAtIST}}</td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">
+                <tr>
+                  <td style="color:#d1d5db; font-size:13px;">
+                    Hi {{recipientName}} — here is your briefing for <strong style="color:#ffffff;">{{businessDate}}</strong> ({{scopeLabel}})
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- KPI strip -->
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td width="25%" align="center" style="padding:10px; border:1px solid #e5e7eb; border-radius:6px;">
+                    <div style="font-size:20px; font-weight:bold; color:#111827;">{{kpi.attendancePctDisplay}}</div>
+                    <div style="font-size:11px; color:#6b7280; text-transform:uppercase;">Attendance</div>
+                  </td>
+                  <td width="4"></td>
+                  <td width="25%" align="center" style="padding:10px; border:1px solid #e5e7eb; border-radius:6px;">
+                    <div style="font-size:20px; font-weight:bold; color:#b91c1c;">{{kpi.absent}}</div>
+                    <div style="font-size:11px; color:#6b7280; text-transform:uppercase;">Absent</div>
+                  </td>
+                  <td width="4"></td>
+                  <td width="25%" align="center" style="padding:10px; border:1px solid #e5e7eb; border-radius:6px;">
+                    <div style="font-size:20px; font-weight:bold; color:#b45309;">{{kpi.missingPunch}}</div>
+                    <div style="font-size:11px; color:#6b7280; text-transform:uppercase;">Missing Punch</div>
+                  </td>
+                  <td width="4"></td>
+                  <td width="25%" align="center" style="padding:10px; border:1px solid #e5e7eb; border-radius:6px;">
+                    <div style="font-size:20px; font-weight:bold; color:#b45309;">{{kpi.lateCount}}</div>
+                    <div style="font-size:11px; color:#6b7280; text-transform:uppercase;">Late Arrivals</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {{#if payrollReadiness}}
+          <tr>
+            <td style="padding:8px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eff6ff; border:1px solid #bfdbfe; border-radius:6px;">
+                <tr>
+                  <td style="padding:10px 14px; font-size:13px; color:#1e3a8a;">
+                    <strong>{{payrollReadiness.label}}:</strong> {{payrollReadiness.value}}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if payrollReadinessDetail}}
+          <tr>
+            <td style="padding:8px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eff6ff; border:1px solid #bfdbfe; border-radius:6px;">
+                <tr>
+                  <td style="padding:10px 14px; font-size:13px; color:#1e3a8a;">
+                    <strong>Payroll readiness:</strong> {{payrollReadinessDetail.pendingApprovalsCount}} run(s) pending finance/CEO sign-off.
+                    {{#each payrollReadinessDetail.runs}}
+                    <div style="margin-top:4px; font-size:12px; color:#1e3a8a;">{{this.runMonth}} — {{this.status}} — {{this.blockerCount}} blocker(s), {{this.warningCount}} warning(s)</div>
+                    {{/each}}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{else if payrollOperationalHint}}
+          <tr>
+            <td style="padding:8px 28px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fff7ed; border:1px solid #fed7aa; border-radius:6px;">
+                <tr>
+                  <td style="padding:10px 14px; font-size:13px; color:#9a3412;">{{payrollOperationalHint}}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if positives}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#065f46; border-bottom:2px solid #d1fae5; padding-bottom:6px; margin-bottom:8px;">
+                What's Going Well
+              </div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                {{#each positives}}
+                <tr>
+                  <td style="font-size:13px; color:#065f46; padding:6px 0; border-top:1px solid #ecfdf5;">{{this.label}}</td>
+                </tr>
+                {{/each}}
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if attention}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Needs Your Attention
+              </div>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                {{#each attention}}
+                <tr>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.label}}</td>
+                  <td align="right" style="font-size:12px; color:#6b7280; padding:6px 0; border-top:1px solid #f3f4f6; white-space:nowrap;">{{this.priority}}</td>
+                </tr>
+                {{/each}}
+              </table>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if performance}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                KPI &amp; Performance
+              </div>
+              {{#if performance.exceptions.length}}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                {{#each performance.exceptions}}
+                <tr>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.label}}</td>
+                </tr>
+                {{/each}}
+              </table>
+              {{#if performance.overflowText}}<div style="font-size:12px; color:#6b7280; margin-top:4px;">{{performance.overflowText}}</div>{{/if}}
+              {{else}}
+              <div style="font-size:13px; color:#6b7280;">No KPI exceptions for D-1.</div>
+              {{/if}}
+              <div style="font-size:12px; color:#6b7280; margin-top:6px;">Coaching due/overdue: {{performance.coachingDueOrOverdueCount}} &middot; Training needs opened: {{performance.trainingNeedsOpenedCount}}</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if quality}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Quality
+              </div>
+              <div style="font-size:13px; color:#111827;">Avg quality: {{quality.avgQualityPctDisplay}} &middot; Audit coverage: {{quality.auditCoveragePctDisplay}}</div>
+              {{#if quality.deteriorationNote}}<div style="font-size:12px; color:#b91c1c; margin-top:4px;">{{quality.deteriorationNote}}</div>{{/if}}
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if training}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Coaching &amp; Training
+              </div>
+              <div style="font-size:13px; color:#111827;">Completion: {{training.completionPctDisplay}} &middot; Completed D-1: {{training.coursesCompletedD1}} &middot; Overdue: {{training.overdueMandatoryTraining}}</div>
+              {{#if training.certificationsExpired}}<div style="font-size:12px; color:#b91c1c; margin-top:4px;">{{training.certificationsExpired}} certification(s) expired</div>{{/if}}
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if roster}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Looking Ahead — Staffing
+              </div>
+              <div style="font-size:13px; color:#111827;">Uncovered HC (next 7 days): {{roster.uncoveredHc}}{{#if roster.worstSeverity}} ({{roster.worstSeverity}}){{/if}}</div>
+              <div style="font-size:12px; color:#6b7280; margin-top:4px;">Pending roster ack: {{roster.pendingAcknowledgement}} &middot; Rejected, needs action: {{roster.pendingRejectedByEmployee}}</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if peopleRisk}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                People Risk
+              </div>
+              <div style="font-size:13px; color:#111827;">{{peopleRisk.count}} team member(s) need people-risk attention ({{peopleRisk.severity}}).</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if helpdesk}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Helpdesk
+              </div>
+              <div style="font-size:13px; color:#111827;">{{helpdesk.businessImpactLine}}</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if recruitment}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Recruitment &amp; Onboarding
+              </div>
+              <div style="font-size:13px; color:#111827;">Moved D-1: {{recruitment.candidatesMovedD1}} &middot; Interviews D-1: {{recruitment.interviewsScheduledD1}} &middot; Offers pending: {{recruitment.pendingOfferApprovals}} &middot; BGV pending: {{recruitment.bgvPending}}</div>
+              <div style="font-size:12px; color:#6b7280; margin-top:4px;">Joining today: {{recruitment.joiningToday}} &middot; This week: {{recruitment.joiningThisWeek}}</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#if exit}}
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Exit &amp; Attrition
+              </div>
+              <div style="font-size:13px; color:#111827;">Resignations D-1: {{exit.resignationsSubmittedD1}} &middot; Manager discussions pending: {{exit.managerDiscussionsPending}} &middot; HR discussions pending: {{exit.hrDiscussionsPending}}</div>
+              <div style="font-size:12px; color:#6b7280; margin-top:4px;">Upcoming LWD (7 days): {{exit.upcomingLwdNext7Days}} &middot; Clearance completion: {{exit.clearanceCompletionPctDisplay}}</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          {{#unless rollup}}
+          <!-- Hygiene / Discipline (per-employee brief only — see rollup section below) -->
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Hygiene &amp; Discipline
+              </div>
+              {{#if hygieneIssues.length}}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Employee</td>
+                  <td style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Issue</td>
+                  <td style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Severity</td>
+                </tr>
+                {{#each hygieneIssues}}
+                <tr>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.employeeCode}}</td>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.issueType}}</td>
+                  <td style="font-size:13px; padding:6px 0; border-top:1px solid #f3f4f6; color:{{#if this.isBlocker}}#b91c1c{{else}}#b45309{{/if}};">{{this.severity}}</td>
+                </tr>
+                {{/each}}
+              </table>
+              {{else}}
+              <div style="font-size:13px; color:#6b7280;">No open hygiene/discipline items for {{businessDate}}.</div>
+              {{/if}}
+            </td>
+          </tr>
+
+          <!-- Your Priorities Today -->
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Your Priorities Today
+              </div>
+              {{#if actions.length}}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                {{#each actions}}
+                <tr>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.title}}</td>
+                  <td align="right" style="font-size:12px; color:#6b7280; padding:6px 0; border-top:1px solid #f3f4f6; white-space:nowrap;">{{this.priority}}</td>
+                </tr>
+                {{/each}}
+              </table>
+              {{else}}
+              <div style="font-size:13px; color:#6b7280;">No open priority items right now.</div>
+              {{/if}}
+            </td>
+          </tr>
+          {{/unless}}
+
+          {{#if rollup}}
+          <!-- Executive rollup (spec §29): branch/process comparison, not a per-employee list -->
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Branch Attendance Comparison
+              </div>
+              {{#if executiveRollup.branchAttendance.length}}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Branch</td>
+                  <td align="right" style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Attendance</td>
+                  <td align="right" style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Absent</td>
+                  <td align="right" style="font-size:11px; color:#6b7280; text-transform:uppercase; padding:4px 0;">Missing Punch</td>
+                </tr>
+                {{#each executiveRollup.branchAttendance}}
+                <tr>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.branchName}}</td>
+                  <td align="right" style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.attendancePctDisplay}}</td>
+                  <td align="right" style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.absent}}</td>
+                  <td align="right" style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.missingPunch}}</td>
+                </tr>
+                {{/each}}
+              </table>
+              {{#if executiveRollup.bestPerformingBranch}}
+              <div style="font-size:12px; color:#065f46; margin-top:6px;">Best: {{executiveRollup.bestPerformingBranch.branchName}} ({{executiveRollup.bestPerformingBranch.attendancePct}}%)</div>
+              {{/if}}
+              {{#if executiveRollup.worstPerformingBranch}}
+              <div style="font-size:12px; color:#b91c1c; margin-top:2px;">Needs attention: {{executiveRollup.worstPerformingBranch.branchName}} ({{executiveRollup.worstPerformingBranch.attendancePct}}%)</div>
+              {{/if}}
+              {{else}}
+              <div style="font-size:13px; color:#6b7280;">No branch attendance data for {{businessDate}}.</div>
+              {{/if}}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Top Org-Wide Actions
+              </div>
+              {{#if executiveRollup.topActions.length}}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                {{#each executiveRollup.topActions}}
+                <tr>
+                  <td style="font-size:13px; color:#111827; padding:6px 0; border-top:1px solid #f3f4f6;">{{this.title}}</td>
+                  <td align="right" style="font-size:12px; color:#6b7280; padding:6px 0; border-top:1px solid #f3f4f6; white-space:nowrap;">{{this.severity}}</td>
+                </tr>
+                {{/each}}
+              </table>
+              {{else}}
+              <div style="font-size:13px; color:#6b7280;">No open high-severity business actions.</div>
+              {{/if}}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:20px 28px 8px 28px;">
+              <div style="font-size:14px; font-weight:bold; color:#111827; border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-bottom:8px;">
+                Hiring &amp; Attrition Summary
+              </div>
+              <div style="font-size:13px; color:#111827;">Candidates moved (D-1): {{executiveRollup.hiringAttrition.candidatesMovedD1}} &middot; Offer approvals pending: {{executiveRollup.hiringAttrition.offerApprovalsPending}}</div>
+              <div style="font-size:12px; color:#6b7280; margin-top:4px;">Joining today: {{executiveRollup.hiringAttrition.joiningToday}} &middot; This week: {{executiveRollup.hiringAttrition.joiningThisWeek}}</div>
+              <div style="font-size:12px; color:#6b7280; margin-top:4px;">Resignations (D-1): {{executiveRollup.hiringAttrition.resignationsSubmittedD1}} &middot; Open exits: {{executiveRollup.hiringAttrition.openExitRequests}} &middot; Upcoming LWD (7d): {{executiveRollup.hiringAttrition.upcomingLwdNext7Days}}</div>
+            </td>
+          </tr>
+          {{/if}}
+
+          <!-- Data health footer -->
+          <tr>
+            <td style="padding:20px 28px 24px 28px;">
+              <div style="font-size:11px; color:#9ca3af; border-top:1px solid #e5e7eb; padding-top:12px;">
+                Data as of {{businessDate}} (IST). Generated {{generatedAtIST}}.
+                {{#if sourceHealthIssues.length}}
+                <br>Some sections may be incomplete:
+                {{#each sourceHealthIssues}}{{this.module}} ({{this.state}}){{#unless @last}}, {{/unless}}{{/each}}.
+                {{/if}}
+                This is an automated summary and does not include grievance or payroll amount data.
+              </div>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

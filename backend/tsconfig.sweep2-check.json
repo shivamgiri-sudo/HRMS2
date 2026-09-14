@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/engagement/engagement.controller.ts",
+    "src/workers/domains/attendance-sync-handler.ts",
+    "src/workers/domains/salary-snapshot-sync-handler.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

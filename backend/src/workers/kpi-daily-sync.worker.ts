@@ -1,0 +1,143 @@
+import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics, syncQualityMetricsForDate } from '../modules/kpi/kpi-data-connector.service.js';
+import { runWeeklyCoachingEvaluation } from '../modules/quality-dashboard/weekly-coaching.service.js';
+
+const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DAILY_HOUR = 1;
+const QUALITY_DAY = 2;
+
+let initialTimeoutRef: ReturnType<typeof setTimeout> | undefined;
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function yesterday(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function lastMonth(): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+
+function msUntilHour(hour: number): number {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(hour, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next.getTime() - now.getTime();
+}
+
+async function runDailySync(): Promise<void> {
+  const date = yesterday();
+  console.log(`[KpiDailySyncWorker] Starting daily sync for ${date}`);
+
+  try {
+    const aprResult = await syncAprMetrics(date);
+    console.log(`[KpiDailySyncWorker] APR sync: ${aprResult.synced} synced, ${aprResult.skipped} skipped, ${aprResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] APR sync failed:`, err.message);
+  }
+
+  try {
+    const attResult = await syncAttendanceMetrics(date);
+    console.log(`[KpiDailySyncWorker] Attendance sync: ${attResult.synced} synced, ${attResult.skipped} skipped, ${attResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Attendance sync failed:`, err.message);
+  }
+
+  try {
+    const conversionResult = await syncConversionMetrics(date);
+    console.log(`[KpiDailySyncWorker] Conversion sync: ${conversionResult.synced} synced, ${conversionResult.skipped} skipped, ${conversionResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Conversion sync failed:`, err.message);
+  }
+
+  try {
+    const salesBrandResult = await syncSalesBrandMisMetrics(date);
+    console.log(`[KpiDailySyncWorker] Sales brand MIS sync: ${salesBrandResult.synced} synced, ${salesBrandResult.skipped} skipped, ${salesBrandResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Sales brand MIS sync failed:`, err.message);
+  }
+
+  try {
+    const salesOrderResult = await syncSalesOrderMetrics(date);
+    console.log(`[KpiDailySyncWorker] Sales order sync: ${salesOrderResult.synced} synced, ${salesOrderResult.skipped} skipped, ${salesOrderResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Sales order sync failed:`, err.message);
+  }
+
+  // Quality daily, alongside every other source. It previously ran only on the
+  // 2nd of the month for the month before, so quality sat up to five weeks
+  // behind the metrics it is compared against, and arrived as one rollup per
+  // agent that could not be split across processes.
+  try {
+    const qDaily = await syncQualityMetricsForDate(date);
+    console.log(`[KpiDailySyncWorker] Quality sync (${date}): ${qDaily.synced} synced, ${qDaily.skipped} skipped, ${qDaily.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Quality daily sync failed:`, err.message);
+  }
+
+  // Weekly coaching review, run nightly over the rolling ISO week rather than on
+  // a fixed weekday. A "runs on Monday" job silently skips a whole week if that
+  // one night fails, and the writer's idempotency already guarantees one session
+  // per agent per week — so running every night is self-healing rather than
+  // duplicative.
+  try {
+    const coaching = await runWeeklyCoachingEvaluation(date);
+    console.log(`[KpiDailySyncWorker] Weekly coaching (${coaching.weekStart}..${coaching.weekEnd}): ` +
+      `${coaching.raised} raised, ${coaching.skippedAlreadyOpen} already open, ` +
+      `${coaching.skippedNoTrigger} no trigger, ${coaching.skippedNoCoach} no coach`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Weekly coaching failed:`, err.message);
+  }
+
+  const today = new Date();
+  if (today.getDate() === QUALITY_DAY) {
+    const ym = lastMonth();
+    try {
+      const qResult = await syncQualityMetrics(ym);
+      console.log(`[KpiDailySyncWorker] Quality sync (${ym}): ${qResult.synced} synced, ${qResult.skipped} skipped, ${qResult.errors.length} errors`);
+    } catch (err: any) {
+      console.error(`[KpiDailySyncWorker] Quality sync failed:`, err.message);
+    }
+  }
+}
+
+async function startWorker(): Promise<void> {
+  console.log(`[KpiDailySyncWorker] Starting - will run daily at ${DAILY_HOUR}:00 AM`);
+
+  const delay = msUntilHour(DAILY_HOUR);
+  console.log(`[KpiDailySyncWorker] First run in ${Math.round(delay / 60000)} minutes`);
+
+  initialTimeoutRef = setTimeout(async () => {
+    await runDailySync();
+    intervalRef = setInterval(runDailySync, DAILY_INTERVAL_MS);
+  }, delay);
+}
+
+function stopWorker(): void {
+  if (initialTimeoutRef) {
+    clearTimeout(initialTimeoutRef);
+    initialTimeoutRef = undefined;
+  }
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[KpiDailySyncWorker] Stopped");
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startWorker().catch(err => {
+    console.error('[KpiDailySyncWorker] Fatal error:', err);
+    process.exit(1);
+  });
+}
+
+export { startWorker as startKpiDailySyncWorker, stopWorker as stopKpiDailySyncWorker, runDailySync };

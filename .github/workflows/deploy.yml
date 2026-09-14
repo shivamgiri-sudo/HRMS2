@@ -1,0 +1,548 @@
+name: Deploy to Production
+
+on:
+  # Auto-deploy-on-push permanently disabled 2026-08-26 at the user's explicit
+  # request -- deploys are manual only from here on. Trigger via
+  # `gh workflow run deploy.yml` or the Actions tab "Run workflow" button.
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ── 1. CI Gate (self-hosted) ─────────────────────────────────────────────────
+  # Runs typecheck + build to catch broken pushes before the deploy runner touches
+  # the server.
+  #
+  # Moved off ubuntu-latest on 2026-08-12. Every hosted job had been failing in about
+  # three seconds with zero steps and no runner assigned - GitHub was not providing a
+  # hosted runner at all, so nothing in this gate ever executed and the deploy job,
+  # which needs it, skipped on every push. The last successful run was 14:03 that day
+  # and production sat on 4122d676 while later commits piled up unshipped.
+  #
+  # Nothing was wrong with the code: the whole gate was reproduced locally and passed.
+  # The self-hosted runner was online and idle the entire time, so this removes the
+  # dependency on hosted-runner availability rather than waiting on it.
+  #
+  # The cost is real and deliberate: this now runs tsc, four test batches and two
+  # builds on the same box that serves production, and with a single runner the gate
+  # and the deploy queue behind each other rather than overlapping.
+  #
+  # No setup-node here. The deploy job below has always run on this runner using the
+  # system node (v20) and never needed it; adding it would ask the runner to populate
+  # a tool cache it has never used.
+  ci-gate:
+    name: Typecheck & Build
+    # GitHub-hosted, NOT self-hosted, and that is the whole point.
+    #
+    # The self-hosted runner lives on the production server, which has ONE CPU core
+    # shared with MySQL, the API and 45 workers. Measured during the 2026-09-04
+    # deploy: `npm ci` took 70.8% of that core while mysqld got 0.6%. Every query
+    # slowed, connections were held longer, the backend exhausted DB_POOL_MAX=50, the
+    # circuit breaker opened, and the restart that followed could not get its
+    # migration locks - so production came back 502 and stayed down.
+    #
+    # Nothing in this job touches the server: it checks out the repo, installs, type-
+    # checks, builds and runs tests. Only the `deploy` job below needs the host, and it
+    # stays self-hosted for that reason. Building here means a deploy no longer starves
+    # the database it is about to restart against.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # backend/package.json pulls in canvas@^3 (used by ats/face-match.service.ts).
+      # It falls back to a node-gyp source build on this runner, which fails with
+      # "gyp ERR! configure error" because cairo/pango/jpeg/gif headers are absent.
+      # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
+      # the change that introduced it.
+      - name: Install native build deps for canvas
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The self-hosted runner user has no passwordless sudo: this exact command
+          # failed with "sudo: a password is required", which is not something a
+          # non-interactive job can answer. The packages only matter if canvas has to
+          # fall back to a node-gyp source build, and this host has been building it
+          # for every deploy already, so they are present.
+          #
+          # Attempted when sudo is available, skipped when it is not. Nothing is
+          # hidden by skipping: if the headers really are missing, the npm ci below
+          # fails on the gyp configure error, which is the same signal this step was
+          # added to prevent - just one step later.
+          if sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+          else
+            echo "Passwordless sudo unavailable on this runner - relying on the host's existing cairo/pango headers."
+          fi
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Typecheck backend
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Run backend unit tests
+        working-directory: backend
+        run: npx vitest run tests/peopleos-module-registry.test.ts tests/policy.test.ts tests/domain-registry.test.ts tests/data-governance.test.ts tests/action-item-registry.test.ts
+        timeout-minutes: 5
+
+      # ── Everything below this line was missing on 01-Aug-2026 ──────────────────
+      # Five deploys shipped green that day while the CI workflow was failing on the
+      # same commits, because deploy.yml and ci.yml are separate workflows and this
+      # one consults nothing. The gate above covers 5 registry files out of ~3,600
+      # tests and touches none of the pages under UAT. Four working pages broke in
+      # one release and reached the CEO mid-test.
+      #
+      # These are not new tests. They already exist, already pass, and already run in
+      # ci.yml — where nothing acts on the result. Running them here is what makes
+      # them a gate rather than a report.
+
+      # The suite that would have caught three of the four regressions. It guards the
+      # UI/API contracts — an endpoint changing shape under a page that reads it.
+      - name: Frontend test suite
+        run: npx vitest run --config vitest.config.ts --testTimeout=60000
+        timeout-minutes: 10
+
+      # The six contracts written against the Round 1 findings. Without these in the
+      # deploy path, a fix for a UAT finding can be reverted by an unrelated commit
+      # and ship again.
+      - name: CEO UAT regression contracts
+        working-directory: backend
+        run: |
+          npx vitest run \
+            src/modules/dashboards/__tests__/attendance-canon.contract.test.ts \
+            src/modules/dashboards/__tests__/dashboard-summary-inbox-isolation.test.ts \
+            src/modules/payroll/__tests__/payroll-signoff-schema-contract.test.ts \
+            src/modules/payroll/__tests__/payroll-payslip-access.contract.test.ts \
+            src/modules/access/__tests__/ceo-page-scope.contract.test.ts \
+            src/modules/lms/__tests__/lms-launch-context-portal.contract.test.ts \
+            src/modules/lms/__tests__/lms-session-insert.contract.test.ts \
+            src/modules/reporting/__tests__/daily-attendance-report.contract.test.ts
+        timeout-minutes: 10
+
+      # Authentication, document vault, migration governance, route contract, database
+      # reliability and worker safety. A production deploy should not be able to ship
+      # past a failing auth or RBAC contract.
+      - name: Security and RBAC contracts
+        working-directory: backend
+        run: |
+          npx vitest run \
+            src/modules/auth/__tests__/auth-security.test.ts \
+            src/modules/files/__tests__/document-vault-security.test.ts \
+            src/db/__tests__/migration-governance.test.ts \
+            src/platform/__tests__/route-contract.test.ts \
+            src/db/__tests__/connection-reliability.test.ts \
+            src/workers/__tests__/worker-safety.test.ts
+        timeout-minutes: 10
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+  # ── 2. Deploy (self-hosted runner on 192.168.11.225) ─────────────────────────
+  # The self-hosted runner runs INSIDE the LAN and has direct access to
+  # /var/www/HRMS2 and pm2.  It connects outbound to GitHub — no inbound port
+  # needs to be opened.
+  #
+  # Runner setup: see docs/ci-cd/self-hosted-runner-setup.sh
+  deploy:
+    name: Deploy to 192.168.11.225
+    needs: ci-gate
+    runs-on: self-hosted
+    # 30, not 15.
+    #
+    # This job installs deps, builds frontend AND backend, swaps two dist trees and then waits up
+    # to ~3 minutes for a backend that re-applies migrations at boot — all on a single-core box
+    # that is also running MySQL, the API, 45 workers and this runner. Fifteen minutes did not
+    # cover it.
+    #
+    # The failure mode was expensive and completely silent about its cause: on 2026-09-05 the job
+    # was killed mid-health-check at attempt 21 of 90, which the script could only read as "the
+    # backend never came up". It rolled a perfectly good release back, left production on the
+    # previous build, and reported a deploy failure whose log showed nothing but connection
+    # refused. Three consecutive deploys were lost to the clock, not to any defect in the code
+    # being shipped.
+    #
+    # A timeout must sit ABOVE the work it bounds, not inside it, or it stops being a safety net
+    # and becomes the thing that breaks the deploy.
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout source at triggering commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # backend/package.json pulls in canvas@^3 (used by ats/face-match.service.ts).
+      # It falls back to a node-gyp source build on this runner, which fails with
+      # "gyp ERR! configure error" because cairo/pango/jpeg/gif headers are absent.
+      # That aborts npm ci before any test runs, so it blocked EVERY deploy, not just
+      # the change that introduced it.
+      - name: Install native build deps for canvas
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The self-hosted runner user has no passwordless sudo: this exact command
+          # failed with "sudo: a password is required", which is not something a
+          # non-interactive job can answer. The packages only matter if canvas has to
+          # fall back to a node-gyp source build, and this host has been building it
+          # for every deploy already, so they are present.
+          #
+          # Attempted when sudo is available, skipped when it is not. Nothing is
+          # hidden by skipping: if the headers really are missing, the npm ci below
+          # fails on the gyp configure error, which is the same signal this step was
+          # added to prevent - just one step later.
+          if sudo -n true 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+          else
+            echo "Passwordless sudo unavailable on this runner - relying on the host's existing cairo/pango headers."
+          fi
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Verify commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Deploying commit: ${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Validate backend artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARTIFACT="backend/dist"
+          test -f "$ARTIFACT/src/server.js"
+          test -f "$ARTIFACT/src/modules/visitor/visitor.routes.js"
+          if ! find "$ARTIFACT/src/modules/visitor" -type f -name '*.js' | grep -q .; then
+            echo "Missing compiled visitor files in backend artifact"
+            exit 1
+          fi
+          if find "$ARTIFACT" \( -type d \( -name uploads -o -name private-storage -o -name candidate-files -o -name candidate-documents -o -name ocr-data -o -name node_modules \) -o -type f -name '.env' \) | grep -q .; then
+            echo "Backend artifact contains forbidden runtime files"
+            exit 1
+          fi
+          echo "Backend artifact validated"
+
+      - name: Validate frontend artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARTIFACT="dist"
+          test -f "$ARTIFACT/index.html"
+          if find "$ARTIFACT" \( -type d \( -name uploads -o -name private-storage -o -name candidate-files -o -name candidate-documents -o -name ocr-data -o -name node_modules \) -o -type f -name '.env' \) | grep -q .; then
+            echo "Frontend artifact contains forbidden runtime files"
+            exit 1
+          fi
+          echo "Frontend artifact validated"
+
+      # Migration SQL is NOT part of the compiled artifact ("npm run build" is
+      # plain tsc), and the startup runners resolve it from
+      # /var/www/HRMS2/backend/sql.  Without this step that directory only ever
+      # changes when somebody runs "git pull" on the server by hand, so a fresh
+      # dist can start against stale SQL — and runPendingMigrations() throws
+      # outright when a manifest file is absent, which fails the health check
+      # and rolls the deploy back.
+      - name: Sync backend migration SQL atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY_ROOT="/var/www/HRMS2"
+          ARTIFACT="backend/sql"
+          LIVE_DIR="$DEPLOY_ROOT/backend/sql"
+          STAGE_PARENT="$DEPLOY_ROOT/backend/.deploy-staging"
+          BACKUP_PARENT="$DEPLOY_ROOT/backend/.deploy-backups"
+          STAMP="$(date +%Y%m%d%H%M%S)-$$"
+          STAGE_DIR="$STAGE_PARENT/backend-sql-$STAMP"
+          BACKUP_DIR="$BACKUP_PARENT/backend-sql-$STAMP"
+          mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
+            echo "Backend SQL staging and live directories must be on the same filesystem"
+            exit 1
+          fi
+
+          test -f "$ARTIFACT/000_run_all.sql"
+
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          cp -a "$ARTIFACT"/. "$STAGE_DIR"/
+
+          if [[ -d "$LIVE_DIR" ]]; then
+            mv "$LIVE_DIR" "$BACKUP_DIR"
+          else
+            mkdir -p "$BACKUP_DIR"
+          fi
+
+          mv "$STAGE_DIR" "$LIVE_DIR"
+          echo "Backend SQL synced: $(find "$LIVE_DIR" -type f -name '*.sql' | wc -l) files"
+
+      # SKIP_MIGRATIONS=true in backend/.env made every deploy apply zero schema change —
+      # migrations queued up silently until a health check finally caught the drift (11 of them,
+      # one masking a genuine cross-MySQL-version syntax bug). runPendingMigrations() is a no-op
+      # whenever SKIP_MIGRATIONS==='true' (backend/src/db/runPendingMigrations.ts), so removing the
+      # line — rather than setting it to false — is what actually re-enables the runner; dotenv
+      # loads backend/.env with override:true (backend/src/config/env.ts), so this is the one place
+      # that can actually flip it. /api/health already gates on zero pending migrations, so this is
+      # a no-op for schema *right now*; it only starts mattering for migrations added after this.
+      # Idempotent: a run with the line already gone does nothing.
+      - name: Stop skipping migrations at boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          if [[ -f "$ENV_FILE" ]] && grep -qE '^SKIP_MIGRATIONS=' "$ENV_FILE"; then
+            sed -i -E '/^SKIP_MIGRATIONS=/d' "$ENV_FILE"
+            echo "Removed SKIP_MIGRATIONS from $ENV_FILE — migrations will now auto-apply at boot."
+          else
+            echo "SKIP_MIGRATIONS not present in $ENV_FILE (or file missing) — nothing to change."
+          fi
+
+      - name: Deploy backend dist atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY_ROOT="/var/www/HRMS2"
+          ARTIFACT="backend/dist"
+          LIVE_DIR="$DEPLOY_ROOT/backend/dist"
+          STAGE_PARENT="$DEPLOY_ROOT/backend/.deploy-staging"
+          BACKUP_PARENT="$DEPLOY_ROOT/backend/.deploy-backups"
+          STAMP="$(date +%Y%m%d%H%M%S)-$$"
+          STAGE_DIR="$STAGE_PARENT/backend-dist-$STAMP"
+          BACKUP_DIR="$BACKUP_PARENT/backend-dist-$STAMP"
+          mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
+            echo "Backend staging and live directories must be on the same filesystem"
+            exit 1
+          fi
+
+          ensure_backend_pm2_processes() {
+            mkdir -p /var/www/HRMS2/backend/logs
+            if pm2 describe hrms2-backend >/dev/null 2>&1; then
+              pm2 delete hrms2-backend --no-color || true
+            fi
+            if pm2 describe hrms2-workers >/dev/null 2>&1; then
+              pm2 delete hrms2-workers --no-color || true
+            fi
+            (
+              cd "$DEPLOY_ROOT/backend"
+              NODE_ENV=production PORT=5055 WORKERS_PROCESS=external ENABLE_SCHEDULERS=false \
+                pm2 start dist/src/server.js --name hrms2-backend --cwd "$DEPLOY_ROOT/backend" --time
+              NODE_ENV=production ENABLE_SCHEDULERS=true \
+                pm2 start dist/src/workers/all-workers.js --name hrms2-workers --cwd "$DEPLOY_ROOT/backend" --time
+            )
+          }
+
+          # 90 attempts, not 30. The budget has to cover a boot that APPLIES MIGRATIONS, because
+          # runPendingMigrations runs at startup and /api/health does not answer until it has
+          # finished — the endpoint gates on schemaStatus.valid.
+          #
+          # This is not hypothetical. On 2026-08-11 a deploy carrying migration 1130 applied nine
+          # pending migrations at boot. Health came back at 11:59:04; the wait gave up at
+          # 11:59:03, one second short, after 30 attempts of curl(3s)+sleep(2s) ~= 100s. The
+          # deploy then did exactly what it was built to do — rolled the dist back and reported
+          # failure — so a healthy release was reverted because its boot was slow, and production
+          # ran the previous commit with the new schema already applied.
+          #
+          # A deploy that waits too long costs minutes. A deploy that gives up too early rolls
+          # back a good release and leaves code and schema at different versions, which is the
+          # more expensive mistake, so the budget is generous rather than tight.
+          wait_for_backend_health() {
+            for attempt in $(seq 1 90); do
+              if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
+                if [ "$attempt" -gt 30 ]; then
+                  echo "Backend became healthy on attempt ${attempt} — slower than the old 30-attempt budget."
+                  echo "That is normal when this release applies migrations at boot."
+                fi
+                return 0
+              fi
+              echo "Waiting for backend health (${attempt}/90)"
+              sleep 2
+            done
+            echo "Backend did not become healthy within 90 attempts (~5 minutes)."
+            return 1
+          }
+
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          cp -a "$ARTIFACT"/. "$STAGE_DIR"/
+
+          rollback_backend() {
+            if [[ -d "$LIVE_DIR" ]]; then
+              mv "$LIVE_DIR" "${LIVE_DIR}.failed-$STAMP"
+            fi
+            if [[ -d "$BACKUP_DIR" ]]; then
+              mv "$BACKUP_DIR" "$LIVE_DIR"
+            fi
+            ensure_backend_pm2_processes || true
+          }
+
+          if [[ -d "$LIVE_DIR" ]]; then
+            mv "$LIVE_DIR" "$BACKUP_DIR"
+          else
+            mkdir -p "$BACKUP_DIR"
+          fi
+
+          mv "$STAGE_DIR" "$LIVE_DIR"
+
+          ensure_backend_pm2_processes
+
+          if ! wait_for_backend_health; then
+            echo "Backend health check failed, restoring previous dist"
+            rollback_backend
+            if ! wait_for_backend_health; then
+              echo "Backend health still failing after rollback"
+              pm2 logs hrms2-backend --lines 50 --nostream --no-color
+            fi
+            exit 1
+          fi
+
+          if ! curl -fsS -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches >/dev/null; then
+            echo "Visitor branches endpoint failed after backend deploy"
+            rollback_backend
+            exit 1
+          fi
+
+          # These were two bare `grep -q` calls. Under `set -euo pipefail` a miss exits the whole
+          # step with code 1 and NOT ONE WORD of output — on 2026-09-05 that failed a deploy whose
+          # backend was already healthy and live, printed nothing between "Backend became healthy"
+          # and "Process completed with exit code 1", and skipped the frontend step entirely,
+          # leaving new backend + old frontend. The headers were correct when checked minutes
+          # later, so this was a race: /api/health answers before every route and middleware is
+          # mounted, and the check ran in that window.
+          #
+          # Retried briefly, and a failure now PRINTS what it actually got. A deploy that fails
+          # must say why; one that half-deploys in silence is worse than one that refuses.
+          CORS_HEADERS="$(mktemp)"
+          trap 'rm -f "$CORS_HEADERS"' EXIT
+          cors_ok=0
+          for cors_attempt in 1 2 3 4 5 6 7 8 9 10; do
+            curl -s -D "$CORS_HEADERS" -o /dev/null -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches || true
+            if grep -qi '^access-control-allow-origin: https://visitor-management-portal.shivam-giri.chatgpt.site' "$CORS_HEADERS" \
+               && grep -qi '^access-control-allow-credentials: true' "$CORS_HEADERS"; then
+              cors_ok=1
+              [ "$cors_attempt" -gt 1 ] && echo "CORS headers correct on attempt ${cors_attempt} (app was still warming)."
+              break
+            fi
+            echo "CORS headers not ready yet (${cors_attempt}/10), retrying…"
+            sleep 3
+          done
+          if [ "$cors_ok" -ne 1 ]; then
+            echo "Visitor CORS headers wrong after 10 attempts. Headers actually returned:"
+            sed 's/^/    /' "$CORS_HEADERS"
+            rollback_backend
+            exit 1
+          fi
+
+          PROTECTED_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/visitor/visits || echo "000")"
+          if [[ "$PROTECTED_CODE" != "401" ]]; then
+            echo "Expected protected visitor endpoint to return 401, got $PROTECTED_CODE"
+            rollback_backend
+            exit 1
+          fi
+
+          pm2 status hrms2-backend --no-color
+          pm2 status hrms2-workers --no-color
+          pm2 save --no-color
+
+      - name: Deploy frontend dist atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY_ROOT="/var/www/HRMS2"
+          ARTIFACT="dist"
+          LIVE_DIR="$DEPLOY_ROOT/dist"
+          STAGE_PARENT="$DEPLOY_ROOT/.deploy-staging"
+          BACKUP_PARENT="$DEPLOY_ROOT/.deploy-backups"
+          STAMP="$(date +%Y%m%d%H%M%S)-$$"
+          STAGE_DIR="$STAGE_PARENT/frontend-dist-$STAMP"
+          BACKUP_DIR="$BACKUP_PARENT/frontend-dist-$STAMP"
+          mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
+            echo "Frontend staging and live directories must be on the same filesystem"
+            exit 1
+          fi
+
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          cp -a "$ARTIFACT"/. "$STAGE_DIR"/
+
+          stop_frontend_preview() {
+            if pm2 describe hrms2-frontend >/dev/null 2>&1; then
+              pm2 delete hrms2-frontend --no-color || true
+            fi
+          }
+
+          rollback_frontend() {
+            if [[ -d "$LIVE_DIR" ]]; then
+              mv "$LIVE_DIR" "${LIVE_DIR}.failed-$STAMP"
+            fi
+            if [[ -d "$BACKUP_DIR" ]]; then
+              mv "$BACKUP_DIR" "$LIVE_DIR"
+            fi
+            stop_frontend_preview
+          }
+
+          if [[ -d "$LIVE_DIR" ]]; then
+            mv "$LIVE_DIR" "$BACKUP_DIR"
+          else
+            mkdir -p "$BACKUP_DIR"
+          fi
+
+          mv "$STAGE_DIR" "$LIVE_DIR"
+
+          stop_frontend_preview
+
+          if ! curl -fsSI -H "Host: mcnhrms.teammas.in" https://127.0.0.1/auth -k >/dev/null; then
+            echo "Frontend auth route failed after deploy"
+            rollback_frontend
+            exit 1
+          fi
+
+          if ! curl -fsSI -H "Host: mcnhrms.teammas.in" https://127.0.0.1/dashboard -k >/dev/null; then
+            echo "Frontend dashboard route failed after deploy"
+            rollback_frontend
+            exit 1
+          fi
+
+          pm2 save --no-color
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          COMMIT="${{ github.sha }}"
+          echo "## Deployment successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${COMMIT:0:8}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Server:** 192.168.11.225" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Deployed by:** ${{ github.actor }}" >> "$GITHUB_STEP_SUMMARY"

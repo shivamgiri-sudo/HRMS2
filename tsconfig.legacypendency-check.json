@@ -1,0 +1,16 @@
+{
+  // Typecheck for the legacy-pendency dashboard fixes (2026-08-28): BGV counted in
+  // candidates, legacy leave backlog split out of the approval queue.
+  //
+  //     npx tsc -p tsconfig.legacypendency-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/dashboards/ReferenceRoleDashboard.tsx",
+    "src/pages/dashboards/reference-dashboard-model.ts",
+    "src/pages/dashboards/reference/CeoReferenceLayout.tsx",
+    "src/pages/dashboards/reference/HrReferenceLayout.tsx",
+    "src/pages/dashboards/reference/ManagerReferenceLayout.tsx",
+    "src/pages/dashboards/reference/SuperAdminReferenceLayout.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

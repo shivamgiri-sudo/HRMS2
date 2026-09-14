@@ -1,0 +1,13 @@
+{
+  // Scoped typecheck covering BOTH places that must agree on the half-day rules: the leave
+  // service (writes the day on approval) and the attendance engine (rewrites it on every
+  // re-grade). Root tsconfig has "files": [] so `npm run typecheck` compiles nothing.
+  //   npx tsc -p backend/tsconfig.halfdayengine-check.json
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/shared/halfDayLeave.ts",
+    "src/modules/leave",
+    "src/modules/wfm/attendance-engine.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true, "types": ["node", "vitest/globals"] }
+}

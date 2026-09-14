@@ -1,0 +1,169 @@
+# Resend the joining-kit signing link for candidates stuck at Luckpay's own
+# "INITIATED, 0 pages opened" state.
+#
+# WHY THE SELF-HOSTED RUNNER
+# The email path (SMTP) and, for the manual "Resend signing link" button this
+# mirrors, the eSign provider path both go out through the deploy host's own
+# network — the same reason esign-backfill.yml runs here rather than on a
+# GitHub-hosted runner. /var/www/HRMS2/backend/.env — SMTP and DB credentials —
+# exists only on that host, and there is no SSH into it; the runner is the
+# only process that can read it.
+#
+# WHY MANUAL-ONLY
+# Every confirmed run sends a real email to a real candidate. That is not
+# something a schedule should decide on its own, so the only trigger is a
+# human pressing "Run workflow" — same reasoning as esign-backfill.yml.
+
+name: eSign Link Resend (stuck joining kits)
+
+on:
+  workflow_dispatch:
+    inputs:
+      actor_user_id:
+        description: "auth_user.id to attribute this remediation to (recorded in the audit trail; the script refuses to run without it)"
+        required: true
+        type: string
+      mode:
+        description: "list-only enumerates eligible candidates and sends nothing; confirm actually sends"
+        required: true
+        type: choice
+        default: list-only
+        options:
+          - list-only
+          - confirm
+      candidate_id:
+        description: "Optional: restrict the run to a single candidate id. Leave empty to sweep every eligible one."
+        required: false
+        type: string
+
+concurrency:
+  group: esign-link-resend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resend:
+    name: Resend on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - name: Announce the run
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: |
+          set -euo pipefail
+          echo "mode:          ${MODE}"
+          echo "actor user:    ${ACTOR_USER_ID}"
+          echo "candidate id:  ${CANDIDATE_ID:-<none — all eligible candidates>}"
+          if [[ "${MODE}" == "confirm" ]]; then
+            echo "SENDS:         YES — real emails will go out to real candidates."
+          else
+            echo "SENDS:         no — this only lists who is eligible."
+          fi
+
+      # The artifact comes from the deploy pipeline, not from this workflow.
+      - name: Verify the deployed script exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="/var/www/HRMS2/backend/dist/scripts/resend-stuck-esign-links.js"
+          if [[ ! -f "$SCRIPT" ]]; then
+            echo "::error::$SCRIPT is missing."
+            echo "This workflow runs the deployed build; it does not compile anything."
+            echo "Run the 'Deploy to Production' workflow on main first, then re-run this."
+            exit 1
+          fi
+          echo "Found $SCRIPT"
+
+      - name: Run the resend
+        id: run
+        shell: bash
+        working-directory: /var/www/HRMS2/backend
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p logs
+          REPORT="/var/www/HRMS2/backend/logs/esign-link-resend-$(date -u +%Y%m%dT%H%M%SZ)-run${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.csv"
+
+          ARGS=(dist/scripts/resend-stuck-esign-links.js)
+          ARGS+=(--actor-user-id "$ACTOR_USER_ID")
+          if [[ -n "${CANDIDATE_ID// /}" ]]; then
+            ARGS+=(--candidate-id "$CANDIDATE_ID")
+          fi
+          ARGS+=(--report "$REPORT")
+          if [[ "$MODE" == "confirm" ]]; then
+            ARGS+=(--confirm)
+          fi
+
+          echo "+ node ${ARGS[*]}"
+
+          CODE=0
+          node "${ARGS[@]}" || CODE=$?
+
+          echo "exit_code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "report_path=${REPORT}" >> "$GITHUB_OUTPUT"
+          echo "Script exited ${CODE}; report at ${REPORT}"
+
+      - name: Publish report to run summary
+        if: always()
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACTOR_USER_ID: ${{ inputs.actor_user_id }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          REPORT_PATH: ${{ steps.run.outputs.report_path }}
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## eSign link resend — ${MODE}"
+            echo ""
+            echo "- **Actor user id:** \`${ACTOR_USER_ID}\`"
+            echo "- **Candidate filter:** ${CANDIDATE_ID:-_none — all eligible candidates_}"
+            echo "- **Script exit code:** \`${EXIT_CODE:-<script did not run>}\`"
+            echo "- **Report:** \`${REPORT_PATH:-<none>}\`"
+            echo "- **Host:** 192.168.11.225"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -n "${REPORT_PATH:-}" && -f "${REPORT_PATH}" && "${MODE}" == "confirm" ]]; then
+            {
+              echo "### Per-candidate report"
+              echo ""
+              echo '```csv'
+              cat "${REPORT_PATH}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload report artifact
+        if: always() && inputs.mode == 'confirm'
+        uses: actions/upload-artifact@v4
+        with:
+          name: esign-link-resend-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.run.outputs.report_path }}
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Fail if the script reported a failure
+        if: always() && steps.run.outputs.exit_code != '0'
+        shell: bash
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          REPORT_PATH: ${{ steps.run.outputs.report_path }}
+        run: |
+          set -euo pipefail
+          echo "::error::Resend exited ${EXIT_CODE} — at least one candidate was not sent."
+          echo "Read the report for the per-candidate reason before re-running: ${REPORT_PATH:-<no report>}"
+          exit 1

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/finance/grn/imprest/**/*.tsx",
+    "src/pages/NativeGRNManagement.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

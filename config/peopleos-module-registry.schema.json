@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PeopleOS Module Registry Schema",
+  "type": "object",
+  "required": ["modules"],
+  "properties": {
+    "_meta": { "type": "object" },
+    "modules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "module_code",
+          "module_name",
+          "domain",
+          "business_owner",
+          "technical_owner",
+          "canonical_route",
+          "canonical_api",
+          "roles",
+          "status",
+          "production_readiness",
+          "contains_pii",
+          "contains_payroll_data",
+          "audit_required"
+        ],
+        "properties": {
+          "module_code": { "type": "string", "minLength": 1 },
+          "module_name": { "type": "string", "minLength": 1 },
+          "domain": {
+            "type": "string",
+            "enum": ["people", "recruitment", "workforce", "payroll", "performance", "learning", "employee-experience", "finance", "compliance", "platform", "external-portals"]
+          },
+          "business_owner": { "type": "string", "minLength": 1 },
+          "technical_owner": { "type": "string", "minLength": 1 },
+          "canonical_route": { "type": "string", "pattern": "^/" },
+          "legacy_routes": { "type": "array", "items": { "type": "string" } },
+          "canonical_api": { "type": "string", "pattern": "^/" },
+          "legacy_apis": { "type": "array", "items": { "type": "string" } },
+          "authoritative_tables": { "type": "array", "items": { "type": "string" } },
+          "roles": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "scope_dimensions": { "type": "array", "items": { "type": "string" } },
+          "status": {
+            "type": "string",
+            "enum": ["PRODUCTION", "CONTROLLED_PILOT", "BETA", "LEGACY", "REDIRECT_ONLY", "DISABLED", "PLANNED"]
+          },
+          "production_readiness": {
+            "type": "string",
+            "enum": ["READY", "PARTIAL", "BLOCKED", "UNVERIFIED"]
+          },
+          "contains_pii": { "type": "boolean" },
+          "contains_payroll_data": { "type": "boolean" },
+          "audit_required": { "type": "boolean" },
+          "replacement_target": { "type": ["string", "null"] },
+          "deprecation_date": { "type": ["string", "null"] },
+          "test_coverage": {
+            "type": "string",
+            "enum": ["FULL", "PARTIAL", "UNVERIFIED", "NONE"]
+          },
+          "known_gaps": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

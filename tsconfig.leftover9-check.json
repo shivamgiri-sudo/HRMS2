@@ -1,0 +1,19 @@
+{
+  // Typecheck for the "9 leftover small fixes" batch (StatutoryCenter, EcrDownloadTab,
+  // Payroll.tsx pipeline board, RecalculationQueue, PayrollHeadSalaryReviewDetail/Queue).
+  // Scoped per the established pattern — root tsconfig reports 0 regardless of errors.
+  //
+  //     npx tsc -p tsconfig.leftover9-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/payroll/StatutoryCenter.tsx",
+    "src/pages/payroll/EcrDownloadTab.tsx",
+    "src/pages/Payroll.tsx",
+    "src/pages/payroll/RecalculationQueue.tsx",
+    "src/pages/payroll/PayrollHeadSalaryReviewDetail.tsx",
+    "src/pages/payroll/PayrollHeadSalaryReviewQueue.tsx",
+    "src/components/payroll/PackageBuilderDialog.tsx",
+    "src/config/routes/recruitment.routes.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

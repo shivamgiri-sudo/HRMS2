@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/AonAnalyticsPage.tsx",
+    "src/config/routes/workforce.routes.tsx",
+    "src/components/layout/navConfig.tsx",
+    "src/lib/pageRoutePageCodes.ts",
+    "src/components/reports/views/AonAnalyticsView.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

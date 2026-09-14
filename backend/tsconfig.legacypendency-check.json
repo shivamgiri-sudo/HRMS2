@@ -1,0 +1,16 @@
+{
+  // Typecheck for the legacy-pendency fixes (2026-08-28): candidate record_type
+  // exclusion on the candidate-keyed dashboard metrics, BGV counted in candidates
+  // rather than checks, and the legacy_leave_id split on leave approvals.
+  //
+  //     npx tsc -p tsconfig.legacypendency-check.json
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/dashboards/dashboard-metric.service.ts",
+    "src/modules/dashboards/dashboard-drilldown.service.ts",
+    "src/modules/dashboards/dashboard-definition.service.ts",
+    "src/modules/management/management.service.ts",
+    "src/modules/ats/ats-reporting-scope.ts",
+    "src/workers/domains/leave-sync-handler.ts"
+  ]
+}

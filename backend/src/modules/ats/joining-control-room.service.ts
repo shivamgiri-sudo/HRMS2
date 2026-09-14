@@ -1,0 +1,1200 @@
+import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { randomUUID } from "crypto";
+import { db } from "../../db/mysql.js";
+import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
+import { convertCandidateToEmployee } from "./ats.convert.service.js";
+import { classifyEsignState } from "./esignState.js";
+import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
+
+type JsonRecord = Record<string, unknown>;
+
+function monthOf(dateText: string): string {
+  return String(dateText || "").slice(0, 7);
+}
+
+function toDateOnly(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function readinessBlockers(row: RowDataPacket | null): string[] {
+  const blockers: string[] = [];
+  if (!row) return ["Candidate record is missing"];
+  if (String(row.onboarding_status || "").toLowerCase() !== "approved") blockers.push("Candidate onboarding form is not HR-approved");
+  if (Number(row.document_pending_count || 0) > 0) blockers.push("Mandatory/available documents are not fully verified");
+  if (String(row.bgv_status || "").toLowerCase() !== "verified") blockers.push("BGV/eKYC is not verified");
+  if (String(row.payroll_status || "").toLowerCase() !== "validated") blockers.push("Payroll HR details are not validated");
+  if (row.salary_exception_status && String(row.salary_exception_status) !== "approved") blockers.push("Salary proposal approval is pending");
+  if (!row.salary_register_id || Number(row.salary_register_locked || 0) !== 1) blockers.push("Salary register is not locked");
+  // JCLR (branch-head sign-off + Payroll HR logistics entry) is deliberately NOT a
+  // readiness blocker, per an explicit product decision (2026-09-04): it tracks
+  // physical joining-day logistics — workstation, ID card, transport, training
+  // batch — which is operational handoff information, not a condition of the
+  // candidate being ready to become an employee. It also read from
+  // ats_branch_head_approval, a pre-offer "approve this candidate for hire" table
+  // that a candidate's actual offer approval does not always write to — verified
+  // live, MAS63438's offer carries ats_employment_offer.status = 'bh_approved'
+  // with zero rows in ats_branch_head_approval, so this blocker was unclearable
+  // for anyone who took that path. The JCLR Logistics tab remains, for Payroll HR
+  // to record the same information once it exists; see canSaveJclr below for why
+  // its own save button no longer depends on this gate either.
+  if (String(row.statutory_status || "").toLowerCase() !== "verified") blockers.push("EPF/statutory declaration is not verified");
+  if (String(row.dpdp_required_status || "").toLowerCase() !== "granted") blockers.push("Required DPDP consent is not granted");
+  return blockers;
+}
+
+function nextAction(blockers: string[]): string {
+  if (!blockers.length) return "Generate employee code";
+  if (blockers[0].includes("onboarding")) return "HR review candidate onboarding form";
+  if (blockers[0].includes("documents")) return "Review uploaded documents";
+  if (blockers[0].includes("BGV")) return "Complete BGV/eKYC verification";
+  if (blockers[0].includes("Payroll")) return "Complete Payroll HR details";
+  if (blockers[0].includes("Salary proposal")) return "Complete salary proposal approvals";
+  if (blockers[0].includes("Salary register")) return "Lock salary register";
+  if (blockers[0].includes("JCLR approval")) return "BM / Branch Head JCLR approval";
+  if (blockers[0].includes("JCLR entry")) return "Payroll HR complete JCLR entry";
+  if (blockers[0].includes("statutory")) return "Verify EPF/statutory declaration";
+  return "Resolve DPDP consent";
+}
+
+/**
+ * The one SELECT behind both the queue list and every single-candidate read. `whereSql` is the only
+ * thing that differs between them - `c.id = ?` for one candidate, `c.id IN (?,?,...)` for the
+ * queue's page of 50 - so the two can never drift into reporting different figures for the same
+ * candidate. It is a builder because the queue used to call the single-row form 50 times per page
+ * load; see candidateSnapshots() below.
+ */
+const candidateSnapshotSql = (whereSql: string) => `SELECT
+       c.id AS candidate_id,
+       c.candidate_code,
+       c.full_name,
+       c.mobile,
+       c.email,
+       c.applied_for_branch,
+       -- ats_candidate.applied_for_process holds a process NAME on almost every row
+       -- ('Back Office', 'Outbound Agent'), but the newer intake writes a process_master
+       -- UUID instead — 69 rows overall, and 6 of the 20 most recently touched candidates,
+       -- i.e. exactly the ones HR is working in this screen. Those rendered as a raw
+       -- 'b0afc80e-6969-11f1-adb1-00155d0ab410' in the Summary tab. All 69 resolve against
+       -- process_master, so COALESCE names them and leaves the legacy text rows untouched.
+       COALESCE(pm.process_name, c.applied_for_process) AS applied_for_process,
+       c.created_at,
+       c.current_stage,
+       c.status AS candidate_status,
+       COALESCE(p.profile_status, 'pending') AS onboarding_status,
+       COALESCE(doc_stats.total_documents, 0) AS total_documents,
+       COALESCE(doc_stats.verified_documents, 0) AS verified_documents,
+       GREATEST(COALESCE(doc_stats.total_documents, 0) - COALESCE(doc_stats.verified_documents, 0), 0) AS document_pending_count,
+       CASE
+         WHEN COALESCE(bgv_checks.blocker_count, 0) > 0 THEN 'blocked'
+         WHEN COALESCE(bgv_checks.verified_count, 0) > 0 OR bgv.verification_status = 'verified' THEN 'verified'
+         ELSE COALESCE(bgv.verification_status, 'pending')
+       END AS bgv_status,
+       phr.id AS payroll_validation_id,
+       phr.validation_status AS payroll_status,
+       phr.joining_date,
+       phr.salary_start_date,
+       phr.salary_register_locked,
+       phr.salary_register_id,
+       phr.gross_salary,
+       phr.employment_type,
+       phr.profile,
+       phr.band_grade,
+       phr.employee_location,
+       sep.id AS salary_exception_id,
+       sep.status AS salary_exception_status,
+       sep.approval_stage AS salary_approval_stage,
+       sep.proposed_gross_salary,
+       bha.approval_status AS jclr_approval_status,
+       bha.branch_head_id AS jclr_approved_by,
+       bha.approved_at AS jclr_approved_at,
+       jclr.jclr_status,
+       stat.declaration_status AS statutory_status,
+       COALESCE(dpdp.required_status, 'pending') AS dpdp_required_status,
+       sr.id AS locked_salary_register_id,
+       e.employee_code,
+       ob.employee_id,
+       DATEDIFF(CURRENT_DATE(), DATE(COALESCE(p.submitted_at, c.created_at))) AS aging_days
+     FROM ats_candidate c
+     LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+     LEFT JOIN (
+       SELECT candidate_id, COUNT(*) AS total_documents,
+              SUM(CASE WHEN document_status = 'verified' OR verification_status = 'verified' THEN 1 ELSE 0 END) AS verified_documents
+         FROM (
+           SELECT candidate_id, document_status, NULL AS verification_status FROM candidate_onboarding_document WHERE deleted_at IS NULL
+           UNION ALL
+           SELECT candidate_id, NULL AS document_status, verification_status FROM ats_candidate_documents
+         ) d
+        GROUP BY candidate_id
+     ) doc_stats ON doc_stats.candidate_id = c.id
+     LEFT JOIN (
+       SELECT candidate_id,
+              SUM(CASE WHEN status IN ('verified','waived') THEN 1 ELSE 0 END) AS verified_count,
+              SUM(CASE WHEN status IN ('mismatch','failed','manual_review') THEN 1 ELSE 0 END) AS blocker_count
+         FROM candidate_bgv_check
+        GROUP BY candidate_id
+     ) bgv_checks ON bgv_checks.candidate_id = c.id
+     LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
+     LEFT JOIN ats_payroll_hr_validation phr ON phr.candidate_id = c.id
+     LEFT JOIN salary_exception_proposal sep ON sep.candidate_id = c.id
+     LEFT JOIN ats_branch_head_approval bha ON bha.candidate_id = c.id
+     LEFT JOIN salary_register sr ON sr.candidate_id = c.id AND sr.locked_status = 1
+     LEFT JOIN jclr_detail jclr ON jclr.candidate_id = c.id
+     LEFT JOIN statutory_declaration stat ON stat.candidate_id = c.id
+     LEFT JOIN (
+       SELECT candidate_id,
+              CASE
+                WHEN SUM(CASE WHEN consent_status = 'withdrawn' THEN 1 ELSE 0 END) > 0 THEN 'withdrawn'
+                WHEN SUM(CASE WHEN consent_status = 'granted' THEN 1 ELSE 0 END) > 0 THEN 'granted'
+                ELSE 'pending'
+              END AS required_status
+         FROM dpdp_consent_register
+        WHERE purpose_code IN ('candidate_onboarding','bgv_verification','payroll_processing','document_review')
+        GROUP BY candidate_id
+     ) dpdp ON dpdp.candidate_id = c.id
+     LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+     LEFT JOIN employees e ON e.id = ob.employee_id
+     WHERE ${whereSql}`;
+
+async function candidateSnapshot(candidateId: string): Promise<RowDataPacket | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `${candidateSnapshotSql("c.id = ?")} LIMIT 1`,
+    [candidateId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Every candidate on one page of the queue, in ONE query.
+ *
+ * listJoiningControlRoomQueue used to Promise.all() candidateSnapshot() across its 50 ids. That
+ * snapshot carries three uncorrelated derived tables (doc_stats, bgv_checks, dpdp) which MySQL
+ * materialises in full on every execution, so the page paid for 150 aggregate scans to render 50
+ * rows - measured on live data at 234 ms x 50 = ~11.7 s of database time, on top of the queue
+ * query's own cost, against a 30 s client timeout. Batching by `IN` builds each derived table once:
+ * the same 50 rows came back in 440 ms, identical across all 40 columns.
+ *
+ * Returned in the caller's id order, not the database's: the queue's ordering is decided by
+ * listJoiningControlRoomQueue's ORDER BY, and `IN` does not preserve it.
+ */
+async function candidateSnapshots(candidateIds: string[]): Promise<RowDataPacket[]> {
+  if (!candidateIds.length) return [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    candidateSnapshotSql(`c.id IN (${candidateIds.map(() => "?").join(",")})`),
+    candidateIds,
+  );
+  const byId = new Map(rows.map((row) => [String(row.candidate_id), row]));
+  return candidateIds.map((id) => byId.get(id)).filter(Boolean) as RowDataPacket[];
+}
+
+export async function listJoiningControlRoomQueue(search = "") {
+  let searchSql = "";
+  let searchParams: unknown[] = [];
+  if (search.trim()) {
+    searchSql = "AND (c.full_name LIKE ? OR c.mobile LIKE ? OR c.email LIKE ? OR c.candidate_code LIKE ?)";
+    const like = `%${search.trim()}%`;
+    searchParams = [like, like, like, like];
+  }
+  // The filter is interpolated into all four arms below, so its bindings repeat once per arm.
+  const params: unknown[] = [
+    ...searchParams, ...searchParams, ...searchParams, ...searchParams,
+  ];
+
+  // One arm per source of the candidate's sort key, in the precedence the ORDER BY used to express
+  // as COALESCE(p.updated_at, phr.updated_at, jclr.updated_at, c.updated_at, c.created_at): an arm
+  // claims a candidate only when every higher-precedence source is absent, so each candidate is
+  // emitted exactly once, keyed exactly as before. All four `updated_at` columns are NOT NULL by
+  // schema, so that COALESCE could only ever fall through on a MISSING JOIN, never on a NULL value
+  // - which is what makes this decomposition equivalent rather than merely similar.
+  //
+  // The point of it is the ORDER BY. As one statement, ordering on a COALESCE spanning four tables
+  // is indexable by nothing, so MySQL joined all ~35k candidates into a temp table and filesorted
+  // it to hand back 50 rows: 26.7 s measured on live data, while the identical query WITHOUT the
+  // ORDER BY returned in 18 ms. Here each arm sorts its own table's own column and stops at 50, and
+  // the global top 50 is necessarily contained in the union of the per-source top 50s.
+  //
+  // The `c.id DESC` tie-breaker is not cosmetic. `updated_at` is second-resolution and these rows
+  // arrive by bulk import, so ties are dense - the 50-row cut was measured landing inside a group
+  // of three rows sharing one timestamp. Without it the old single-statement query was already free
+  // to return a different 50 on each call for unchanged data; with it the page is stable and this
+  // decomposition is provably identical to the old ordering rather than equal most of the time.
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT candidate_id FROM (
+       ( SELECT c.id AS candidate_id, p.updated_at AS sort_key
+           FROM candidate_onboarding_profile p
+           JOIN ats_candidate c ON c.id = p.candidate_id
+          WHERE 1=1 ${searchSql}
+          -- Tie-broken on p.candidate_id, not c.id. They are the same value (that is the join
+          -- condition), so the ordering is unchanged — but only the profile-side column can be
+          -- served by an index on this table. An InnoDB secondary index carries the PRIMARY KEY
+          -- as its suffix, and this table's pk is its own surrogate id column, not candidate_id, so
+          -- (updated_at) alone yields (updated_at, profile_id) and cannot answer this ORDER BY:
+          -- measured type=ALL, rows=32282, "Using temporary; Using filesort", ~14 s. Migration
+          -- 1669 adds (updated_at, candidate_id) for exactly this arm. Contrast the ats_candidate
+          -- arm below, where c.id IS that table's pk, so 1668's single-column index already gives
+          -- it a backward index scan.
+          ORDER BY p.updated_at DESC, p.candidate_id DESC
+          LIMIT 50 )
+       UNION ALL
+       ( SELECT c.id AS candidate_id, phr.updated_at AS sort_key
+           FROM ats_payroll_hr_validation phr
+           JOIN ats_candidate c ON c.id = phr.candidate_id
+          WHERE NOT EXISTS (SELECT 1 FROM candidate_onboarding_profile p WHERE p.candidate_id = c.id)
+            ${searchSql}
+          ORDER BY phr.updated_at DESC, c.id DESC
+          LIMIT 50 )
+       UNION ALL
+       ( SELECT c.id AS candidate_id, jclr.updated_at AS sort_key
+           FROM jclr_detail jclr
+           JOIN ats_candidate c ON c.id = jclr.candidate_id
+          WHERE NOT EXISTS (SELECT 1 FROM candidate_onboarding_profile p WHERE p.candidate_id = c.id)
+            AND NOT EXISTS (SELECT 1 FROM ats_payroll_hr_validation phr WHERE phr.candidate_id = c.id)
+            ${searchSql}
+          ORDER BY jclr.updated_at DESC, c.id DESC
+          LIMIT 50 )
+       UNION ALL
+       ( SELECT c.id AS candidate_id, c.updated_at AS sort_key
+           FROM ats_candidate c
+          WHERE LOWER(COALESCE(c.final_decision, c.status, c.current_stage, '')) IN ('selected','offered','joined','onboarding')
+            AND NOT EXISTS (SELECT 1 FROM candidate_onboarding_profile p WHERE p.candidate_id = c.id)
+            AND NOT EXISTS (SELECT 1 FROM ats_payroll_hr_validation phr WHERE phr.candidate_id = c.id)
+            AND NOT EXISTS (SELECT 1 FROM jclr_detail jclr WHERE jclr.candidate_id = c.id)
+            ${searchSql}
+          ORDER BY c.updated_at DESC, c.id DESC
+          LIMIT 50 )
+     ) queue
+     ORDER BY sort_key DESC, candidate_id DESC
+     LIMIT 50`,
+    params,
+  );
+
+  const snapshots = await candidateSnapshots(rows.map((row) => String(row.candidate_id)));
+  return snapshots.map((row) => {
+    const blockers = readinessBlockers(row);
+    return {
+      ...row,
+      readiness_status: blockers.length ? "blocked" : row?.employee_code ? "employee_created" : "ready",
+      blockers,
+      next_action: nextAction(blockers),
+    };
+  });
+}
+
+export async function getJoiningControlRoomCandidate(candidateId: string) {
+  const summary = await candidateSnapshot(candidateId);
+  if (!summary) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+
+  const [profile] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const [bank] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const [qualifications] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
+  const [experience] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
+  const [payroll] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const [salaryProposal] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const [salarySteps] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`, [candidateId]);
+  const [jclr] = await db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const [statutory] = await db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const [dpdp] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]);
+  const [withdrawals] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]);
+  const [bridge] = await db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]);
+
+  // Fetch employment offer (salary source of truth set in onboarding-requests)
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT o.*,
+            d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
+            CONCAT(m.first_name, ' ', m.last_name) AS manager_name
+       FROM ats_employment_offer o
+       LEFT JOIN department_master d ON d.id = o.department_id
+       LEFT JOIN designation_master des ON des.id = o.designation_id
+       LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
+       LEFT JOIN employees m ON m.id = o.reporting_manager_id
+      WHERE o.candidate_id = ?
+      ORDER BY o.created_at DESC
+      LIMIT 1`,
+    [candidateId],
+  );
+
+  // Fetch provisioning task statuses
+  const [provTasks] = await db.execute<RowDataPacket[]>(
+    // Four columns here named things it_provisioning_request does not have, so the whole
+    // provisioning panel of the joining control room threw and showed no tasks:
+    // assigned_to -> assigned_user_id, completed_at -> actioned_at, sla_due -> sla_due_at,
+    // and candidate_id, which has no equivalent at all. The table links to a candidate only
+    // through ats_onboarding_bridge, so that subquery is the only real predicate.
+    `SELECT r.task_code, r.status, r.assigned_user_id AS assigned_to,
+            r.actioned_at AS completed_at, r.sla_due_at AS sla_due,
+            CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
+       FROM it_provisioning_request r
+       LEFT JOIN employees e ON e.id = r.assigned_user_id
+      WHERE r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
+      ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
+    [candidateId],
+  );
+
+  // Joining-document e-sign checklist.
+  //
+  // The Joining Control Room showed no e-sign state at all, while the data was sitting in
+  // `employee_joining_document_checklist` the whole time — MAS63459 has 9 rows there, 6 of
+  // them `esign_completed` with `signature_mode = 'aadhaar_esign_verified'`. HR had to leave
+  // for /ats/joining-documents-tracker to learn whether a joiner had signed anything.
+  //
+  // Keyed on BOTH ids defensively. The table carries `employee_id` on all 596 live rows but
+  // `candidate_id` on only 495. Measured, the employee-id arm recovers exactly 0 rows today:
+  // the 101 candidate-less rows belong to 12 employees who have no `ats_onboarding_bridge`
+  // row at all, so this screen cannot reach them by either key. It is kept because the
+  // reverse case — a bridged joiner whose checklist rows were written without the candidate
+  // link — would otherwise show a confident, wrong "0 of 0 signed", and `bridge` is already
+  // loaded above so the second key costs no extra round trip.
+  const bridgeEmployeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  const [esignRows] = await db.execute<RowDataPacket[]>(
+    `SELECT document_code, document_name, owner_type, action_type, status, fill_status,
+            signature_mode, mandatory, due_at, completed_at, verification_status,
+            employee_review_status, hr_remarks, updated_at
+       FROM employee_joining_document_checklist
+      WHERE candidate_id = ? OR (? IS NOT NULL AND employee_id = ?)
+      ORDER BY mandatory DESC, document_name`,
+    [candidateId, bridgeEmployeeId, bridgeEmployeeId],
+  );
+
+  const esignDocuments = esignRows.map((row) => ({
+    document_code: String(row.document_code ?? ""),
+    document_name: String(row.document_name ?? row.document_code ?? "Document"),
+    owner_type: row.owner_type ?? null,
+    action_type: row.action_type ?? null,
+    status: row.status ?? null,
+    // classifyEsignState is TOTAL — an unrecognised status buckets to not_started and is
+    // logged once, never dropped. That is what keeps completed+in_progress+not_started
+    // equal to the row count, so the "6 of 9 signed" headline cannot overstate itself.
+    bucket: classifyEsignState(row.status as string | null),
+    fill_status: row.fill_status ?? null,
+    signature_mode: row.signature_mode ?? null,
+    mandatory: Number(row.mandatory ?? 0) === 1,
+    due_at: row.due_at ?? null,
+    completed_at: row.completed_at ?? null,
+    verification_status: row.verification_status ?? null,
+    employee_review_status: row.employee_review_status ?? null,
+    hr_remarks: row.hr_remarks ?? null,
+    updated_at: row.updated_at ?? null,
+  }));
+
+  const esignSignable = esignDocuments.filter((doc) => doc.action_type === "esign");
+  const esign = {
+    documents: esignDocuments,
+    total: esignDocuments.length,
+    completed: esignDocuments.filter((doc) => doc.bucket === "completed").length,
+    in_progress: esignDocuments.filter((doc) => doc.bucket === "in_progress").length,
+    not_started: esignDocuments.filter((doc) => doc.bucket === "not_started").length,
+    signable_total: esignSignable.length,
+    signable_completed: esignSignable.filter((doc) => doc.bucket === "completed").length,
+    // Kit-level state the dispatcher maintains on the bridge row; shown beside the checklist
+    // so HR can tell "nothing sent yet" from "sent and unsigned" without reading nine rows.
+    kit_status: bridge[0]?.joining_document_status ?? null,
+    kit_completion_pct: bridge[0]?.joining_document_completion_pct ?? null,
+    kit_completed_at: bridge[0]?.joining_document_completed_at ?? null,
+    digilocker_status: bridge[0]?.digilocker_status ?? null,
+    penny_drop_status: bridge[0]?.penny_drop_status ?? null,
+  };
+
+  const taskLabels: Record<string, string> = {
+    WFM_PROCESS_ALIGNMENT: "WFM Process Alignment",
+    IT_EMAIL_DOMAIN_ASSET: "IT Email, Domain & Asset",
+    ADMIN_BIOMETRIC_ID_CARD: "Admin Biometric & ID Card",
+    APPOINTMENT_LETTER_ESIGN: "Appointment Letter E-Sign",
+  };
+  const taskRoles: Record<string, string> = {
+    WFM_PROCESS_ALIGNMENT: "wfm",
+    IT_EMAIL_DOMAIN_ASSET: "it",
+    ADMIN_BIOMETRIC_ID_CARD: "admin",
+    APPOINTMENT_LETTER_ESIGN: "hr",
+  };
+
+  const blockers = readinessBlockers(summary);
+  return {
+    summary: {
+      ...summary,
+      readiness_status: blockers.length ? "blocked" : summary.employee_code ? "employee_created" : "ready",
+      blockers,
+      next_action: nextAction(blockers),
+    },
+    // profile and bank are SELECT *, so they carry the at-rest crypto columns
+    // (pan_number_encrypted, *_hash, account_no_encrypted, onboarding_token_hash). This
+    // router admits it, operations_manager and branch_head among others, and none of them
+    // — nor anyone else — has a use for ciphertext or a lookup hash.
+    onboarding: {
+      profile: stripCryptoPlumbing(profile[0] ?? null),
+      bank: stripCryptoPlumbing(bank[0] ?? null),
+      qualifications,
+      experience,
+    },
+    offer: offerRows[0] ?? null,
+    payroll: payroll[0] ?? null,
+    salaryProposal: salaryProposal[0] ?? null,
+    salarySteps,
+    jclr: jclr[0] ?? null,
+    statutory: statutory[0] ?? null,
+    dpdp,
+    withdrawals,
+    esign,
+    employee: bridge[0] ?? null,
+    provisioningTasks: provTasks.map((t) => ({
+      task_code: t.task_code,
+      task_label: taskLabels[t.task_code] || t.task_code,
+      assigned_role: taskRoles[t.task_code] || "unknown",
+      status: t.status,
+      assigned_to_name: t.assigned_to_name,
+      completed_at: t.completed_at,
+      sla_due: t.sla_due,
+    })),
+  };
+}
+
+export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string) {
+  // JCR only updates effective dates and remarks — salary is set in onboarding-requests offer form
+  const salaryStartDate = String(input.salary_start_date || "");
+  const attendanceEffective = String(input.attendance_effective_from || salaryStartDate);
+  const statutoryEffective = String(input.statutory_effective_from || salaryStartDate);
+  const payrollMonth = String(input.payroll_month_effective || monthOf(salaryStartDate));
+  const reason = String(input.salary_effective_date_reason || "");
+  const joiningRemarks = String(input.joining_remarks || "");
+
+  // Get joining date from offer (source of truth)
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT date_of_joining, date_of_salary FROM ats_employment_offer WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  );
+  const offer = offerRows[0];
+  const joiningDate = offer?.date_of_joining ? toDateOnly(offer.date_of_joining) : null;
+  const originalSalaryDate = offer?.date_of_salary ? toDateOnly(offer.date_of_salary) : joiningDate;
+
+  // Validate salary start date if changed from original
+  if (salaryStartDate && originalSalaryDate && salaryStartDate !== originalSalaryDate && !reason.trim()) {
+    throw Object.assign(new Error("salary_effective_date_reason is required when salary start date differs from offer"), { statusCode: 400 });
+  }
+
+  // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
+  const [existingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+
+  if (!existingRows[0]) {
+    // Create minimal record seeded from offer data
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(b.id, c.applied_for_branch) AS branch_id
+         FROM ats_candidate c
+         LEFT JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch
+        WHERE c.id = ? LIMIT 1`,
+      [candidateId],
+    );
+    const branchId = branchRows[0]?.branch_id || null;
+
+    // INSERT ... SELECT FROM ats_employment_offer: with no offer row for this
+    // candidate the SELECT returns nothing and the INSERT writes nothing — no
+    // error, no row. Payroll HR fills the form, saves, is told it worked, and
+    // no validation record exists. Since validation is a hard gate on employee
+    // creation, the candidate then sits in the queue indefinitely with nothing
+    // to show why.
+    //
+    // 31 of the 44 submitted candidates in production have no employment offer,
+    // so this is the common case, not the edge one. affectedRows is checked
+    // below and the failure is raised.
+    const [seedResult] = await db.execute<ResultSetHeader>(
+      `INSERT INTO ats_payroll_hr_validation
+         (id, candidate_id, branch_id, payroll_hr_id, validation_status,
+          employment_type, department_id, designation_id, cost_centre_id, reporting_manager_id,
+          gross_salary, joining_date, salary_start_date,
+          attendance_effective_from, statutory_effective_from, payroll_month_effective,
+          salary_effective_date_reason, joining_remarks, validated_at)
+       SELECT UUID(), ?, ?, ?, 'validated',
+              o.emp_type, o.department_id, o.designation_id, o.cost_centre, o.reporting_manager_id,
+              o.gross, o.date_of_joining, COALESCE(?, o.date_of_salary, o.date_of_joining),
+              COALESCE(?, o.date_of_salary, o.date_of_joining),
+              COALESCE(?, o.date_of_salary, o.date_of_joining),
+              ?,
+              ?, ?, NOW()
+         FROM ats_employment_offer o
+        WHERE o.candidate_id = ?
+        ORDER BY o.created_at DESC
+        LIMIT 1`,
+      [
+        candidateId, branchId, actorId,
+        salaryStartDate || null,
+        attendanceEffective || null,
+        statutoryEffective || null,
+        payrollMonth || null,
+        reason || null, joiningRemarks || null,
+        candidateId,
+      ],
+    );
+
+    if (seedResult.affectedRows === 0) {
+      throw Object.assign(
+        new Error(
+          "Payroll validation could not be created because this candidate has no employment offer. " +
+          "Raise and approve the offer first — the validation record is seeded from it."
+        ),
+        { statusCode: 400 },
+      );
+    }
+  } else {
+    // Update only JCR-specific effective date fields
+    await db.execute(
+      `UPDATE ats_payroll_hr_validation
+          SET salary_start_date = COALESCE(?, salary_start_date),
+              attendance_effective_from = COALESCE(?, attendance_effective_from),
+              statutory_effective_from = COALESCE(?, statutory_effective_from),
+              payroll_month_effective = COALESCE(?, payroll_month_effective),
+              salary_effective_date_reason = COALESCE(?, salary_effective_date_reason),
+              joining_remarks = COALESCE(?, joining_remarks),
+              payroll_hr_id = ?,
+              validation_status = 'validated'
+        WHERE candidate_id = ?`,
+      [
+        salaryStartDate || null,
+        attendanceEffective || null,
+        statutoryEffective || null,
+        payrollMonth || null,
+        reason || null,
+        joiningRemarks || null,
+        actorId,
+        candidateId,
+      ],
+    );
+  }
+
+  // Auto-lock the salary register the moment Payroll HR validates for payroll,
+  // per an explicit product decision (2026-09-04): locking used to be a second,
+  // separate manual step with no button anywhere to trigger it — the backend
+  // endpoint existed, nothing in the product ever called it — so every candidate
+  // sat "validated" but permanently "not locked".
+  //
+  // Best-effort and silent on failure: lockSalaryRegister() itself still enforces
+  // its own preconditions (an approved salary proposal, a resolvable effective
+  // date) and throws a clear 409 if they are not met. Surfacing that failure HERE
+  // would turn "save my effective dates" into a hard error over a salary proposal
+  // this same call may not control, so it is logged and left for the next
+  // validate — or the readiness screen, which still reports "not locked"
+  // accurately — rather than blocking the save that got the candidate this far.
+  await lockSalaryRegister(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] auto-lock skipped for ${candidateId}:`, (error as Error)?.message ?? error);
+  });
+
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+export async function saveJclrDetails(candidateId: string, input: JsonRecord, actorId: string) {
+  const existing = await candidateSnapshot(candidateId);
+  const oldStatus = existing?.jclr_status ? String(existing.jclr_status) : null;
+  // No longer gated on jclr_approval_status (2026-09-04, matching readinessBlockers
+  // above): that column comes from ats_branch_head_approval, a pre-offer "approve
+  // this candidate for hire" table a candidate's actual offer approval does not
+  // always write to, which made this throw for anyone who took that path — verified
+  // live against MAS63438, whose offer was genuinely approved
+  // (ats_employment_offer.status = 'bh_approved') with zero rows in that table.
+  // JCLR logistics is operational handoff information, not a workflow gate.
+  await db.execute(
+    `INSERT INTO jclr_detail
+       (id, candidate_id, joining_location, joining_floor, work_station, system_required, headset_required,
+        id_card_required, training_batch, trainer_name, induction_slot, transport_required, transport_route,
+        joining_coordinator_id, jclr_status, blocker_reason, remarks, created_by, updated_by)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       joining_location = VALUES(joining_location),
+       joining_floor = VALUES(joining_floor),
+       work_station = VALUES(work_station),
+       system_required = VALUES(system_required),
+       headset_required = VALUES(headset_required),
+       id_card_required = VALUES(id_card_required),
+       training_batch = VALUES(training_batch),
+       trainer_name = VALUES(trainer_name),
+       induction_slot = VALUES(induction_slot),
+       transport_required = VALUES(transport_required),
+       transport_route = VALUES(transport_route),
+       joining_coordinator_id = VALUES(joining_coordinator_id),
+       jclr_status = VALUES(jclr_status),
+       blocker_reason = VALUES(blocker_reason),
+       remarks = VALUES(remarks),
+       updated_by = VALUES(updated_by)`,
+    [
+      candidateId,
+      input.joining_location || null,
+      input.joining_floor || null,
+      input.work_station || null,
+      input.system_required === false ? 0 : 1,
+      input.headset_required ? 1 : 0,
+      input.id_card_required === false ? 0 : 1,
+      input.training_batch || null,
+      input.trainer_name || null,
+      input.induction_slot || null,
+      input.transport_required ? 1 : 0,
+      input.transport_route || null,
+      input.joining_coordinator_id || null,
+      input.jclr_status || "pending",
+      input.blocker_reason || null,
+      input.remarks || null,
+      actorId,
+      actorId,
+    ],
+  );
+  await db.execute(
+    `INSERT INTO jclr_audit_log (id, candidate_id, actor_id, action, old_status, new_status, payload_json)
+     VALUES (UUID(), ?, ?, 'SAVE_JCLR', ?, ?, ?)`,
+    [candidateId, actorId, oldStatus, input.jclr_status || "pending", JSON.stringify(input)],
+  );
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+export async function saveStatutoryDeclaration(candidateId: string, input: JsonRecord, actorId: string) {
+  await db.execute(
+    `INSERT INTO statutory_declaration
+       (id, candidate_id, epf_member, uan, pf_applicable, esi_applicable, professional_tax_state,
+        nominee_name, nominee_relationship, nominee_dob, declaration_status, verified_by, verified_at,
+        rejection_reason, remarks, created_by, updated_by)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'verified' THEN NOW() ELSE NULL END, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       epf_member = VALUES(epf_member),
+       uan = VALUES(uan),
+       pf_applicable = VALUES(pf_applicable),
+       esi_applicable = VALUES(esi_applicable),
+       professional_tax_state = VALUES(professional_tax_state),
+       nominee_name = VALUES(nominee_name),
+       nominee_relationship = VALUES(nominee_relationship),
+       nominee_dob = VALUES(nominee_dob),
+       declaration_status = VALUES(declaration_status),
+       verified_by = VALUES(verified_by),
+       verified_at = VALUES(verified_at),
+       rejection_reason = VALUES(rejection_reason),
+       remarks = VALUES(remarks),
+       updated_by = VALUES(updated_by)`,
+    [
+      candidateId,
+      input.epf_member || "unknown",
+      input.uan || null,
+      input.pf_applicable === false ? 0 : 1,
+      input.esi_applicable ? 1 : 0,
+      input.professional_tax_state || null,
+      input.nominee_name || null,
+      input.nominee_relationship || null,
+      input.nominee_dob || null,
+      input.declaration_status || "pending",
+      input.declaration_status === "verified" ? actorId : null,
+      input.declaration_status || "pending",
+      input.rejection_reason || null,
+      input.remarks || null,
+      actorId,
+      actorId,
+    ],
+  );
+  await db.execute(
+    `INSERT INTO statutory_declaration_audit_log (id, candidate_id, actor_id, action, payload_json)
+     VALUES (UUID(), ?, ?, 'SAVE_STATUTORY', ?)`,
+    [candidateId, actorId, JSON.stringify(input)],
+  );
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+export async function upsertDpdpConsent(candidateId: string, input: JsonRecord, actorId: string) {
+  const purpose = String(input.purpose_code || "candidate_onboarding");
+  const status = String(input.consent_status || "granted");
+  await db.execute(
+    `INSERT INTO dpdp_consent_register
+       (id, candidate_id, purpose_code, consent_status, consent_text_version, lawful_basis, granted_at, withdrawn_at, source, actor_id)
+     VALUES (UUID(), ?, ?, ?, ?, ?, CASE WHEN ? = 'granted' THEN NOW() ELSE NULL END, CASE WHEN ? = 'withdrawn' THEN NOW() ELSE NULL END, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       consent_status = VALUES(consent_status),
+       consent_text_version = VALUES(consent_text_version),
+       lawful_basis = VALUES(lawful_basis),
+       granted_at = COALESCE(VALUES(granted_at), granted_at),
+       withdrawn_at = VALUES(withdrawn_at),
+       source = VALUES(source),
+       actor_id = VALUES(actor_id),
+       updated_at = NOW()`,
+    [candidateId, purpose, status, input.consent_text_version || null, input.lawful_basis || "consent", status, status, input.source || "hr_control_room", actorId],
+  );
+  await db.execute(
+    `INSERT INTO dpdp_processing_activity_log (id, candidate_id, actor_id, purpose_code, action, data_category, lawful_basis, payload_json)
+     VALUES (UUID(), ?, ?, ?, 'CONSENT_UPDATE', ?, ?, ?)`,
+    [candidateId, actorId, purpose, input.data_category || "candidate_onboarding", input.lawful_basis || "consent", JSON.stringify(input)],
+  );
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+export async function requestDpdpWithdrawal(candidateId: string, input: JsonRecord, actorId: string) {
+  const purpose = String(input.purpose_code || "candidate_onboarding");
+  await db.execute(
+    `INSERT INTO dpdp_consent_withdrawal (id, requester_id, requester_type, withdrawal_reason, status)
+     VALUES (UUID(), ?, 'candidate', ?, 'submitted')`,
+    [candidateId, String(input.reason || "Withdrawal requested from HR control room")],
+  );
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+export async function validateReadiness(candidateId: string) {
+  const summary = await candidateSnapshot(candidateId);
+  const blockers = readinessBlockers(summary);
+  const status = blockers.length ? "blocked" : summary?.employee_code ? "employee_created" : "ready";
+  await db.execute(
+    `INSERT INTO joining_control_room_snapshot
+       (id, candidate_id, readiness_status, blockers_json, next_action, snapshot_json)
+     VALUES (UUID(), ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       readiness_status = VALUES(readiness_status),
+       blockers_json = VALUES(blockers_json),
+       next_action = VALUES(next_action),
+       snapshot_json = VALUES(snapshot_json),
+       updated_at = NOW()`,
+    [candidateId, status, JSON.stringify(blockers), nextAction(blockers), JSON.stringify(summary || {})],
+  );
+  return { candidate_id: candidateId, readiness_status: status, blockers, next_action: nextAction(blockers) };
+}
+
+/**
+ * Ask the provider right now, instead of waiting for the background worker's
+ * schedule.
+ *
+ * esign-reconciliation.worker.ts backs a pending transaction off to a fixed
+ * interval — capped, but still up to an hour — specifically to avoid the
+ * per-call billing cost of polling every open transaction on a short cycle. That
+ * is the right default, but it means a completion between two scheduled checks
+ * sits invisible on this exact screen: verified live, MAS63438's kit-level
+ * Aadhaar eSign finished on Luckpay's side hours before the worker's next
+ * scheduled check, and every one of her six kit documents kept reading
+ * `esign_initiated` — correct as of the last check, wrong as of right now.
+ *
+ * This is the one place a manual check is worth the extra provider call: an HR
+ * user pressing "Check now" already has a specific reason to believe something
+ * changed, which is exactly the condition the worker's schedule cannot see.
+ * Every non-terminal transaction for the candidate is checked (not just one),
+ * since a joining kit can carry more than one open transaction.
+ */
+export async function recheckEsignStatus(candidateId: string): Promise<{ checked: number; completed: number }> {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT client_transaction_id
+       FROM employee_document_esign_transaction
+      WHERE (candidate_id = ? OR (? IS NOT NULL AND employee_id = ?))
+        AND status NOT IN ('signed', 'completed', 'failed', 'expired', 'cancelled', 'abandoned_unresolved')`,
+    [candidateId, employeeId, employeeId],
+  );
+
+  let completed = 0;
+  for (const row of rows as RowDataPacket[]) {
+    const outcome = await syncEsignStatus(String(row.client_transaction_id)).catch((error: unknown) => {
+      console.warn(`[joining-control-room] manual esign recheck failed for ${row.client_transaction_id}:`, error);
+      return null;
+    });
+    if (outcome?.state === "completed") completed++;
+  }
+  return { checked: rows.length, completed };
+}
+
+/**
+ * Re-send the joining kit's signing link, for a candidate who never opened the
+ * original one.
+ *
+ * Investigated live 2026-09-04: 24 candidates were stuck at Luckpay's own
+ * "INITIATED, 0 pages opened" state, not because the eSign was broken, but
+ * because the joining-kit dispatch only ever emails the link — it never texts
+ * it — for a candidate population where a personal email often goes unchecked.
+ * This is the recovery action: mint and send a fresh link (see
+ * resendKitEsignLink's own doc comment for why it must be fresh, not
+ * resent-as-is) to whichever kit is currently awaiting this candidate's
+ * signature, so Payroll HR is not stuck only re-polling a status that will
+ * never change on its own.
+ */
+export async function resendEsignLink(candidateId: string, actorId: string): Promise<{ resent: boolean; message: string; emailedTo?: string[] }> {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+
+  const [kits] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employee_joining_esign_kit
+      WHERE (candidate_id = ? OR (? IS NOT NULL AND employee_id = ?)) AND status = 'sent'
+      ORDER BY sent_at DESC LIMIT 1`,
+    [candidateId, employeeId, employeeId],
+  );
+  const kitId = (kits as RowDataPacket[])[0]?.id;
+  if (!kitId) {
+    return { resent: false, message: "No joining kit is currently awaiting this candidate's signature." };
+  }
+
+  const { resendKitEsignLink } = await import("../employees/joiningKitDispatch.service.js");
+  return resendKitEsignLink(String(kitId), actorId);
+}
+
+/**
+ * Recovery for a candidate whose joining kit's Luckpay session has already
+ * failed or expired — the case resendEsignLink can never fix, since a resend
+ * only mints a new internal link to the SAME provider session, and this one
+ * is dead. This is the one path that deliberately re-bills the provider: a
+ * genuinely new kit, assembled and dispatched from scratch.
+ */
+export async function redispatchDeadEsignKit(candidateId: string, actorId: string) {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  if (!employeeId) {
+    throw Object.assign(new Error("No employee record exists yet for this candidate"), { statusCode: 409 });
+  }
+  const { redispatchDeadKit } = await import("../employees/joiningKitDispatch.service.js");
+  return redispatchDeadKit(employeeId, actorId);
+}
+
+export async function lockSalaryRegister(candidateId: string, actorId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT phr.*, sep.status AS proposal_status, sep.proposed_gross_salary
+       FROM ats_payroll_hr_validation phr
+       LEFT JOIN salary_exception_proposal sep ON sep.candidate_id = phr.candidate_id
+      WHERE phr.candidate_id = ?
+      LIMIT 1`,
+    [candidateId],
+  );
+  const payroll = rows[0];
+  if (!payroll) throw Object.assign(new Error("Payroll HR validation is required before locking salary register"), { statusCode: 409 });
+  if (payroll.proposal_status && payroll.proposal_status !== "approved") {
+    throw Object.assign(new Error("Salary proposal must be approved before salary register lock"), { statusCode: 409 });
+  }
+  const salaryEffective = toDateOnly(payroll.salary_start_date || payroll.joining_date);
+  if (!salaryEffective) throw Object.assign(new Error("Salary effective date is missing"), { statusCode: 409 });
+  const gross = Number(payroll.proposed_gross_salary || payroll.gross_salary || 0);
+  const salaryRegisterId = randomUUID();
+  await db.execute(
+    `INSERT INTO salary_register
+       (id, candidate_id, salary_slab_id, approved_ctc_annual, locked_status, locked_by, locked_at, created_by)
+     VALUES (?, ?, ?, ?, 1, ?, NOW(), ?)
+     ON DUPLICATE KEY UPDATE
+       salary_slab_id = VALUES(salary_slab_id),
+       approved_ctc_annual = VALUES(approved_ctc_annual),
+       locked_status = 1,
+       locked_by = VALUES(locked_by),
+       locked_at = NOW()`,
+    [
+      salaryRegisterId,
+      candidateId,
+      payroll.salary_slab_id,
+      gross,
+      actorId,
+      actorId,
+    ],
+  );
+  await db.execute(
+    `UPDATE ats_payroll_hr_validation
+        SET salary_register_locked = 1,
+            salary_register_id = (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1)
+      WHERE candidate_id = ?`,
+    [candidateId, candidateId],
+  );
+  // candidate_id and actor_id below are this table's ORIGINAL columns, typed int —
+  // left over from before the codebase moved to UUID ids — and every real writer
+  // (verified: the employee-edit-dialog direct-assignment path) has since moved to
+  // actor_user_id/action_type/change_summary, leaving the int columns NULL. This
+  // call was still writing the abandoned pair, so every lock ever attempted through
+  // it failed on "Incorrect integer value" for a UUID — verified live, the exact
+  // error a real attempt raised — which the salary_register row it belongs to
+  // already carries the candidate/employee link, so no candidate_id is needed here.
+  await db.execute(
+    `INSERT INTO salary_register_audit_log (id, salary_register_id, actor_user_id, action_type, change_summary)
+     VALUES (UUID(), (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1), ?, 'LOCK', ?)`,
+    [candidateId, actorId, JSON.stringify({ gross, salaryEffective })],
+  );
+  // Best-effort, same reasoning as the DPDP/bank auto-syncs elsewhere in this
+  // file: the salary just became genuinely locked, so the appointment-letter
+  // eligibility check — which reads salary_component_assignments, a different
+  // table entirely — should not have to wait for someone to separately notice
+  // and re-key it.
+  await syncSalaryComponentFromValidation(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] salary component auto-sync skipped for ${candidateId}:`, error);
+  });
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+/**
+ * Copy a locked salary_register's own component breakdown into
+ * salary_component_assignments, the table appointmentLetterEligibility.service.ts
+ * and payroll actually read.
+ *
+ * The gap this closes: lockSalaryRegister writes salary_register from
+ * ats_payroll_hr_validation, but never salary_component_assignments — a
+ * completely different table with a completely different set of writers
+ * (payroll-head-review.service.ts, salary-change.service.ts,
+ * ats/salary-component-assignment.routes.ts), none of which this flow ever
+ * called. Verified live 2026-09-05: 27 candidates had a locked salary_register
+ * with a real basic/hra/conveyance/special_allowance breakdown already sitting
+ * on ats_payroll_hr_validation, and appointmentLetterEligibility still reported
+ * salary_not_assigned for every one of them, because it reads
+ * salary_component_assignments specifically.
+ *
+ * Copies ats_payroll_hr_validation's OWN basic_salary/hra/conveyance/
+ * special_allowance/pf_amount/esic_amount columns directly — this is not a
+ * derived or estimated split, it is the exact breakdown Payroll HR already
+ * entered and had locked. package_id is left NULL (no salary_package_master
+ * row was ever chosen for these candidates) and net_estimate is left NULL
+ * rather than computed, since inventing either would be guessing at numbers
+ * nobody approved.
+ *
+ * Requires salary_register_locked = 1 — a validation that was never locked is
+ * not yet a final figure — and never overwrites an existing active row, same
+ * non-overwrite rule as every other sync in this file.
+ */
+export async function syncSalaryComponentFromValidation(candidateId: string, actorId: string): Promise<{ synced: boolean; reason?: string }> {
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = bridge[0]?.employee_id ? String(bridge[0].employee_id) : null;
+  if (!employeeId) return { synced: false, reason: "No employee record exists yet for this candidate" };
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM salary_component_assignments WHERE employee_id = ? AND status = 'active' LIMIT 1`,
+    [employeeId],
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return { synced: false, reason: "Employee already has an active salary component assignment" };
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT salary_register_locked, salary_start_date, joining_date, gross_salary,
+            basic_salary, hra, conveyance, special_allowance, pf_amount, esic_amount,
+            (SELECT id FROM salary_register WHERE candidate_id = ? LIMIT 1) AS salary_register_id
+       FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
+    [candidateId, candidateId],
+  );
+  const payroll = (rows as RowDataPacket[])[0];
+  if (!payroll || Number(payroll.salary_register_locked) !== 1) {
+    return { synced: false, reason: "Salary register is not locked" };
+  }
+  if (payroll.basic_salary == null || payroll.gross_salary == null) {
+    return { synced: false, reason: "Payroll HR validation has no salary component breakdown to copy" };
+  }
+
+  const effectiveDate = toDateOnly(payroll.salary_start_date || payroll.joining_date);
+  const pfApplicable = Number(payroll.pf_amount ?? 0) > 0;
+  const esiApplicable = Number(payroll.esic_amount ?? 0) > 0;
+
+  await db.execute(
+    `INSERT INTO salary_component_assignments
+       (id, employee_id, effective_date, package_id,
+        basic, hra, conveyance, special_allowance,
+        bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+        gross, pf_applicable, esi_applicable, employer_pf, employer_esi,
+        pf_employee, esic_employee, ctc, net_estimate, assigned_by, assigned_at,
+        approval_reference, status)
+     VALUES (UUID(), ?, ?, NULL,
+             ?, ?, ?, ?,
+             0, 0, 0, 0, 0, 0,
+             ?, ?, ?, NULL, NULL,
+             ?, ?, ?, NULL, ?, NOW(),
+             ?, 'active')`,
+    [
+      employeeId, effectiveDate,
+      payroll.basic_salary, payroll.hra ?? 0, payroll.conveyance ?? 0, payroll.special_allowance ?? 0,
+      payroll.gross_salary, pfApplicable ? 1 : 0, esiApplicable ? 1 : 0,
+      payroll.pf_amount ?? null, payroll.esic_amount ?? null, payroll.gross_salary,
+      actorId, payroll.salary_register_id ? String(payroll.salary_register_id) : "joining_control_room_lock_sync",
+    ],
+  );
+  return { synced: true };
+}
+
+export async function approveSalaryProposal(candidateId: string, input: JsonRecord, actorId: string) {
+  const level = String(input.approval_level || "bm");
+  const action = String(input.action || "approved");
+  const [proposalRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]);
+  const proposal = proposalRows[0];
+  if (!proposal) throw Object.assign(new Error("Salary proposal not found"), { statusCode: 404 });
+  await db.execute(
+    `INSERT INTO salary_proposal_approval_step
+       (id, proposal_id, candidate_id, approval_level, approver_id, status, remarks, acted_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE
+       approver_id = VALUES(approver_id),
+       status = VALUES(status),
+       remarks = VALUES(remarks),
+       acted_at = NOW()`,
+    [proposal.id, candidateId, level, actorId, action === "rejected" ? "rejected" : "approved", input.remarks || null],
+  );
+  const nextStage: Record<string, string> = { bm: "operations", operations: "payroll", payroll: "finance", finance: "completed" };
+  const finalStatus = action === "rejected" ? "rejected" : level === "finance" ? "approved" : "pending";
+  await db.execute(
+    `UPDATE salary_exception_proposal
+        SET status = ?, approval_stage = ?, approved_by = CASE WHEN ? = 'approved' THEN ? ELSE approved_by END,
+            approved_at = CASE WHEN ? = 'approved' THEN NOW() ELSE approved_at END,
+            rejection_reason = CASE WHEN ? = 'rejected' THEN ? ELSE rejection_reason END,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [finalStatus, action === "rejected" ? level : nextStage[level] || "completed", finalStatus, actorId, finalStatus, action, input.remarks || null, proposal.id],
+  );
+  return getJoiningControlRoomCandidate(candidateId);
+}
+
+/**
+ * Copy the candidate's own onboarding bank submission into the store payroll's
+ * NEFT export actually reads.
+ *
+ * The gap this closes: candidate_onboarding_bank_detail is where the candidate's
+ * real account number lives — verified by penny drop during onboarding — but
+ * nothing in this codebase has ever copied it into employee_bank_detail, the
+ * table bank-payment-readiness.service.ts and the NEFT export query. Verified
+ * live: 0 writers of employee_bank_detail read from
+ * candidate_onboarding_bank_detail anywhere. So a joiner's bank account existed,
+ * verified, the whole time — and payroll could not pay them from it unless HR
+ * separately keyed it in from a spreadheet, which is the exact gap MAS63438 was
+ * found in earlier the same day this was written.
+ *
+ * Ciphertext copied directly, never decrypted here: both columns are encrypted
+ * with the same fieldEncryption.js key (penny-drop.service.ts and this table both
+ * call encryptField()/store into an *_enc column), so the copy is readable by
+ * every existing consumer without this process ever holding the plaintext. This
+ * machine's dev key would make a value *encrypted here* unreadable in production
+ * (see the bank-sheet-load precedent) — copying ciphertext sidesteps that
+ * entirely because nothing here re-encrypts anything.
+ *
+ * Never overwrites an existing active primary row — same rule as the earlier
+ * bank-sheet load: an employee who already has bank details keeps them, this
+ * only fills a genuinely empty record. Requires the onboarding submission to be
+ * 'verified' — an unverified account is not a payment destination, only a claim.
+ */
+export async function syncBankDetailFromOnboarding(
+  employeeId: string,
+  candidateId: string,
+  actorId: string,
+): Promise<{ synced: boolean; reason?: string }> {
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
+    [employeeId],
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return { synced: false, reason: "Employee already has an active primary bank record" };
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT bank_name, account_holder_name, account_no_encrypted, ifsc_code, account_type, verification_status
+       FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const submission = (rows as RowDataPacket[])[0];
+  if (!submission) return { synced: false, reason: "No bank details submitted during onboarding" };
+  if (String(submission.verification_status ?? "").toLowerCase() !== "verified") {
+    return { synced: false, reason: `Onboarding bank submission is "${submission.verification_status ?? "pending"}", not verified` };
+  }
+  if (!submission.account_no_encrypted || !submission.ifsc_code) {
+    return { synced: false, reason: "Onboarding bank submission has no usable account number or IFSC" };
+  }
+
+  await db.execute(
+    `INSERT INTO employee_bank_detail
+       (employee_id, is_primary, account_seq, bank_name, account_holder_name,
+        account_number_enc, ifsc_code, account_type, verified, active_status)
+     VALUES (?, 1, 1, ?, ?, ?, ?, ?, 0, 1)`,
+    [
+      employeeId,
+      submission.bank_name ?? null,
+      submission.account_holder_name ?? null,
+      submission.account_no_encrypted,
+      String(submission.ifsc_code).toUpperCase(),
+      submission.account_type || "Savings",
+    ],
+  );
+  await db.execute(
+    `INSERT INTO employee_bank_detail_backfill_log
+       (employee_id, employee_code, account_before, account_after, ifsc_before, ifsc_after, source, corroborated_by_payment, phase, written_at)
+     SELECT id, employee_code, NULL, 'synced-from-onboarding', NULL, ?, 'joining_control_room_onboarding_sync', 0, 'onboarding-sync', NOW()
+       FROM employees WHERE id = ?`,
+    [String(submission.ifsc_code).toUpperCase(), employeeId],
+  ).catch((error: unknown) => {
+    // The bank record itself is already written; a missing audit row must not
+    // undo that. Logged so the gap in the log is visible, not silent.
+    console.warn(`[joining-control-room] bank-sync audit log failed for ${employeeId}:`, error);
+  });
+  return { synced: true };
+}
+
+/**
+ * Carry the candidate's own onboarding consent into dpdp_consent_register,
+ * instead of leaving the tab asking them to grant it again for something they
+ * already agreed to on the portal.
+ *
+ * Narrow on purpose: candidate_onboarding_profile.dpdp_consent is a single
+ * checkbox captured once, during onboarding, for the onboarding process itself
+ * — it is not evidence of consent for the other three purposes this register
+ * tracks separately (bgv_verification, payroll_processing, document_review),
+ * each of which is its own downstream use of the same data. DPDP's purpose-
+ * limitation principle means consent for one purpose cannot silently be
+ * expanded into consent for another, so this only ever grants
+ * 'candidate_onboarding' — the one purpose the checkbox actually maps to
+ * 1:1. The other three still require HR to grant them individually, exactly
+ * as today.
+ *
+ * That is still enough to clear the readiness blocker: readinessBlockers reads
+ * dpdp.required_status, computed as 'granted' the moment ANY of the four
+ * purposes is granted (see candidateSnapshotSql) — so this closes the gap for
+ * every candidate who consented at onboarding without inventing consent for
+ * purposes they were never asked about.
+ *
+ * Never overwrites an existing row for the purpose (ON DUPLICATE KEY in
+ * upsertDpdpConsent would, but this checks first) — a withdrawal or an
+ * HR-recorded decision must never be silently re-granted by a backfill.
+ */
+export async function syncDpdpConsentFromOnboarding(
+  candidateId: string,
+  actorId: string,
+): Promise<{ synced: boolean; reason?: string }> {
+  const [profileRows] = await db.execute<RowDataPacket[]>(
+    `SELECT dpdp_consent FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const profile = (profileRows as RowDataPacket[])[0];
+  if (!profile || !Number(profile.dpdp_consent)) {
+    return { synced: false, reason: "No DPDP consent recorded on the onboarding profile" };
+  }
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM dpdp_consent_register WHERE candidate_id = ? AND purpose_code = 'candidate_onboarding' LIMIT 1`,
+    [candidateId],
+  );
+  if ((existing as RowDataPacket[]).length > 0) {
+    return { synced: false, reason: "candidate_onboarding consent is already recorded" };
+  }
+
+  await upsertDpdpConsent(
+    candidateId,
+    { purpose_code: "candidate_onboarding", consent_status: "granted", source: "onboarding_portal_sync" },
+    actorId,
+  );
+  return { synced: true };
+}
+
+export async function generateEmployeeCode(candidateId: string, actorId: string) {
+  const readiness = await validateReadiness(candidateId);
+  if (readiness.blockers.length) {
+    throw Object.assign(new Error(`Employee code blocked: ${readiness.blockers.join("; ")}`), { statusCode: 409, blockers: readiness.blockers });
+  }
+  const result = await convertCandidateToEmployee(candidateId, actorId);
+  // Best-effort, same reasoning as the salary-register auto-lock just above: the
+  // employee now exists, so their onboarding bank submission — already verified —
+  // can be copied into the store payroll actually pays from, without HR having to
+  // separately re-key it from a spreadsheet. A missing/unverified submission is
+  // not an error here; it is reported accurately by employeeInScope/readiness
+  // elsewhere, and the manual "Sync bank details" action covers a candidate whose
+  // onboarding was completed or verified after this ran.
+  if (result.employee_id) {
+    await syncBankDetailFromOnboarding(result.employee_id, candidateId, actorId).catch((error: unknown) => {
+      console.warn(`[joining-control-room] bank auto-sync skipped for ${candidateId}:`, error);
+    });
+  }
+  await syncDpdpConsentFromOnboarding(candidateId, actorId).catch((error: unknown) => {
+    console.warn(`[joining-control-room] dpdp auto-sync skipped for ${candidateId}:`, error);
+  });
+  await validateReadiness(candidateId);
+  return result;
+}

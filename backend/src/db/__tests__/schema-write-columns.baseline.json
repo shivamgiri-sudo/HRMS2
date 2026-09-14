@@ -1,0 +1,155 @@
+{
+  "db/__tests__/schema-column-refs.test.ts": [
+    "upload_batch_row.error_message"
+  ],
+  "modules/ats/__tests__/offer-letter.test.ts": [
+    "ats_candidate.applied_for_role",
+    "ats_candidate.candidate_id",
+    "ats_payroll_hr_validation.esic_employee",
+    "ats_payroll_hr_validation.other_allowances",
+    "ats_payroll_hr_validation.pf_employee"
+  ],
+  "modules/ats/ats.enhanced.service.ts": [
+    "employee_code_generation_log.company_prefix",
+    "employee_code_generation_log.employee_id",
+    "employee_code_generation_log.is_offrole",
+    "employee_code_generation_log.sequence_number",
+    "employee_code_sequence.last_sequence_number"
+  ],
+  "modules/ats/ats.onboarding.routes.ts": [
+    "ats_candidate.onboarding_token",
+    "ats_candidate.onboarding_token_expires"
+  ],
+  "modules/ats/bgv.enhanced.service.ts": [
+    "ats_bgv_verification_details.verified_at"
+  ],
+  "modules/ats/joining-control-room.service.ts": [
+    "dpdp_consent_withdrawal.candidate_id",
+    "dpdp_consent_withdrawal.purpose_code",
+    "dpdp_consent_withdrawal.reason",
+    "dpdp_consent_withdrawal.requested_by"
+  ],
+  "modules/ats/onboarding-full.service.ts": [
+    "appointment_letter_request.created_by"
+  ],
+  "modules/ats/payroll-hr.service.ts": [
+    "ats_employment_offer.esic_opt_out"
+  ],
+  "modules/bulk-upload/asset-master-bulk.service.ts": [
+    "asset_master.asset_condition",
+    "asset_master.asset_status"
+  ],
+  "modules/bulk-upload/department-master-bulk.service.ts": [
+    "department_master.cost_centre"
+  ],
+  "modules/bulk-upload/designation-master-bulk.service.ts": [
+    "designation_master.level"
+  ],
+  "modules/bulk-upload/employee-master-bulk.service.ts": [
+    "employees.created_by"
+  ],
+  "modules/bulk-upload/process-master-bulk.service.ts": [
+    "process_master.lob_id"
+  ],
+  "modules/bulk-upload/roster-assignment-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/bulk-upload/shift-roster-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/bulk-upload/shift-rotation-type-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/bulk-upload/weekoff-preference-bulk.service.ts": [
+    "upload_batch.imported_at",
+    "upload_batch.imported_by"
+  ],
+  "modules/employees/employee.documents.routes.ts": [
+    "employee_documents.updated_at"
+  ],
+  "modules/finance/grn-smart.service.ts": [
+    "grn_invoice_component.hsn_sac_code"
+  ],
+  "modules/finance/vendor-payment-ledger.service.ts": [
+    "vendor_payment_tracking.tds_deducted_amount",
+    "vendor_payment_transaction.net_amount",
+    "vendor_payment_transaction.tds_amount",
+    "vendor_payment_transaction.tds_section"
+  ],
+  "modules/incentives/incentives.service.ts": [
+    "incentive_upload_batch.remarks",
+    "salary_prep_run.incentives_applied_at"
+  ],
+  "modules/letters/appointment-esign.service.ts": [
+    "appointment_letter_request.created_by",
+    "appointment_letter_request.generated_at",
+    "appointment_letter_request.generated_by",
+    "appointment_letter_request.template_data"
+  ],
+  "modules/mobility/mobility.service.ts": [
+    "transfer_record.applied_at"
+  ],
+  "modules/org/org.service.ts": [
+    "process_master.department_id"
+  ],
+  "modules/payroll/payroll-more.routes.ts": [
+    "salary_prep_line.payslip_emailed",
+    "salary_prep_line.payslip_emailed_at"
+  ],
+  "modules/payroll/payrollCalculate.service.ts": [
+    "salary_prep_line.reimbursement_total"
+  ],
+  "modules/performance-feedback/performance-feedback.service.ts": [
+    "performance_feedback_request.overall_comments"
+  ],
+  "modules/privacy/dpdpErasure.service.ts": [
+    "auth_user.first_name",
+    "auth_user.last_name",
+    "auth_user.phone"
+  ],
+  "modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts": [
+    "cost_centre_master.cc_code",
+    "cost_centre_master.cc_name"
+  ],
+  "workers/domains/dialer-kpi-sync.ts": [
+    "kpi_score.updated_at"
+  ],
+  "workers/domains/employee-master-sync-handler.ts": [
+    "employees.branch",
+    "employees.client_name",
+    "employees.cost_center",
+    "employees.department",
+    "employees.designation",
+    "employees.legacy_last_updated",
+    "employees.passport_number",
+    "employees.process",
+    "employees.qualification",
+    "employees.title",
+    "employees.uan"
+  ],
+  "workers/domains/employee-sync-handler.ts": [
+    "employees.branch",
+    "employees.client_name",
+    "employees.cost_center",
+    "employees.department",
+    "employees.designation",
+    "employees.legacy_last_updated",
+    "employees.passport_number",
+    "employees.process",
+    "employees.qualification",
+    "employees.title",
+    "employees.uan",
+    "legacy_sync_checkpoint.domain",
+    "legacy_sync_checkpoint.last_sync_time",
+    "legacy_sync_run_log.completed_at",
+    "legacy_sync_run_log.domain",
+    "legacy_sync_run_log.records_failed",
+    "legacy_sync_run_log.records_processed"
+  ],
+  "workers/domains/leave-sync-handler.ts": [
+    "leave_request.updated_at"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/engagement/survey.service.ts",
+    "src/modules/access/access.routes.ts",
+    "src/modules/payroll/payroll.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

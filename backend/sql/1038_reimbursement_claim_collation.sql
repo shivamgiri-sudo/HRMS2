@@ -1,0 +1,65 @@
+-- 1038_reimbursement_claim_collation.sql
+--
+-- Fixes a completely broken endpoint: every reimbursements call 500s.
+--
+-- SYMPTOM (production backend log, 6 occurrences traced to reimbursements.routes.js:92)
+--     ER_CANT_AGGREGATE_2COLLATIONS
+--     Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT)
+--                           and (utf8mb4_0900_ai_ci,IMPLICIT) for operation '='
+--
+-- CAUSE
+-- employee_reimbursement_claim is created at RUNTIME by ensureTable() in
+-- reimbursements.routes.ts, and the DDL ended with:
+--     ENGINE=InnoDB DEFAULT CHARSET=utf8mb4          <- no COLLATE
+-- With no COLLATE, MySQL 8 applies the SERVER default, utf8mb4_0900_ai_ci. Every other
+-- table in mas_hrms is utf8mb4_unicode_ci — 757 of them against 45 exceptions. So
+--     JOIN employees e ON e.id = erc.employee_id
+-- compares a utf8mb4_0900_ai_ci column with a utf8mb4_unicode_ci one and MySQL refuses.
+-- The endpoint has never worked.
+--
+-- Verified before writing this:
+--     SELECT erc.id FROM employee_reimbursement_claim erc
+--       JOIN employees e ON e.id = erc.employee_id LIMIT 1;
+--     -> ER_CANT_AGGREGATE_2COLLATIONS
+--
+-- SAFETY: the table holds ZERO rows, so CONVERT TO rebuilds nothing and cannot corrupt or
+-- truncate data. On a populated table this statement rewrites every row and takes a metadata
+-- lock — it would need a maintenance window. Here it is instant.
+--
+-- The matching code fix ships alongside: ensureTable() now specifies
+-- COLLATE=utf8mb4_unicode_ci, so a fresh environment does not recreate the same defect.
+-- Both halves are required — the migration alone is undone by any environment that runs
+-- ensureTable() against a database where the table does not yet exist.
+--
+-- NOTE: 44 other tables share the utf8mb4_0900_ai_ci collation (apr_manual_upload,
+-- billing_*, cosec_*, lms_assessment_scores, lms_learner_progress, funnel_*, ...). They are
+-- NOT converted here. Most are never text-joined to a utf8mb4_unicode_ci table, so they
+-- cause no error; converting 44 populated tables in one migration would be a large,
+-- lock-heavy change justified by nothing observed. Convert them individually, when a real
+-- failure points at one.
+--
+-- ADDITIVE in effect and reversible. Rollback is the commented statement at the foot.
+
+SET NAMES utf8mb4;
+
+ALTER TABLE employee_reimbursement_claim
+  CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Verification
+-- ---------------------------------------------------------------------------
+-- Collation now matches the rest of the database:
+--   SELECT TABLE_COLLATION FROM information_schema.TABLES
+--    WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_reimbursement_claim';
+--   -- expect utf8mb4_unicode_ci
+--
+-- The join that used to throw now runs:
+--   SELECT erc.id FROM employee_reimbursement_claim erc
+--     JOIN employees e ON e.id = erc.employee_id LIMIT 1;
+--   -- expect 0 rows, NOT an error
+--
+-- ---------------------------------------------------------------------------
+-- ROLLBACK  (restores the broken state — only useful to prove causation)
+-- ---------------------------------------------------------------------------
+-- ALTER TABLE employee_reimbursement_claim
+--   CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;

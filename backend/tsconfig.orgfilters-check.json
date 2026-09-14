@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/org/org.service.ts",
+    "src/modules/org/org.routes.ts",
+    "src/modules/org/__tests__/branchAddress.contract.test.ts",
+    "src/modules/org/__tests__/process-cost-centre-label.test.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

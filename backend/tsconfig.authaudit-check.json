@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/auth/auth.routes.ts",
+    "src/modules/auth/auth.service.ts",
+    "src/modules/auth/auth-login-error.ts",
+    "src/modules/auth/auth-cookie.ts",
+    "src/middleware/authMiddleware.ts",
+    "src/shared/roleResolver.ts",
+    "src/shared/accessGuard.ts",
+    "src/platform/policy/roles.ts"
+  ]
+}

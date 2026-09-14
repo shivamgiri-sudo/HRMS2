@@ -1,0 +1,494 @@
+import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
+import twilio from "twilio";
+import type { Twilio } from "twilio";
+import Handlebars from "handlebars";
+import type { RowDataPacket } from "mysql2";
+import { env } from "../config/env.js";
+
+// Web Push — loaded lazily so the service starts even without web-push installed
+let webpush: typeof import("web-push") | null = null;
+try {
+  webpush = (await import("web-push")).default as unknown as typeof import("web-push");
+  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
+  const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+  const vapidEmail   = process.env.VAPID_EMAIL;
+  if (vapidPublic && vapidPrivate && vapidEmail) {
+    webpush.setVapidDetails(`mailto:${vapidEmail}`, vapidPublic, vapidPrivate);
+  } else {
+    webpush = null; // not configured — skip silently
+  }
+} catch {
+  webpush = null;
+}
+
+// Database connection (assume exists)
+// import { db } from "../db/mysql.js";
+// For now, we'll use a mock - replace with actual db import
+let db: any;
+try {
+  const dbModule = await import("../db/mysql.js");
+  db = dbModule.db;
+} catch {
+  console.warn("[NotificationService] Database module not found - notifications will fail");
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface NotificationTemplate {
+  template_code: string;
+  template_name: string;
+  trigger_event: string;
+  audience: string;
+  channel: "email" | "sms" | "both";
+  subject: string | null;
+  body_template: string;
+  sms_template: string | null;
+  active_status: number;
+}
+
+export interface NotificationRecipient {
+  type: "candidate" | "recruiter" | "hr";
+  id?: string;
+  user_id?: string;
+  email?: string;
+  mobile?: string;
+  name?: string;
+}
+
+export interface NotificationContext {
+  [key: string]: string | number | null;
+}
+
+export interface SendNotificationInput {
+  template_code: string;
+  recipients: NotificationRecipient[];
+  context: NotificationContext;
+  channel?: "email" | "sms" | "both";
+}
+
+interface SmtpConfig {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_secure: number;
+  smtp_user: string;
+  smtp_pass: string;
+  from_email: string;
+  from_name: string;
+}
+
+interface SmsConfig {
+  provider: string;
+  account_sid?: string;
+  auth_token?: string;
+  from_number?: string;
+  api_key?: string;
+}
+
+// ── Service Class ────────────────────────────────────────────────────────────
+
+export class NotificationService {
+  private emailTransporter: Transporter | null = null;
+  private twilioClient: Twilio | null = null;
+  private smtpConfig: SmtpConfig | null = null;
+  private smsConfig: SmsConfig | null = null;
+  private warnedMissingSmtp = false;
+  private warnedMissingSms = false;
+
+  private warnOnce(kind: "smtp" | "sms", message: string): void {
+    if (kind === "smtp") {
+      if (this.warnedMissingSmtp) return;
+      this.warnedMissingSmtp = true;
+    } else {
+      if (this.warnedMissingSms) return;
+      this.warnedMissingSms = true;
+    }
+    console.warn(message);
+  }
+
+  private buildEmailTransporter(config: SmtpConfig): Transporter {
+    return nodemailer.createTransport({
+      host: config.smtp_host,
+      port: config.smtp_port,
+      secure: config.smtp_secure === 1,
+      auth: {
+        user: config.smtp_user,
+        pass: config.smtp_pass,
+      },
+    });
+  }
+
+  private getEnvSmtpConfig(): SmtpConfig | null {
+    if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
+      return null;
+    }
+
+    return {
+      smtp_host: env.SMTP_HOST,
+      smtp_port: Number(env.SMTP_PORT || 587),
+      smtp_secure: Number(env.SMTP_PORT || 587) === 465 ? 1 : 0,
+      smtp_user: env.SMTP_USER,
+      smtp_pass: env.SMTP_PASS,
+      from_email: env.SMTP_FROM || env.SMTP_USER,
+      from_name: env.SMTP_FROM_NAME || "MAS Callnet HRMS",
+    };
+  }
+
+  private getEnvTwilioConfig(): SmsConfig | null {
+    const provider = String(process.env.SMS_PROVIDER || "").trim().toLowerCase();
+    if (provider && provider !== "twilio") {
+      return null;
+    }
+
+    const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+    const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+    const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim()
+      || process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+
+    if (!accountSid || !authToken || !fromNumber) {
+      return null;
+    }
+
+    return {
+      provider: "twilio",
+      account_sid: accountSid,
+      auth_token: authToken,
+      from_number: fromNumber,
+    };
+  }
+
+  /**
+   * Initialize email transporter from database config
+   */
+  private async initEmailTransporter(): Promise<Transporter | null> {
+    if (this.emailTransporter) return this.emailTransporter;
+
+    try {
+      let config: SmtpConfig | null = null;
+
+      if (db) {
+        try {
+          const [rows] = await (db.execute(
+            "SELECT * FROM smtp_config WHERE active_status = 1 ORDER BY id DESC LIMIT 1"
+          ) as Promise<[RowDataPacket[], unknown]>);
+
+          if (rows && rows.length > 0) {
+            config = rows[0] as SmtpConfig;
+          }
+        } catch (error: any) {
+          console.warn("[NotificationService] SMTP config lookup failed, falling back to env:", error.message);
+        }
+      }
+
+      if (!config) {
+        config = this.getEnvSmtpConfig();
+      }
+
+      if (!config) {
+        this.warnOnce("smtp", "[NotificationService] SMTP runtime not configured in DB or env");
+        return null;
+      }
+
+      this.smtpConfig = config;
+      this.emailTransporter = this.buildEmailTransporter(config);
+
+      // Verify connection
+      await this.emailTransporter!.verify();
+      console.log("[NotificationService] Email transporter initialized successfully");
+      return this.emailTransporter;
+    } catch (error: any) {
+      console.error("[NotificationService] Failed to initialize email:", error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Initialize Twilio SMS client from database config
+   */
+  private async initSmsClient(): Promise<Twilio | null> {
+    if (this.twilioClient) return this.twilioClient;
+
+    try {
+      let config: SmsConfig | null = null;
+
+      if (db) {
+        try {
+          const [rows] = await (db.execute(
+            "SELECT * FROM sms_config WHERE active_status = 1 AND provider = 'twilio' ORDER BY id DESC LIMIT 1"
+          ) as Promise<[RowDataPacket[], unknown]>);
+
+          if (rows && rows.length > 0) {
+            config = rows[0] as SmsConfig;
+          }
+        } catch (error: any) {
+          console.warn("[NotificationService] SMS config lookup failed, falling back to env:", error.message);
+        }
+      }
+
+      if (!config) {
+        config = this.getEnvTwilioConfig();
+      }
+
+      if (!config) {
+        const provider = String(process.env.SMS_PROVIDER || "twilio").trim().toLowerCase() || "twilio";
+        this.warnOnce("sms", `[NotificationService] SMS runtime not configured for legacy notification service (provider=${provider})`);
+        return null;
+      }
+
+      this.smsConfig = config;
+
+      if (!config.account_sid || !config.auth_token) {
+        this.warnOnce("sms", "[NotificationService] Twilio credentials incomplete");
+        return null;
+      }
+
+      this.twilioClient = twilio(config.account_sid, config.auth_token);
+      console.log("[NotificationService] Twilio client initialized successfully");
+      return this.twilioClient;
+    } catch (error: any) {
+      console.error("[NotificationService] Failed to initialize SMS:", error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get template by code
+   */
+  private async getTemplate(templateCode: string): Promise<NotificationTemplate | null> {
+    try {
+      const [rows] = await (db.execute(
+        "SELECT * FROM notification_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
+        [templateCode]
+      ) as Promise<[RowDataPacket[], unknown]>);
+
+      if (!rows || rows.length === 0) {
+        console.warn(`[NotificationService] Template not found: ${templateCode}`);
+        return null;
+      }
+
+      return rows[0] as NotificationTemplate;
+    } catch (error: any) {
+      console.error(`[NotificationService] Failed to fetch template ${templateCode}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Render template with Handlebars
+   */
+  private renderTemplate(template: string, context: NotificationContext): string {
+    try {
+      const compiled = Handlebars.compile(template);
+      return compiled(context);
+    } catch (error: any) {
+      console.error("[NotificationService] Template render error:", error.message);
+      return template; // Return unrendered on error
+    }
+  }
+
+  /**
+   * Send email
+   */
+  private async sendEmail(
+    to: string,
+    subject: string,
+    body: string,
+    logId: string
+  ): Promise<boolean> {
+    const transporter = await this.initEmailTransporter();
+    if (!transporter || !this.smtpConfig) {
+      await this.logNotificationStatus(logId, "failed", "SMTP not configured");
+      return false;
+    }
+
+    try {
+      await transporter.sendMail({
+        from: `"${this.smtpConfig.from_name}" <${this.smtpConfig.from_email}>`,
+        to,
+        subject,
+        text: body,
+        html: body.replace(/\n/g, "<br>"),
+      });
+
+      await this.logNotificationStatus(logId, "sent");
+      console.log(`[NotificationService] Email sent to ${to}`);
+      return true;
+    } catch (error: any) {
+      await this.logNotificationStatus(logId, "failed", error.message);
+      console.error(`[NotificationService] Email send failed to ${to}:`, error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Send SMS
+   */
+  private async sendSms(
+    to: string,
+    body: string,
+    logId: string
+  ): Promise<boolean> {
+    const client = await this.initSmsClient();
+    if (!client || !this.smsConfig?.from_number) {
+      await this.logNotificationStatus(logId, "failed", "SMS not configured");
+      return false;
+    }
+
+    try {
+      await client.messages.create({
+        body,
+        from: this.smsConfig.from_number,
+        to,
+      });
+
+      await this.logNotificationStatus(logId, "sent");
+      console.log(`[NotificationService] SMS sent to ${to}`);
+      return true;
+    } catch (error: any) {
+      await this.logNotificationStatus(logId, "failed", error.message);
+      console.error(`[NotificationService] SMS send failed to ${to}:`, error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Log notification to database
+   */
+  private async createNotificationLog(
+    templateCode: string,
+    recipient: NotificationRecipient,
+    channel: "email" | "sms",
+    subject: string | null,
+    body: string
+  ): Promise<string> {
+    try {
+      const logId = crypto.randomUUID();
+      await db.execute(
+        `INSERT INTO notification_log
+         (id, template_code, recipient_type, recipient_id, recipient_email, recipient_mobile, channel, subject, body, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+        [
+          logId,
+          templateCode,
+          recipient.type,
+          recipient.id || null,
+          recipient.email || null,
+          recipient.mobile || null,
+          channel,
+          subject,
+          body,
+        ]
+      );
+      return logId;
+    } catch (error: any) {
+      console.error("[NotificationService] Failed to create log:", error.message);
+      return crypto.randomUUID(); // Return temp ID
+    }
+  }
+
+  /**
+   * Update notification log status
+   */
+  private async logNotificationStatus(
+    logId: string,
+    status: "sent" | "failed" | "bounced",
+    errorMessage?: string
+  ): Promise<void> {
+    try {
+      await db.execute(
+        `UPDATE notification_log
+         SET status = ?, error_message = ?, sent_at = IF(? = 'sent', NOW(), sent_at)
+         WHERE id = ?`,
+        [status, errorMessage || null, status, logId]
+      );
+    } catch (error: any) {
+      console.error("[NotificationService] Failed to update log:", error.message);
+    }
+  }
+
+  /**
+   * Send notification (main public method)
+   */
+  async send(input: SendNotificationInput): Promise<{ sent: number; failed: number }> {
+    const { template_code, recipients, context, channel } = input;
+
+    // Get template
+    const template = await this.getTemplate(template_code);
+    if (!template) {
+      console.error(`[NotificationService] Template ${template_code} not found`);
+      return { sent: 0, failed: recipients.length };
+    }
+
+    // Determine channels
+    const effectiveChannel = channel || template.channel;
+    const wantsEmail = effectiveChannel === "email" || effectiveChannel === "both";
+    const wantsSms = effectiveChannel === "sms" || effectiveChannel === "both";
+    const useEmail = wantsEmail && !!(await this.initEmailTransporter());
+    const useSms = wantsSms && !!(await this.initSmsClient());
+
+    let sent = 0;
+    let failed = 0;
+
+    if ((wantsEmail ? !useEmail : true) && (wantsSms ? !useSms : true)) {
+      console.warn(`[NotificationService] Template ${template_code} skipped - no active delivery runtime`);
+      return { sent: 0, failed: recipients.length };
+    }
+
+    // Send to each recipient
+    for (const recipient of recipients) {
+      // Email
+      if (useEmail && recipient.email && template.subject && template.body_template) {
+        const subject = this.renderTemplate(template.subject, context);
+        const body = this.renderTemplate(template.body_template, context);
+        const logId = await this.createNotificationLog(template_code, recipient, "email", subject, body);
+        const success = await this.sendEmail(recipient.email, subject, body, logId);
+        if (success) sent++;
+        else failed++;
+      }
+
+      // SMS
+      if (useSms && recipient.mobile && template.sms_template) {
+        const smsBody = this.renderTemplate(template.sms_template, context);
+        const logId = await this.createNotificationLog(template_code, recipient, "sms", null, smsBody);
+        const success = await this.sendSms(recipient.mobile, smsBody, logId);
+        if (success) sent++;
+        else failed++;
+      }
+
+      // Web Push — send to all browser subscriptions for this recipient (by user_id if available)
+      if (webpush && recipient.user_id && db) {
+        try {
+          const [subs] = await (db.execute(
+            `SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = ?`,
+            [recipient.user_id],
+          ) as Promise<[RowDataPacket[], unknown]>);
+          const title = template.subject
+            ? this.renderTemplate(template.subject, context)
+            : template_code;
+          const body = this.renderTemplate(template.body_template, context).slice(0, 200);
+          const payload = JSON.stringify({ title, body });
+          for (const sub of subs as { endpoint: string; p256dh: string; auth_key: string }[]) {
+            webpush.sendNotification(
+              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
+              payload,
+            ).catch((err: any) => {
+              // 410 Gone = subscription expired; remove it
+              if (err?.statusCode === 410 && db) {
+                db.execute(`DELETE FROM push_subscriptions WHERE endpoint = ?`, [sub.endpoint]).catch(() => {});
+              }
+            });
+          }
+        } catch {
+          /* web push is best-effort */
+        }
+      }
+    }
+
+    console.log(`[NotificationService] Template ${template_code}: sent=${sent}, failed=${failed}`);
+    return { sent, failed };
+  }
+}
+
+// ── Singleton Export ─────────────────────────────────────────────────────────
+
+export const notificationService = new NotificationService();

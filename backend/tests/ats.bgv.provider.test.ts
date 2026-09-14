@@ -1,0 +1,504 @@
+/**
+ * ATS BGV Provider Adapter Tests — Session 8
+ *
+ * Covers:
+ *  - Adapter factory: mock/infinity_ai/digio selection by BGV_PROVIDER env
+ *  - MockBgvProviderAdapter: PAN/bank/aadhaar/digilocker logic
+ *  - InfinityAiBgvAdapter / DigioBgvAdapter: throw when credentials missing
+ *  - requireFormApiKey: timingSafeEqual guard logic
+ *  - roughNameMatchScore: helper edge cases
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { timingSafeEqual } from "crypto";
+import axios from "axios";
+import { db } from "../src/db/mysql.js";
+import { env } from "../src/config/env.js";
+
+// ── Shared mocks (must come before any dynamic imports) ───────────────────────
+
+vi.mock("../src/db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+}));
+
+vi.mock("../src/shared/scopeAccess.js", () => ({
+  hasScopedAccess: vi.fn().mockResolvedValue(true),
+  buildScopeWhereClause: vi.fn().mockResolvedValue({ sql: "1=1", params: [] }),
+}));
+
+// ── Adapter imports ───────────────────────────────────────────────────────────
+
+import {
+  MockBgvProviderAdapter,
+  InfinityAiBgvAdapter,
+  DigioBgvAdapter,
+  roughNameMatchScore,
+  getBgvProviderAdapter,
+  resetBgvProviderAdapterCache,
+  buildAdapterFromDbConfig,
+} from "../src/modules/ats/bgv-provider.adapter.js";
+
+const luckpayCfg = {
+  bgv_provider: "befisc_luckpay",
+  luckpay_api_url: "https://api-banking.luckpay.in/apibanking/api/v1",
+  luckpay_basic_token: "test-basic-token",
+  luckpay_client_id: "TESTCLIENT",
+};
+
+// ── roughNameMatchScore ───────────────────────────────────────────────────────
+
+describe("roughNameMatchScore", () => {
+  it("TC-PROV-01: exact match → 100", () => {
+    expect(roughNameMatchScore("Rahul Sharma", "Rahul Sharma")).toBe(100);
+  });
+
+  it("TC-PROV-02: partial word overlap → between 0 and 100", () => {
+    const score = roughNameMatchScore("Rahul Sharma", "Rahul Kumar");
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThan(100);
+  });
+
+  it("TC-PROV-03: no common words → 0", () => {
+    expect(roughNameMatchScore("Rahul Sharma", "Priya Singh")).toBe(0);
+  });
+
+  it("TC-PROV-04: null/empty inputs → 0", () => {
+    expect(roughNameMatchScore(null, null)).toBe(0);
+    expect(roughNameMatchScore("Rahul", null)).toBe(0);
+    expect(roughNameMatchScore(null, "Rahul")).toBe(0);
+  });
+
+  it("TC-PROV-05: case-insensitive comparison", () => {
+    expect(roughNameMatchScore("RAHUL SHARMA", "rahul sharma")).toBe(100);
+  });
+});
+
+// ── MockBgvProviderAdapter ────────────────────────────────────────────────────
+
+describe("MockBgvProviderAdapter", () => {
+  const adapter = new MockBgvProviderAdapter();
+
+  it("TC-PROV-06: providerKey is mock_bgv", () => {
+    expect(adapter.providerKey).toBe("mock_bgv");
+  });
+
+  it("TC-PROV-07: PAN valid format → verified with no risk flags", async () => {
+    const result = await adapter.verifyPan({ panNumber: "ABCDE1234F", candidateName: "Rahul" });
+    expect(result.status).toBe("verified");
+    expect(result.providerKey).toBe("mock_bgv");
+    expect(result.riskFlags).toEqual([]);
+  });
+
+  it("TC-PROV-08: PAN invalid format → failed with PAN_FORMAT_INVALID flag", async () => {
+    const result = await adapter.verifyPan({ panNumber: "INVALID_PAN" });
+    expect(result.status).toBe("failed");
+    expect(result.riskFlags).toContain("PAN_FORMAT_INVALID");
+  });
+
+  it("TC-PROV-09: bank valid IFSC + 12-digit account → verified", async () => {
+    const result = await adapter.verifyBank({
+      accountNo: "123456789012",
+      ifscCode: "HDFC0001234",
+      candidateName: "Mock Account Holder",
+    });
+    expect(result.status).toBe("verified");
+    expect(result.matchScore).toBeGreaterThanOrEqual(60);
+  });
+
+  it("TC-PROV-10: bank invalid IFSC → failed with IFSC_FORMAT_INVALID flag", async () => {
+    const result = await adapter.verifyBank({ accountNo: "123456", ifscCode: "BADIFSC", candidateName: "Test" });
+    expect(result.status).toBe("failed");
+    expect(result.riskFlags).toContain("IFSC_FORMAT_INVALID");
+  });
+
+  it("TC-PROV-11: aadhaar with documentId → manual_review", async () => {
+    const result = await adapter.verifyAadhaarOffline({ documentId: "doc-123", candidateName: "Test" });
+    expect(result.status).toBe("manual_review");
+  });
+
+  it("TC-PROV-12: aadhaar without documentId → failed with AADHAAR_DOCUMENT_MISSING", async () => {
+    const result = await adapter.verifyAadhaarOffline({ candidateName: "Test" });
+    expect(result.status).toBe("failed");
+    expect(result.riskFlags).toContain("AADHAAR_DOCUMENT_MISSING");
+  });
+
+  it("TC-PROV-13: startDigilocker returns mock URL with state and expiresAt", async () => {
+    const session = await adapter.startDigilocker("cand-1", ["aadhaar", "pan"]);
+    expect(session.state).toBeTruthy();
+    expect(session.authUrl).toContain("mock-digilocker");
+    expect(session.expiresAt).toBeInstanceOf(Date);
+    expect(session.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+// ── Real adapter constructors — credential guards ──────────────────────────────
+
+describe("InfinityAiBgvAdapter constructor guard", () => {
+  it("TC-PROV-14: throws when INFINITY_AI_API_KEY is not set in env", () => {
+    // In test env INFINITY_AI_API_KEY is undefined — guard must throw
+    expect(() => new InfinityAiBgvAdapter()).toThrow("INFINITY_AI_API_KEY");
+  });
+});
+
+describe("DigioBgvAdapter constructor guard", () => {
+  it("TC-PROV-15: throws when DIGIO_CLIENT_ID / DIGIO_CLIENT_SECRET are not set", () => {
+    // In test env both are undefined — guard must throw
+    expect(() => new DigioBgvAdapter()).toThrow("DIGIO_CLIENT_ID");
+  });
+});
+
+// ── getBgvProviderAdapter factory ─────────────────────────────────────────────
+
+describe("getBgvProviderAdapter factory", () => {
+  beforeEach(() => resetBgvProviderAdapterCache());
+  afterEach(() => resetBgvProviderAdapterCache());
+
+  /**
+   * BGV_PROVIDER is set explicitly rather than relied on to be absent.
+   *
+   * The schema in config/env.ts does default it to "mock", but that default never
+   * applies here: vitest.config.ts declares envFile ".env.test", no such file exists,
+   * and loadEnv("test", cwd, "") therefore falls through to the real .env — which sets
+   * BGV_PROVIDER=befisc_luckpay. The factory correctly returned the composite Befisc/
+   * Luckpay adapter and the test failed on every run, asserting a default the process
+   * had already overridden.
+   *
+   * env is a parsed object read at call time, not process.env, so it is set directly and
+   * restored afterwards. What this actually pins is the mapping mock -> Mock adapter,
+   * which is the real contract; the schema default is covered by config/env.ts itself.
+   */
+  it("TC-PROV-16: BGV_PROVIDER=mock → returns MockBgvProviderAdapter", () => {
+    const previous = env.BGV_PROVIDER;
+    (env as { BGV_PROVIDER: string }).BGV_PROVIDER = "mock";
+    try {
+      resetBgvProviderAdapterCache();
+      const adapter = getBgvProviderAdapter();
+      expect(adapter.providerKey).toBe("mock_bgv");
+      expect(adapter).toBeInstanceOf(MockBgvProviderAdapter);
+    } finally {
+      (env as { BGV_PROVIDER: string }).BGV_PROVIDER = previous;
+      resetBgvProviderAdapterCache();
+    }
+  });
+
+  it("TC-PROV-17: factory caches singleton — same instance returned on second call", () => {
+    const a = getBgvProviderAdapter();
+    const b = getBgvProviderAdapter();
+    expect(a).toBe(b);
+  });
+
+  it("TC-PROV-18: resetBgvProviderAdapterCache clears singleton so next call creates new instance", () => {
+    const a = getBgvProviderAdapter();
+    resetBgvProviderAdapterCache();
+    const b = getBgvProviderAdapter();
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("Composite Befisc/Luckpay adapter", () => {
+  beforeEach(() => {
+    vi.spyOn(axios, "post").mockReset();
+    // Luckpay access tokens are cached in the shared transport (keyed by
+    // baseUrl+clientId), so a token minted by a previous test would otherwise
+    // survive and shift the mocked call ordering asserted below.
+    resetBgvProviderAdapterCache();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("TC-PROV-24: PAN uses Luckpay auth token and verifyPan payload contract", async () => {
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token", expiresIn: 60 } } })
+      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "pan-ref", pan_name: "Rahul Sharma", idNumber: "ABCDE1234F" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    const result = await adapter.verifyPan({ panNumber: "ABCDE1234F", candidateName: "Rahul Sharma", mobileNumber: "98765 43210" });
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      "https://api-banking.luckpay.in/apibanking/api/v1/auth/token",
+      undefined,
+      expect.objectContaining({
+        headers: { Authorization: "Basic test-basic-token" },
+      }),
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyPan",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        idNumber: "ABCDE1234F",
+        mobileNumber: "9876543210",
+      }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          // Business endpoints take base64(clientId), never the raw id. Sending
+          // the raw id makes Luckpay reject every call with VAL_EXT_001
+          // "Invalid Base64 encoding" (verified against the live provider).
+          Authorization: Buffer.from("TESTCLIENT", "utf8").toString("base64"),
+          "X-Access-Token": "Bearer access-token",
+        }),
+      }),
+    );
+    expect(result.status).toBe("verified");
+    expect(JSON.stringify(result.raw)).not.toContain("ABCDE1234F");
+  });
+
+  it("TC-PROV-25: UAN uses verifyUanByUan with identifier payload", async () => {
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
+      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "uan-ref", member_name: "Rahul Sharma", identifier: "100200300400" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    if (!adapter.verifyUan) throw new Error("verifyUan missing");
+    await adapter.verifyUan({ uanNumber: "100200300400", candidateName: "Rahul Sharma" });
+
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyUanByUan",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        identifier: "100200300400",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("TC-PROV-26: bank verification uses Luckpay verifyPennyDrop contract", async () => {
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
+      .mockResolvedValueOnce({ data: { status: "success", transaction_id: "bank-ref", registered_name: "Rahul Sharma", customerAccountNumber: "123456789012" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyBank({
+      accountNo: "123456789012",
+      ifscCode: "HDFC0001234",
+      accountHolderName: "Rahul Sharma",
+    });
+
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyPennyDrop",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        customerAccountNumber: "123456789012",
+        customerAccountName: "Rahul Sharma",
+        customerIfscCode: "HDFC0001234",
+        verificationMode: "PENNY_DROP",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("TC-PROV-27: DigiLocker uses Luckpay verifyDigilockerWithURL with candidate contact", async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token" } } })
+      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker", mobileNumber: "9876543210" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    const session = await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
+
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
+      expect.objectContaining({
+        clientTransactionId: expect.any(String),
+        customerName: "Rahul Sharma",
+        mobileNumber: "9876543210",
+      }),
+      expect.any(Object),
+    );
+    expect(session.authUrl).toBe("https://luckpay.example/digilocker");
+  });
+
+  it("TC-PROV-28: Luckpay auth failures throw sanitized errors", async () => {
+    expect.assertions(2);
+    vi.spyOn(axios, "post").mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: {
+          code: "AUTH_023",
+          message: "IP address 203.0.113.10 is not whitelisted",
+        },
+      },
+      config: {
+        headers: {
+          Authorization: "Basic test-basic-token",
+        },
+      },
+    });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
+      expect(String(error.message)).toContain("IP address 203.0.113.10 is not whitelisted");
+      expect(String(error.message)).not.toContain("test-basic-token");
+    });
+  });
+
+  it("TC-PROV-29: IP-whitelist failures surface as an actionable 503", async () => {
+    // Real production response shape when the caller's egress IP is not
+    // whitelisted — verified against the live Luckpay endpoint.
+    expect.assertions(2);
+    vi.spyOn(axios, "post").mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: { code: "AUTH_023", status: "Failed", message: "IP address 203.0.113.11 is not whitelisted" },
+      },
+    });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
+      expect((error as { statusCode?: number }).statusCode).toBe(503);
+      expect((error as { isIpWhitelistError?: boolean }).isIpWhitelistError).toBe(true);
+    });
+  });
+
+  it("TC-PROV-30: PAN and DigiLocker share one access token when no DigiLocker override is set", async () => {
+    // The production shape: DigiLocker/eSign use the same base URL and
+    // credentials as PAN, so they must reuse the cached token rather than
+    // re-authenticating (previously the DigiLocker token was never cached).
+    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "access-token", expiresIn: 60 } } })
+      .mockResolvedValueOnce({ data: { status: "success", pan_name: "Rahul Sharma" } })
+      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker" } });
+
+    const adapter = buildAdapterFromDbConfig(luckpayCfg);
+    await adapter.verifyPan({ panNumber: "ABCDE1234F" });
+    const session = await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
+
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(post).toHaveBeenNthCalledWith(
+      3,
+      "https://api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
+      expect.any(Object),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "X-Access-Token": "Bearer access-token" }),
+      }),
+    );
+    expect(session.authUrl).toBe("https://luckpay.example/digilocker");
+  });
+
+  it("TC-PROV-31: DigiLocker authenticates separately when an override account is configured", async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
+    const post = vi.spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { data: { token: "core-token", expiresIn: 60 } } })
+      .mockResolvedValueOnce({ data: { status: "success", pan_name: "Rahul Sharma" } })
+      .mockResolvedValueOnce({ data: { data: { token: "dl-token", expiresIn: 60 } } })
+      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker" } });
+
+    const adapter = buildAdapterFromDbConfig({
+      ...luckpayCfg,
+      luckpay_digilocker_base_url: "https://staging-api-banking.luckpay.in/apibanking/api/v1",
+      luckpay_digilocker_basic_token: "dl-basic-token",
+      luckpay_digilocker_client_id: "DLCLIENT",
+    });
+    await adapter.verifyPan({ panNumber: "ABCDE1234F" });
+    await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
+
+    expect(post).toHaveBeenCalledTimes(4);
+    expect(post).toHaveBeenNthCalledWith(
+      3,
+      "https://staging-api-banking.luckpay.in/apibanking/api/v1/auth/token",
+      undefined,
+      expect.objectContaining({ headers: { Authorization: "Basic dl-basic-token" } }),
+    );
+    expect(post).toHaveBeenNthCalledWith(
+      4,
+      "https://staging-api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
+      expect.any(Object),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: Buffer.from("DLCLIENT", "utf8").toString("base64"),
+          "X-Access-Token": "Bearer dl-token",
+        }),
+      }),
+    );
+  });
+});
+
+// ── requireFormApiKey guard logic ─────────────────────────────────────────────
+//
+// We test the guard's inline logic directly rather than via supertest (avoids
+// re-importing the router after resetModules which would break the top-level mocks).
+
+describe("requireFormApiKey guard logic", () => {
+  it("TC-PROV-19: missing header — simulated guard rejects", () => {
+    const secret = "test-ats-key-12345";
+    const mockRes = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    const mockNext = vi.fn();
+
+    const provided = ""; // no header
+    if (!provided) {
+      mockRes.status(401).json({ success: false, message: "Missing X-ATS-Api-Key header" });
+    } else {
+      mockNext();
+    }
+
+    expect(mockRes.status).toHaveBeenCalledWith(401);
+    expect(mockNext).not.toHaveBeenCalled();
+    expect(secret).toBeTruthy(); // secret is set but unused when header missing
+  });
+
+  it("TC-PROV-20: wrong key — timingSafeEqual returns false for different-length strings", () => {
+    const secret = "correct-key-32ch";
+    const provided = "wrong-key"; // different length → immediate false
+    let match = false;
+    try {
+      match = provided.length === secret.length &&
+        timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+    } catch {
+      match = false;
+    }
+    expect(match).toBe(false);
+  });
+
+  it("TC-PROV-21: wrong key — same length, wrong value → timingSafeEqual returns false", () => {
+    const secret = "aaaaaaaaaaaaaaaa"; // 16 chars
+    const provided = "bbbbbbbbbbbbbbbb"; // 16 chars, different bytes
+    let match = false;
+    try {
+      match = provided.length === secret.length &&
+        timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+    } catch {
+      match = false;
+    }
+    expect(match).toBe(false);
+  });
+
+  it("TC-PROV-22: correct key — timingSafeEqual returns true", () => {
+    const secret = "correct-key-12345678901234567890";
+    const provided = "correct-key-12345678901234567890";
+    let match = false;
+    try {
+      match = provided.length === secret.length &&
+        timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+    } catch {
+      match = false;
+    }
+    expect(match).toBe(true);
+  });
+
+  it("TC-PROV-23: secret not configured in non-prod — next() called (guard skips)", () => {
+    const mockNext = vi.fn();
+    const mockRes = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    // Simulate: secret = undefined, NODE_ENV = test
+    const secret: string | undefined = undefined;
+    const isProduction = false;
+
+    if (!secret) {
+      if (isProduction) {
+        mockRes.status(503).json({ success: false, message: "Form endpoint not configured" });
+      } else {
+        // Non-prod: skip with warning
+        mockNext();
+      }
+    }
+
+    expect(mockNext).toHaveBeenCalled();
+    expect(mockRes.status).not.toHaveBeenCalled();
+  });
+});

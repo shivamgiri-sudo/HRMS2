@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MAS Callnet — CEO Analytics Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#0b0f1a;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;}
+  .header{background:linear-gradient(135deg,#1e3a8a 0%,#1d4ed8 50%,#0891b2 100%);padding:24px 32px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1e40af;}
+  .header-left h1{font-size:22px;font-weight:700;letter-spacing:.5px;}
+  .header-left p{font-size:12px;color:#bfdbfe;margin-top:3px;}
+  .header-right{text-align:right;font-size:12px;color:#bfdbfe;}
+  .header-right .date{font-size:14px;font-weight:600;color:#fff;}
+  .grid{display:grid;gap:16px;padding:24px 32px;}
+  .kpi-row{display:grid;grid-template-columns:repeat(6,1fr);gap:16px;}
+  .charts-row{display:grid;grid-template-columns:3fr 2fr;gap:16px;}
+  .charts-row3{display:grid;grid-template-columns:2fr 2fr 1fr;gap:16px;}
+  .charts-row2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .card{background:#131929;border:1px solid #1e293b;border-radius:12px;padding:20px;}
+  .card h3{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#64748b;margin-bottom:12px;}
+  .kpi-card{background:#131929;border:1px solid #1e293b;border-radius:12px;padding:18px;position:relative;overflow:hidden;}
+  .kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--accent);}
+  .kpi-card .label{font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#64748b;}
+  .kpi-card .value{font-size:28px;font-weight:800;margin:6px 0 2px;line-height:1;}
+  .kpi-card .sub{font-size:11px;color:#64748b;}
+  .kpi-card .icon{position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:28px;opacity:.15;}
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;}
+  .badge.up{background:#052e16;color:#4ade80;}
+  .badge.down{background:#450a0a;color:#f87171;}
+  canvas{max-height:260px;}
+  .big-canvas canvas{max-height:200px;}
+  .section-title{font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#334155;margin:8px 0 -4px;}
+  .divider{height:1px;background:#1e293b;margin:8px 0;}
+  .footer{text-align:center;padding:16px;font-size:11px;color:#334155;border-top:1px solid #1e293b;}
+  .pipeline-list{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+  .pipeline-item{display:flex;align-items:center;gap:10px;}
+  .pipeline-item .pl-name{flex:1;font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pipeline-item .pl-bar-bg{flex:2;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;}
+  .pipeline-item .pl-bar{height:6px;border-radius:4px;background:linear-gradient(90deg,#3b82f6,#06b6d4);}
+  .pipeline-item .pl-count{width:40px;text-align:right;font-size:11px;font-weight:700;color:#e2e8f0;}
+  .leave-list{display:flex;flex-direction:column;gap:10px;margin-top:4px;}
+  .leave-item{display:flex;align-items:center;gap:10px;}
+  .leave-item .lv-name{flex:1;font-size:11px;color:#94a3b8;}
+  .leave-item .lv-bar-bg{flex:2;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;}
+  .leave-item .lv-bar{height:6px;border-radius:4px;}
+  .leave-item .lv-count{width:35px;text-align:right;font-size:11px;font-weight:700;color:#e2e8f0;}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>MAS Callnet PeopleOS — CEO Analytics</h1>
+    <p>Live workforce intelligence powered by HRMS • mas_hrms database</p>
+  </div>
+  <div class="header-right">
+    <div class="date">22 August 2026</div>
+    <div>Data as of today • Real-time</div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- KPI Row -->
+  <div class="kpi-row">
+    <div class="kpi-card" style="--accent:linear-gradient(90deg,#3b82f6,#06b6d4)">
+      <div class="label">Total Workforce</div>
+      <div class="value" style="color:#60a5fa">58,907</div>
+      <div class="sub">All-time employee records</div>
+      <div class="icon">👥</div>
+    </div>
+    <div class="kpi-card" style="--accent:linear-gradient(90deg,#10b981,#34d399)">
+      <div class="label">Active Employees</div>
+      <div class="value" style="color:#34d399">1,069</div>
+      <div class="sub">Currently on rolls</div>
+      <div class="icon">✅</div>
+    </div>
+    <div class="kpi-card" style="--accent:linear-gradient(90deg,#f59e0b,#fbbf24)">
+      <div class="label">Today's Attendance</div>
+      <div class="value" style="color:#fbbf24">669</div>
+      <div class="sub">Aug 22 — present punches</div>
+      <div class="icon">🕐</div>
+    </div>
+    <div class="kpi-card" style="--accent:linear-gradient(90deg,#8b5cf6,#a78bfa)">
+      <div class="label">New Joiners (Aug)</div>
+      <div class="value" style="color:#a78bfa">136</div>
+      <div class="sub">This month onboarded</div>
+      <div class="icon">🆕</div>
+    </div>
+    <div class="kpi-card" style="--accent:linear-gradient(90deg,#ef4444,#f87171)">
+      <div class="label">Pending Leave</div>
+      <div class="value" style="color:#f87171">584</div>
+      <div class="sub">Awaiting approval</div>
+      <div class="icon">📋</div>
+    </div>
+    <div class="kpi-card" style="--accent:linear-gradient(90deg,#0ea5e9,#38bdf8)">
+      <div class="label">ATS Pipeline</div>
+      <div class="value" style="color:#38bdf8">38,029</div>
+      <div class="sub">Total candidates tracked</div>
+      <div class="icon">🎯</div>
+    </div>
+  </div>
+
+  <!-- Row 2: Joiners vs Exits + Workforce Status -->
+  <div class="charts-row">
+    <div class="card">
+      <h3>Monthly Joiners vs Exits (Last 12 Months)</h3>
+      <canvas id="joinersExitsChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Workforce Status Breakdown</h3>
+      <canvas id="statusDonut"></canvas>
+    </div>
+  </div>
+
+  <!-- Row 3: Branch + Attendance -->
+  <div class="charts-row">
+    <div class="card">
+      <h3>Branch-wise Headcount (Top 15)</h3>
+      <canvas id="branchChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Daily Attendance Trend (Last 30 Days)</h3>
+      <canvas id="attendanceChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Row 4: ATS Pipeline + Leave + Process -->
+  <div class="charts-row3">
+    <div class="card">
+      <h3>ATS Monthly Applications (Last 6 Months)</h3>
+      <canvas id="atsMonthlyChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Process-wise Active Headcount (Top 10)</h3>
+      <canvas id="processChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Pending Leave by Type</h3>
+      <div class="leave-list" id="leaveList"></div>
+      <div class="divider" style="margin-top:16px"></div>
+      <h3 style="margin-top:12px">ATS Stage Pipeline</h3>
+      <div class="pipeline-list" id="pipelineList"></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">MAS Callnet PeopleOS &bull; CEO Analytics Dashboard &bull; Data source: mas_hrms (192.168.10.6) &bull; Generated by Claude AI via MCP</div>
+
+<script>
+// ── Shared chart defaults ──────────────────────────────────────────────────
+Chart.defaults.color = '#64748b';
+Chart.defaults.borderColor = '#1e293b';
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+
+// ── Data ──────────────────────────────────────────────────────────────────
+const joinerMonths  = ['Aug-25','Sep-25','Oct-25','Nov-25','Dec-25','Jan-26','Feb-26','Mar-26','Apr-26','May-26','Jun-26','Jul-26','Aug-26'];
+const joinerValues  = [81,173,191,191,262,217,244,243,303,269,322,193,136];
+const exitValues    = [46,200,191,216,260,212,193,255,305,237,301,163,0];
+
+const branches      = ['Delhi','NOIDA-2','KARNAL','NOIDA','Ahmedabad-JD','Ahmedabad','Ahmedabad H','Ahmedabad HO','Jaipur','Jaipur-2','VDF Manpower','Mohali','Meerut','KARNAL-2','Hyderabad'];
+const branchTotals  = [7710,6227,5941,5672,5329,3343,2999,2679,2597,2537,2391,2328,2147,1763,1188];
+const branchActive  = [0,359,0,429,265,0,0,0,0,0,0,0,0,0,0];
+
+const attDates      = ['23 Jul','24 Jul','25 Jul','26 Jul','27 Jul','28 Jul','29 Jul','30 Jul','31 Jul','1 Aug','2 Aug','3 Aug','4 Aug','5 Aug','6 Aug','7 Aug','8 Aug','9 Aug','10 Aug','11 Aug','12 Aug','13 Aug','14 Aug','15 Aug','16 Aug','17 Aug','18 Aug','19 Aug','20 Aug','21 Aug','22 Aug'];
+const attValues     = [1387,1391,1414,531,1409,905,894,902,1234,1145,1216,1158,1156,1150,827,1156,1159,481,817,1238,1238,1237,1264,1255,1259,1294,1294,1033,1063,759,669];
+
+const atsMonths     = ['Mar-26','Apr-26','May-26','Jun-26','Jul-26','Aug-26'];
+const atsApps       = [393,713,1035,33592,1229,789];
+
+const procNames     = ['Cust. Acquisition','Sales & Marketing','Cust. Services','Inbound CS','Prepaid Retention','Upselling','Cust. Profiling','CS-Others','Post Paid Ret.','Pre-Post Conv.'];
+const procTotals    = [7638,5784,2720,2439,2380,1680,1566,1224,1165,1164];
+
+const leavePending  = [{name:'Casual Leave',count:231},{name:'Medical Leave',count:147},{name:'Earned Leave',count:120},{name:'LWP',count:86}];
+const atsStages     = [{stage:'Applied',count:34908},{stage:'Offered',count:1250},{stage:'Round 1 HR',count:813},{stage:'Round 2 Ops',count:465},{stage:'Arrival',count:198},{stage:'Skill Test',count:145},{stage:'Arrived',count:70},{stage:'Round 3 Client',count:64},{stage:'Selection',count:34},{stage:'Onboarded',count:28}];
+
+// ── 1. Joiners vs Exits ───────────────────────────────────────────────────
+new Chart(document.getElementById('joinersExitsChart'), {
+  type: 'bar',
+  data: {
+    labels: joinerMonths,
+    datasets: [
+      { label: 'Joiners', data: joinerValues, backgroundColor: 'rgba(52,211,153,0.8)', borderRadius: 4 },
+      { label: 'Exits',   data: exitValues,   backgroundColor: 'rgba(248,113,113,0.8)', borderRadius: 4 },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: true,
+    plugins: { legend: { position: 'top', labels: { boxWidth: 10, padding: 12 } } },
+    scales: {
+      x: { grid: { color: '#1e293b' }, ticks: { font: { size: 10 } } },
+      y: { grid: { color: '#1e293b' }, ticks: { font: { size: 10 } } }
+    }
+  }
+});
+
+// ── 2. Status Donut ───────────────────────────────────────────────────────
+new Chart(document.getElementById('statusDonut'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Active','Inactive','Resigned','Terminated'],
+    datasets: [{
+      data: [1069, 27030, 30309, 499],
+      backgroundColor: ['#10b981','#f59e0b','#ef4444','#6b7280'],
+      borderWidth: 2, borderColor: '#131929'
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: true, cutout: '65%',
+    plugins: {
+      legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10, font: { size: 11 } } },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toLocaleString()} (${((ctx.raw/58907)*100).toFixed(1)}%)` } }
+    }
+  }
+});
+
+// ── 3. Branch Chart ───────────────────────────────────────────────────────
+new Chart(document.getElementById('branchChart'), {
+  type: 'bar',
+  data: {
+    labels: branches,
+    datasets: [
+      { label: 'Total', data: branchTotals, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 3 },
+      { label: 'Active', data: branchActive, backgroundColor: 'rgba(52,211,153,0.8)', borderRadius: 3 },
+    ]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top', labels: { boxWidth: 10, padding: 10 } } },
+    scales: {
+      x: { grid: { color: '#1e293b' }, ticks: { font: { size: 10 } } },
+      y: { grid: { color: '#0b0f1a' }, ticks: { font: { size: 10 } } }
+    }
+  }
+});
+document.getElementById('branchChart').style.maxHeight = '320px';
+document.getElementById('branchChart').parentElement.style.height = '360px';
+
+// ── 4. Attendance Trend ───────────────────────────────────────────────────
+new Chart(document.getElementById('attendanceChart'), {
+  type: 'line',
+  data: {
+    labels: attDates,
+    datasets: [{
+      label: 'Present',
+      data: attValues,
+      borderColor: '#f59e0b',
+      backgroundColor: 'rgba(245,158,11,0.1)',
+      fill: true, tension: 0.4,
+      pointRadius: 2, pointHoverRadius: 5,
+      borderWidth: 2
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: '#1e293b' }, ticks: { font: { size: 9 }, maxRotation: 45 } },
+      y: { grid: { color: '#1e293b' }, ticks: { font: { size: 10 } }, min: 0 }
+    }
+  }
+});
+
+// ── 5. ATS Monthly ────────────────────────────────────────────────────────
+new Chart(document.getElementById('atsMonthlyChart'), {
+  type: 'bar',
+  data: {
+    labels: atsMonths,
+    datasets: [{
+      label: 'Applications',
+      data: atsApps,
+      backgroundColor: ctx => {
+        const v = ctx.raw;
+        return v > 5000 ? 'rgba(239,68,68,0.8)' : 'rgba(14,165,233,0.8)';
+      },
+      borderRadius: 6
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: true,
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.raw.toLocaleString()} applications` } }
+    },
+    scales: {
+      x: { grid: { color: '#1e293b' } },
+      y: { grid: { color: '#1e293b' }, ticks: { font: { size: 10 } } }
+    }
+  }
+});
+
+// ── 6. Process Chart ──────────────────────────────────────────────────────
+new Chart(document.getElementById('processChart'), {
+  type: 'bar',
+  data: {
+    labels: procNames,
+    datasets: [{
+      label: 'Total Headcount',
+      data: procTotals,
+      backgroundColor: [
+        '#6366f1','#8b5cf6','#a855f7','#c084fc','#e879f9',
+        '#f0abfc','#818cf8','#93c5fd','#67e8f9','#6ee7b7'
+      ],
+      borderRadius: 4
+    }]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: '#1e293b' }, ticks: { font: { size: 9 } } },
+      y: { grid: { color: '#0b0f1a' }, ticks: { font: { size: 9 } } }
+    }
+  }
+});
+
+// ── 7. Leave Pending List ─────────────────────────────────────────────────
+const lvColors = ['#ef4444','#f59e0b','#10b981','#6366f1'];
+const lvMax = Math.max(...leavePending.map(x=>x.count));
+document.getElementById('leaveList').innerHTML = leavePending.map((lv,i) => `
+  <div class="leave-item">
+    <div class="lv-name">${lv.name}</div>
+    <div class="lv-bar-bg"><div class="lv-bar" style="width:${(lv.count/lvMax*100).toFixed(0)}%;background:${lvColors[i]}"></div></div>
+    <div class="lv-count">${lv.count}</div>
+  </div>
+`).join('');
+
+// ── 8. ATS Pipeline List ──────────────────────────────────────────────────
+const pMax = atsStages[0].count;
+document.getElementById('pipelineList').innerHTML = atsStages.map(s => `
+  <div class="pipeline-item">
+    <div class="pl-name">${s.stage}</div>
+    <div class="pl-bar-bg"><div class="pl-bar" style="width:${(s.count/pMax*100).toFixed(0)}%"></div></div>
+    <div class="pl-count">${s.count.toLocaleString()}</div>
+  </div>
+`).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,991 @@
+import { randomUUID } from "crypto";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
+import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+import { inboxService } from "../inbox/inbox.service.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+
+/**
+ * Latest Payment Voucher raised against each vendor_payment_tracking row, as a joinable
+ * subquery. Shared verbatim by listPayments() and getPayment() so the grid and the drill-down
+ * can never disagree about a due's voucher state.
+ *
+ * ROW_NUMBER() picks the most recently raised voucher per due — a due can accumulate several
+ * over time (raised, rejected, raised again), and only the newest one governs what the page
+ * may do now. The full history is a separate query in getPayment().
+ *
+ * Reads through payment_voucher_grn_allocation, whose idx_pvga_grn index covers
+ * vendor_payment_tracking_id, so this join stays cheap at grid page sizes.
+ */
+const LATEST_VOUCHER_JOIN = `
+  LEFT JOIN (
+    SELECT pvga.vendor_payment_tracking_id,
+           pv.id AS voucher_id,
+           pv.voucher_number,
+           pv.status AS voucher_status,
+           pv.raised_at AS voucher_raised_at,
+           pv.ceo_approved_at AS voucher_ceo_approved_at,
+           pv.released_at AS voucher_released_at,
+           pv.rejection_reason AS voucher_rejection_reason,
+           ROW_NUMBER() OVER (
+             PARTITION BY pvga.vendor_payment_tracking_id ORDER BY pv.raised_at DESC, pv.id DESC
+           ) AS rn
+      FROM payment_voucher_grn_allocation pvga
+      JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+  ) pvl ON pvl.vendor_payment_tracking_id = vpt.id AND pvl.rn = 1`;
+
+/**
+ * Voucher statuses that mean "a voucher is mid-flight for this due".
+ *
+ * 'released' is excluded because the money has already moved — the pre-existing
+ * Paid/balance guards cover that case. 'rejected' is excluded because it is terminal and must
+ * not block a fresh voucher or a direct dispatch.
+ *
+ * DUPLICATED, DELIBERATELY: vendor-payment-ledger.service.ts's dispatch() enforces the same
+ * set in SQL inside its own row lock. The UI gate and the server guard must agree; if you
+ * change one, change the other.
+ */
+const ACTIVE_VOUCHER_STATUSES = ["raised", "ceo_approved", "changes_requested"];
+
+function withActiveVoucherFlag(row: RowDataPacket): Record<string, any> {
+  return {
+    ...(row as Record<string, any>),
+    active_voucher: ACTIVE_VOUCHER_STATUSES.includes(String(row.voucher_status ?? "")),
+  };
+}
+
+export interface VendorPaymentFilters {
+  financialYear?: string;
+  month?: string;
+  branchId?: string;
+  /**
+   * Multi-branch scope; wins over branchId when present.
+   *
+   * Both exist so routers can migrate one at a time. exportPayments delegates straight to
+   * listPayments, so scoping here covers the CSV export too — an export must never return a
+   * row its list would not.
+   */
+  branchScope?: FinanceBranchScope;
+  processId?: string;
+  costCentreId?: string;
+  costClass?: string;
+  head?: string;
+  subHead?: string;
+  vendorId?: string;
+  paymentStatus?: string;
+  /**
+   * True outstanding balance, independent of payment_status label — a row can carry any status
+   * while still owing money (e.g. "Partially Paid"), and the reverse is also possible in this
+   * legacy-backed table. Consumers that need "what can still be paid" (the Payment Voucher
+   * raise form's vendor/GRN pickers) must ask for this instead of paging through
+   * ORDER BY due_date ASC and filtering client-side: with 200+ already-settled legacy rows
+   * sorted first, a plain LIMIT 200 can return zero outstanding rows even when many exist.
+   */
+  outstandingOnly?: boolean;
+  dueDateFrom?: string;
+  dueDateTo?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface UpdatePaymentPayload {
+  processId?: string;
+  costCentreId?: string;
+  costClass?: "direct" | "indirect";
+  paymentMode?: string;
+  paymentDate?: string;
+  bankId?: string;
+  transactionId?: string;
+  paidAmount?: number;
+  remarks?: string;
+  paymentStatus?: string;
+}
+
+const PAYMENT_MODES = [
+  "Cheque",
+  "NEFT",
+  "RTGS",
+  "IMPS",
+  "UPI",
+  "Cash",
+  "Bank Transfer",
+  "Adjustment",
+  "Other",
+] as const;
+const BANK_MODES = new Set([
+  "Cheque",
+  "NEFT",
+  "RTGS",
+  "IMPS",
+  "UPI",
+  "Bank Transfer",
+]);
+const PAYMENT_STATUSES = new Set([
+  "Payment Pending",
+  "Partially Paid",
+  "Paid",
+  "On Hold",
+  "Rejected",
+  "Closed",
+]);
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+async function writeFinanceAudit(
+  actionType: string,
+  entityId: string,
+  actorUserId: string,
+  actorRole: string | undefined,
+  changeSummary: Record<string, unknown>,
+  executor: any = db
+) {
+  await executor.execute(
+    `INSERT INTO finance_action_audit_log
+       (id, action_type, entity_type, entity_id, actor_user_id, actor_role, change_summary)
+     VALUES (?, ?, 'VENDOR_PAYMENT', ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      actionType,
+      entityId,
+      actorUserId,
+      actorRole ?? null,
+      JSON.stringify(changeSummary),
+    ]
+  );
+}
+
+function ensureImmutableAttribution(existing: any, payload: UpdatePaymentPayload) {
+  if (payload.processId != null && payload.processId !== (existing.process_id ?? "")) {
+    throw new Error("Process mapping is locked from the approved GRN");
+  }
+  if (
+    payload.costCentreId != null
+    && payload.costCentreId !== (existing.cost_centre_id ?? "")
+  ) {
+    throw new Error("Cost centre mapping is locked from the approved GRN");
+  }
+  if (payload.costClass != null && payload.costClass !== existing.cost_class) {
+    throw new Error("Cost classification is locked from the approved GRN");
+  }
+}
+
+function grnPaymentStatus(paymentStatus: string, paidAmount: number) {
+  if (paymentStatus === "Paid") {
+    return { grnStatus: "paid", accountsStatus: "paid" };
+  }
+  if (paymentStatus === "Partially Paid") {
+    return { grnStatus: "partially_paid", accountsStatus: "partially_paid" };
+  }
+  if (paymentStatus === "On Hold") {
+    return {
+      grnStatus: paidAmount > 0 ? "partially_paid" : "pending_accounts_payment",
+      accountsStatus: "on_hold",
+    };
+  }
+  return { grnStatus: "pending_accounts_payment", accountsStatus: "pending" };
+}
+
+export const vendorPaymentService = {
+  async listBanks() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, bank_name, bank_code, ifsc_prefix
+         FROM bank_master
+        WHERE active_status = 1
+        ORDER BY bank_name`
+    );
+    return rows;
+  },
+
+  async listPayments(filters: VendorPaymentFilters) {
+    const conditions: string[] = ["1=1"];
+    const params: unknown[] = [];
+
+    if (filters.financialYear) {
+      conditions.push("vpt.financial_year = ?");
+      params.push(filters.financialYear);
+    }
+    if (filters.month) {
+      conditions.push("DATE_FORMAT(vpt.due_date, '%Y-%m') = ?");
+      params.push(filters.month);
+    }
+    if (filters.branchScope) {
+      const filter = financeBranchFilter(filters.branchScope, "vpt.branch_id");
+      if (filter.sql !== "1=1") {
+        conditions.push(filter.sql);
+        params.push(...filter.params);
+      }
+    } else if (filters.branchId) {
+      conditions.push("vpt.branch_id = ?");
+      params.push(filters.branchId);
+    }
+    if (filters.processId) {
+      conditions.push("vpt.process_id = ?");
+      params.push(filters.processId);
+    }
+    if (filters.costCentreId) {
+      conditions.push("vpt.cost_centre_id = ?");
+      params.push(filters.costCentreId);
+    }
+    if (filters.costClass) {
+      conditions.push("vpt.cost_class = ?");
+      params.push(filters.costClass);
+    }
+    if (filters.head) {
+      conditions.push("vpt.head = ?");
+      params.push(filters.head);
+    }
+    if (filters.subHead) {
+      conditions.push("vpt.sub_head = ?");
+      params.push(filters.subHead);
+    }
+    if (filters.vendorId) {
+      conditions.push("vpt.vendor_id = ?");
+      params.push(filters.vendorId);
+    }
+    if (filters.paymentStatus) {
+      if (!PAYMENT_STATUSES.has(filters.paymentStatus)) {
+        throw new Error("Invalid payment status filter");
+      }
+      conditions.push("vpt.payment_status = ?");
+      params.push(filters.paymentStatus);
+    }
+    if (filters.outstandingOnly) {
+      conditions.push("vpt.balance_amount > 0");
+    }
+    if (filters.dueDateFrom) {
+      conditions.push("vpt.due_date >= ?");
+      params.push(filters.dueDateFrom);
+    }
+    if (filters.dueDateTo) {
+      conditions.push("vpt.due_date <= ?");
+      params.push(filters.dueDateTo);
+    }
+    if (filters.search) {
+      conditions.push(
+        "(vpt.grn_number LIKE ? OR vpt.vendor_name LIKE ? OR vpt.transaction_id LIKE ?)"
+      );
+      const like = `%${filters.search}%`;
+      params.push(like, like, like);
+    }
+
+    const page = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(200, Math.max(1, filters.limit ?? 50));
+    const offset = (page - 1) * limit;
+    const where = `WHERE ${conditions.join(" AND ")}`;
+
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM vendor_payment_tracking vpt ${where}`,
+      params
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vpt.*,
+              bm.bank_name AS bank_master_name,
+              bm.ifsc_prefix,
+              b.branch_name,
+              b.branch_code,
+              pm.process_name,
+              ccm.cost_centre_name,
+              vm.vendor_type,
+              vm.gst_number AS vendor_gst,
+              -- Requirement 11 wants the invoice number on the payment grid, and it lives on
+              -- the GRN, not here: vendor_payment_tracking carries grn_number but never the
+              -- vendor's own bill reference. That is the number Accounts quote to a vendor
+              -- chasing payment, so joining beats asking them to open each GRN.
+              g.invoice_number,
+              g.bill_date,
+              g.billing_cycle_status,
+              -- Reverse visibility into the Payment Voucher workflow. A due can be paid two
+              -- ways — the direct dispatch on this page, or a voucher raised on
+              -- /finance/payment-vouchers that CEO approves and Finance Head releases. Both
+              -- write the same vendor_payment_tracking row, so this page has to show whether a
+              -- voucher is already in flight, otherwise Accounts would pay something the CEO
+              -- is still deciding on.
+              pvl.voucher_id,
+              pvl.voucher_number,
+              pvl.voucher_status,
+              pvl.voucher_raised_at,
+              pvl.voucher_ceo_approved_at,
+              pvl.voucher_released_at,
+              pvl.voucher_rejection_reason
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+         LEFT JOIN process_master pm ON pm.id = vpt.process_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+         ${LATEST_VOUCHER_JOIN}
+         ${where}
+        ORDER BY vpt.due_date ASC, vpt.created_at ASC
+        LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+
+    return {
+      rows: rows.map(withActiveVoucherFlag),
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      limit,
+    };
+  },
+
+  async getPayment(id: string): Promise<Record<string, any> | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vpt.*,
+              bm.bank_name AS bank_master_name,
+              b.branch_name,
+              b.branch_code,
+              pm.process_name,
+              ccm.cost_centre_name,
+              vm.vendor_type,
+              vm.contact_email,
+              vm.contact_phone,
+              pvl.voucher_id,
+              pvl.voucher_number,
+              pvl.voucher_status,
+              pvl.voucher_raised_at,
+              pvl.voucher_ceo_approved_at,
+              pvl.voucher_released_at,
+              pvl.voucher_rejection_reason
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+         LEFT JOIN process_master pm ON pm.id = vpt.process_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         ${LATEST_VOUCHER_JOIN}
+        WHERE vpt.id = ?
+        LIMIT 1`,
+      [id]
+    );
+    if (!rows[0]) return null;
+
+    // Every voucher ever raised against this due, newest first — the drill-down mandate wants
+    // the whole approval history, not just the current one. Kept as a second query rather than
+    // widening the join: one due can carry N vouchers and a join would multiply the base row.
+    const [voucherHistory] = await db.execute<RowDataPacket[]>(
+      `SELECT pv.id, pv.voucher_number, pv.status, pv.amount AS voucher_amount,
+              pv.raised_by, pv.raised_at, pv.ceo_approved_by, pv.ceo_approved_at,
+              pv.released_by, pv.released_at, pv.rejection_reason,
+              pvga.allocated_amount
+         FROM payment_voucher_grn_allocation pvga
+         JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+        WHERE pvga.vendor_payment_tracking_id = ?
+        ORDER BY pv.raised_at DESC, pv.id DESC`,
+      [id]
+    );
+
+    return { ...withActiveVoucherFlag(rows[0]), voucher_history: voucherHistory };
+  },
+
+  /**
+   * externalConnection: pass the caller's own PoolConnection to run this inside a larger
+   * transaction instead of opening/committing one of its own — payment-voucher.service.ts's
+   * release() needs this update, the bank_account_ledger_entry insert and the payment_voucher
+   * status transition to commit or roll back together. Mirrors createFromGrn's existing
+   * `connection?: PoolConnection` parameter in this same file.
+   *
+   * When an externalConnection is supplied, this method does not begin/commit/rollback, does
+   * not fire the post-commit logSensitiveAction (the caller does that once, after ITS commit,
+   * covering both this update and its own event), and does not re-read the row via
+   * this.getPayment() — that would run on a different connection and could read the
+   * pre-transaction row before the caller commits. The caller is expected to log and re-read.
+   */
+  async updatePayment(
+    id: string,
+    payload: UpdatePaymentPayload,
+    actorUserId: string,
+    actorRole?: string,
+    externalConnection?: PoolConnection
+  ) {
+    const owns = !externalConnection;
+    const connection = externalConnection ?? await db.getConnection();
+    let auditSummary: Record<string, unknown> = {};
+    try {
+      if (owns) await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT *
+           FROM vendor_payment_tracking
+          WHERE id = ?
+          FOR UPDATE`,
+        [id]
+      );
+      const existing = rows[0] as any;
+      if (!existing) throw new Error("Vendor payment record not found");
+      ensureImmutableAttribution(existing, payload);
+
+      const dueAmount = roundMoney(Number(existing.due_amount));
+      const paidAmount = roundMoney(
+        payload.paidAmount == null
+          ? Number(existing.paid_amount ?? 0)
+          : Number(payload.paidAmount)
+      );
+      if (!Number.isFinite(paidAmount) || paidAmount < 0) {
+        throw new Error("Paid amount must be zero or greater");
+      }
+      if (paidAmount > dueAmount + 0.01) {
+        throw new Error(
+          `Paid amount (${paidAmount}) cannot exceed due amount (${dueAmount})`
+        );
+      }
+
+      const paymentMode = payload.paymentMode ?? existing.payment_mode ?? null;
+      if (paymentMode && !PAYMENT_MODES.includes(paymentMode as any)) {
+        throw new Error("Invalid payment mode");
+      }
+      const paymentDate = payload.paymentDate ?? existing.payment_date ?? null;
+      if (paymentDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate).slice(0, 10))) {
+        throw new Error("Payment date must be a valid date");
+      }
+      if (
+        paymentDate
+        && String(paymentDate).slice(0, 10) > new Date().toISOString().slice(0, 10)
+      ) {
+        throw new Error("Payment date cannot be in the future");
+      }
+
+      const bankId = payload.bankId ?? existing.bank_id ?? null;
+      let bankName = existing.bank_name ?? null;
+      if (bankId) {
+        const [bankRows] = await connection.execute<RowDataPacket[]>(
+          `SELECT bank_name
+             FROM bank_master
+            WHERE id = ? AND active_status = 1
+            LIMIT 1`,
+          [bankId]
+        );
+        if (!bankRows[0]) throw new Error("Selected bank is inactive or unavailable");
+        bankName = String(bankRows[0].bank_name);
+      }
+
+      const transactionId =
+        payload.transactionId?.trim() || existing.transaction_id || null;
+      if (paidAmount > 0) {
+        if (!paymentMode) throw new Error("Payment mode is required");
+        if (!paymentDate) throw new Error("Payment date is required");
+        if (paymentMode !== "Cash" && !transactionId) {
+          throw new Error("Transaction ID / UTR / Cheque No. is required");
+        }
+        if (BANK_MODES.has(paymentMode) && !bankId) {
+          throw new Error("Bank is required for this payment mode");
+        }
+      }
+
+      if (transactionId) {
+        const [duplicates] = await connection.execute<RowDataPacket[]>(
+          `SELECT id
+             FROM vendor_payment_tracking
+            WHERE transaction_id = ? AND id <> ?
+            LIMIT 1`,
+          [transactionId, id]
+        );
+        if (duplicates[0]) {
+          throw new Error("This transaction ID / UTR is already used on another payment");
+        }
+      }
+
+      const requestedStatus = payload.paymentStatus ?? existing.payment_status;
+      if (requestedStatus && !PAYMENT_STATUSES.has(String(requestedStatus))) {
+        throw new Error("Invalid payment status");
+      }
+      if (requestedStatus === "On Hold" && !payload.remarks?.trim()) {
+        throw new Error("Hold reason is required");
+      }
+      if (["Rejected", "Closed"].includes(String(requestedStatus))) {
+        throw new Error("Rejected/Closed status cannot be set through payment dispatch");
+      }
+
+      const balanceAmount = roundMoney(dueAmount - paidAmount);
+      const paymentStatus = requestedStatus === "On Hold"
+        ? "On Hold"
+        : paidAmount === 0
+          ? "Payment Pending"
+          : balanceAmount > 0.01
+            ? "Partially Paid"
+            : "Paid";
+      const mappedStatus = grnPaymentStatus(paymentStatus, paidAmount);
+
+      const [updateResult] = await connection.execute<ResultSetHeader>(
+        `UPDATE vendor_payment_tracking
+            SET payment_mode = ?,
+                payment_date = ?,
+                bank_id = ?,
+                bank_name = ?,
+                transaction_id = ?,
+                paid_amount = ?,
+                balance_amount = ?,
+                payment_status = ?,
+                remarks = COALESCE(?, remarks),
+                updated_by = ?,
+                updated_at = NOW()
+          WHERE id = ?`,
+        [
+          paymentMode,
+          paymentDate ? String(paymentDate).slice(0, 10) : null,
+          bankId,
+          bankName,
+          transactionId,
+          paidAmount,
+          balanceAmount,
+          paymentStatus,
+          payload.remarks?.trim() || null,
+          actorUserId,
+          id,
+        ]
+      );
+      if (updateResult.affectedRows !== 1) {
+        throw new Error("Vendor payment update did not affect a record");
+      }
+
+      if (existing.grn_request_id) {
+        await connection.execute(
+          `UPDATE grn_request
+              SET status = ?, accounts_payment_status = ?
+            WHERE id = ?`,
+          [
+            mappedStatus.grnStatus,
+            mappedStatus.accountsStatus,
+            existing.grn_request_id,
+          ]
+        );
+      }
+
+      auditSummary = {
+        grn_number: existing.grn_number,
+        branch_id: existing.branch_id,
+        budget_id: existing.budget_id ?? null,
+        budget_line_id: existing.budget_line_id ?? null,
+        before: {
+          payment_mode: existing.payment_mode,
+          payment_date: existing.payment_date,
+          bank_id: existing.bank_id,
+          transaction_id: existing.transaction_id,
+          paid_amount: existing.paid_amount,
+          balance_amount: existing.balance_amount,
+          payment_status: existing.payment_status,
+          remarks: existing.remarks,
+        },
+        after: {
+          payment_mode: paymentMode,
+          payment_date: paymentDate,
+          bank_id: bankId,
+          transaction_id: transactionId,
+          paid_amount: paidAmount,
+          balance_amount: balanceAmount,
+          payment_status: paymentStatus,
+          remarks: payload.remarks ?? existing.remarks,
+        },
+      };
+      await writeFinanceAudit(
+        "VENDOR_PAYMENT_UPDATED",
+        id,
+        actorUserId,
+        actorRole,
+        auditSummary,
+        connection
+      );
+      if (owns) await connection.commit();
+    } catch (error) {
+      if (owns) await connection.rollback();
+      throw error;
+    } finally {
+      if (owns) connection.release();
+    }
+
+    if (!owns) return null;
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      actor_role: actorRole,
+      action_type: "VENDOR_PAYMENT_UPDATED",
+      module_key: "FINANCE",
+      entity_type: "vendor_payment_tracking",
+      entity_id: id,
+      change_summary: auditSummary,
+    }).catch(() => undefined);
+
+    return this.getPayment(id);
+  },
+
+  async bulkUpdate(
+    updates: Array<{ id: string } & UpdatePaymentPayload>,
+    actorUserId: string,
+    actorRole?: string
+  ) {
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+    for (const update of updates) {
+      try {
+        const { id, ...payload } = update;
+        await this.updatePayment(id, payload, actorUserId, actorRole);
+        results.push({ id, success: true });
+      } catch (error: unknown) {
+        results.push({
+          id: update.id,
+          success: false,
+          error: error instanceof Error ? error.message : "Payment update failed",
+        });
+      }
+    }
+    return results;
+  },
+
+  async saveProofPath(
+    id: string,
+    fileName: string,
+    filePath: string,
+    fileMime: string,
+    actorUserId: string,
+    actorRole?: string
+  ) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT paid_amount, payment_status
+           FROM vendor_payment_tracking
+          WHERE id = ?
+          FOR UPDATE`,
+        [id]
+      );
+      if (!rows[0]) throw new Error("Vendor payment record not found");
+      if (Number(rows[0].paid_amount ?? 0) <= 0) {
+        throw new Error("Dispatch payment details before uploading payment proof");
+      }
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE vendor_payment_tracking
+            SET payment_proof_file_name = ?,
+                payment_proof_file_path = ?,
+                payment_proof_file_mime = ?,
+                updated_by = ?,
+                updated_at = NOW()
+          WHERE id = ?`,
+        [fileName, filePath, fileMime, actorUserId, id]
+      );
+      if (result.affectedRows !== 1) {
+        throw new Error("Payment proof could not be saved");
+      }
+      await writeFinanceAudit(
+        "VENDOR_PAYMENT_PROOF_UPLOADED",
+        id,
+        actorUserId,
+        actorRole,
+        { file_name: fileName, file_mime: fileMime },
+        connection
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  async exportPayments(filters: VendorPaymentFilters) {
+    const { rows } = await this.listPayments({
+      ...filters,
+      limit: 5000,
+      page: 1,
+    });
+    return rows;
+  },
+
+  async createFromGrn(
+    grnId: string,
+    actorUserId: string,
+    connection?: PoolConnection
+  ) {
+    const executor = connection ?? db;
+    const [rows] = await executor.execute<RowDataPacket[]>(
+      `SELECT g.*, b.branch_name
+         FROM grn_request g
+         LEFT JOIN branch_master b ON b.id = g.branch_id
+        WHERE g.id = ?
+          AND g.grn_type = 'vendor'
+          AND g.status IN ('pending_accounts_payment','finance_head_approved','approved')
+        LIMIT 1`,
+      [grnId]
+    );
+    const grn = rows[0] as any;
+    if (!grn) throw new Error("Finance-approved vendor GRN not found");
+    if (!grn.vendor_id || !grn.vendor_name) {
+      throw new Error("Vendor GRN has no canonical Vendor Master mapping");
+    }
+    if (!grn.attachment_path && !grn.attachment_file_path) {
+      throw new Error("Vendor GRN has no invoice/supporting attachment");
+    }
+
+    const [existing] = await executor.execute<RowDataPacket[]>(
+      `SELECT id
+         FROM vendor_payment_tracking
+        WHERE grn_request_id = ?
+        LIMIT 1`,
+      [grnId]
+    );
+    if (existing[0]) return String(existing[0].id);
+
+    const id = randomUUID();
+    const dueAmount = roundMoney(Number(grn.amount_with_tax ?? grn.amount ?? 0));
+    if (dueAmount <= 0) throw new Error("Vendor GRN payable amount must be positive");
+
+    await executor.execute(
+      `INSERT INTO vendor_payment_tracking
+       (id, grn_request_id, grn_number, branch_id, process_id, cost_centre_id,
+        cost_class, vendor_id, vendor_name, head, sub_head, due_amount, due_date,
+        grn_file_name, grn_file_path, grn_file_mime, paid_amount, balance_amount,
+        payment_status, financial_year, budget_id, budget_line_id,
+        amount_without_tax, tax_amount, amount_with_tax)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,'Payment Pending',?,?,?,?,?,?)`,
+      [
+        id,
+        grnId,
+        grn.grn_number,
+        grn.branch_id,
+        grn.process_id ?? null,
+        grn.cost_centre_id ?? null,
+        grn.cost_class ?? "indirect",
+        grn.vendor_id,
+        grn.vendor_name,
+        grn.head,
+        grn.sub_head,
+        dueAmount,
+        grn.due_date ?? grn.bill_date,
+        grn.attachment_original_name ?? grn.attachment_file_name,
+        grn.attachment_path ?? grn.attachment_file_path,
+        grn.attachment_mime ?? grn.attachment_file_mime,
+        dueAmount,
+        grn.financial_year ?? null,
+        grn.budget_id ?? null,
+        grn.budget_line_id ?? null,
+        Number(grn.amount_without_tax || grn.amount || 0),
+        Number(grn.tax_amount || 0),
+        dueAmount,
+      ]
+    );
+    await executor.execute(
+      `UPDATE grn_request
+          SET status = 'pending_accounts_payment', accounts_payment_status = 'pending'
+        WHERE id = ?`,
+      [grnId]
+    );
+
+    if (!connection) {
+      await this.auditCreatedPayment(id, actorUserId);
+    }
+    return id;
+  },
+
+  async getAgingReport(options: { branchScope?: FinanceBranchScope }) {
+    const scope: FinanceBranchScope = options.branchScope ?? { mode: "all" };
+    const { sql: branchClause, params: branchParams } = financeBranchFilter(
+      scope,
+      "vpt.branch_id"
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vpt.id, gr.grn_number, gr.invoice_number,
+              vm.vendor_name, vpt.branch_id,
+              b.branch_name,
+              vpt.due_amount, vpt.paid_amount, vpt.balance_amount,
+              vpt.due_date, vpt.payment_status,
+              DATEDIFF(CURDATE(), vpt.due_date) AS days_overdue
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN grn_request gr ON gr.id = vpt.grn_request_id
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+        WHERE ${branchClause}
+          AND vpt.payment_status NOT IN ('Paid','Closed')
+          AND vpt.due_date IS NOT NULL
+        ORDER BY days_overdue DESC, vpt.due_date`,
+      branchParams
+    );
+    const buckets: Record<string, RowDataPacket[]> = { current: [], "1-30": [], "31-60": [], "61-90": [], ">90": [] };
+    for (const row of rows as RowDataPacket[]) {
+      const d = Number(row.days_overdue ?? 0);
+      if (d <= 0)       buckets.current.push(row);
+      else if (d <= 30) buckets["1-30"].push(row);
+      else if (d <= 60) buckets["31-60"].push(row);
+      else if (d <= 90) buckets["61-90"].push(row);
+      else              buckets[">90"].push(row);
+    }
+    return { rows: buckets };
+  },
+
+  async getVendorLedger(options: {
+    vendorId: string;
+    branchScope?: FinanceBranchScope;
+    fromPeriod?: string;
+    toPeriod?: string;
+  }) {
+    const scopeL: FinanceBranchScope = options.branchScope ?? { mode: "all" };
+    const { sql: branchClause, params: branchParams } = financeBranchFilter(
+      scopeL,
+      "vpt.branch_id"
+    );
+    const extraParams: unknown[] = [options.vendorId, ...branchParams];
+    let periodClause = "";
+    if (options.fromPeriod) {
+      periodClause += ` AND gr.accounting_period >= ?`;
+      extraParams.push(options.fromPeriod);
+    }
+    if (options.toPeriod) {
+      periodClause += ` AND gr.accounting_period <= ?`;
+      extraParams.push(options.toPeriod);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT gr.grn_number, gr.bill_date, gr.invoice_number, gr.accounting_period,
+              vpt.due_amount, vpt.tds_deducted_amount,
+              (vpt.due_amount - COALESCE(vpt.tds_deducted_amount,0)) AS net_payable,
+              vpt.paid_amount, vpt.balance_amount,
+              vpt.payment_status, vpt.due_date,
+              b.branch_name
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN grn_request gr ON gr.id = vpt.grn_request_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+        WHERE vpt.vendor_id = ? AND ${branchClause}${periodClause}
+        ORDER BY gr.bill_date DESC, gr.grn_number`,
+      extraParams
+    );
+    return rows;
+  },
+
+  /**
+   * Vendor's currently available advance/on-account balance — the latest vendor_advance_ledger
+   * running balance, or 0 if this vendor has never had an advance voucher released. Same
+   * "latest balance_after wins" logic payment-voucher.service.ts's own private copy of this
+   * query uses internally during raise()/release() — this is the read-only, externally-callable
+   * twin, backing the Raise form's inline balance display and the Vendor Payment Dispatch page's
+   * advance badge. A single trivial SELECT, not worth importing across modules for.
+   */
+  async getAdvanceBalance(vendorId: string): Promise<number> {
+    const [[last]] = await db.execute<RowDataPacket[]>(
+      `SELECT balance_after FROM vendor_advance_ledger
+        WHERE vendor_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [vendorId],
+    );
+    return last ? Number((last as any).balance_after) : 0;
+  },
+
+  async auditCreatedPayment(id: string, actorUserId: string) {
+    const payment = await this.getPayment(id);
+    if (!payment) throw new Error("Vendor payment record not found for audit");
+    await writeFinanceAudit(
+      "VENDOR_PAYMENT_ROW_CREATED",
+      id,
+      actorUserId,
+      undefined,
+      {
+        grn_id: payment.grn_request_id,
+        grn_number: payment.grn_number,
+        due_amount: Number(payment.due_amount),
+        budget_id: payment.budget_id ?? null,
+        budget_line_id: payment.budget_line_id ?? null,
+        process_id: payment.process_id ?? null,
+        cost_centre_id: payment.cost_centre_id ?? null,
+      }
+    );
+  },
+
+  async notifyPaymentPending(id: string) {
+    const payment = await this.getPayment(id);
+    if (!payment) return;
+    const [accountsUsers] = await db.execute<RowDataPacket[]>(
+      /*
+       * Three faults in one statement, so no accounts_head has ever been notified of a pending
+       * vendor payment - the query threw before reaching the inbox writes below.
+       *
+       *   user_role_assignment  -> the table is user_roles
+       *   ura.role_name         -> the column is role_key
+       *   u.active_status       -> auth_user has no active_status; it records is_blocked
+       *
+       * The polarity is the one thing worth stating plainly: active_status = 1 meant "this user
+       * is active", and the equivalent on auth_user is NOT blocked. Reading it the other way
+       * round would notify exactly the blocked accounts and skip the working ones, silently.
+       * NULL is treated as not blocked, matching how listAgents and the access routes read this
+       * column elsewhere.
+       *
+       * user_roles carries its own active_status, so the role assignment's own active flag is
+       * kept as a separate condition rather than being folded into the user's.
+       */
+      `SELECT DISTINCT u.id
+         FROM auth_user u
+         JOIN user_roles ur ON ur.user_id = u.id
+        WHERE ur.role_key = 'accounts_head'
+          AND ur.active_status = 1
+          AND (u.is_blocked IS NULL OR u.is_blocked = 0)
+        LIMIT 100`
+    );
+
+    for (const user of accountsUsers) {
+      await inboxService.createItem({
+        user_id: String(user.id),
+        type: "VENDOR_PAYMENT_PENDING",
+        title: `Vendor Payment Pending - GRN ${
+          payment.grn_number ?? payment.grn_request_id
+        }`,
+        description: `Branch: ${
+          payment.branch_name ?? payment.branch_id
+        } | Vendor: ${payment.vendor_name ?? "N/A"} | Due: Rs ${Number(
+          payment.due_amount
+        ).toLocaleString("en-IN")} | Due Date: ${payment.due_date ?? "TBD"}`,
+        entity_type: "vendor_payment_tracking",
+        entity_id: id,
+        action_url: "/finance/vendor-payment-tracking",
+        priority: "high",
+      });
+    }
+  },
+
+  /**
+   * Governance-tab readiness signal for a P&L period: are the vendor payments tied to this
+   * period's GRNs actually settled? Ready means nothing is left in a not-yet-paid state.
+   *
+   * "NOT IN ('Paid','Closed')" mirrors getAgingReport's own definition of outstanding above —
+   * same statuses count as pending there. Period is the GRN's own accounting period (the P&L
+   * period the invoice books into), not vpt.due_date's month — a vendor payment can fall due in
+   * a different calendar month than the period its cost belongs to, and due_date is what the
+   * AP Aging report already covers. Falls back to bill_date's month exactly as documented in
+   * 1085_grn_billing_cycle_and_accounting_period.sql ("every read path must fall back... when
+   * this is NULL") — accounting_period is NULL on any GRN raised before that migration.
+   */
+  async getPeriodReadiness(options: { periodCode: string; branchId?: string }) {
+    const params: unknown[] = [options.periodCode];
+    let branchClause = "";
+    if (options.branchId) {
+      branchClause = " AND vpt.branch_id = ?";
+      params.push(options.branchId);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          COUNT(*) AS pending_count,
+          SUM(COALESCE(vpt.balance_amount, 0)) AS pending_balance
+         FROM vendor_payment_tracking vpt
+         JOIN grn_request g ON g.id = vpt.grn_request_id
+        WHERE vpt.payment_status NOT IN ('Paid', 'Closed')
+          AND COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?${branchClause}`,
+      params
+    );
+    const row = rows[0] ?? {};
+    const pendingCount = Number(row.pending_count ?? 0);
+    return {
+      periodCode: options.periodCode,
+      pendingCount,
+      pendingBalance: Number(row.pending_balance ?? 0),
+      ready: pendingCount === 0,
+    };
+  },
+
+  async getScopeBranchNames(scope: FinanceBranchScope): Promise<string[]> {
+    if (scope.mode === "all" || scope.branchIds.length === 0) return [];
+    const placeholders = scope.branchIds.map(() => "?").join(", ");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_name FROM branch_master WHERE id IN (${placeholders})`,
+      scope.branchIds
+    );
+    return rows.map((row) => String(row.branch_name)).filter(Boolean);
+  },
+};

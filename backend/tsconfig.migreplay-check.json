@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["scripts/migrate-fresh-test.ts", "src/db/runPendingMigrations.ts"]
+}

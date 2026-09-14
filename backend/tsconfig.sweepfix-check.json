@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/ats/ats-form-config.service.ts",
+    "src/modules/ats/ats-form-config.routes.ts",
+    "src/modules/reporting/report-request.service.ts",
+    "src/modules/reporting/report-admin-audit.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

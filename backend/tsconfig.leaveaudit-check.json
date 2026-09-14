@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/leave/leave.service.ts",
+    "src/modules/leave/leave.routes.ts",
+    "src/modules/leave/leave.secure.routes.ts",
+    "src/modules/leave/leave.controller.ts",
+    "src/modules/leave/leave-policy.service.ts",
+    "src/workers/leave-monthly-credit.worker.ts",
+    "src/shared/employeeDeprovisioning.ts",
+    "src/shared/auditLog.ts",
+    "src/shared/attendanceRestore.ts",
+    "src/modules/reporting/reporting.leave-balance.routes.ts",
+    "src/modules/reporting/executors/leave.executor.ts",
+    "src/modules/reporting/reporting.service.ts"
+  ]
+}

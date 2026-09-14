@@ -1,0 +1,94 @@
+{
+  "baseUrl": "http://127.0.0.1:8081",
+  "loginUrl": "http://127.0.0.1:8081/auth",
+  "finalUrl": "http://127.0.0.1:8081/my-dashboard",
+  "titleTexts": {
+    "hr": {
+      "url": "http://127.0.0.1:8081/hr/dashboard",
+      "expected": "HR Dashboard",
+      "h1": "Access not available",
+      "bodyHasExpected": false,
+      "bodyTextSample": "MAS CALLNET INDIA PVT LTD\n\nOVERVIEW\n\nDashboard\nMy Modules\nNotifications\nWork Inbox\nReports\n\nMY SPACE\n\nProfile\nCalendar\nAttendance\nLeave\nPay & Tax\nEngage\nComm. Prefs\n\nPEOPLE & HIRING\n\nEmployees\nDepartments\nATS\nOnboarding\nLifecycle\n\nWORKFORCE\n\nLearning\nWFM & Roster\n\nOPERATIONS\n\nQuality\nPerformance\nPayroll\nManagement\n\nSUPPORT\n\nHelpdesk\nBenefits\n\nADMIN\n\nAccess & Settings\nOrganisation\nIntegrations\nSystem\nSO\n\nSOFIYA SULTAN\n\nEXECUTIVE\n\nVIEW PROFILE\n\nv1.0.5\nHome\nHr\nDashboard\n⌘K\n5\nSO\nAccess not available\n\nYour current role does not have permission to open this Workforce OS page.\n\nContact your administrator or use the button below to request access.\n\nRequest Access\n\nWe use cookies to enhance your experience. By continuing to visit this site, you agree to our use of cookies. Learn more\n\nDecline\nAccept"
+    },
+    "payroll": {
+      "url": "http://127.0.0.1:8081/payroll-hr/dashboard",
+      "expected": "Finance / Payroll Dashboard",
+      "h1": "Access not available",
+      "bodyHasExpected": false,
+      "bodyTextSample": "MAS CALLNET INDIA PVT LTD\n\nOVERVIEW\n\nDashboard\nMy Modules\nNotifications\nWork Inbox\nReports\n\nMY SPACE\n\nProfile\nCalendar\nAttendance\nLeave\nPay & Tax\nEngage\nComm. Prefs\n\nPEOPLE & HIRING\n\nEmployees\nDepartments\nATS\nOnboarding\nLifecycle\n\nWORKFORCE\n\nLearning\nWFM & Roster\n\nOPERATIONS\n\nQuality\nPerformance\nPayroll\nManagement\n\nSUPPORT\n\nHelpdesk\nBenefits\n\nADMIN\n\nAccess & Settings\nOrganisation\nIntegrations\nSystem\nSO\n\nSOFIYA SULTAN\n\nEXECUTIVE\n\nVIEW PROFILE\n\nv1.0.5\nHome\nPayroll Hr\nDashboard\n⌘K\n5\nSO\nAccess not available\n\nYour current role does not have permission to open this Workforce OS page.\n\nContact your administrator or use the button below to request access.\n\nRequest Access\n\nWe use cookies to enhance your experience. By continuing to visit this site, you agree to our use of cookies. Learn more\n\nDecline\nAccept"
+    },
+    "wfm": {
+      "url": "http://127.0.0.1:8081/wfm/dashboard",
+      "expected": "WFM / Attendance Dashboard",
+      "h1": "Access not available",
+      "bodyHasExpected": false,
+      "bodyTextSample": "MAS CALLNET INDIA PVT LTD\n\nOVERVIEW\n\nDashboard\nMy Modules\nNotifications\nWork Inbox\nReports\n\nMY SPACE\n\nProfile\nCalendar\nAttendance\nLeave\nPay & Tax\nEngage\nComm. Prefs\n\nPEOPLE & HIRING\n\nEmployees\nDepartments\nATS\nOnboarding\nLifecycle\n\nWORKFORCE\n\nLearning\nWFM & Roster\n\nOPERATIONS\n\nQuality\nPerformance\nPayroll\nManagement\n\nSUPPORT\n\nHelpdesk\nBenefits\n\nADMIN\n\nAccess & Settings\nOrganisation\nIntegrations\nSystem\nSO\n\nSOFIYA SULTAN\n\nEXECUTIVE\n\nVIEW PROFILE\n\nv1.0.5\nHome\nWfm\nDashboard\n⌘K\n5\nSO\nAccess not available\n\nYour current role does not have permission to open this Workforce OS page.\n\nContact your administrator or use the button below to request access.\n\nRequest Access\n\nWe use cookies to enhance your experience. By continuing to visit this site, you agree to our use of cookies. Learn more\n\nDecline\nAccept"
+    },
+    "manager": {
+      "url": "http://127.0.0.1:8081/manager/dashboard",
+      "expected": "Manager Dashboard",
+      "h1": "Access not available",
+      "bodyHasExpected": false,
+      "bodyTextSample": "MAS CALLNET INDIA PVT LTD\n\nOVERVIEW\n\nDashboard\nMy Modules\nNotifications\nWork Inbox\nReports\n\nMY SPACE\n\nProfile\nCalendar\nAttendance\nLeave\nPay & Tax\nEngage\nComm. Prefs\n\nPEOPLE & HIRING\n\nEmployees\nDepartments\nATS\nOnboarding\nLifecycle\n\nWORKFORCE\n\nLearning\nWFM & Roster\n\nOPERATIONS\n\nQuality\nPerformance\nPayroll\nManagement\n\nSUPPORT\n\nHelpdesk\nBenefits\n\nADMIN\n\nAccess & Settings\nOrganisation\nIntegrations\nSystem\nSO\n\nSOFIYA SULTAN\n\nEXECUTIVE\n\nVIEW PROFILE\n\nv1.0.5\nHome\nManager\nDashboard\n⌘K\n5\nSO\nAccess not available\n\nYour current role does not have permission to open this Workforce OS page.\n\nContact your administrator or use the button below to request access.\n\nRequest Access\n\nWe use cookies to enhance your experience. By continuing to visit this site, you agree to our use of cookies. Learn more\n\nDecline\nAccept"
+    },
+    "employee": {
+      "url": "http://127.0.0.1:8081/my-dashboard",
+      "expected": "Welcome",
+      "h1": "Access not available",
+      "bodyHasExpected": false,
+      "bodyTextSample": "MAS CALLNET INDIA PVT LTD\n\nOVERVIEW\n\nDashboard\nMy Modules\nNotifications\nWork Inbox\nReports\n\nMY SPACE\n\nProfile\nCalendar\nAttendance\nLeave\nPay & Tax\nEngage\nComm. Prefs\n\nPEOPLE & HIRING\n\nEmployees\nDepartments\nATS\nOnboarding\nLifecycle\n\nWORKFORCE\n\nLearning\nWFM & Roster\n\nOPERATIONS\n\nQuality\nPerformance\nPayroll\nManagement\n\nSUPPORT\n\nHelpdesk\nBenefits\n\nADMIN\n\nAccess & Settings\nOrganisation\nIntegrations\nSystem\nSO\n\nSOFIYA SULTAN\n\nEXECUTIVE\n\nVIEW PROFILE\n\nv1.0.5\nHome\nMy Dashboard\n⌘K\n5\nSO\nAccess not available\n\nYour current role does not have permission to open this Workforce OS page.\n\nContact your administrator or use the button below to request access.\n\nRequest Access\n\nWe use cookies to enhance your experience. By continuing to visit this site, you agree to our use of cookies. Learn more\n\nDecline\nAccept"
+    }
+  },
+  "consoleLogs": [
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+    "error: Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold",
+    "debug: [vite] connecting...",
+    "debug: [vite] connected.",
+    "info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+  ],
+  "pageErrors": [],
+  "responses": [
+    "403 https://ip-api.com/json?fields=status,city,lat,lon",
+    "200 http://localhost:5055/api/auth/login",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/access/me",
+    "200 http://localhost:5055/api/inbox/count",
+    "200 http://localhost:5055/api/inbox",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/access/me",
+    "200 http://localhost:5055/api/inbox/count",
+    "200 http://localhost:5055/api/inbox",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/access/me",
+    "200 http://localhost:5055/api/inbox/count",
+    "200 http://localhost:5055/api/inbox",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/access/me",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/inbox/count",
+    "200 http://localhost:5055/api/inbox",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/employees/me",
+    "200 http://localhost:5055/api/access/me",
+    "200 http://localhost:5055/api/inbox",
+    "200 http://localhost:5055/api/inbox/count",
+    "200 http://localhost:5055/api/employees/me"
+  ]
+}

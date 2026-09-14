@@ -1,0 +1,19 @@
+{
+  // Typecheck for the home-dashboard audit fixes (2026-08-13): scope narrowing,
+  // asOf freshness, TEAM_ONLY drilldowns, leave-approvals scoping.
+  //
+  // Deliberately NOT the repo-wide `tsc -p tsconfig.json` — see tsconfig.attendance-check.json
+  // for why. Run with:
+  //
+  //     npx tsc -p tsconfig.dashboard-audit-check.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/shared/dashboardScope.ts",
+    "src/modules/dashboards/dashboard-definition.service.ts",
+    "src/modules/dashboards/dashboard-drilldown.service.ts",
+    "src/modules/management/management.service.ts"
+  ]
+}

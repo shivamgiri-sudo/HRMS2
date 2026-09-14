@@ -1,0 +1,598 @@
+import { randomUUID } from "crypto";
+import fs from "fs";
+import path from "path";
+import { Router, type NextFunction, type Response } from "express";
+import multer from "multer";
+import {
+  requireAuth,
+  requireWriteAccess,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import {
+  assertFinanceRecordBranch,
+  hasGlobalFinanceScope,
+  resolveFinanceBranchScopeSet,
+} from "./finance-access-scope.js";
+import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
+import { vendorPaymentService } from "./vendor-payment.service.js";
+
+const PAYMENT_WRITE_ROLES = ["accounts_head", "super_admin"] as const;
+const PAYMENT_READ_ROLES = [
+  ...PAYMENT_WRITE_ROLES,
+  "finance_head",
+  "branch_admin",
+  "branch_head",
+  "admin",
+  "finance",
+  // `financeRoles` in src/config/routes/finance.routes.tsx (shared across most Finance page
+  // gates) has always included payroll_head, but it was missing here — a payroll_head-only user
+  // could open /finance/vendor-payment-tracking and every single data call (capabilities, banks,
+  // list, aging, ledger, transactions) 403'd, i.e. a permanently broken page for that role.
+  "payroll_head",
+] as const;
+// Mirrors `pnlRoles` in src/config/routes/finance.routes.tsx exactly — the role list that can
+// open the P&L Master & Control Center page this endpoint feeds (its Governance tab). Kept
+// separate from PAYMENT_READ_ROLES because that page's route additionally admits ceo/coo/
+// payroll_head, who must get a real readiness answer here too, not a 403.
+const PNL_GOVERNANCE_READ_ROLES = [
+  "super_admin",
+  "admin",
+  "ceo",
+  "coo",
+  "finance",
+  "finance_head",
+  "accounts_head",
+  "payroll_head",
+] as const;
+
+const router = Router();
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
+
+function actor(req: AuthenticatedRequest) {
+  const id = req.authUser?.id;
+  if (!id) throw new Error("Authenticated user is required");
+  return {
+    id,
+    role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
+    roles: req.userRoles ?? [],
+  };
+}
+
+function allRoles(req: AuthenticatedRequest) {
+  return new Set(
+    [req.authUser?.role, ...(req.userRoles ?? [])]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => value.toLowerCase())
+  );
+}
+
+function paymentWriteRole(req: AuthenticatedRequest) {
+  const roles = allRoles(req);
+  if (roles.has("accounts_head")) return "accounts_head";
+  if (roles.has("super_admin")) return "super_admin";
+  return String(req.authUser?.role ?? "unknown");
+}
+
+type ScopedPaymentRequest = AuthenticatedRequest & { financePayment?: any };
+
+async function authorizePaymentBranch(
+  req: ScopedPaymentRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const user = actor(req);
+    const payment = await vendorPaymentService.getPayment(req.params.id);
+    if (!payment) {
+      res.status(404).json({ success: false, error: "Record not found" });
+      return;
+    }
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: payment.branch_id,
+    });
+    req.financePayment = payment;
+    next();
+  } catch (error: unknown) {
+    res.status(403).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Access denied",
+    });
+  }
+}
+
+router.use(requireAuth);
+
+router.get(
+  "/vendor-payments/capabilities",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req: AuthenticatedRequest, res) => {
+    const roles = allRoles(req);
+    const canWrite = roles.has("accounts_head") || roles.has("super_admin");
+    /*
+     * readScope must come from the SAME rule the data endpoints obey, not a second list.
+     *
+     * This was a hand-rolled set that included `admin` and ignored `branch_admin`.
+     * hasGlobalFinanceScope — which resolveFinanceBranchScopeSet actually consults — does the
+     * opposite: branch_admin PINS a user to their own branch even when they also hold a global
+     * role, and `admin` is deliberately absent from the overriding set because it is a generic
+     * grant rather than a statement that the holder reviews other branches.
+     *
+     * The live pattern this breaks on is a branch admin who also carries `admin`, which is how
+     * these accounts are actually provisioned. They were told readScope "organisation" while
+     * GET /vendor-payments returned only their own branch — so the page labelled one branch's
+     * vendor payments as the whole company's, and a reader would conclude the company owes far
+     * less than it does.
+     */
+    const user = actor(req);
+    const hasGlobalRead = hasGlobalFinanceScope(user.role, user.roles);
+    const scope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: undefined,
+    });
+    const scopeBranchNames = await vendorPaymentService.getScopeBranchNames(scope);
+    res.json({
+      success: true,
+      data: {
+        canRead: true,
+        canWrite,
+        readScope: hasGlobalRead ? "organisation" : "branch",
+        scopeBranchNames,
+        writeRole: canWrite ? paymentWriteRole(req) : null,
+        paymentModel: "installment_ledger",
+      },
+    });
+  })
+);
+
+router.get(
+  "/banks",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (_req, res) => {
+    const data = await vendorPaymentService.listBanks();
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/vendor-payments",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
+    });
+    const result = await vendorPaymentService.listPayments({
+      financialYear: req.query.financialYear
+        ? String(req.query.financialYear)
+        : undefined,
+      month: req.query.month ? String(req.query.month) : undefined,
+      branchScope,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
+      costClass: req.query.costClass ? String(req.query.costClass) : undefined,
+      head: req.query.head ? String(req.query.head) : undefined,
+      subHead: req.query.subHead ? String(req.query.subHead) : undefined,
+      vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
+      paymentStatus: req.query.paymentStatus
+        ? String(req.query.paymentStatus)
+        : undefined,
+      outstandingOnly: req.query.outstandingOnly === "1",
+      dueDateFrom: req.query.dueDateFrom
+        ? String(req.query.dueDateFrom)
+        : undefined,
+      dueDateTo: req.query.dueDateTo ? String(req.query.dueDateTo) : undefined,
+      search: req.query.search ? String(req.query.search) : undefined,
+      page: req.query.page ? Number(req.query.page) : 1,
+      limit: req.query.limit ? Number(req.query.limit) : 50,
+    });
+    res.json({ success: true, ...result });
+  })
+);
+
+router.get(
+  "/vendor-payments/export",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId
+        ? String(req.query.branchId)
+        : undefined,
+    });
+    const rows = await vendorPaymentService.exportPayments({
+      financialYear: req.query.financialYear
+        ? String(req.query.financialYear)
+        : undefined,
+      month: req.query.month ? String(req.query.month) : undefined,
+      branchScope,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
+      costClass: req.query.costClass ? String(req.query.costClass) : undefined,
+      head: req.query.head ? String(req.query.head) : undefined,
+      subHead: req.query.subHead ? String(req.query.subHead) : undefined,
+      vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
+      paymentStatus: req.query.paymentStatus
+        ? String(req.query.paymentStatus)
+        : undefined,
+      dueDateFrom: req.query.dueDateFrom
+        ? String(req.query.dueDateFrom)
+        : undefined,
+      dueDateTo: req.query.dueDateTo ? String(req.query.dueDateTo) : undefined,
+      search: req.query.search ? String(req.query.search) : undefined,
+    });
+
+    // ── Report format contract ────────────────────────────────────────────────
+    // The default export reproduces the LEGACY GRN Payment Report exactly. Its shape is not a
+    // recollection: db_bill.tbl_payment_processing (12,553 rows, still being written) declares
+    // GrnNo, BranchId, Head, SubHead, DueAmount, DueDate, PaymentMode, PaymentDate, BankName,
+    // TransactionId, and Grn File comes from expense_entry_master.grn_file.
+    //
+    // Header spelling and column order are part of the contract — "Grn No." not "GRN No",
+    // "SubHead" not "Sub Head", "Due Amount" not "Due Amount With Tax". Finance already works
+    // from these headers, and a renamed column silently breaks whatever consumes the file.
+    // grn-payment-report-format.contract.test.ts fails if any of it drifts.
+    //
+    // The nine extra columns HRMS2 can offer (Process, Cost Centre, Cost Class, Vendor, the
+    // tax split, Paid/Balance/Status/Remarks) are NOT dropped — they move behind
+    // ?format=extended, so the official report stays as-is while nobody loses data they were
+    // already using.
+    const EXTENDED = String(req.query.format ?? "").toLowerCase() === "extended";
+
+    const LEGACY_COLUMNS = [
+      "Sr. No.", "Branch", "Grn No.", "Head", "SubHead", "Due Amount", "Due Date",
+      "Grn File", "Payment Mode", "Payment Date", "Bank Name", "Transaction ID / Cheque No.",
+    ];
+    const EXTENDED_COLUMNS = [
+      "Sr No", "Branch", "Process", "Cost Centre", "Cost Class", "GRN No",
+      "Vendor", "Head", "Sub Head", "Amount Without Tax", "Tax Amount",
+      "Due Amount With Tax", "Due Date", "Latest Payment Mode",
+      "Latest Payment Date", "Latest Bank Name", "Latest Transaction ID",
+      "Paid Amount", "Balance Amount", "Payment Status", "Remarks",
+    ];
+    const columns = EXTENDED ? EXTENDED_COLUMNS : LEGACY_COLUMNS;
+
+    const escape = (value: unknown) =>
+      `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const csvRows = [
+      columns.map(escape).join(","),
+      ...(rows as any[]).map((row, index) =>
+        (EXTENDED
+          ? [
+              index + 1, row.branch_name ?? row.branch_id, row.process_name ?? "",
+              row.cost_centre_name ?? "", row.cost_class ?? "", row.grn_number,
+              row.vendor_name, row.head, row.sub_head, row.amount_without_tax,
+              row.tax_amount, row.due_amount, row.due_date, row.payment_mode,
+              row.payment_date, row.bank_name, row.transaction_id, row.paid_amount,
+              row.balance_amount, row.payment_status, row.remarks,
+            ]
+          : [
+              index + 1, row.branch_name ?? row.branch_id, row.grn_number,
+              row.head, row.sub_head, row.due_amount, row.due_date,
+              row.grn_file_name ?? "", row.payment_mode, row.payment_date,
+              row.bank_name, row.transaction_id,
+            ]
+        ).map(escape).join(",")
+      ),
+    ];
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="vendor-payments-export.csv"'
+    );
+    res.send(csvRows.join("\n"));
+  })
+);
+
+// 4-B: AP Aging — unpaid balances grouped into standard overdue buckets.
+//
+// Must stay registered before /vendor-payments/:id (below): Express matches routes in
+// registration order, and :id matches any literal segment including "aging" — this route
+// used to sit ~200 lines further down, after /vendor-payments/:id, so every request here
+// was swallowed by the :id handler as WHERE vendor_payment_tracking.id = 'aging', which
+// never matches a row and 404s "Record not found". Confirmed live-broken 2026-08-13: the
+// AP Aging panel (VendorPaymentDispatchPage.tsx's showAging toggle) has 404ed on every use
+// since this route was added. Moved here, immediately after the other static
+// /vendor-payments/... sub-paths and before the first /vendor-payments/:id route.
+router.get(
+  "/vendor-payments/aging",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const { rows: data } = await vendorPaymentService.getAgingReport({ branchScope });
+    res.json({ success: true, data });
+  })
+);
+
+// Must stay above /vendor-payments/:id, same reason as /vendor-payments/aging above: Express
+// matches routes in declaration order and :id matches any literal segment.
+//
+// Feeds the P&L Master & Control Center's Governance tab (PnlMasterControlCenterPage.tsx,
+// "Data-source readiness" card — that field was a hardcoded `true` placeholder before this
+// endpoint existed).
+router.get(
+  "/vendor-payments/period-readiness",
+  requireRole(...PNL_GOVERNANCE_READ_ROLES),
+  h(async (req, res) => {
+    const periodCode = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) {
+      return res.status(400).json({ success: false, error: "period must be in YYYY-MM format" });
+    }
+    const data = await vendorPaymentService.getPeriodReadiness({
+      periodCode,
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    res.json({ success: true, ...data });
+  })
+);
+
+router.get(
+  "/vendor-payments/:id/transactions",
+  requireRole(...PAYMENT_READ_ROLES),
+  authorizePaymentBranch,
+  h(async (req, res) => {
+    const data = await vendorPaymentLedgerService.listTransactions(req.params.id);
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/vendor-payments/:id",
+  requireRole(...PAYMENT_READ_ROLES),
+  authorizePaymentBranch,
+  async (req: ScopedPaymentRequest, res) => {
+    res.json({ success: true, data: req.financePayment });
+  }
+);
+
+router.post(
+  "/vendor-payments/:id/dispatch",
+  requireWriteAccess,
+  requireRole(...PAYMENT_WRITE_ROLES),
+  authorizePaymentBranch,
+  h(async (req, res) => {
+    const user = actor(req);
+    const data = await vendorPaymentLedgerService.dispatch(
+      req.params.id,
+      req.body,
+      user.id,
+      paymentWriteRole(req)
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/vendor-payments/:id/hold",
+  requireWriteAccess,
+  requireRole(...PAYMENT_WRITE_ROLES),
+  authorizePaymentBranch,
+  h(async (req, res) => {
+    const user = actor(req);
+    const hold = Boolean(req.body?.hold);
+    const data = await vendorPaymentLedgerService.setHold(
+      req.params.id,
+      hold,
+      req.body?.reason ? String(req.body.reason) : undefined,
+      user.id,
+      paymentWriteRole(req)
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/vendor-payments/:id/update-payment",
+  requireWriteAccess,
+  requireRole(...PAYMENT_WRITE_ROLES),
+  (_req, res) => {
+    res.status(410).json({
+      success: false,
+      error: "Aggregate payment updates are retired. Use /dispatch for installments or /hold for hold/release actions.",
+    });
+  }
+);
+
+router.post(
+  "/vendor-payments/bulk-update",
+  requireWriteAccess,
+  requireRole(...PAYMENT_WRITE_ROLES),
+  (_req, res) => {
+    res.status(410).json({
+      success: false,
+      error: "Bulk aggregate updates are retired because each installment requires its own payment reference.",
+    });
+  }
+);
+
+const proofUploadDirectory = path.join(
+  process.cwd(),
+  "uploads",
+  "payment-proofs"
+);
+if (!fs.existsSync(proofUploadDirectory)) {
+  fs.mkdirSync(proofUploadDirectory, { recursive: true });
+}
+
+const proofStorage = multer.diskStorage({
+  destination: (_req, _file, callback) => callback(null, proofUploadDirectory),
+  filename: (_req, file, callback) => {
+    callback(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
+  },
+});
+const proofUpload = multer({
+  storage: proofStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    const allowedMimeTypes = [
+      "image/jpeg", "image/png", "image/webp", "application/pdf",
+    ];
+    const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp", ".pdf"];
+    callback(
+      null,
+      allowedMimeTypes.includes(file.mimetype)
+        && allowedExtensions.includes(path.extname(file.originalname).toLowerCase())
+    );
+  },
+});
+
+router.post(
+  "/vendor-payments/:id/transactions/:transactionRowId/upload-proof",
+  requireWriteAccess,
+  requireRole(...PAYMENT_WRITE_ROLES),
+  authorizePaymentBranch,
+  proofUpload.single("proof"),
+  h(async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: "PDF or image proof required" });
+      return;
+    }
+    const user = actor(req);
+    await vendorPaymentLedgerService.saveTransactionProof(
+      req.params.id,
+      req.params.transactionRowId,
+      req.file.originalname,
+      req.file.path,
+      req.file.mimetype,
+      user.id,
+      paymentWriteRole(req)
+    );
+    res.json({ success: true, message: "Installment proof uploaded" });
+  })
+);
+
+router.post(
+  "/vendor-payments/:id/upload-proof",
+  requireWriteAccess,
+  requireRole(...PAYMENT_WRITE_ROLES),
+  (_req, res) => {
+    res.status(410).json({
+      success: false,
+      error: "Upload proof against a specific payment installment transaction.",
+    });
+  }
+);
+
+router.get(
+  "/vendor-payments/:id/transactions/:transactionRowId/proof",
+  requireRole(...PAYMENT_READ_ROLES),
+  authorizePaymentBranch,
+  h(async (req, res) => {
+    const transactions = await vendorPaymentLedgerService.listTransactions(req.params.id) as any[];
+    const transaction = transactions.find((item) => String(item.id) === req.params.transactionRowId);
+    const filePath = transaction?.proof_file_path as string | undefined;
+    if (!filePath || !fs.existsSync(filePath)) {
+      res.status(404).json({ success: false, error: "Installment proof not found" });
+      return;
+    }
+    res.setHeader(
+      "Content-Type",
+      transaction.proof_file_mime ?? "application/octet-stream"
+    );
+    res.sendFile(path.resolve(filePath));
+  })
+);
+
+router.get(
+  "/vendor-payments/:id/proof",
+  requireRole(...PAYMENT_READ_ROLES),
+  authorizePaymentBranch,
+  async (req: ScopedPaymentRequest, res) => {
+    const record = req.financePayment;
+    const filePath = record?.payment_proof_file_path as string | undefined;
+    if (!filePath || !fs.existsSync(filePath)) {
+      res.status(404).json({ success: false, error: "Payment proof not found" });
+      return;
+    }
+    res.setHeader(
+      "Content-Type",
+      record.payment_proof_file_mime ?? "application/octet-stream"
+    );
+    res.sendFile(path.resolve(filePath));
+  }
+);
+
+router.get(
+  "/vendor-payments/:id/grn-file",
+  requireRole(...PAYMENT_READ_ROLES),
+  authorizePaymentBranch,
+  async (req: ScopedPaymentRequest, res) => {
+    const record = req.financePayment;
+    const filePath = record?.grn_file_path as string | undefined;
+    if (!filePath || !fs.existsSync(filePath)) {
+      res.status(404).json({ success: false, error: "GRN file not found" });
+      return;
+    }
+    res.setHeader(
+      "Content-Type",
+      record.grn_file_mime ?? "application/octet-stream"
+    );
+    res.sendFile(path.resolve(filePath));
+  }
+);
+
+// 4-B: AP Aging moved above, before /vendor-payments/:id — see the comment there.
+
+// 4-C: Vendor ledger — running statement for a single vendor.
+router.get(
+  "/vendors/:vendorId/ledger",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    // requestedBranchId was missing here while every sibling route (list/export/aging above)
+    // threads it through — VendorPaymentDispatchPage.tsx's branch filter visibly narrowed the
+    // main table and the Aging panel but silently had no effect on this Vendor Ledger panel on
+    // the same page, which always fell back to the caller's own default scope.
+    const branchScope = await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await vendorPaymentService.getVendorLedger({
+      vendorId: req.params.vendorId,
+      branchScope,
+      fromPeriod: req.query.fromPeriod ? String(req.query.fromPeriod) : undefined,
+      toPeriod: req.query.toPeriod ? String(req.query.toPeriod) : undefined,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+// 4-D: Vendor advance/on-account balance — backs the Raise form's inline display and the
+// Dispatch page's advance badge.
+router.get(
+  "/vendors/:vendorId/advance-balance",
+  requireRole(...PAYMENT_READ_ROLES),
+  h(async (req, res) => {
+    const balance = await vendorPaymentService.getAdvanceBalance(req.params.vendorId);
+    res.json({ success: true, data: { balance } });
+  })
+);
+
+export { router as vendorPaymentRouter };

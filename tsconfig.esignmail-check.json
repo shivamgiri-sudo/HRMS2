@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/lib/publicJson.ts",
+    "src/pages/EmployeeJoiningKitEsignPage.tsx",
+    "src/pages/EmployeeDocumentEsignReviewPage.tsx",
+    "src/pages/EmployeeEpfComplianceReviewPage.tsx",
+    "src/vite-env.d.ts"
+  ]
+}
