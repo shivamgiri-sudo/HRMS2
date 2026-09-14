@@ -6,6 +6,26 @@
 
 The production URL https://mcnhrms.teammas.in is live and actively used. An unsanctioned deploy — even a clean one — disrupts real users. "The code builds locally" is NOT approval to deploy. "Show me the demo" is NOT approval to deploy. Wait for the user to say something like "deploy it", "push to server", or "go live".
 
+## ⛔ MANDATORY — TEST LOCALLY BEFORE PUSHING OR DEPLOYING
+
+**Every new API endpoint or change to an existing endpoint MUST be tested locally before the code is pushed to main or deployed.**
+
+This is non-negotiable. A bug that reaches the production server is harder to fix than one caught locally, and it disrupts real users. The appointment letter preview (`d.name` → `ER_BAD_FIELD_ERROR` in production) happened because the endpoint was not tested before pushing. It must not happen again.
+
+### What "tested locally" means for a backend change
+1. Start the local backend (`npm run dev` in `/backend`) against a local or staging MySQL instance.
+2. Call the actual endpoint with `curl` or the browser and confirm it returns the expected response shape.
+3. If the endpoint touches a database column, run `SHOW COLUMNS FROM <table>` to verify the column name before writing the query.
+4. Fix any errors found locally, then push.
+
+### What "tested locally" means for a frontend change
+1. Run `npm run build` — zero TypeScript errors.
+2. Start the dev server (`npm run dev`) and open the affected page in the browser.
+3. Walk through the golden path (happy case) and at least one error/edge case.
+4. Confirm no console errors from the new code.
+
+**If local testing is impossible** (no local DB, credentials not available), say so explicitly and list what was verified and what was not, rather than silently skipping verification.
+
 ## Product Goal
 
 Build a production-grade MAS Callnet workforce platform for a multi-branch BPO/call-centre organisation, while preserving the modules that already work.
