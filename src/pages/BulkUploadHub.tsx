@@ -161,6 +161,65 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   CLOVIA_EMAIL_DAILY: "import_clovia_email_daily_batch",
   CLOVIA_CHAT_DAILY: "import_clovia_chat_daily_batch",
   CLOVIA_CRM_DISPOSITION: "import_clovia_crm_disposition_batch",
+  CLOVIA_FEEDBACK: "import_clovia_feedback_batch",
+  // Bella / BVO / Neemans MASMIS — write into db_masmis tables used by My Dashboards
+  BB_SALE_MASMIS: "import_bb_sale_masmis_batch",
+  BB_APR_MASMIS: "import_bb_apr_masmis_batch",
+  BVO_REPEAT_CDR_MASMIS: "import_bvo_repeat_cdr_masmis_batch",
+  BVO_REPEAT_ALLOCATION_MASMIS: "import_bvo_repeat_allocation_masmis_batch",
+  BB_CART_MASMIS: "import_bb_cart_masmis_batch",
+  BB_CHAT_MASMIS: "import_bb_chat_masmis_batch",
+  BVO_ORDER_EXPORT_MASMIS: "import_bvo_order_export_masmis_batch",
+  NEEMANS_SALE_RAW_MASMIS: "import_neemans_sale_raw_masmis_batch",
+  NEEMANS_ALLOCATION_MASMIS: "import_neemans_allocation_masmis_batch",
+  NEEMANS_CART_MASMIS: "import_neemans_cart_masmis_batch",
+  NEEMANS_APR_MASMIS: "import_neemans_apr_masmis_batch",
+  // GNC MASMIS
+  GNC_SALE_MASMIS: "import_gnc_sale_masmis_batch",
+  GNC_ALLOCATION_MASMIS: "import_gnc_allocation_masmis_batch",
+  GNC_APR: "import_gnc_apr_batch",
+  // Bla Bli Blu process uploads
+  BLA_BLI_BLU_DD_TAGGING: "import_bla_bli_blu_dd_tagging_batch",
+  BLA_BLI_BLU_AUTO_CALLBACK: "import_bla_bli_blu_auto_callback_batch",
+  BLA_BLI_BLU_AFTER_HOUR: "import_bla_bli_blu_after_hour_batch",
+  BLA_BLI_BLU_CALL_DISPOSITION: "import_bla_bli_blu_call_disposition_batch",
+  BLA_BLI_BLU_SHOPIFY_SALES: "import_bla_bli_blu_shopify_sales_batch",
+  // Housing process uploads
+  HOUSING_PREMIUM_SALE_RAW: "import_housing_premium_sale_raw_batch",
+  HOUSING_PREMIUM_AGENT_TARGET: "import_housing_premium_agent_target_batch",
+  HOUSING_OWNER_SALE_RAW: "import_housing_owner_sale_raw_batch",
+  HOUSING_OWNER_INCENTIVE: "import_housing_owner_incentive_batch",
+  HOUSING_OWNER_LEAD_PIPELINE: "import_housing_owner_lead_pipeline_batch",
+  // LP process uploads
+  LP_APR_DAILY: "import_lp_apr_daily_batch",
+  LP_LEADS_REGIONAL: "import_lp_leads_regional_batch",
+  LP_LEADS_NON_REGIONAL: "import_lp_leads_non_regional_batch",
+  LP_CR_REPORT_REGIONAL: "import_lp_cr_report_regional_batch",
+  LP_CR_REPORT_NON_REGIONAL: "import_lp_cr_report_non_regional_batch",
+  // DU Digital uploads
+  DU_APR_KOREA: "import_du_apr_korea_batch",
+  DU_APR_THAILAND: "import_du_apr_thailand_batch",
+  DU_TEAM_MAPPING_KOREA: "import_du_team_mapping_korea_batch",
+  DU_TEAM_MAPPING_THAILAND: "import_du_team_mapping_thailand_batch",
+  // Other process uploads
+  EMAIL_TICKET_DAILY: "import_email_ticket_daily_batch",
+  REGINALD_ABANDONED_CART_SALES: "import_reginald_abandoned_cart_sales_batch",
+  BELLA_TARGET_PLAN: "import_bella_target_plan_batch",
+  COMPLIANCE_AUDIT: "import_compliance_audit_batch",
+  PROCESS_MANUAL_KPI: "import_process_manual_kpi_batch",
+  PROCESS_DELIVERY: "import_process_delivery_batch",
+  // Bella Repeat alignment
+  BELLA_REPEAT_ALIGNMENT: "import_bella_repeat_alignment_batch",
+  // Bla Bli Blu Overall Sales (curated workbook sheet)
+  BLA_BLI_BLU_OVERALL_SALES: "import_bla_bli_blu_overall_sales_batch",
+  // Remaining Clovia uploads
+  CLOVIA_QUALITY_AUDIT: "import_clovia_quality_audit_batch",
+  CLOVIA_RECHURN_CALLS: "import_clovia_rechurn_calls_batch",
+  CLOVIA_TEAM_ALIGNMENT: "import_clovia_team_alignment_batch",
+  // Dalmia uploads
+  DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
+  DALMIA_DD_RAW: "import_dalmia_dd_batch",
+  DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {

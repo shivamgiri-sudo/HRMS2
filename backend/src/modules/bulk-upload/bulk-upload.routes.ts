@@ -344,6 +344,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   // sample; no DB backing exists anywhere. See
   // clovia-crm-disposition-bulk.service.ts.
   "import_clovia_crm_disposition_batch",
+  "import_clovia_feedback_batch",
   // Housing Premium's "Sale Raw" -- per its SOP, a manually-updated Google
   // Sheet with no DB backing anywhere. See
   // housing-premium-sale-raw-bulk.service.ts.
@@ -439,6 +440,18 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_neemans_cart_masmis_batch",
   "import_neemans_apr_masmis_batch",
   "import_gnc_allocation_masmis_batch",
+  // Bella Repeat alignment — separate service, not covered by the generic bella-raw handler
+  "import_bella_repeat_alignment_batch",
+  // Bla Bli Blu Overall Sales (curated workbook sheet, distinct from the Shopify direct export)
+  "import_bla_bli_blu_overall_sales_batch",
+  // Remaining Clovia uploads — quality audit, re-churn calls, team alignment
+  "import_clovia_quality_audit_batch",
+  "import_clovia_rechurn_calls_batch",
+  "import_clovia_team_alignment_batch",
+  // Dalmia uploads — after-hour contacts, DialDesk DD raw, outbound CDR
+  "import_dalmia_after_hour_batch",
+  "import_dalmia_dd_batch",
+  "import_dalmia_outbound_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -904,6 +917,14 @@ async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_clovia_feedback_batch") {
+    const { importCloviaFeedbackBatch } = await import(
+      "../bulk-upload/clovia-feedback-bulk.service.js"
+    );
+    const data = await importCloviaFeedbackBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_housing_premium_sale_raw_batch") {
     const { importHousingPremiumSaleRawBatch } = await import(
       "../bulk-upload/housing-premium-sale-raw-bulk.service.js"
@@ -1184,6 +1205,70 @@ async function dispatchImport(
       "../bulk-upload/process-manual-kpi-bulk.service.js"
     );
     const data = await importProcessManualKpiBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bella_repeat_alignment_batch") {
+    const { importBellaRepeatAlignmentBatch } = await import(
+      "../bulk-upload/bella-repeat-alignment-bulk.service.js"
+    );
+    const data = await importBellaRepeatAlignmentBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_bla_bli_blu_overall_sales_batch") {
+    const { importBlaBliBluOverallSalesBatch } = await import(
+      "../bulk-upload/bla-bli-blu-overall-sales-bulk.service.js"
+    );
+    const data = await importBlaBliBluOverallSalesBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_quality_audit_batch") {
+    const { importCloviaQualityAuditBatch } = await import(
+      "../bulk-upload/clovia-quality-audit-bulk.service.js"
+    );
+    const data = await importCloviaQualityAuditBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_rechurn_calls_batch") {
+    const { importCloviaRechurnCallsBatch } = await import(
+      "../bulk-upload/clovia-rechurn-calls-bulk.service.js"
+    );
+    const data = await importCloviaRechurnCallsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_clovia_team_alignment_batch") {
+    const { importCloviaTeamAlignmentBatch } = await import(
+      "../bulk-upload/clovia-team-alignment-bulk.service.js"
+    );
+    const data = await importCloviaTeamAlignmentBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_after_hour_batch") {
+    const { importDalmiaAfterHourBatch } = await import(
+      "../bulk-upload/dalmia-after-hour-bulk.service.js"
+    );
+    const data = await importDalmiaAfterHourBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_dd_batch") {
+    const { importDalmiaDdBatch } = await import(
+      "../bulk-upload/dalmia-dd-bulk.service.js"
+    );
+    const data = await importDalmiaDdBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_outbound_batch") {
+    const { importDalmiaOutboundBatch } = await import(
+      "../bulk-upload/dalmia-outbound-bulk.service.js"
+    );
+    const data = await importDalmiaOutboundBatch(id, userId);
     return { success: true, data };
   }
 
