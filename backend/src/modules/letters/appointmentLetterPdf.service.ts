@@ -320,7 +320,8 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     heading(doc, "2. DESIGNATION");
     body(doc, `2.1 You will be designated as '${input.designation || "—"}' and you would be reporting to your Reporting Manager.`);
     heading(doc, "3. REMUNERATION");
-    body(doc, "3.1 Your monthly salary breakup would be as follows (in INR):");
+    body(doc, `3.1 Salary Date: ${istDisplayDate(input.dateOfJoining)}`);
+    body(doc, "3.2 Your monthly salary breakup would be as follows (in INR):");
     salaryTable(doc, input.salary);
 
     for (const [title, paras] of TERMS) {
