@@ -507,8 +507,16 @@ export async function createEmployeeFromCandidate(
     // that do (profile display, ESI docs, DPDP export, etc.) — this is additive, not a
     // replacement. Only written when the onboarding form actually captured at least one
     // structured field, so this never creates an empty row for no reason.
-    const hasPresentAddress = [candRow?.present_address_line1, candRow?.present_city,
-      candRow?.present_state, candRow?.present_pincode].some((v) => v && String(v).trim() !== "");
+    // All four columns are NOT NULL in employee_address — every one must be present
+    // before the INSERT, otherwise MySQL strict mode throws "Column 'city' cannot be null".
+    // .some() was the original guard but fires if only address_line1 is filled; use
+    // explicit non-empty checks on each required field instead.
+    const hasPresentAddress = !!(
+      candRow?.present_address_line1 && String(candRow.present_address_line1).trim() &&
+      candRow?.present_city          && String(candRow.present_city).trim() &&
+      candRow?.present_state         && String(candRow.present_state).trim() &&
+      candRow?.present_pincode       && String(candRow.present_pincode).trim()
+    );
     if (hasPresentAddress) {
       await conn.execute(
         `INSERT INTO employee_address
@@ -524,8 +532,12 @@ export async function createEmployeeFromCandidate(
          candRow?.present_city ?? null, candRow?.present_state ?? null, candRow?.present_pincode ?? null]
       );
     }
-    const hasPermanentAddress = [candRow?.permanent_address_line1, candRow?.permanent_city,
-      candRow?.permanent_state, candRow?.permanent_pincode].some((v) => v && String(v).trim() !== "");
+    const hasPermanentAddress = !!(
+      candRow?.permanent_address_line1 && String(candRow.permanent_address_line1).trim() &&
+      candRow?.permanent_city          && String(candRow.permanent_city).trim() &&
+      candRow?.permanent_state         && String(candRow.permanent_state).trim() &&
+      candRow?.permanent_pincode       && String(candRow.permanent_pincode).trim()
+    );
     if (hasPermanentAddress) {
       await conn.execute(
         `INSERT INTO employee_address
@@ -564,7 +576,7 @@ export async function createEmployeeFromCandidate(
            (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, is_minor)
          VALUES (?, ?, ?, ?, ?, 100, 'general', ?)`,
         [randomUUID(), employeeId, toStoredNameRequired(nomineeName), nomineeRelation, candRow?.nominee_dob ?? null, isMinor ? 1 : 0]
-      );
+      ).catch((e: unknown) => console.warn('[createEmployee] employee_nominee insert skipped:', (e as Error).message));
     }
 
     // Create related records (statutory, salary, nominee, leave, pf-opt-out)
