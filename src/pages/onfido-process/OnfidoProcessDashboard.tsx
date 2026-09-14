@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, Globe, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
@@ -318,17 +318,19 @@ function TrendChart({ points }: { points: TrendPoint[] }) {
   }
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+      <BarChart data={points} margin={{ top: 24, right: 12, left: 0, bottom: 0 }}
         barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
-        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-        <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} />
-        <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
+        <XAxis dataKey="month" tickLine={false} axisLine={false}
+          tick={{ fontSize: 12, fill: "var(--muted)" }} tickMargin={8} angle={-20} textAnchor="end" />
+        <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false}
+          tick={{ fontSize: 12, fill: "var(--muted)" }} />
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-        <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={48}>
-          <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+        <Bar dataKey="doc" name="DOC" fill="var(--blue)" fillOpacity={0.85} radius={[6, 6, 0, 0]} maxBarSize={48}>
+          <LabelList dataKey="doc" position="top" fill="var(--blue)" fontSize={11} fontWeight={700} />
         </Bar>
-        <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={48}>
-          <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+        <Bar dataKey="poa" name="POA" fill="var(--teal)" fillOpacity={0.85} radius={[6, 6, 0, 0]} maxBarSize={48}>
+          <LabelList dataKey="poa" position="top" fill="var(--teal)" fontSize={11} fontWeight={700} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -344,6 +346,118 @@ function ChartLegendRow() {
       <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--teal)" }} /> POA
       </span>
+    </div>
+  );
+}
+
+/**
+ * Quality scorecard bar chart — mirrors the reference's buildScorecardBar().
+ * Bars are threshold-colored: green (< 1%), orange (1–1.5%), red (≥ 1.5%).
+ * Each bar is one quality metric; the height is its error %.
+ */
+function barColor(v: number): string {
+  if (v >= 1.5) return "var(--red)";
+  if (v >= 1.0) return "var(--orange)";
+  if (v > 0)    return "var(--green)";
+  return "var(--muted)";
+}
+
+function ScorecardBarTooltip({ active, payload }: { active?: boolean; payload?: { payload: { name: string; value: number } }[] }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div style={{
+      background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 8,
+      padding: "8px 12px", fontSize: 12, color: "var(--text)", boxShadow: "var(--shadow)",
+    }}>
+      <div style={{ color: "var(--muted-strong)", fontWeight: 700, marginBottom: 2 }}>{d.name}</div>
+      <div>Error: <strong style={{ color: barColor(d.value ?? 0) }}>{(d.value ?? 0).toFixed(3)}%</strong></div>
+    </div>
+  );
+}
+
+function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; value: number | null }[]; title: string; hc?: string }) {
+  const data = metrics.filter((m) => m.value !== null).map((m) => ({ name: m.name, value: m.value as number }));
+  if (data.length === 0) {
+    return <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
+  }
+  return (
+    <div className="oc-card" style={{ "--hc": hc ?? "var(--red)" } as React.CSSProperties}>
+      <h3>{title}</h3>
+      <ResponsiveContainer width="100%" height={Math.max(200, data.length * 40 + 60)}>
+        <BarChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 40 }} layout="vertical">
+          <CartesianGrid horizontal={false} stroke="rgba(42,58,82,0.25)" />
+          <XAxis
+            type="number" domain={[0, "auto"]}
+            tickLine={false} axisLine={false}
+            tick={{ fontSize: 11, fill: "var(--muted)" }}
+            tickFormatter={(v: number) => `${v.toFixed(2)}%`}
+          />
+          <YAxis
+            type="category" dataKey="name" width={150}
+            tickLine={false} axisLine={false}
+            tick={{ fontSize: 11, fill: "var(--muted-strong)", fontWeight: 600 }}
+          />
+          <RTooltip content={<ScorecardBarTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28}>
+            {data.map((d, i) => (
+              <Cell key={i} fill={barColor(d.value)} fillOpacity={0.82} />
+            ))}
+            <LabelList
+              dataKey="value"
+              position="right"
+              formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"}
+              style={{ fontSize: 11, fontWeight: 700, fill: "var(--muted-strong)" }}
+            />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 4, fontSize: 11 }}>
+        {[{ c: "var(--green)", l: "< 1% (Good)" }, { c: "var(--orange)", l: "1–1.5% (Warning)" }, { c: "var(--red)", l: "≥ 1.5% (Breach)" }].map(({ c, l }) => (
+          <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--muted)" }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: c, flexShrink: 0 }} /> {l}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Smooth filled area-line chart for the quality trend — mirrors the reference's
+ * multi-series line chart with 20% fill, tension 0.35, point markers.
+ */
+function QualityAreaChart({ points, title, hc }: { points: { bucket: string; taskCount: number; errorRate: number | null }[]; title: string; hc?: string }) {
+  if (points.length === 0) {
+    return null;
+  }
+  const data = points.map((p) => ({ ...p, errorRate: p.errorRate ?? 0 }));
+  return (
+    <div className="oc-card" style={{ "--hc": hc ?? "var(--red)" } as React.CSSProperties}>
+      <h3>{title}</h3>
+      <ResponsiveContainer width="100%" height={240}>
+        <AreaChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="qAreaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--red)" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="var(--red)" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
+          <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+          <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+          <RTooltip content={<DarkTooltip />} />
+          <Area
+            type="monotone" dataKey="errorRate" name="Error Rate %"
+            stroke="var(--red)" strokeWidth={2} fill="url(#qAreaGrad)"
+            dot={{ r: 3, fill: "var(--red)", stroke: "var(--card)", strokeWidth: 2 }}
+            activeDot={{ r: 6 }}
+          >
+            <LabelList dataKey="errorRate" position="top" fontSize={10} fill="var(--red)"
+              formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"} />
+          </Area>
+        </AreaChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -1248,44 +1362,67 @@ function QualityView({
   const errors = errorsQuery.data?.data;
   const dimLabel = { ims_client_name: "Client", docupedia_document_name: "Document Type", tl_name: "TL", am_name: "AM" }[dimension];
 
+  // Build scorecard metrics from the overview KPIs
+  const scorecardMetrics = ov ? [
+    { name: "Overall Error %", value: ov.overallErrorRate?.value ?? null },
+    { name: "Classification Error %", value: ov.classificationErrorRate?.value ?? null },
+    { name: "Extraction Error %", value: ov.extractionErrorRate?.value ?? null },
+    { name: "Add. Extraction Error %", value: ov.addExtractionErrorRate?.value ?? null },
+    { name: "Raw Extraction Error %", value: ov.rawExtractionErrorRate?.value ?? null },
+  ] : [];
+
   return (
     <div className="space-y-4">
       {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
+        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.overallErrorRate} kc="var(--red)" />
+          <KpiPlain kpi={ov.farRate} kc="var(--orange)" />
         </div>
       )}
-      {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-          <KpiPlain kpi={ov.classificationErrorRate} kc="var(--purple)" />
-          <KpiPlain kpi={ov.extractionErrorRate} kc="var(--purple)" />
-          <KpiPlain kpi={ov.rawExtractionErrorRate} kc="var(--purple)" />
-        </div>
+
+      {scorecardMetrics.length > 0 && (
+        <ScorecardBarChart
+          metrics={scorecardMetrics}
+          title="Quality Scorecard — Error Rates by Stage"
+          hc="var(--red)"
+        />
       )}
 
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>Overall Error Rate Trend</h3>
+          <h3 style={{ marginBottom: 0 }}>Error Rate Trend</h3>
           <PillGroup
             value={granularity} onChange={setGranularity}
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
           />
         </div>
-        <div className="oc-card-sub">Errors ÷ tasks audited, per bucket — always a real 0-100% ratio regardless of bucket width.</div>
+        <div className="oc-card-sub">Errors ÷ tasks audited per bucket.</div>
         {points.length === 0 ? (
           <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+            <AreaChart data={points.map((p) => ({ ...p, errorRate: p.errorRate ?? 0 }))} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="qTrendGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--red)" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="var(--red)" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <YAxis tickLine={false} axisLine={false} width={40} tick={{ fontSize: 11, fill: "var(--muted)" }} unit="%" />
+              <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
               <RTooltip content={<DarkTooltip />} />
-              <Line type="monotone" dataKey="errorRate" name="Error Rate %" stroke="var(--red)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
-                <LabelList dataKey="errorRate" position="top" fontSize={10} fill="var(--red)" formatter={(v: number) => `${v}%`} />
-              </Line>
-            </LineChart>
+              <Area
+                type="monotone" dataKey="errorRate" name="Error Rate %"
+                stroke="var(--red)" strokeWidth={2} fill="url(#qTrendGrad)"
+                dot={{ r: 3, fill: "var(--red)", stroke: "var(--card)", strokeWidth: 2 }}
+                activeDot={{ r: 6 }}
+              >
+                <LabelList dataKey="errorRate" position="top" fontSize={10} fill="var(--red)"
+                  formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"} />
+              </Area>
+            </AreaChart>
           </ResponsiveContainer>
         )}
       </div>
