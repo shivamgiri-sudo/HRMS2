@@ -804,7 +804,8 @@
     "1761_esic_registration_automation.sql",
     "1763_noc_cases_page_access.sql",
     "1765_portal_sessions.sql",
-    "1766_roster_live_monitoring_branch_head_wfm_only.sql"
+    "1766_roster_live_monitoring_branch_head_wfm_only.sql",
+    "1767_onfido_external_audit_add_total_columns.sql"
   ],
   "approvedDeletions": [
     {
