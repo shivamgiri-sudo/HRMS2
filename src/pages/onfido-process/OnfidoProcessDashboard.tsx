@@ -39,6 +39,8 @@ interface OverviewData {
   doc: {
     volume: KpiValue; avgAht: KpiValue; escalationRate: KpiValue;
     auditErrorRate: KpiValue; clientEscalationLines: KpiValue;
+    manualFarRate?: KpiValue; manualFrrRate?: KpiValue;
+    classificationRate?: KpiValue; extractionRate?: KpiValue;
   };
   poa: {
     volume: KpiValue; avgAht: KpiValue; errorRate: KpiValue;
@@ -55,6 +57,10 @@ interface TlBreakdownRow {
   docEscalations: number;
   docAuditErrorRate: number | null;
   escalationLines: number;
+  manualFarRate: number | null;
+  manualFrrRate: number | null;
+  classificationRate: number | null;
+  extractionRate: number | null;
 }
 
 interface TrendPoint { month: string; doc: number; poa: number }
@@ -2759,6 +2765,19 @@ export default function OnfidoProcessDashboard() {
             </div>
           </div>
 
+          {/* DOC Quality KPIs */}
+          {overview && (overview.doc.manualFarRate || overview.doc.manualFrrRate) && (
+          <div>
+            <SectionHead hc="var(--blue)" title="DOC External Audit Quality" subtitle="FAR/FRR use stage-specific audit counts as denominator (reference formula)" />
+            <div className="kr k4">
+              {overview.doc.manualFarRate && <KpiTile kpi={overview.doc.manualFarRate} onDrill={setMetricDrilldown} />}
+              {overview.doc.manualFrrRate && <KpiTile kpi={overview.doc.manualFrrRate} onDrill={setMetricDrilldown} />}
+              {overview.doc.classificationRate && <KpiTile kpi={overview.doc.classificationRate} onDrill={setMetricDrilldown} />}
+              {overview.doc.extractionRate && <KpiTile kpi={overview.doc.extractionRate} onDrill={setMetricDrilldown} />}
+            </div>
+          </div>
+          )}
+
           {/* POA KPIs */}
           <div>
             <SectionHead hc="var(--teal)" title="POA Queue" subtitle="Click any card to drill down" />
@@ -2795,13 +2814,17 @@ export default function OnfidoProcessDashboard() {
                     <th className="oc-right">DOC Volume</th>
                     <th className="oc-right">Avg AHT</th>
                     <th className="oc-right">Escalations</th>
-                    <th className="oc-right">Audit Error Rate</th>
-                    <th className="oc-right">Client Escalation Lines</th>
+                    <th className="oc-right">Audit Error %</th>
+                    <th className="oc-right">Client Esc. Lines</th>
+                    <th className="oc-right">Manual FAR %</th>
+                    <th className="oc-right">Manual FRR %</th>
+                    <th className="oc-right">Class. Error %</th>
+                    <th className="oc-right">Ext. Error %</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tlRows.length === 0 && (
-                    <tr className="oc-empty-row"><td colSpan={6}>No data</td></tr>
+                    <tr className="oc-empty-row"><td colSpan={10}>No data</td></tr>
                   )}
                   {tlRows.map((row) => (
                     <tr
@@ -2818,6 +2841,10 @@ export default function OnfidoProcessDashboard() {
                       <td className="oc-right">{row.docEscalations}</td>
                       <td className="oc-right">{row.docAuditErrorRate !== null ? `${row.docAuditErrorRate}%` : "—"}</td>
                       <td className="oc-right">{row.escalationLines}</td>
+                      <td className="oc-right">{row.manualFarRate !== null ? `${row.manualFarRate}%` : "—"}</td>
+                      <td className="oc-right">{row.manualFrrRate !== null ? `${row.manualFrrRate}%` : "—"}</td>
+                      <td className="oc-right">{row.classificationRate !== null ? `${row.classificationRate}%` : "—"}</td>
+                      <td className="oc-right">{row.extractionRate !== null ? `${row.extractionRate}%` : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

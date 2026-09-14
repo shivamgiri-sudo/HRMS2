@@ -504,6 +504,16 @@ export const ONFIDO_DOC_EXTERNAL_AUDIT_CONFIG: OnfidoReportConfig = {
     { column: "raw_extraction_flag", header: "Raw.Ext. Yes", type: "int" },
     { column: "manual_far_flag", header: "Manual FAR. Yes", type: "int" },
     { column: "manual_frr_flag", header: "Manual FRR. Yes", type: "int" },
+    // Denominator columns — total audits of each stage on this row.
+    // Without these the FAR%/FRR%/extraction% calculations used COUNT(*) (all
+    // rows) as denominator instead of the stage-specific audit count, producing
+    // rates that were far too low when only a subset of rows covered each stage.
+    { column: "manual_far_total", header: "Manual FAR", type: "int" },
+    { column: "manual_frr_total", header: "Manual FRR", type: "int" },
+    { column: "classification_total", header: "Classification", type: "int" },
+    { column: "extraction_total", header: "Extraction", type: "int" },
+    { column: "add_extraction_total", header: "Add. Extraction", type: "int" },
+    { column: "raw_extraction_total", header: "Raw. Extraction", type: "int" },
   ],
 };
 ONFIDO_REPORT_CONFIGS.push(ONFIDO_DOC_EXTERNAL_AUDIT_CONFIG);

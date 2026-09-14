@@ -157,6 +157,10 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ONFIDO_POA_ETM: "import_onfido_poa_etm_batch",
   ONFIDO_TASK_SKIP: "import_onfido_task_skip_batch",
   ONFIDO_AGENT_DAILY: "import_onfido_agent_daily_batch",
+  // Clovia process raw-data reports — email daily, chat daily, CRM disposition
+  CLOVIA_EMAIL_DAILY: "import_clovia_email_daily_batch",
+  CLOVIA_CHAT_DAILY: "import_clovia_chat_daily_batch",
+  CLOVIA_CRM_DISPOSITION: "import_clovia_crm_disposition_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {

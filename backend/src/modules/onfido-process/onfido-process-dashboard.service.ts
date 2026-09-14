@@ -124,6 +124,23 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
     [f.from, f.to, ...filterParams]
   );
 
+  // DOC external audit quality metrics — FAR%, FRR%, classification%, extraction%.
+  // Denominator comes from the per-row total columns (SUM of stage-specific audit counts),
+  // not COUNT(*) — the reference dashboard formula: FAR% = SUM(far_flag) / SUM(far_total).
+  const docExtQuality = await scalar<RowDataPacket & {
+    audits: number; errors: number;
+    farN: number; farTotal: number; frrN: number; frrTotal: number;
+    classN: number; classTotal: number; extN: number; extTotal: number;
+  }>(
+    `SELECT COUNT(*) AS audits, COALESCE(SUM(has_error),0) AS errors,
+            COALESCE(SUM(manual_far_flag),0) AS farN, COALESCE(SUM(manual_far_total),0) AS farTotal,
+            COALESCE(SUM(manual_frr_flag),0) AS frrN, COALESCE(SUM(manual_frr_total),0) AS frrTotal,
+            COALESCE(SUM(classification_flag),0) AS classN, COALESCE(SUM(classification_total),0) AS classTotal,
+            COALESCE(SUM(extraction_flag),0) AS extN, COALESCE(SUM(extraction_total),0) AS extTotal
+       FROM onfido_doc_external_audit_raw WHERE report_date BETWEEN ? AND ? ${filterClause}`,
+    [f.from, f.to, ...filterParams]
+  );
+
   const poaVolume = await scalar<RowDataPacket & { n: number; aht: number | null }>(
     `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
        FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
@@ -191,6 +208,34 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
         "doc_client_escalations", "DOC Client-Reported Errors (lines)", (cre.line_count ?? 0) + (crq.line_count ?? 0), "count",
         `${cre.reports ?? 0} distinct CRE report(s), ${crq.reports ?? 0} distinct CRQ report(s)`
       ),
+      manualFarRate: kpi(
+        "doc_manual_far_rate", "DOC Manual FAR%",
+        rate(Number(docExtQuality.farN), Number(docExtQuality.farTotal)), "percent",
+        Number(docExtQuality.farTotal) > 0
+          ? `${docExtQuality.farN} errors of ${docExtQuality.farTotal} FAR audits`
+          : "no FAR audits in range"
+      ),
+      manualFrrRate: kpi(
+        "doc_manual_frr_rate", "DOC Manual FRR%",
+        rate(Number(docExtQuality.frrN), Number(docExtQuality.frrTotal)), "percent",
+        Number(docExtQuality.frrTotal) > 0
+          ? `${docExtQuality.frrN} errors of ${docExtQuality.frrTotal} FRR audits`
+          : "no FRR audits in range"
+      ),
+      classificationRate: kpi(
+        "doc_classification_rate", "DOC Classification Error%",
+        rate(Number(docExtQuality.classN), Number(docExtQuality.classTotal)), "percent",
+        Number(docExtQuality.classTotal) > 0
+          ? `${docExtQuality.classN} of ${docExtQuality.classTotal} classification audits`
+          : "no classification audits in range"
+      ),
+      extractionRate: kpi(
+        "doc_extraction_rate", "DOC Extraction Error%",
+        rate(Number(docExtQuality.extN), Number(docExtQuality.extTotal)), "percent",
+        Number(docExtQuality.extTotal) > 0
+          ? `${docExtQuality.extN} of ${docExtQuality.extTotal} extraction audits`
+          : "no extraction audits in range"
+      ),
     },
     poa: {
       volume: kpi("poa_volume", "POA Reports Processed", (poaVolume.n ?? 0) + (poaTrial.n ?? 0), "count",
@@ -221,6 +266,10 @@ export interface TlBreakdownRow {
   docEscalations: number;
   docAuditErrorRate: number | null;
   escalationLines: number;
+  manualFarRate: number | null;
+  manualFrrRate: number | null;
+  classificationRate: number | null;
+  extractionRate: number | null;
 }
 
 /** Per-TL rollup for the same date range — the table the KPI cards drill into. */
@@ -254,17 +303,31 @@ export async function getTlBreakdown(rawFilters: { from?: string; to?: string })
        GROUP BY tl_name`,
     [f.from, f.to]
   );
+  const [extAuditRows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name,
+            COALESCE(SUM(manual_far_flag),0) AS farN, COALESCE(SUM(manual_far_total),0) AS farTotal,
+            COALESCE(SUM(manual_frr_flag),0) AS frrN, COALESCE(SUM(manual_frr_total),0) AS frrTotal,
+            COALESCE(SUM(classification_flag),0) AS classN, COALESCE(SUM(classification_total),0) AS classTotal,
+            COALESCE(SUM(extraction_flag),0) AS extN, COALESCE(SUM(extraction_total),0) AS extTotal
+       FROM onfido_doc_external_audit_raw WHERE report_date BETWEEN ? AND ?
+       GROUP BY tl_name`,
+    [f.from, f.to]
+  );
 
   const qualityByTl = new Map(qualityRows.map((r) => [r.tl_name, r]));
+  const extAuditByTl = new Map(extAuditRows.map((r) => [r.tl_name as string, r]));
   const escByTl = new Map<string, number>();
   for (const r of [...creRows, ...crqRows]) {
     escByTl.set(r.tl_name, (escByTl.get(r.tl_name) ?? 0) + Number(r.n));
   }
 
+  const rateN = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+
   return docRows.map((r): TlBreakdownRow => {
     const q = qualityByTl.get(r.tl_name);
     const audits = q ? Number(q.audits) : 0;
     const errors = q ? Number(q.errors) : 0;
+    const ea = extAuditByTl.get(r.tl_name);
     return {
       tlName: r.tl_name,
       docVolume: Number(r.n),
@@ -272,6 +335,10 @@ export async function getTlBreakdown(rawFilters: { from?: string; to?: string })
       docEscalations: Number(r.esc ?? 0),
       docAuditErrorRate: audits > 0 ? Math.round((errors / audits) * 1000) / 10 : null,
       escalationLines: escByTl.get(r.tl_name) ?? 0,
+      manualFarRate: ea ? rateN(Number(ea.farN), Number(ea.farTotal)) : null,
+      manualFrrRate: ea ? rateN(Number(ea.frrN), Number(ea.frrTotal)) : null,
+      classificationRate: ea ? rateN(Number(ea.classN), Number(ea.classTotal)) : null,
+      extractionRate: ea ? rateN(Number(ea.extN), Number(ea.extTotal)) : null,
     };
   }).sort((a, b) => b.docVolume - a.docVolume);
 }
@@ -362,6 +429,22 @@ const METRIC_DEFS: Record<string, MetricDef> = {
   poa_error_data_comparison: {
     key: "poa_error_data_comparison", table: "onfido_poa_quality_raw", dateColumn: "report_completed_date", kind: "rate",
     numeratorExpr: "SUM(data_comparison_error)", denominatorExpr: "SUM(total_qc)", recordFilter: "data_comparison_error > 0",
+  },
+  doc_manual_far_rate: {
+    key: "doc_manual_far_rate", table: "onfido_doc_external_audit_raw", dateColumn: "report_date", kind: "rate",
+    numeratorExpr: "SUM(manual_far_flag)", denominatorExpr: "SUM(manual_far_total)", recordFilter: "manual_far_flag > 0",
+  },
+  doc_manual_frr_rate: {
+    key: "doc_manual_frr_rate", table: "onfido_doc_external_audit_raw", dateColumn: "report_date", kind: "rate",
+    numeratorExpr: "SUM(manual_frr_flag)", denominatorExpr: "SUM(manual_frr_total)", recordFilter: "manual_frr_flag > 0",
+  },
+  doc_classification_rate: {
+    key: "doc_classification_rate", table: "onfido_doc_external_audit_raw", dateColumn: "report_date", kind: "rate",
+    numeratorExpr: "SUM(classification_flag)", denominatorExpr: "SUM(classification_total)", recordFilter: "classification_flag > 0",
+  },
+  doc_extraction_rate: {
+    key: "doc_extraction_rate", table: "onfido_doc_external_audit_raw", dateColumn: "report_date", kind: "rate",
+    numeratorExpr: "SUM(extraction_flag)", denominatorExpr: "SUM(extraction_total)", recordFilter: "extraction_flag > 0",
   },
 };
 
@@ -737,9 +820,12 @@ export async function getAnalystPerformance(email: string, rawFilters: { from?: 
   );
   if (!identity || !identity.n) return null;
 
-  const agg = await scalar<RowDataPacket & { total: number; errors: number; farN: number; frrN: number; avgSecs: number | null }>(
+  const agg = await scalar<RowDataPacket & { total: number; errors: number; farN: number; frrN: number; farTotal: number; frrTotal: number; avgSecs: number | null }>(
     `SELECT COUNT(*) AS total, SUM(has_error) AS errors, SUM(manual_far_flag) AS farN,
-            SUM(manual_frr_flag) AS frrN, AVG(manual_processing_time_secs) AS avgSecs
+            SUM(manual_frr_flag) AS frrN,
+            COALESCE(SUM(manual_far_total), 0) AS farTotal,
+            COALESCE(SUM(manual_frr_total), 0) AS frrTotal,
+            AVG(manual_processing_time_secs) AS avgSecs
        FROM onfido_doc_external_audit_raw
       WHERE LOWER(analyst_email) = LOWER(?) AND report_date BETWEEN ? AND ?`,
     [email, f.from, f.to]
@@ -784,6 +870,8 @@ export async function getAnalystPerformance(email: string, rawFilters: { from?: 
   const errors = Number(agg.errors ?? 0);
   const farN = Number(agg.farN ?? 0);
   const frrN = Number(agg.frrN ?? 0);
+  const farTotal = Number(agg.farTotal ?? 0);
+  const frrTotal = Number(agg.frrTotal ?? 0);
   const poaTotal = Number(poaQ.errors ?? 0) + Number(poaQ.noErrors ?? 0);
 
   return {
@@ -794,8 +882,10 @@ export async function getAnalystPerformance(email: string, rawFilters: { from?: 
     totalTasks: kpi("analyst_total_tasks", "Total Tasks", total, "count"),
     avgManualProcessingTime: kpi("analyst_avg_time", "Avg Handling Time", agg.avgSecs !== null ? Math.round(Number(agg.avgSecs)) : null, "seconds"),
     overallErrorRate: kpi("analyst_overall_err", "Overall Error Rate", rate(errors, total), "percent", `${errors} of ${total}`),
-    manualFarRate: kpi("analyst_far", "Manual FAR Rate", rate(farN, total), "percent", `${farN} of ${total}`),
-    manualFrrRate: kpi("analyst_frr", "Manual FRR Rate", rate(frrN, total), "percent", `${frrN} of ${total}`),
+    manualFarRate: kpi("analyst_far", "Manual FAR Rate", rate(farN, farTotal), "percent",
+      farTotal > 0 ? `${farN} of ${farTotal} FAR audits` : "no FAR audits in range"),
+    manualFrrRate: kpi("analyst_frr", "Manual FRR Rate", rate(frrN, frrTotal), "percent",
+      frrTotal > 0 ? `${frrN} of ${frrTotal} FRR audits` : "no FRR audits in range"),
     poaTasks: kpi("analyst_poa_tasks", "POA Tasks", Number(poaAgg.n ?? 0), "count"),
     poaAvgAht: kpi("analyst_poa_aht", "POA Avg Handling Time", poaAgg.aht !== null ? Math.round(Number(poaAgg.aht)) : null, "seconds"),
     poaErrorRate: kpi("analyst_poa_err", "POA Error Rate", rate(Number(poaQ.errors ?? 0), poaTotal), "percent",
@@ -848,7 +938,9 @@ export async function listAlerts(rawFilters: { from?: string; to?: string }, thr
 
   const [auditRows] = await pool.query<RowDataPacket[]>(
     `SELECT analyst_email, COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name,
-            COUNT(*) AS total, SUM(has_error) AS errors, SUM(manual_far_flag) AS farN, SUM(manual_frr_flag) AS frrN
+            COUNT(*) AS total, SUM(has_error) AS errors,
+            SUM(manual_far_flag) AS farN, SUM(manual_frr_flag) AS frrN,
+            COALESCE(SUM(manual_far_total), 0) AS farTotal, COALESCE(SUM(manual_frr_total), 0) AS frrTotal
        FROM onfido_doc_external_audit_raw
       WHERE report_date BETWEEN ? AND ? AND analyst_email IS NOT NULL AND analyst_email <> ''
       GROUP BY analyst_email, tl_name`,
@@ -870,8 +962,10 @@ export async function listAlerts(rawFilters: { from?: string; to?: string }, thr
     const total = Number(r.total);
     if (total === 0) continue;
     const overallPct = round1((Number(r.errors ?? 0) / total) * 100);
-    const farPct = round1((Number(r.farN ?? 0) / total) * 100);
-    const frrPct = round1((Number(r.frrN ?? 0) / total) * 100);
+    const farTotal = Number(r.farTotal ?? 0);
+    const frrTotal = Number(r.frrTotal ?? 0);
+    const farPct = farTotal > 0 ? round1((Number(r.farN ?? 0) / farTotal) * 100) : 0;
+    const frrPct = frrTotal > 0 ? round1((Number(r.frrN ?? 0) / frrTotal) * 100) : 0;
     if (overallPct > thresholds.overallErrorPct) {
       alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, metric: "Overall Error %", value: overallPct, threshold: thresholds.overallErrorPct, severity: severityFor(overallPct, thresholds.overallErrorPct) });
     }
