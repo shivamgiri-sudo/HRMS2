@@ -16,7 +16,9 @@ type GuideActivity = {
   id: string;
   title: string;
   description: string;
+  path?: string;
   steps: GuideStep[];
+  screenGuide?: string;
   example: string;
   tip?: string;
 };
@@ -41,10 +43,473 @@ type RoleGuide = {
 
 const GUIDE_DATA: Record<string, RoleGuide> = {
 
+  // ─── SUPER ADMIN ───────────────────────────────────────────────────────────
   super_admin: {
     roleLabel: "Super Admin",
-    description: "Full platform control — user management, configuration, security, audit, and all modules.",
+    description: "Full platform control — user management, configuration, security, audit, and all modules across every branch and department. You see everything; you approve everything.",
     modules: [
+      {
+        id: "sa-user-mgmt",
+        title: "User Management & Access Control",
+        icon: <Users className="h-4 w-4" />,
+        color: "#6366f1",
+        bgColor: "from-indigo-50 to-purple-50",
+        borderColor: "border-indigo-200",
+        activities: [
+          {
+            id: "create-user",
+            title: "Create a New User Account",
+            description: "Add a new employee login with the correct role and branch scope.",
+            path: "/super-admin/page-access",
+            steps: [
+              { step: 1, action: "Go to Admin → Access Control", detail: "Menu path: Settings → Access Control — only Super Admins see this." },
+              { step: 2, action: "Search the employee by name or EmpCode in the search bar." },
+              { step: 3, action: "Click 'Assign Role', select the correct role from the dropdown (e.g. payroll, hr, wfm)." },
+              { step: 4, action: "Set Branch scope if the role is branch-level (e.g. HR at Noida)." },
+              { step: 5, action: "Save — the employee can now log in with their registered email and the default password." },
+              { step: 6, action: "Notify the employee to reset their password on first login." },
+            ],
+            screenGuide: "The Access Control page shows a searchable table of all employees. Each row has a 'Role' badge column and an 'Actions' dropdown. The assign-role form slides in from the right.",
+            example: "New Payroll Head joining Noida. Find her by EmpCode 'EMP1452', click Assign Role → select 'payroll' → Branch = Noida → Save. She logs in with her registered email.",
+            tip: "Always assign the narrowest role that fits the job. A branch-level HR does not need Super Admin access.",
+          },
+          {
+            id: "page-access",
+            title: "Grant or Revoke Page Access for a Role",
+            description: "Control which pages each role can see, beyond default role grants.",
+            path: "/super-admin/page-access",
+            steps: [
+              { step: 1, action: "Go to Admin → Page Access (/super-admin/page-access)." },
+              { step: 2, action: "Use the search box to find the page by its code or name (e.g. QUALITY_DASHBOARD)." },
+              { step: 3, action: "Click the page row to open the role matrix panel on the right." },
+              { step: 4, action: "Toggle the role ON or OFF in the matrix." },
+              { step: 5, action: "Changes take effect on the user's next page load — no restart required." },
+            ],
+            screenGuide: "Left side shows a list of all page codes with their current role list. Right panel shows a grid of every role with a green/grey toggle for that page.",
+            example: "You want Trainers to see the Quality Dashboard. Find 'QUALITY_DASHBOARD', open it, flip the 'trainer' toggle to ON. All Trainer-role users now see the Quality Dashboard in their sidebar.",
+          },
+          {
+            id: "reset-password",
+            title: "Reset an Employee's Password",
+            description: "Force a password reset for an employee who is locked out or forgot their credentials.",
+            path: "/super-admin/page-access",
+            steps: [
+              { step: 1, action: "Go to Access Control, find the employee." },
+              { step: 2, action: "Click the three-dot menu on their row → 'Reset Password'." },
+              { step: 3, action: "Confirm the reset — the system sets a temporary password and emails the employee." },
+              { step: 4, action: "Alternatively, click 'Force Logout' to invalidate all active sessions." },
+            ],
+            screenGuide: "The three-dot menu on each user row reveals: Edit Role, Reset Password, Force Logout, Deactivate Account.",
+            example: "Employee says they are locked out. Find them in Access Control, click Reset Password. They get an email with a one-time link to set a new password.",
+          },
+        ],
+      },
+      {
+        id: "sa-org",
+        title: "Organisation Setup",
+        icon: <Building2 className="h-4 w-4" />,
+        color: "#0ea5e9",
+        bgColor: "from-sky-50 to-cyan-50",
+        borderColor: "border-sky-200",
+        activities: [
+          {
+            id: "add-branch",
+            title: "Add a New Branch",
+            description: "Register a new office location that employees, rosters and payroll can be linked to.",
+            path: "/org-masters",
+            steps: [
+              { step: 1, action: "Go to Admin → Org Masters (/org-masters)." },
+              { step: 2, action: "Click the 'Branches' tab at the top of the page." },
+              { step: 3, action: "Click 'Add Branch' — a form opens." },
+              { step: 4, action: "Fill: Branch Name, City, State, GST State Code (2-digit), and set Active = Yes." },
+              { step: 5, action: "Save — the branch is now selectable in employee forms, rosters, and billing." },
+            ],
+            screenGuide: "Org Masters has six tabs: Branches, Departments, Designations, Cost Centers, Processes, Shifts. Each tab shows a searchable card grid.",
+            example: "New office opening in Pune. Add branch 'Pune HO', State = Maharashtra, GST code 27, Active = Yes. All Pune employees and their roster entries can now be assigned here.",
+          },
+          {
+            id: "add-designation",
+            title: "Add Designations and Departments",
+            description: "Maintain the official designation and department master lists used across profiles and payroll.",
+            path: "/org-masters",
+            steps: [
+              { step: 1, action: "Go to Admin → Org Masters, select the 'Designations' tab." },
+              { step: 2, action: "Click 'Add Designation', enter the title and the level/grade." },
+              { step: 3, action: "Switch to the 'Departments' tab to add departments similarly." },
+              { step: 4, action: "New designations and departments appear immediately in employee profile dropdowns." },
+            ],
+            screenGuide: "Each tab in Org Masters shows a table with an Add button in the top-right. The add form is an inline modal.",
+            example: "New job title 'Senior Process Executive' is approved for band L3. Add it under Designations. HR Admins can now assign this designation during onboarding.",
+          },
+          {
+            id: "holiday-calendar",
+            title: "Configure the Holiday Calendar",
+            description: "Set the official public holidays and optional/restricted holidays for the year.",
+            path: "/calendar",
+            steps: [
+              { step: 1, action: "Go to Admin → Company Calendar or HR section → Holiday Calendar." },
+              { step: 2, action: "Click 'Add Holiday' or 'Import Holiday List'." },
+              { step: 3, action: "For each holiday: set date, name, type (National/Regional/Optional), and applicable branches." },
+              { step: 4, action: "Publish the calendar — it becomes visible to all employees and affects leave deductions." },
+              { step: 5, action: "Employees can see upcoming holidays on their attendance and leave pages." },
+            ],
+            screenGuide: "The calendar page shows a full 12-month calendar with colour-coded holiday markers. Clicking any date opens an edit popover.",
+            example: "For FY 2026-27, upload the Maharashtra holiday list. Diwali (Oct 23) is marked as National; Gudhi Padwa (Mar 30) as Regional for Maharashtra branches only.",
+          },
+        ],
+      },
+      {
+        id: "sa-employees",
+        title: "Employee Management",
+        icon: <Users2 className="h-4 w-4" />,
+        color: "#10b981",
+        bgColor: "from-emerald-50 to-green-50",
+        borderColor: "border-emerald-200",
+        activities: [
+          {
+            id: "add-employee",
+            title: "Add a New Employee Manually",
+            description: "Create a full employee profile with all details — personal, statutory, bank, and employment.",
+            path: "/employees",
+            steps: [
+              { step: 1, action: "Go to Employees → click 'Add Employee' in the top-right." },
+              { step: 2, action: "Fill Personal Info: full name, date of birth, gender, phone, personal email." },
+              { step: 3, action: "Fill Employment Info: joining date, designation, department, branch, cost centre." },
+              { step: 4, action: "Fill Statutory: PAN, Aadhaar, UAN number, bank account and IFSC." },
+              { step: 5, action: "Upload joining documents: offer letter, ID proof, education certificates." },
+              { step: 6, action: "Save and Generate EmpCode — the system auto-assigns the next code in sequence." },
+            ],
+            screenGuide: "The Add Employee form is a multi-step wizard with 5 tabs at the top: Personal, Employment, Statutory, Bank, Documents. Progress indicator shows your step.",
+            example: "Anjali Sharma joins 01-Nov as Senior Process Executive at Noida for Axis Inbound. Fill all tabs, upload her Aadhaar and PAN, save. EmpCode EMP1531 generated.",
+            tip: "Complete all statutory fields (PAN, Aadhaar, bank) before running the first payroll for the employee.",
+          },
+          {
+            id: "bulk-upload-emp",
+            title: "Bulk Upload Employee Data",
+            description: "Import multiple employees at once from an Excel sheet — useful for large onboarding batches.",
+            path: "/bulk-upload",
+            steps: [
+              { step: 1, action: "Go to Onboarding → Bulk Upload (/bulk-upload)." },
+              { step: 2, action: "Download the Excel template by clicking 'Download Template'." },
+              { step: 3, action: "Fill the template: one row per employee, all mandatory columns in order." },
+              { step: 4, action: "Upload the filled sheet. The system validates each row and shows errors inline." },
+              { step: 5, action: "Fix any errors (red rows), re-upload, then click 'Submit for Approval'." },
+              { step: 6, action: "An authorised HR Admin reviews and approves the batch before records are created." },
+            ],
+            screenGuide: "Bulk Upload shows a drag-drop zone at the top, then a row-by-row validation grid below. Red rows have errors; green rows are ready.",
+            example: "20 new Axis Inbound joiners. Download template, fill their details, upload. 18 rows pass; 2 have wrong IFSC codes. Fix those 2, re-upload. Submit. HR Admin approves.",
+          },
+          {
+            id: "employee-transfer",
+            title: "Transfer an Employee to Another Branch",
+            description: "Move an employee to a new branch or process, updating their reporting structure.",
+            path: "/employees",
+            steps: [
+              { step: 1, action: "Open the employee's profile from the Employees directory." },
+              { step: 2, action: "Click the 'Transfer' action from the profile menu." },
+              { step: 3, action: "Select: new branch, new department, new cost centre, and effective date." },
+              { step: 4, action: "Optionally change the reporting manager." },
+              { step: 5, action: "Save — the transfer is logged in the employee's career timeline with full audit." },
+            ],
+            screenGuide: "The Transfer form is a right-side drawer with dropdown fields. The career timeline on the profile tab shows a new entry after saving.",
+            example: "Rahul is moving from Delhi to the Pune branch effective 01-Dec. Open his profile → Transfer → select Branch = Pune, Department = Operations, effective 01-Dec → Save.",
+          },
+        ],
+      },
+      {
+        id: "sa-attendance",
+        title: "Attendance Administration",
+        icon: <Clock className="h-4 w-4" />,
+        color: "#f59e0b",
+        bgColor: "from-amber-50 to-yellow-50",
+        borderColor: "border-amber-200",
+        activities: [
+          {
+            id: "team-attendance",
+            title: "View Team-Wide Attendance Grid",
+            description: "See attendance status for every employee across all branches in a single grid.",
+            path: "/wfm/team-attendance",
+            steps: [
+              { step: 1, action: "Go to Attendance → Team Attendance (/wfm/team-attendance)." },
+              { step: 2, action: "Select the month and branch/process filter." },
+              { step: 3, action: "The grid shows each employee as a row and each day as a column." },
+              { step: 4, action: "Colour codes: Green = Present, Red = Absent, Blue = Leave, Grey = Week-off, Yellow = Late." },
+              { step: 5, action: "Click any cell to see punch-in/out times and the status reason." },
+            ],
+            screenGuide: "A large grid — rows are employees, columns are dates. A colour legend appears at the top-right. Filtering dropdowns are at the top-left.",
+            example: "It's 15-Nov. Open Team Attendance for the Noida branch. You see 3 employees in red (absent) on 13-Nov with no leave application — investigate with their TL.",
+          },
+          {
+            id: "attendance-dispute",
+            title: "Resolve an Attendance Dispute",
+            description: "Review and decide on contested attendance records raised by employees.",
+            path: "/attendance/disputes",
+            steps: [
+              { step: 1, action: "Go to Attendance → Attendance Disputes (/attendance/disputes)." },
+              { step: 2, action: "See all open disputes listed by employee, date, and dispute reason." },
+              { step: 3, action: "Click a dispute to see the employee's claim vs the biometric log." },
+              { step: 4, action: "Review evidence (employee's reason, biometric data, supervisor comment)." },
+              { step: 5, action: "Accept the correction or reject with a reason. The employee is notified." },
+            ],
+            screenGuide: "Disputes page shows a card list of open cases. Each card shows the date, type (Missing Punch, Wrong Time, etc.) and the employee's photo and name.",
+            example: "Seema disputes 10-Oct as absent — she says the biometric failed. Dispute shows punch-in at 09:22, no punch-out. She provides a supervisor confirmation. Accept the dispute and mark as Present.",
+          },
+          {
+            id: "attendance-lookup",
+            title: "Look Up Any Employee's Attendance",
+            description: "View detailed punch-by-punch attendance history for any individual.",
+            path: "/hr/attendance-lookup",
+            steps: [
+              { step: 1, action: "Go to Attendance → Attendance Lookup (/hr/attendance-lookup)." },
+              { step: 2, action: "Search by EmpCode or name." },
+              { step: 3, action: "Select the date range." },
+              { step: 4, action: "View: daily status, punch-in, punch-out, total hours, late marks." },
+              { step: 5, action: "Export to Excel for payroll reconciliation if needed." },
+            ],
+            screenGuide: "Attendance Lookup shows a compact calendar month view on the left and a detailed punch log table on the right.",
+            example: "Payroll query on EMP1102 — 5 days showing as absent in October. Use Attendance Lookup to verify biometric logs. 3 days had no biometric data at all — escalate to security for device check.",
+          },
+        ],
+      },
+      {
+        id: "sa-payroll",
+        title: "Payroll Administration",
+        icon: <DollarSign className="h-4 w-4" />,
+        color: "#ef4444",
+        bgColor: "from-red-50 to-rose-50",
+        borderColor: "border-red-200",
+        activities: [
+          {
+            id: "run-payroll",
+            title: "Initiate and Approve the Monthly Payroll Run",
+            description: "Trigger the payroll computation for a given month and approve it for disbursement.",
+            path: "/payroll-hr/dashboard",
+            steps: [
+              { step: 1, action: "Go to Payroll → Payroll Dashboard (/payroll-hr/dashboard)." },
+              { step: 2, action: "Click 'New Payroll Run' and select the month (e.g. October 2026)." },
+              { step: 3, action: "The system pre-checks: attendance data locked, salary revisions applied, LOP counts verified." },
+              { step: 4, action: "Click 'Run Computation' — payroll calculates gross, deductions, net for every active employee." },
+              { step: 5, action: "Review the summary: total gross, total deductions, total net. Check employee-level breakdown." },
+              { step: 6, action: "Click 'Approve' to finalise. Payslips are generated and visible to employees." },
+            ],
+            screenGuide: "The Payroll Dashboard shows a monthly calendar on the left and a current run status panel on the right with a 5-step progress bar.",
+            example: "October 31st. Run payroll for October. System shows 312 employees, gross ₹1.82 Cr, deductions ₹38L, net ₹1.44 Cr. Verify 5 new joiners are included. Approve. Payslips released at midnight.",
+            tip: "Never approve if the pre-check shows red. Fix attendance locks or salary revision issues first.",
+          },
+          {
+            id: "salary-config",
+            title: "Configure Salary Slabs and Components",
+            description: "Set up the salary structure: basic %, HRA %, allowances, PF, ESIC thresholds.",
+            path: "/payroll-hr/dashboard",
+            steps: [
+              { step: 1, action: "Go to Payroll → Statutory Config or Salary Configuration." },
+              { step: 2, action: "Select the applicable branch and effective date for the configuration." },
+              { step: 3, action: "Set each component: Basic as % of CTC, HRA as % of Basic, Special Allowance as remainder." },
+              { step: 4, action: "Set PF basis (Basic or actual), ESIC threshold (₹21,000 per month), PT slab by state." },
+              { step: 5, action: "Save — new configuration applies from the set effective date onwards." },
+            ],
+            screenGuide: "Salary Configuration is a multi-section form with expandable panels for each component group. A preview panel on the right shows a sample payslip with the entered configuration.",
+            example: "New statutory rule: PF ceiling increased. Open Salary Config, update PF wage ceiling to ₹15,000 effective 01-Apr-26. All employees earning above ₹15,000 basic will have PF capped at ₹1,800.",
+          },
+        ],
+      },
+      {
+        id: "sa-ats",
+        title: "ATS & Recruitment",
+        icon: <Briefcase className="h-4 w-4" />,
+        color: "#8b5cf6",
+        bgColor: "from-violet-50 to-purple-50",
+        borderColor: "border-violet-200",
+        activities: [
+          {
+            id: "ats-overview",
+            title: "Review the ATS Recruitment Pipeline",
+            description: "Get a bird's-eye view of all active requisitions, candidate stages, and pending actions.",
+            path: "/ats/command-center",
+            steps: [
+              { step: 1, action: "Go to ATS → ATS Command Center (/ats/command-center)." },
+              { step: 2, action: "The dashboard shows: Open JRs by process, candidate funnel (Applied → Shortlisted → Offered → Joined)." },
+              { step: 3, action: "Filter by branch or process to drill into a specific pipeline." },
+              { step: 4, action: "Click any funnel stage number to see the candidate list at that stage." },
+              { step: 5, action: "Use the 'Aging' filter to find candidates stuck at a stage for more than 3 days." },
+            ],
+            screenGuide: "The Command Center has a large funnel chart in the centre. Below it is a card grid per process showing JR count, candidates pending review, and offers outstanding.",
+            example: "Axis Inbound has 47 candidates in screening, 12 pending ops round, 5 offers pending acceptance. Two offers are 8 days old — escalate to the hiring manager.",
+          },
+          {
+            id: "offer-approval",
+            title: "Approve an Offer Letter",
+            description: "Review and approve an offer generated by Recruitment HR before it is sent to the candidate.",
+            path: "/ats/offer-approvals",
+            steps: [
+              { step: 1, action: "Go to ATS → Onboarding → Offer Approvals (/ats/offer-approvals)." },
+              { step: 2, action: "See pending offers listed by candidate, role, CTC, and the requesting recruiter." },
+              { step: 3, action: "Click an offer to preview the full offer letter PDF." },
+              { step: 4, action: "Verify: CTC within the approved band, joining date, designation, and branch are correct." },
+              { step: 5, action: "Click Approve — the offer is sent to the candidate's email automatically." },
+            ],
+            screenGuide: "Offer Approvals shows a list of pending offers with status badges. Clicking any row opens a PDF preview in a right drawer with Approve/Reject buttons at the bottom.",
+            example: "Meenakshi applied for Process Executive. Offer: CTC ₹2.2L, joining 01-Dec, Noida. CTC within band. Approve. She receives the email offer letter within 2 minutes.",
+          },
+        ],
+      },
+      {
+        id: "sa-wfm",
+        title: "WFM & Roster",
+        icon: <Calendar className="h-4 w-4" />,
+        color: "#0ea5e9",
+        bgColor: "from-sky-50 to-blue-50",
+        borderColor: "border-sky-200",
+        activities: [
+          {
+            id: "roster-rules",
+            title: "Configure Roster Rules for a Process",
+            description: "Set minimum headcount, week-off pattern, minimum rest hours and shift constraints for a process.",
+            path: "/wfm/roster-rules",
+            steps: [
+              { step: 1, action: "Go to WFM & Roster → Roster Rules (/wfm/roster-rules)." },
+              { step: 2, action: "Select the process (e.g. Axis Inbound) from the dropdown." },
+              { step: 3, action: "Set: Min Headcount per day, Week-off Pattern (Rotational/Fixed), Min Rest between shifts (hrs)." },
+              { step: 4, action: "Add shift templates: Morning (09:00–18:00), Afternoon (13:00–22:00), Night (22:00–06:00)." },
+              { step: 5, action: "Save — the Roster Builder will enforce these rules when Process Managers build weekly rosters." },
+            ],
+            screenGuide: "Roster Rules is a form with three sections: Headcount Constraints, Shift Templates, and Week-off Policy. Each section has inline validation.",
+            example: "Axis Inbound must have minimum 15 agents on floor at all times. Set Min Headcount = 15, Week-off = Rotational (1 day/7), Min Rest = 10 hours. Save.",
+          },
+          {
+            id: "live-tracker",
+            title: "Monitor Live Attendance and Adherence",
+            description: "See real-time who is present, absent, on break, or late across all processes.",
+            path: "/wfm/live-tracker",
+            steps: [
+              { step: 1, action: "Go to Live Monitoring → WFM Tracker (/wfm/live-tracker)." },
+              { step: 2, action: "The dashboard auto-refreshes every 60 seconds with live biometric data." },
+              { step: 3, action: "Use branch and process filters to narrow the view." },
+              { step: 4, action: "Red tiles = agents who should be on shift but are not yet punched in." },
+              { step: 5, action: "Click any agent tile to see their shift schedule vs actual punch status." },
+            ],
+            screenGuide: "Live Tracker shows a coloured tile grid — one tile per agent. Green = On floor, Red = Absent/Late, Blue = Break, Orange = Approaching end of break.",
+            example: "At 09:45 AM you see 8 red tiles for Axis Inbound. Click one — agent Suraj was scheduled 09:00 but no biometric. You notify his TL to follow up.",
+          },
+        ],
+      },
+      {
+        id: "sa-exit",
+        title: "Exit Management",
+        icon: <UserPlus className="h-4 w-4" />,
+        color: "#ef4444",
+        bgColor: "from-red-50 to-orange-50",
+        borderColor: "border-red-200",
+        activities: [
+          {
+            id: "exit-overview",
+            title: "Review All Active Exit Cases",
+            description: "Get a consolidated view of every resignation, notice period status, and pending clearance.",
+            path: "/exit/command-center",
+            steps: [
+              { step: 1, action: "Go to Lifecycle → Exit Command Center (/exit/command-center)." },
+              { step: 2, action: "Filter by status: Submitted, Notice Period, Clearance Pending, Relieved." },
+              { step: 3, action: "Click any case to see the full timeline: resignation date, notice end, clearance tasks." },
+              { step: 4, action: "Check overdue clearance tasks — asset return, NOC from IT, salary dues." },
+              { step: 5, action: "Escalate or reassign blocked tasks to the responsible department." },
+            ],
+            screenGuide: "Exit Command Center is a Kanban-style board with columns for each exit stage. Cards show employee name, process, and days remaining in notice.",
+            example: "Vikram resigned on 01-Oct with 30-day notice. It is now 01-Nov. His clearance shows IT NOC pending for 12 days. Escalate to IT Head to unblock his F&F.",
+          },
+          {
+            id: "ff-review",
+            title: "Review Full & Final Settlement",
+            description: "Verify the F&F calculation before final payout approval.",
+            path: "/exit/command-center",
+            steps: [
+              { step: 1, action: "Open an exit case that has reached 'Clearance Complete' status." },
+              { step: 2, action: "Click 'View F&F Calculation'." },
+              { step: 3, action: "Review: salary for notice period, leave encashment, deductions (notice shortfall, asset loss)." },
+              { step: 4, action: "If all is correct, click 'Approve F&F' — Payroll picks it up in the next run." },
+              { step: 5, action: "If is_ff_provisional = true, click 'Mark as Final' after verifying all components." },
+            ],
+            screenGuide: "F&F Calculation is a detailed table showing each earning and deduction component. A summary bar at the bottom shows the net payable amount.",
+            example: "Vikram's F&F: 2 days salary + 3 days leave encashment – notice shortfall 0 = net ₹8,400. Approve. Payroll includes in the November run.",
+          },
+        ],
+      },
+      {
+        id: "sa-reports",
+        title: "Reports & Audit Log",
+        icon: <BarChart3 className="h-4 w-4" />,
+        color: "#f59e0b",
+        bgColor: "from-amber-50 to-yellow-50",
+        borderColor: "border-amber-200",
+        activities: [
+          {
+            id: "audit-log",
+            title: "Review the System Audit Log",
+            description: "See every state-changing action taken by any user — who did what, when, and what changed.",
+            path: "/audit-log",
+            steps: [
+              { step: 1, action: "Go to Admin → Audit Log (/audit-log)." },
+              { step: 2, action: "Filter by: date range, user, module (e.g. payroll, leave, exit), or action type (create/update/delete)." },
+              { step: 3, action: "Click any log entry to see the before/after diff for the changed record." },
+              { step: 4, action: "Export the filtered view to CSV for compliance documentation." },
+            ],
+            screenGuide: "Audit Log shows a reverse-chronological table with columns: Timestamp, User, Module, Action, Record ID. The diff panel opens as a right drawer.",
+            example: "An employee disputes a payslip deduction. Filter Audit Log by module=payroll and employee EmpCode. Find the payroll run entry and see exactly which admin approved what values.",
+          },
+          {
+            id: "reports-center",
+            title: "Generate Any Module Report",
+            description: "Access the central Reports Hub to generate, schedule, or download reports from all modules.",
+            path: "/reports",
+            steps: [
+              { step: 1, action: "Go to Reports (/reports)." },
+              { step: 2, action: "Browse the report library by category: HR, Payroll, Attendance, WFM, Quality, ATS, Exit." },
+              { step: 3, action: "Click a report card, set date range and filters, click Generate." },
+              { step: 4, action: "Download as Excel, PDF, or CSV." },
+              { step: 5, action: "For recurring reports, click 'Schedule' to have the system email it weekly/monthly." },
+            ],
+            screenGuide: "Reports Hub is a card grid sorted by category. Each card shows the report name, output format icons, and an 'On-demand / Scheduled' badge.",
+            example: "Month-end. Generate 'Monthly Attendance Register' for October, all branches. Download as Excel. Share with the compliance team for statutory audit.",
+          },
+        ],
+      },
+      {
+        id: "sa-security",
+        title: "Security & Audit",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "#6366f1",
+        bgColor: "from-indigo-50 to-slate-50",
+        borderColor: "border-indigo-200",
+        activities: [
+          {
+            id: "two-factor",
+            title: "Configure Two-Factor Authentication",
+            description: "Enable or require 2FA for sensitive roles to protect the platform.",
+            path: "/super-admin/page-access",
+            steps: [
+              { step: 1, action: "Go to Admin → Security Settings." },
+              { step: 2, action: "Under '2FA Policy', choose: Off / Optional / Required for selected roles." },
+              { step: 3, action: "Select which roles must use 2FA (recommend: super_admin, payroll, finance)." },
+              { step: 4, action: "Save — users in those roles will be prompted to set up 2FA on next login." },
+            ],
+            screenGuide: "Security Settings is a single-page form with toggles per policy area: 2FA, Session Timeout, Password Complexity, IP Whitelist.",
+            example: "Following a security review, require 2FA for super_admin and payroll roles. Enable it in Security Settings. Next time those users log in, they must verify via OTP.",
+          },
+          {
+            id: "workflow-config",
+            title: "Configure Approval Workflows",
+            description: "Set up multi-stage approval chains for leave, exit, payroll, and expense workflows.",
+            path: "/super-admin/page-access",
+            steps: [
+              { step: 1, action: "Go to Admin → Workflow Configuration." },
+              { step: 2, action: "Select the workflow type (e.g. Leave Approval, Exit Clearance, Payroll Approval)." },
+              { step: 3, action: "Define stages: select who approves at each stage, escalation timer, bypass rules." },
+              { step: 4, action: "Save and activate — all new requests follow the new chain immediately." },
+            ],
+            screenGuide: "Workflow Config shows a drag-and-drop stage builder. Each stage is a card with approver role, escalation timer, and an optional bypass condition.",
+            example: "Leave approval now needs 2 stages: Process Manager → Branch Head. Open Leave workflow, add Stage 2 approver = Branch Head, escalation at 24 hours. Save.",
+          },
+        ],
+      },
       {
         id: "user-management",
         title: "User Management",
@@ -201,12 +666,13 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
     ],
   },
 
+  // ─── HR ADMIN ─────────────────────────────────────────────────────────────
   hr: {
     roleLabel: "HR Admin",
-    description: "Employee lifecycle, attendance, leave, onboarding, exit, letters, and compliance.",
+    description: "End-to-end employee lifecycle — onboarding, attendance, leave, exit, BGV, documents, payroll support, and all HR compliance activities.",
     modules: [
       {
-        id: "employee-management",
+        id: "hr-emp",
         title: "Employee Management",
         icon: <Users className="h-4 w-4" />,
         color: "#6366f1",
@@ -341,33 +807,188 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "generate-letter",
             title: "Generate an Offer or Experience Letter",
             description: "Create, preview, and download official HR letters for employees.",
+            path: "/offer-letter",
             steps: [
-              { step: 1, action: "Go to Support → Letters (/letters)" },
-              { step: 2, action: "Click 'New Letter', select the letter type (Offer, Experience, Salary, NOC, etc.)" },
-              { step: 3, action: "Search and select the employee" },
-              { step: 4, action: "Fill any additional fields (effective date, designation, CTC)" },
-              { step: 5, action: "Preview the letter — all placeholders are auto-filled from the employee's profile" },
-              { step: 6, action: "Download PDF or send to employee's email" },
+              { step: 1, action: "Go to ATS → Onboarding → Offer Letters (/offer-letter)." },
+              { step: 2, action: "Click 'New Letter', select the letter type (Offer, Experience, Salary Certificate, NOC, etc.)." },
+              { step: 3, action: "Search and select the employee by name or EmpCode." },
+              { step: 4, action: "Fill any additional fields required for the letter type (effective date, CTC, designation)." },
+              { step: 5, action: "Preview the letter — all profile fields are auto-populated from the employee record." },
+              { step: 6, action: "Download PDF or send directly to the employee's registered email." },
             ],
-            example: "Mohan needs an experience letter after leaving. Go to Letters, click New, type Experience Letter, select Mohan, preview — his full name, designation, and tenure are pulled automatically. Download PDF.",
+            screenGuide: "Letter Generator shows a split view — letter type form on the left, live PDF preview on the right. The preview updates as you change fields.",
+            example: "Mohan needs an experience letter after resignation. Select 'Experience Letter', pick Mohan (EMP0432), preview — shows joining date 12-Mar-2023, LWD 31-Oct-2026, designation. Download PDF.",
+          },
+        ],
+      },
+      {
+        id: "hr-onboarding",
+        title: "Onboarding & Joining",
+        icon: <UserPlus className="h-4 w-4" />,
+        color: "#10b981",
+        bgColor: "from-emerald-50 to-green-50",
+        borderColor: "border-emerald-200",
+        activities: [
+          {
+            id: "onboarding-bridge",
+            title: "Process a New Joiner via the Onboarding Bridge",
+            description: "Confirm a candidate's joining and convert them into an active employee record.",
+            path: "/ats/onboarding-bridge",
+            steps: [
+              { step: 1, action: "Go to ATS → Onboarding → Onboarding Bridge (/ats/onboarding-bridge)." },
+              { step: 2, action: "Find the candidate with status 'Offer Accepted' and joining date today or earlier." },
+              { step: 3, action: "Click 'Confirm Joining' — verify their EmpCode, branch, designation, and salary." },
+              { step: 4, action: "Upload any missing joining documents (Aadhaar, PAN, degree, bank passbook)." },
+              { step: 5, action: "Click 'Convert to Employee' — a full employee profile is created and EmpCode is assigned." },
+              { step: 6, action: "Trigger IT Provisioning and Admin Provisioning tasks from the same screen." },
+            ],
+            screenGuide: "Onboarding Bridge shows a Kanban board — columns: Offer Accepted, Documents Pending, Ready to Join, Converted. Drag cards or click to act.",
+            example: "Anjali is joining today as per her offer. Find her in the 'Offer Accepted' column. Click Confirm Joining, verify all details, upload her bank passbook. Click Convert. EmpCode EMP1541 created.",
+            tip: "Do not convert until all statutory documents (Aadhaar + PAN) are uploaded — it blocks payroll month-1.",
+          },
+          {
+            id: "joining-documents",
+            title: "Track Joining Document Completeness",
+            description: "Ensure every new joiner has submitted all required documents before going live.",
+            path: "/ats/joining-documents-tracker",
+            steps: [
+              { step: 1, action: "Go to ATS → Onboarding → Joining Documents (/ats/joining-documents-tracker)." },
+              { step: 2, action: "Filter by joining date range (e.g. this month's joiners)." },
+              { step: 3, action: "The grid shows each new employee with a colour-coded document checklist." },
+              { step: 4, action: "Green = uploaded & verified, Yellow = uploaded but unverified, Red = missing." },
+              { step: 5, action: "Click any red cell to send a reminder to the employee or upload on their behalf." },
+            ],
+            screenGuide: "Joining Documents Tracker is a spreadsheet-style grid. Rows = employees, columns = document types. The header shows the total completion %.",
+            example: "15 joiners this month. Filter by Oct 2026. See 3 employees with red PAN cells. Click each to send WhatsApp reminder: 'Please upload PAN card to complete your joining formalities'.",
+          },
+          {
+            id: "appointment-letters",
+            title: "Track Appointment Letter E-Signing",
+            description: "Monitor which new employees have received and signed their appointment letters.",
+            path: "/provisioning/appointment-letter",
+            steps: [
+              { step: 1, action: "Go to Onboarding → Appointment Letters (/provisioning/appointment-letter)." },
+              { step: 2, action: "See the list of all employees with pending or completed e-sign." },
+              { step: 3, action: "Green = signed, Red = not yet signed, Yellow = letter not yet sent." },
+              { step: 4, action: "Click 'Resend' for anyone who hasn't signed within 3 days of joining." },
+              { step: 5, action: "Download signed copies for your records." },
+            ],
+            screenGuide: "Appointment Letters page shows a table with columns: Employee Name, Letter Sent Date, Signed Date, Status badge. A bulk-resend button is at the top.",
+            example: "10 new joiners from 01-Nov batch. 7 have signed. 3 haven't in 5 days. Click Bulk Resend for unsigned records — they each get a fresh email with e-sign link.",
+          },
+        ],
+      },
+      {
+        id: "hr-bgv",
+        title: "BGV & Document Compliance",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "#f59e0b",
+        bgColor: "from-amber-50 to-yellow-50",
+        borderColor: "border-amber-200",
+        activities: [
+          {
+            id: "bgv-queue",
+            title: "Process BGV (Background Verification) Queue",
+            description: "Review and action pending BGV tasks for new and existing employees.",
+            path: "/ats/bgv",
+            steps: [
+              { step: 1, action: "Go to Onboarding → BGV Verification (/ats/bgv)." },
+              { step: 2, action: "The queue shows all employees with BGV status: Pending, In-Progress, Clear, Discrepancy." },
+              { step: 3, action: "Click any record to see the specific checks: ID verification, education, previous employment." },
+              { step: 4, action: "For discrepancies, open the details and decide: Escalate, Accept with note, or Reject (terminate)." },
+              { step: 5, action: "Update the BGV status — it reflects on the employee's profile and the onboarding tracker." },
+            ],
+            screenGuide: "BGV Verification shows a card grid with colour-coded status badges. Each card shows the employee photo, check types completed vs pending, and days since initiation.",
+            example: "Rajesh's BGV shows a discrepancy: his stated degree (B.Tech) is not matching the university records (Diploma). Open the case, review the uploaded certificate, mark as Discrepancy and escalate to HR Head.",
+          },
+          {
+            id: "statutory-approvals",
+            title: "Approve Statutory Detail Changes (PAN/Aadhaar/UAN)",
+            description: "Review and approve employee requests to update sensitive statutory identifiers.",
+            path: "/statutory-change-approvals",
+            steps: [
+              { step: 1, action: "Go to Onboarding → Statutory Detail Approvals (/statutory-change-approvals)." },
+              { step: 2, action: "See all pending change requests: employee name, field changing, old value, new value." },
+              { step: 3, action: "Click a request to see the uploaded proof document (new Aadhaar/PAN copy)." },
+              { step: 4, action: "Verify the document is valid and matches the new value." },
+              { step: 5, action: "Approve or Reject. If rejected, add a reason so the employee knows what to resubmit." },
+            ],
+            screenGuide: "Statutory Approvals is a list with before/after comparison for each changed field. The document proof opens in a side viewer.",
+            example: "Divya requests a PAN update — she received a new card after name change post-marriage. Open her request, view the uploaded new PAN PDF, confirm name matches HR records, Approve.",
+          },
+        ],
+      },
+      {
+        id: "hr-training",
+        title: "Training & LMS Coordination",
+        icon: <GraduationCap className="h-4 w-4" />,
+        color: "#8b5cf6",
+        bgColor: "from-violet-50 to-purple-50",
+        borderColor: "border-violet-200",
+        activities: [
+          {
+            id: "lms-batch",
+            title: "Assign Employees to Training Batches",
+            description: "Map new joiners to the appropriate training batch in the LMS system.",
+            path: "/lms/coordinator",
+            steps: [
+              { step: 1, action: "Go to Learning → LMS Coordinator (/lms/coordinator)." },
+              { step: 2, action: "Click 'Assign Batch', search by employee names or EmpCodes." },
+              { step: 3, action: "Select the process/LOB (e.g. Axis Inbound), batch name, and batch start date." },
+              { step: 4, action: "Confirm the assignment — this syncs with the external LMS and enrolls the learners." },
+              { step: 5, action: "Verify the assignment by checking the batch roster in the LMS sync status section." },
+            ],
+            screenGuide: "LMS Coordinator shows a table of all active batches with learner counts. The 'Assign' button opens a search-and-select panel for employees not yet in any batch.",
+            example: "8 new Axis Inbound joiners. Go to LMS Coordinator, click Assign Batch, select all 8 names, choose batch 'AX-NOV-B1' starting 04-Nov. Confirm. LMS enrols them in the Axis Inbound curriculum.",
+          },
+          {
+            id: "lms-progress",
+            title: "Monitor Training Progress and At-Risk Learners",
+            description: "Track who is falling behind in training and take action before it affects quality.",
+            path: "/lms/coordinator",
+            steps: [
+              { step: 1, action: "Go to Learning → LMS Coordinator, click the batch you want to review." },
+              { step: 2, action: "See completion % per learner, MCQ scores, and an 'At Risk' flag for those below threshold." },
+              { step: 3, action: "Click any learner row to see their module-by-module progress." },
+              { step: 4, action: "For at-risk learners, add a comment or raise a support flag for the Trainer to follow up." },
+              { step: 5, action: "Export the batch progress report to share with the Training Manager or Process Head." },
+            ],
+            screenGuide: "Batch progress view is a heatmap table — green cells = modules complete, yellow = in progress, red = not started. At-risk learners have a flame icon on their row.",
+            example: "Week-2 review of AX-NOV-B1. 6 of 8 learners completed Module 2. 2 haven't started — one absent, one struggling with MCQs (42/100). Flag both as At Risk. Trainer follows up.",
           },
         ],
       },
     ],
   },
 
+  // ─── RECRUITMENT HR ──────────────────────────────────────────────────────────
   recruitment_hr: {
     roleLabel: "Recruitment HR",
-    description: "End-to-end hiring: job postings, candidate pipeline, interviews, offers, and joining.",
+    description: "End-to-end hiring pipeline — job requisitions, candidate sourcing, interviews, offers, BGV, and onboarding handoff.",
     modules: [
       {
-        id: "job-postings",
-        title: "Job Postings",
+        id: "rhr-ats",
+        title: "ATS & Candidate Pipeline",
         icon: <Briefcase className="h-4 w-4" />,
         color: "#6366f1",
         bgColor: "from-indigo-50 to-blue-50",
         borderColor: "border-indigo-200",
         activities: [
+          {
+            id: "ats-command",
+            title: "Navigate the ATS Command Center",
+            description: "Use the recruitment dashboard to see all open JRs, candidate counts, and pipeline health at a glance.",
+            path: "/ats/command-center",
+            steps: [
+              { step: 1, action: "Go to ATS → ATS Command Center (/ats/command-center)." },
+              { step: 2, action: "Review the funnel: Applied → Screened → HR Round → Ops Round → Offered → Joined." },
+              { step: 3, action: "Each stage shows a count. Red numbers = candidates stuck > 3 days." },
+              { step: 4, action: "Click any stage count to open the candidate list at that stage." },
+              { step: 5, action: "Use the process/branch filter to narrow down to a specific LOB." },
+            ],
+            screenGuide: "The Command Center is a full-width dashboard with a funnel chart at the top, and a process-wise breakdown table below. Red badges highlight aging candidates.",
+            example: "Monday morning review. Axis Inbound: 120 Applied, 45 Screened, 18 in HR Round (3 aging > 4 days), 5 in Ops Round, 3 Offered. Focus on the 3 aging HR Round candidates first.",
+          },
           {
             id: "create-job",
             title: "Create a Job Opening",
@@ -471,9 +1092,10 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
     ],
   },
 
+  // ─── PAYROLL ──────────────────────────────────────────────────────────────
   payroll: {
     roleLabel: "Payroll",
-    description: "Monthly payroll processing, salary configuration, statutory compliance, and payslips.",
+    description: "Monthly payroll computation, statutory compliance (PF/ESIC/TDS), payslip generation, salary revisions, reimbursements, and F&F settlements.",
     modules: [
       {
         id: "payroll-processing",
@@ -487,8 +1109,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "run-payroll",
             title: "Run Monthly Payroll",
             description: "Compute salary for all active employees for a given month.",
+            path: "/payroll-hr/dashboard",
             steps: [
-              { step: 1, action: "Go to Operations → Payroll → Run Payroll" },
+              { step: 1, action: "Go to Payroll → Payroll Dashboard (/payroll-hr/dashboard)." },
               { step: 2, action: "Select the month and year (e.g. October 2026)" },
               { step: 3, action: "Select branch scope (All Branches or a specific branch)" },
               { step: 4, action: "Click 'Compute' — the system pulls attendance, leave, LWP, advances, and CTC data" },
@@ -539,23 +1162,133 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "payslip-release",
             title: "Generate and Distribute Payslips",
             description: "Release payslips to all employees after payroll is finalized.",
+            path: "/payroll/payslips",
             steps: [
-              { step: 1, action: "After payroll is approved by Payroll Head, go to Payroll → Payslips" },
-              { step: 2, action: "Select the month, confirm all records are finalized (not draft)" },
-              { step: 3, action: "Click 'Generate All' to create PDFs for all employees" },
-              { step: 4, action: "Click 'Release' — employees can now download their payslips from My Space" },
-              { step: 5, action: "Optionally send payslip notification emails to all employees" },
+              { step: 1, action: "After payroll is approved by Payroll Head, go to Payroll → Payslip Center (/payroll/payslips)." },
+              { step: 2, action: "Select the month, confirm all records show status 'Finalized'." },
+              { step: 3, action: "Click 'Generate All' — the system creates password-protected PDFs for every employee." },
+              { step: 4, action: "Review a sample payslip to spot-check format and values." },
+              { step: 5, action: "Click 'Release' — all employees can now download from My Space → Pay & Tax." },
+              { step: 6, action: "An in-app notification is sent to all employees simultaneously." },
             ],
-            example: "October payroll approved. Go to Payslips, select Oct 2026, click Generate All (284 PDFs created), click Release. Employees get an in-app notification. They can download from Profile → Payslips.",
+            screenGuide: "Payslip Center shows a month/year filter, a list of employees with their payslip status (Draft/Generated/Released), and a bulk-action bar at the bottom.",
+            example: "October payroll approved by Payroll Head. Go to Payslip Center, select Oct 2026, click Generate All (284 PDFs created in ~90 seconds), spot-check Priya Kumar's slip, then click Release. Done.",
+          },
+        ],
+      },
+      {
+        id: "payroll-statutory",
+        title: "Statutory Compliance",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "#6366f1",
+        bgColor: "from-indigo-50 to-purple-50",
+        borderColor: "border-indigo-200",
+        activities: [
+          {
+            id: "pf-ecr",
+            title: "Generate PF ECR File for EPFO Portal",
+            description: "Produce the monthly ECR (Electronic Challan-cum-Return) for PF submission.",
+            path: "/payroll-hr/dashboard",
+            steps: [
+              { step: 1, action: "After payroll is finalized, go to Payroll → Statutory → PF." },
+              { step: 2, action: "Select the month and click 'Generate ECR'." },
+              { step: 3, action: "The system creates a .txt file in the EPFO-prescribed format." },
+              { step: 4, action: "Download the ECR file and upload it to the EPFO unified portal (unifiedportal.epfindia.gov.in)." },
+              { step: 5, action: "Upload the challan receipt back into HRMS as confirmation." },
+            ],
+            screenGuide: "PF Statutory section shows employee-wise PF wage, employee PF 12%, employer PF 12%, and EPS amounts. A Download ECR button is at the top-right.",
+            example: "November 5th. Generate ECR for October. 284 employees, total PF liability ₹5.12L (employee) + ₹5.12L (employer). Download the .txt, upload to EPFO portal, pay challan, upload receipt back into HRMS.",
+            tip: "Always cross-check UAN numbers before generating ECR. Any employee with a wrong/missing UAN will create a submission error.",
+          },
+          {
+            id: "esic-return",
+            title: "File ESIC Monthly Return",
+            description: "Submit the ESIC contribution details and challan for eligible employees.",
+            path: "/payroll-hr/dashboard",
+            steps: [
+              { step: 1, action: "Go to Payroll → Statutory → ESIC." },
+              { step: 2, action: "Review employees eligible for ESIC (gross ≤ ₹21,000/month)." },
+              { step: 3, action: "Verify each employee's ESIC number is recorded — flag missing ones to HR." },
+              { step: 4, action: "Click 'Generate ESIC Return' — a CSV is created for the ESIC portal." },
+              { step: 5, action: "Upload to ESIC Employer Portal (esic.in), pay challan, and upload receipt." },
+            ],
+            screenGuide: "ESIC page shows eligible employees sorted by Gross Salary. Red rows = missing ESIC number. A summary bar at the top shows total employee contribution (0.75%) and employer contribution (3.25%).",
+            example: "October: 68 employees are ESIC eligible. 3 have missing ESIC numbers — HR updates them within the day. Re-run the calculation, generate return CSV, upload to ESIC portal.",
+          },
+          {
+            id: "tds-projection",
+            title: "Review TDS Deductions and Form 16",
+            description: "Monitor annual TDS projections and generate Form 16 at year end.",
+            path: "/payroll-hr/dashboard",
+            steps: [
+              { step: 1, action: "Go to Payroll → Statutory → TDS / Tax Declaration." },
+              { step: 2, action: "Review each employee's declared investments vs projected TDS." },
+              { step: 3, action: "For under-declarers, issue a reminder to submit investment proofs before February." },
+              { step: 4, action: "At year-end (May), click 'Generate Form 16' for all employees." },
+              { step: 5, action: "Download and distribute Form 16 PDFs to employees." },
+            ],
+            screenGuide: "TDS section shows a table with: employee name, projected annual tax, TDS deducted to date, balance to deduct, and an investment declaration status badge.",
+            example: "January review: Priya Kumar's declared HRA exemption is ₹60,000 but her rent receipts are not yet submitted. Send automated reminder. If proofs not uploaded by Feb 28, TDS for March is adjusted upward.",
+          },
+        ],
+      },
+      {
+        id: "payroll-revisions",
+        title: "Salary Revisions",
+        icon: <TrendingUp className="h-4 w-4" />,
+        color: "#10b981",
+        bgColor: "from-emerald-50 to-green-50",
+        borderColor: "border-emerald-200",
+        activities: [
+          {
+            id: "process-revision",
+            title: "Process a Salary Revision",
+            description: "Apply an approved salary revision for an employee, effective from a specific date.",
+            path: "/payroll-hr/dashboard",
+            steps: [
+              { step: 1, action: "Go to Payroll → Salary Revisions. (These come as requests from HR or Branch Head.)" },
+              { step: 2, action: "Open a pending revision request — see employee, old CTC, new CTC, effective date." },
+              { step: 3, action: "Verify the revised breakup: new Basic, HRA, allowances all add up to the approved CTC." },
+              { step: 4, action: "Click 'Apply Revision' — the new salary takes effect from the stated effective date." },
+              { step: 5, action: "If effective date is mid-month, the system calculates pro-rata automatically for that month." },
+            ],
+            screenGuide: "Salary Revisions list shows old vs new CTC side by side. The effective date is highlighted in amber if it is mid-month (meaning pro-rata calculation is needed).",
+            example: "Suresh gets a promotion effective 15-Nov with new CTC ₹3.2L (from ₹2.8L). Open the revision, verify breakup, click Apply. November payroll will pay him 14 days at old rate + 17 days at new rate.",
+          },
+        ],
+      },
+      {
+        id: "payroll-reimbursements",
+        title: "Reimbursements",
+        icon: <CreditCard className="h-4 w-4" />,
+        color: "#f59e0b",
+        bgColor: "from-amber-50 to-yellow-50",
+        borderColor: "border-amber-200",
+        activities: [
+          {
+            id: "process-reimbursement",
+            title: "Process Employee Reimbursement Claims",
+            description: "Review and approve submitted expense reimbursement claims for inclusion in payroll.",
+            path: "/payroll/reimbursements",
+            steps: [
+              { step: 1, action: "Go to Pay & Tax → Reimbursements (/payroll/reimbursements)." },
+              { step: 2, action: "See all pending claims: employee, claim type (Travel, Medical, etc.), amount, uploaded receipt." },
+              { step: 3, action: "Click a claim to review the receipt and verify the amount matches." },
+              { step: 4, action: "Click Approve (or Reject with reason)." },
+              { step: 5, action: "Approved reimbursements are automatically included in that month's payroll payout." },
+            ],
+            screenGuide: "Reimbursements page shows a filterable list of claims. Each row has a receipt thumbnail on the right side. Approved claims show a green badge; pending show yellow.",
+            example: "Ankit submitted a ₹1,800 travel reimbursement for October. Open the claim, verify the auto-rickshaw bill photo, amounts match. Approve. The ₹1,800 appears as a separate line in his October payslip.",
           },
         ],
       },
     ],
   },
 
+  // ─── FINANCE ──────────────────────────────────────────────────────────────
   finance: {
     roleLabel: "Finance",
-    description: "Budget management, GRN, imprest, client billing, vendor payments, and finance reports.",
+    description: "Budget management, GRN/procurement, client billing, payment vouchers, vendor payments, bank reconciliation, GST returns, and finance reports.",
     modules: [
       {
         id: "budget",
@@ -569,9 +1302,10 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "create-budget",
             title: "Set a Branch Monthly Budget",
             description: "Allocate and approve the operational budget for each branch.",
+            path: "/reports",
             steps: [
-              { step: 1, action: "Go to Operations → Finance → Branch Budget" },
-              { step: 2, action: "Select branch and finance year/month from the dropdowns (never free text)" },
+              { step: 1, action: "Go to Finance → Branch Budget." },
+              { step: 2, action: "Select branch and finance year/month from the dropdowns — never use free text for these fields." },
               { step: 3, action: "Fill budget heads: Salary, Rent, Utilities, Consumables, Travel" },
               { step: 4, action: "Submit for Finance Head approval" },
               { step: 5, action: "Once approved, the budget is live and GRN requests are tracked against it" },
@@ -616,12 +1350,81 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
           },
         ],
       },
+      {
+        id: "fin-payment-vouchers",
+        title: "Payment Vouchers",
+        icon: <CreditCard className="h-4 w-4" />,
+        color: "#8b5cf6",
+        bgColor: "from-violet-50 to-purple-50",
+        borderColor: "border-violet-200",
+        activities: [
+          {
+            id: "create-pv",
+            title: "Create a Payment Voucher",
+            description: "Raise a payment voucher for a vendor or internal expense that needs disbursement.",
+            path: "/reports",
+            steps: [
+              { step: 1, action: "Go to Finance → Payment Vouchers." },
+              { step: 2, action: "Click 'New Payment Voucher'. Select Voucher Type (Vendor Payment, Internal, Imprest)." },
+              { step: 3, action: "Select Vendor from the dropdown. Do NOT type a vendor name — it must come from the vendor master." },
+              { step: 4, action: "Enter amount, bank account (from dropdown), payment mode (NEFT/IMPS/Cheque), and narration." },
+              { step: 5, action: "Attach the invoice/bill PDF." },
+              { step: 6, action: "Submit for Accounts Head approval." },
+            ],
+            screenGuide: "Payment Voucher form is a multi-section card. Vendor and bank account fields are searchable dropdowns — never free text. A voucher number is auto-generated after submission.",
+            example: "Paying headset vendor ₹72,000 for a GRN that was approved last week. Create PV: Type = Vendor Payment, Vendor = Sennheiser India, Amount ₹72,000, NEFT, narrate 'GRN #GRN-2024-0104'. Attach invoice. Submit.",
+            tip: "Finance Year and Month fields must ALWAYS be selected from dropdowns — typing 2026-27 vs 2026-2027 creates duplicate scope keys that break invoice numbering.",
+          },
+          {
+            id: "approve-pv",
+            title: "Approve a Payment Voucher (Accounts Head)",
+            description: "Review and approve a submitted payment voucher before bank transfer.",
+            path: "/reports",
+            steps: [
+              { step: 1, action: "Go to Finance → Payment Vouchers → Pending Approvals." },
+              { step: 2, action: "Click a voucher to see the full detail: vendor, amount, bank, invoice." },
+              { step: 3, action: "Verify: invoice attached, amount matches GRN, GST is correctly accounted." },
+              { step: 4, action: "Click Approve — the payment is queued for bank processing." },
+              { step: 5, action: "Click Reject with reason if anything is incorrect — the submitter is notified." },
+            ],
+            screenGuide: "Pending Approval list shows vouchers in descending date order. Each card shows the vendor logo (if mapped), amount, and urgency badge (Overdue / Within Terms).",
+            example: "Sennheiser PV arrives for approval. Open it, verify invoice amount ₹72,000 matches the GRN, GST type is IGST (correct for inter-state). Approve. Finance team processes the NEFT.",
+          },
+        ],
+      },
+      {
+        id: "fin-client-billing",
+        title: "Client Billing",
+        icon: <FileText className="h-4 w-4" />,
+        color: "#0ea5e9",
+        bgColor: "from-sky-50 to-cyan-50",
+        borderColor: "border-sky-200",
+        activities: [
+          {
+            id: "create-invoice",
+            title: "Create a Client Invoice (Proforma / Final)",
+            description: "Generate a billing invoice for a client based on agreed rates and headcount.",
+            path: "/reports",
+            steps: [
+              { step: 1, action: "Go to Finance → Client Billing → New Invoice." },
+              { step: 2, action: "Select Client from the dropdown, Finance Year (dropdown), Month (dropdown — never free text)." },
+              { step: 3, action: "Select Invoice Type: Proforma (draft) or Final (for submission)." },
+              { step: 4, action: "Add line items: Service Description, Unit Rate, Quantity. GST is auto-calculated." },
+              { step: 5, action: "Preview the invoice PDF, verify all client-specific fields (PO number, GST registration)." },
+              { step: 6, action: "Submit — invoice number is auto-generated from the client-scope sequence." },
+            ],
+            screenGuide: "Client Billing shows a split view: form on the left with client/period selectors and line items, invoice PDF preview on the right (live preview updates as you type).",
+            example: "Billing Axis Bank for October. Select Client = Axis Bank, FY = 2026-27, Month = Oct-26, Type = Final. Add line: 'BPO Services - Inbound Voice', 1 month, ₹12.8L. Preview shows invoice #AX/2026-27/007. Submit.",
+          },
+        ],
+      },
     ],
   },
 
+  // ─── WFM ──────────────────────────────────────────────────────────────────
   wfm: {
     roleLabel: "WFM (Workforce Management)",
-    description: "Roster planning, attendance monitoring, real-time tracking, shrinkage, and forecasting.",
+    description: "Roster planning, attendance monitoring, real-time live tracking, capacity planning, TNI analysis, shift management, and shrinkage reporting.",
     modules: [
       {
         id: "roster",
@@ -635,8 +1438,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "create-roster",
             title: "Create a Weekly Roster",
             description: "Build the shift roster for a process for the upcoming week.",
+            path: "/wfm/roster-builder",
             steps: [
-              { step: 1, action: "Go to Workforce → WFM / Roster" },
+              { step: 1, action: "Go to WFM & Roster → Roster Builder (/wfm/roster-builder)." },
               { step: 2, action: "Select the process/LOB and week (next week's dates)" },
               { step: 3, action: "Click 'Create Roster' — the demand template loads from forecasting" },
               { step: 4, action: "Assign agents to shifts: drag-and-drop or use the allocation wizard" },
@@ -650,8 +1454,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "publish-roster",
             title: "Publish and Lock a Roster",
             description: "Finalise the roster after Process Manager approval so employees can acknowledge it.",
+            path: "/wfm/roster-workspace",
             steps: [
-              { step: 1, action: "Open the draft roster, confirm Process Manager has approved" },
+              { step: 1, action: "Open the draft roster in Roster Workspace (/wfm/roster-workspace), confirm Process Manager has approved." },
               { step: 2, action: "Click 'Publish' — employees receive a notification to acknowledge" },
               { step: 3, action: "Track acknowledgement rate — target 100% before week start" },
               { step: 4, action: "On Monday 00:01, click 'Lock' — no changes are allowed without a reason" },
@@ -673,23 +1478,81 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "real-time-view",
             title: "Monitor Real-Time Floor Attendance",
             description: "See who is currently logged in, on break, or absent across the floor.",
+            path: "/wfm/live-tracker",
             steps: [
-              { step: 1, action: "Go to Workforce → WFM Attendance Dashboard (/wfm-attendance)" },
+              { step: 1, action: "Go to Live Monitoring → WFM Tracker (/wfm/live-tracker)." },
               { step: 2, action: "Filter by branch or process" },
               { step: 3, action: "View the heat map: green = logged in, amber = on break, red = absent" },
               { step: 4, action: "Click any agent row to see punch times, break history, and current status" },
               { step: 5, action: "Export real-time snapshot for ops reporting if needed" },
             ],
             example: "At 10:30 AM, WFM sees 8 agents red (absent) on the Axis Inbound floor. Click each to confirm they aren't on approved leave. 5 are on leave, 3 are AWOL. Notify Operations Manager for 3 AWOL agents.",
+            screenGuide: "Live Tracker shows a coloured tile grid — one tile per scheduled agent. Green = punched in, Red = absent, Orange = on break, Grey = day off. A summary bar shows the floor headcount vs scheduled.",
+          },
+          {
+            id: "team-attendance-wfm",
+            title: "Review Team Attendance Grid for the Month",
+            description: "Get the full month's attendance status for every employee across all processes.",
+            path: "/wfm/team-attendance",
+            steps: [
+              { step: 1, action: "Go to Attendance → Team Attendance (/wfm/team-attendance)." },
+              { step: 2, action: "Select month, branch, and process filter." },
+              { step: 3, action: "The grid shows employee rows × date columns, colour-coded by status." },
+              { step: 4, action: "Click any red (Absent) cell to see if there is a leave application on file." },
+              { step: 5, action: "Export to Excel for payroll team or compliance reporting." },
+            ],
+            screenGuide: "Team Attendance grid is like a spreadsheet: rows = employees, columns = dates 1–31. Totals column on the right shows present count, absent count, and LOP days.",
+            example: "Reviewing October for Axis Inbound. Grid shows employee Naveen with 7 red (absent) days. Click each — only 2 have approved leave. 5 are unmarked absences. Flag to Branch Head for LOP processing.",
+          },
+        ],
+      },
+      {
+        id: "wfm-capacity",
+        title: "Capacity & TNI Planning",
+        icon: <Target className="h-4 w-4" />,
+        color: "#8b5cf6",
+        bgColor: "from-violet-50 to-purple-50",
+        borderColor: "border-violet-200",
+        activities: [
+          {
+            id: "capacity-dashboard",
+            title: "Analyse Capacity vs Demand Gap",
+            description: "See how your current headcount compares to the contracted mandate and forecast the hiring need.",
+            path: "/wfm/capacity-dashboard",
+            steps: [
+              { step: 1, action: "Go to WFM & Roster → Capacity Dashboard (/wfm/capacity-dashboard)." },
+              { step: 2, action: "Select the process and reporting period." },
+              { step: 3, action: "View: Contracted headcount vs actual active employees vs attrition projection." },
+              { step: 4, action: "The gap section shows how many new hires are needed to meet mandate." },
+              { step: 5, action: "Use the output to raise Job Requisitions with the exact headcount required." },
+            ],
+            screenGuide: "Capacity Dashboard shows a bar chart: Mandate (target) in blue, Actual in green, Gap in red. Below is a process-wise breakdown table with attrition rate and projected gap for next 30/60/90 days.",
+            example: "Axis Inbound mandate is 80. Current active = 72. Attrition projection = 4 more leaving next month. Hiring need = 12. Share this with Recruitment HR to open a JR for 12 Process Executives.",
+          },
+          {
+            id: "tni-analysis",
+            title: "Identify Training Needs via TNI Analysis",
+            description: "Use the Training Needs Identification heatmap to find which agents need coaching on which parameters.",
+            path: "/wfm/tni-analysis",
+            steps: [
+              { step: 1, action: "Go to WFM & Roster → Training Needs (TNI) (/wfm/tni-analysis)." },
+              { step: 2, action: "Select the process and date range (typically last 30 days)." },
+              { step: 3, action: "The heatmap shows agent × quality parameter, with red = consistently failing." },
+              { step: 4, action: "Click any red cell to see the audit scores behind it." },
+              { step: 5, action: "Export the TNI report and share with Trainer and Process Manager for targeted coaching." },
+            ],
+            screenGuide: "TNI Analysis is a heatmap grid — agents on rows, quality parameters (AHT, Opening, Product Knowledge, etc.) on columns. Dark red = severe gap, light yellow = minor gap, white = performing well.",
+            example: "October TNI for Axis Inbound shows 8 agents with deep red in 'Product Knowledge'. 3 also have red for 'AHT'. Share with Trainer: prioritise product knowledge sessions for all 8 agents this week.",
           },
         ],
       },
     ],
   },
 
+  // ─── BRANCH HEAD ──────────────────────────────────────────────────────────
   branch_head: {
     roleLabel: "Branch Head",
-    description: "Branch overview, team approvals, budget oversight, and operations management.",
+    description: "Branch-level ownership: team approvals (leave/exit/offers), roster sign-off, budget review, quality oversight, and escalation management.",
     modules: [
       {
         id: "team-management",
@@ -737,22 +1600,65 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "view-budget-status",
             title: "Review Branch Budget vs Actuals",
             description: "Track how much of your monthly budget has been spent vs allocated.",
+            path: "/reports",
             steps: [
-              { step: 1, action: "Go to Operations → Finance → Branch Budget" },
+              { step: 1, action: "Go to Finance → Branch Budget and filter to your branch." },
               { step: 2, action: "Filter to your branch and current month" },
               { step: 3, action: "View each budget head: allocated vs actual vs remaining" },
               { step: 4, action: "Drill into GRN records for any overspent category" },
             ],
             example: "It's 15-Oct. Open Branch Budget for Pune, Oct 2026. Consumables shows ₹18K spent vs ₹15K budget — already over. Click the row to see the GRN records. One large purchase was miscategorised. Flag to Finance.",
+            screenGuide: "Branch Budget shows a table with budget heads as rows and four columns: Allocated, Approved GRNs, Pending GRNs, Remaining. The progress bar turns red when remaining drops below 10%.",
+          },
+        ],
+      },
+      {
+        id: "bh-quality",
+        title: "Quality & Performance Overview",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "#ef4444",
+        bgColor: "from-red-50 to-rose-50",
+        borderColor: "border-red-200",
+        activities: [
+          {
+            id: "quality-review",
+            title: "Review Branch Quality Scores",
+            description: "Track the quality performance across all processes and teams under your branch.",
+            path: "/quality-dashboard",
+            steps: [
+              { step: 1, action: "Go to Overview → Quality Dashboard (/quality-dashboard)." },
+              { step: 2, action: "Filter to your branch — the default shows all processes you own." },
+              { step: 3, action: "View process-wise quality scores, trend vs last month, and failing agents list." },
+              { step: 4, action: "Click any process to drill down to team-level and then agent-level scores." },
+              { step: 5, action: "For any process below the target (e.g. <80%), review the audit log and coaching plan." },
+            ],
+            screenGuide: "Quality Dashboard shows a card per process. Each card has a large quality score number, a trend arrow, and a list of top/bottom 3 agents. Red cards = below target, green = on track.",
+            example: "Opening Quality Dashboard for Pune. Axis Inbound = 83% (green). HDFC Outbound = 74% (red). Click HDFC — bottom 3 agents have <65% scores. Schedule team review with the TL and QA for next morning.",
+          },
+          {
+            id: "jd-approval",
+            title: "Approve Job Requisitions",
+            description: "Review and approve hiring requests from Process Managers before they reach Recruitment.",
+            path: "/recruitment/job-requisition",
+            steps: [
+              { step: 1, action: "Check Work Inbox for pending JR approvals, or go to ATS → Job Requisitions (/recruitment/job-requisition)." },
+              { step: 2, action: "Open each pending JR — see process, positions requested, reason, and priority." },
+              { step: 3, action: "Verify the headcount gap justification matches your capacity dashboard data." },
+              { step: 4, action: "Click Approve — the JR is released to Recruitment HR to start sourcing." },
+              { step: 5, action: "Click Reject with a note if the business case is unclear or budget is insufficient." },
+            ],
+            screenGuide: "Job Requisitions list shows all JRs with status badges (Draft, Pending Branch Head, Approved, Active). Pending approval JRs have a yellow 'Action Required' badge.",
+            example: "Process Manager raises JR for 5 Process Executives for Axis Inbound. Open the JR, verify capacity gap report shows 5 seats short, budget is allocated. Approve. Recruitment HR is notified to start sourcing.",
           },
         ],
       },
     ],
   },
 
+  // ─── PROCESS MANAGER ──────────────────────────────────────────────────────
   process_manager: {
     roleLabel: "Process Manager",
-    description: "Daily operations, roster publishing, team attendance, quality monitoring, and client reporting.",
+    description: "Daily floor operations, first-level roster approval, team attendance and leave decisions, quality monitoring, training needs, and hiring requisitions.",
     modules: [
       {
         id: "daily-ops",
@@ -766,8 +1672,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "daily-attendance-check",
             title: "Check Today's Attendance for Your Process",
             description: "Start of day review of who is present, absent, or late for your LOB.",
+            path: "/wfm/team-attendance",
             steps: [
-              { step: 1, action: "Go to Workforce → Team Attendance (/wfm/team-attendance)" },
+              { step: 1, action: "Go to WFM & Roster → Team Attendance (/wfm/team-attendance)." },
               { step: 2, action: "Filter to your process and today's date" },
               { step: 3, action: "Scan for red/amber entries — absent, late login, or missing punch" },
               { step: 4, action: "For each absent agent: check if leave is approved or if it is AWOL" },
@@ -809,15 +1716,57 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
               { step: 4, action: "Approve or reject with a note. Branch Head reviews second-level approvals." },
             ],
             example: "Agent Sanjay applies for 2 CL on 22-23 Oct. Open request: balance 5 CL. Check roster — Oct 22 is already short by 1 due to another leave. Reject with note 'Roster constraint on 22-Oct. Please choose different dates.'",
+            path: "/work-inbox",
+          },
+        ],
+      },
+      {
+        id: "pm-quality",
+        title: "Quality & Team Performance",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "#ef4444",
+        bgColor: "from-red-50 to-rose-50",
+        borderColor: "border-red-200",
+        activities: [
+          {
+            id: "pm-team-quality",
+            title: "Review Team Quality Scores",
+            description: "Monitor quality audit results for your agents and identify coaching needs.",
+            path: "/quality/team",
+            steps: [
+              { step: 1, action: "Go to Quality → Team Quality (/quality/team)." },
+              { step: 2, action: "Filter by your process and the current month." },
+              { step: 3, action: "See each agent's average quality score, number of audits, and trend." },
+              { step: 4, action: "Click any agent to see their individual audit records and QA feedback." },
+              { step: 5, action: "Agents scoring below 75% should be flagged for coaching." },
+            ],
+            screenGuide: "Team Quality is a table with quality score bars for each agent. Sort by score ascending to quickly identify bottom performers. A process average bar at the top shows team health.",
+            example: "October team quality: Priya 91%, Suresh 82%, Rahul 71% (below threshold). Click Rahul — 3 audits, all scoring low on Product Knowledge. Raise a coaching request to QA for Rahul.",
+          },
+          {
+            id: "pm-hiring-request",
+            title: "Raise a Job Requisition",
+            description: "Request new hiring when your team is short-staffed vs the contracted mandate.",
+            path: "/recruitment/job-requisition",
+            steps: [
+              { step: 1, action: "Go to ATS → Job Requisitions (/recruitment/job-requisition)." },
+              { step: 2, action: "Click 'New Requisition'." },
+              { step: 3, action: "Fill: Process, Position, Number of Openings, Priority, Expected Joining Date, Reason." },
+              { step: 4, action: "Attach any supporting data (capacity gap report, attrition log)." },
+              { step: 5, action: "Submit — goes to Branch Head for approval." },
+            ],
+            screenGuide: "New Requisition is a simple form. The 'Reason' field is free text; all other fields (Process, Position, Priority) are dropdowns. An approver chain preview shows at the bottom of the form.",
+            example: "Axis Inbound has 68 active agents vs 80 mandate. You need 12. Create JR: Process = Axis Inbound, Position = Process Executive, Openings = 12, Priority = High, Expected = 01-Dec. Submit to Branch Head.",
           },
         ],
       },
     ],
   },
 
+  // ─── TRAINER ──────────────────────────────────────────────────────────────
   trainer: {
     roleLabel: "Trainer",
-    description: "Training assignments, learner progress tracking, assessments, and LMS coordination.",
+    description: "LMS batch coordination, trainee progress monitoring, MCQ performance tracking, training needs identification, and certification readiness.",
     modules: [
       {
         id: "training-assignment",
@@ -831,8 +1780,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "assign-batch",
             title: "Assign a Batch to Training",
             description: "Link newly joined employees to the appropriate training batch in LMS.",
+            path: "/lms/coordinator",
             steps: [
-              { step: 1, action: "Go to Workforce → LMS — the integration summary panel" },
+              { step: 1, action: "Go to Learning → LMS Coordinator (/lms/coordinator)." },
               { step: 2, action: "Identify new joiners who have been onboarded but not yet assigned a batch" },
               { step: 3, action: "Click 'Assign Batch', select the process/LOB, batch name, and start date" },
               { step: 4, action: "Confirm assignment — this syncs with the external LMS" },
@@ -852,15 +1802,58 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
               { step: 5, action: "For at-risk trainees, schedule extra coaching or mark for extended training" },
             ],
             example: "Week 2 review: 8 of 10 trainees completed Module 2. 2 are behind (one was absent, one struggling with MCQs scoring <60%). Flag both as at-risk. Raise a support session for the MCQ underperformer.",
+            path: "/lms/coordinator",
+            screenGuide: "Batch progress view is a heatmap table — green = modules complete, yellow = in progress, red = not started. Clicking any learner row opens their module-by-module breakdown in a side drawer.",
+          },
+        ],
+      },
+      {
+        id: "trainer-tni",
+        title: "Training Needs & Progress Reports",
+        icon: <BarChart3 className="h-4 w-4" />,
+        color: "#0ea5e9",
+        bgColor: "from-sky-50 to-cyan-50",
+        borderColor: "border-sky-200",
+        activities: [
+          {
+            id: "trainer-tni-action",
+            title: "Act on TNI Recommendations",
+            description: "Use the TNI analysis to prioritise which agents need coaching on which topics.",
+            path: "/wfm/tni-analysis",
+            steps: [
+              { step: 1, action: "Go to WFM & Roster → Training Needs (TNI) (/wfm/tni-analysis)." },
+              { step: 2, action: "Filter by your assigned process and the past 30 days." },
+              { step: 3, action: "Identify the parameters with the most red cells (most agents failing)." },
+              { step: 4, action: "Design a targeted module or coaching session for those parameters." },
+              { step: 5, action: "Record the training delivery in LMS — mark it as completed for each agent." },
+            ],
+            screenGuide: "TNI heatmap rows = agents, columns = quality parameters. Sort by the column with the most red cells to find the biggest training gap. Export as Excel for training plan documentation.",
+            example: "TNI shows 9 agents failing 'Product Knowledge' for Axis card policies. Conduct a 2-hour Product Refresh session on Friday. Record the session in LMS. Recheck TNI in 2 weeks to measure improvement.",
+          },
+          {
+            id: "progress-report",
+            title: "Generate a Training Progress Report",
+            description: "Produce a weekly or monthly summary of batch completion, MCQ scores, and at-risk learners.",
+            path: "/lms/coordinator",
+            steps: [
+              { step: 1, action: "Go to LMS Coordinator, select the batch." },
+              { step: 2, action: "Click 'Export Progress Report'." },
+              { step: 3, action: "Choose the date range (weekly or monthly)." },
+              { step: 4, action: "The report shows: completion %, MCQ pass/fail, at-risk count, certification readiness." },
+              { step: 5, action: "Share with HR Admin and Process Manager for operations handover decisions." },
+            ],
+            screenGuide: "The Export button generates a formatted Excel with colour-coded completion by module and a summary sheet with batch-level KPIs.",
+            example: "Week 3 report for AX-OCT-B3: 9/10 learners ≥75% completion, MCQ pass rate 90%, 1 at-risk (medical leave week 2). Share with Process Manager — 9 are ready for floor certification by end of week.",
           },
         ],
       },
     ],
   },
 
+  // ─── QA / QUALITY ANALYST ───────────────────────────────────────────────
   qa: {
     roleLabel: "QA / Quality Analyst",
-    description: "Call auditing, quality scores, feedback, calibration sessions, and quality reports.",
+    description: "Interaction auditing, quality scoring, coaching sessions, calibration, TNI-linked training requests, and quality reporting.",
     modules: [
       {
         id: "auditing",
@@ -874,8 +1867,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "audit-call",
             title: "Audit an Agent Interaction",
             description: "Score a call or chat interaction against the quality rubric.",
+            path: "/quality/dashboard",
             steps: [
-              { step: 1, action: "Go to Operations → Quality Dashboard (/quality-dashboard)" },
+              { step: 1, action: "Go to Quality → Quality Dashboard (/quality/dashboard)." },
               { step: 2, action: "Click 'New Audit', select agent, date, interaction ID" },
               { step: 3, action: "Score each parameter: Greeting, Product Knowledge, AHT, Compliance, Customer Satisfaction" },
               { step: 4, action: "Add specific feedback notes for each failed parameter" },
@@ -895,6 +1889,7 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
               { step: 5, action: "Agent signs off on the notes digitally from their dashboard" },
             ],
             example: "After Rahul's 43/50 audit, schedule feedback on 15-Oct. Discuss the product knowledge gap. Note: 'Reviewed card policy, agent committed to re-certification MCQ by 21-Oct'. Agent acknowledges in system.",
+            screenGuide: "Feedback Session form opens from the audit record. It has a date-time picker, attendance confirmation toggle, notes textarea, and a 'Require Agent Acknowledgement' checkbox.",
           },
         ],
       },
@@ -918,15 +1913,43 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
               { step: 5, action: "Download Excel or PDF for sharing with Operations Manager and Branch Head" },
             ],
             example: "Week ending 19-Oct. Generate Quality Summary for Axis Inbound. Average score: 81% (up 2% vs last week). Top agent: Priya 92%. Bottom: Rahul 43% (being coached). Share with Branch Head.",
+            path: "/reports",
+            screenGuide: "Quality Summary report is a tabular download. The generated view shows an agent leaderboard, weekly score chart, and a parameter-wise breakdown at the bottom.",
+          },
+        ],
+      },
+      {
+        id: "qa-call-master",
+        title: "Call Master Analytics",
+        icon: <BarChart3 className="h-4 w-4" />,
+        color: "#6366f1",
+        bgColor: "from-indigo-50 to-blue-50",
+        borderColor: "border-indigo-200",
+        activities: [
+          {
+            id: "inbound-dashboard",
+            title: "Review Inbound Call Analytics",
+            description: "Use Call Master data to correlate call volume, AHT, and quality scores.",
+            path: "/call-master/inbound",
+            steps: [
+              { step: 1, action: "Go to Call Master → Inbound Dashboard (/call-master/inbound)." },
+              { step: 2, action: "Select the date range and process filter." },
+              { step: 3, action: "View: total calls handled, AHT (average handle time), abandon rate, FCR." },
+              { step: 4, action: "Compare the AHT of agents who score high on quality vs those who score low." },
+              { step: 5, action: "Agents with very low AHT but low quality often rush calls — flag for coaching." },
+            ],
+            screenGuide: "Inbound Dashboard shows a set of KPI tiles at the top (calls, AHT, abandon %) and an agent-wise table below. Clicking any agent tile filters the chart to their personal trend.",
+            example: "Reviewing Oct data: Rahul handles 45 calls/day with AHT 3:10 (below target 4:30 — rushing). His quality score is 68%. This correlation confirms the coaching focus: slow down, use the checklist.",
           },
         ],
       },
     ],
   },
 
+  // ─── EMPLOYEE ─────────────────────────────────────────────────────────────
   employee: {
     roleLabel: "Employee",
-    description: "Your personal space: attendance, leave, payslips, profile, and support requests.",
+    description: "Your personal workspace in PeopleOS — attendance, leave, payslips, roster, learning, profile updates, and support requests.",
     modules: [
       {
         id: "my-profile",
@@ -940,8 +1963,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "update-profile",
             title: "Update Your Personal Information",
             description: "Keep your contact details, address, and bank account up to date.",
+            path: "/profile",
             steps: [
-              { step: 1, action: "Click your avatar or go to My Space → Profile" },
+              { step: 1, action: "Click your avatar top-right, or go to My Space → Profile (/profile)." },
               { step: 2, action: "Click 'Edit' on the section you want to update (Personal / Bank / Address)" },
               { step: 3, action: "Make changes and save" },
               { step: 4, action: "Some changes (e.g. bank account) require HR Admin approval before taking effect" },
@@ -973,8 +1997,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "apply-leave",
             title: "Apply for Leave",
             description: "Submit a leave request for approval by your manager.",
+            path: "/leaves",
             steps: [
-              { step: 1, action: "Go to My Space → Leave → Apply Leave" },
+              { step: 1, action: "Go to My Space → Leave → Apply Leave (/leaves)." },
               { step: 2, action: "Select leave type (Casual Leave, Earned Leave, Sick Leave, etc.) from the dropdown" },
               { step: 3, action: "Pick From and To dates using the date picker" },
               { step: 4, action: "Add reason in the text field" },
@@ -987,8 +2012,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "view-attendance",
             title: "View and Check Your Attendance",
             description: "See your attendance record for the month and check for any discrepancies.",
+            path: "/attendance",
             steps: [
-              { step: 1, action: "Go to My Space → Attendance" },
+              { step: 1, action: "Go to My Space → Attendance (/attendance)." },
               { step: 2, action: "The calendar view shows: Present (green), Absent (red), Leave (blue), Week-off (grey)" },
               { step: 3, action: "Click any day to see your punch-in and punch-out times" },
               { step: 4, action: "If you see a wrong or missing punch, click 'Regularize' on that day" },
@@ -1000,8 +2026,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "view-payslip",
             title: "Download Your Payslip",
             description: "Access and download your monthly payslip.",
+            path: "/profile?tab=payslips",
             steps: [
-              { step: 1, action: "Go to My Space → Pay & Tax → Payslips" },
+              { step: 1, action: "Go to My Space → Pay & Tax → Payslips (/profile?tab=payslips)." },
               { step: 2, action: "Select the month from the dropdown" },
               { step: 3, action: "Click 'Download' to get the PDF" },
               { step: 4, action: "You can also view it inline to check earnings and deductions before downloading" },
@@ -1022,24 +2049,132 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "raise-ticket",
             title: "Raise an IT or HR Support Ticket",
             description: "Log a support request for any system, hardware, or HR issue.",
+            path: "/work-inbox",
             steps: [
-              { step: 1, action: "Go to Support → Helpdesk (/helpdesk)" },
+              { step: 1, action: "Go to Support → Helpdesk." },
               { step: 2, action: "Click 'New Ticket'" },
               { step: 3, action: "Select Category (IT, HR, Payroll, etc.) from the dropdown" },
               { step: 4, action: "Select Sub-category (e.g. 'Desktop Issue — System Hang')" },
               { step: 5, action: "Describe the issue clearly, add screenshot if helpful" },
               { step: 6, action: "Submit — the relevant team is notified and you get a ticket number" },
             ],
-            example: "Your system is hanging repeatedly. Go to Helpdesk, New Ticket, Category IT, Sub-category 'Desktop Issue — System Hang'. Describe: 'System freezes every 30 minutes since morning'. Submit. IT team gets the alert and you get ticket #HLT-2024.",
+            example: "Your system is hanging repeatedly. Go to Helpdesk, New Ticket, Category IT, Sub-category 'Desktop Issue — System Hang'. Describe: 'System freezes every 30 minutes since morning'. Submit. IT team gets the alert.",
+            screenGuide: "Helpdesk form has a category dropdown, a sub-category that updates based on category, a description box, and an optional file attachment area.",
+          },
+        ],
+      },
+      {
+        id: "emp-roster",
+        title: "My Roster & Schedule",
+        icon: <Calendar className="h-4 w-4" />,
+        color: "#8b5cf6",
+        bgColor: "from-violet-50 to-purple-50",
+        borderColor: "border-violet-200",
+        activities: [
+          {
+            id: "view-my-roster",
+            title: "View Your Weekly Roster",
+            description: "See your assigned shift schedule for the current and upcoming weeks.",
+            path: "/my-roster",
+            steps: [
+              { step: 1, action: "Go to My Space → Attendance → My Roster (/my-roster)." },
+              { step: 2, action: "The calendar shows your shift for each day of the week: Morning / Afternoon / Night / Week-off." },
+              { step: 3, action: "Click any day to see your exact shift time (e.g. 09:00–18:00)." },
+              { step: 4, action: "If you see a mistake in your roster, contact your Process Manager or use the dispute option." },
+            ],
+            screenGuide: "My Roster is a 7-day calendar strip. Each day shows a shift badge (M/A/N) or a grey W/O for week-off. A monthly calendar is below for planning ahead.",
+            example: "Checking your schedule for the week 20-26 Oct. Mon-Fri: Morning shift 09:00–18:00. Saturday: Afternoon 13:00–22:00. Sunday: Week-off. You can now plan commute and personal schedule.",
+          },
+          {
+            id: "week-off-preference",
+            title: "Submit Your Week-Off Preference",
+            description: "Request your preferred days off for the upcoming week (subject to WFM approval).",
+            path: "/week-off-preferences",
+            steps: [
+              { step: 1, action: "Go to My Space → Attendance → Week-off Preference (/week-off-preferences)." },
+              { step: 2, action: "The form shows the upcoming week. Select your preferred days off from the dropdown." },
+              { step: 3, action: "Submit before the WFM deadline (usually Wednesday for next week's roster)." },
+              { step: 4, action: "WFM considers your preference when building the roster — it is not guaranteed but is respected when possible." },
+            ],
+            screenGuide: "Week-off Preference shows the next 4 weeks with a 'My Preference' dropdown for each. Once the roster is published, your assigned day-off is shown on the same page.",
+            example: "You want Sunday off next week (a family event). Go to Week-off Preference, select next week, choose Sunday as your preference. Submit before Wednesday. WFM assigns you Sunday off if staffing allows.",
+          },
+        ],
+      },
+      {
+        id: "emp-learning",
+        title: "My Learning (LMS)",
+        icon: <GraduationCap className="h-4 w-4" />,
+        color: "#10b981",
+        bgColor: "from-emerald-50 to-green-50",
+        borderColor: "border-emerald-200",
+        activities: [
+          {
+            id: "my-courses",
+            title: "View and Complete Your Assigned Courses",
+            description: "Access the modules you have been enrolled in and track your own learning progress.",
+            path: "/lms/my-learning",
+            steps: [
+              { step: 1, action: "Go to Learning → My Learning (/lms/my-learning)." },
+              { step: 2, action: "You see a list of all courses assigned to your batch." },
+              { step: 3, action: "Click any course to launch it — you are taken to the LMS learning portal." },
+              { step: 4, action: "Complete modules in order — each module unlocks the next after completion." },
+              { step: 5, action: "After each module, take the MCQ. You need a passing score (usually 70%) to advance." },
+            ],
+            screenGuide: "My Learning shows a vertical list of course modules with a progress bar for each. Completed modules show a green checkmark; locked modules show a padlock icon.",
+            example: "You are in the Axis Inbound batch. My Learning shows 3 modules: Module 1 (Complete ✓), Module 2 (In Progress — 60%), Module 3 (Locked). Click Module 2 to continue where you left off.",
+          },
+        ],
+      },
+      {
+        id: "emp-exit",
+        title: "Exit & Resignation",
+        icon: <UserPlus className="h-4 w-4" />,
+        color: "#ef4444",
+        bgColor: "from-red-50 to-rose-50",
+        borderColor: "border-red-200",
+        activities: [
+          {
+            id: "submit-resignation",
+            title: "Submit Your Resignation",
+            description: "Formally raise a resignation request through the system.",
+            path: "/exit/resignation",
+            steps: [
+              { step: 1, action: "Go to My Space → My Resignation (/exit/resignation)." },
+              { step: 2, action: "Click 'Raise Resignation'." },
+              { step: 3, action: "Fill: Reason for Leaving (from dropdown), Last Working Day preference, and a brief note." },
+              { step: 4, action: "Upload your resignation letter PDF (optional but recommended)." },
+              { step: 5, action: "Submit — your Process Manager and HR Admin are notified immediately." },
+              { step: 6, action: "HR will confirm your LWD and notice period obligations within 24 hours." },
+            ],
+            screenGuide: "My Resignation shows your current status (Active / Notice Period / Relieved). The 'Raise Resignation' button is prominent at the top. The form has a reason dropdown and a date picker for LWD.",
+            example: "You decide to resign on 01-Nov. Go to My Resignation, click Raise Resignation. Select Reason = 'Better Opportunity', LWD = 30-Nov (30 days notice). Upload your letter PDF. Submit. HR confirms within the day.",
+            tip: "Do not resign verbally before submitting here. The official notice period clock starts from the date you submit in the system.",
+          },
+          {
+            id: "salary-dispute",
+            title: "Raise a Salary Dispute",
+            description: "If you believe there is an error in your payslip, raise a formal dispute for payroll to review.",
+            path: "/payroll/salary-disputes",
+            steps: [
+              { step: 1, action: "Go to My Space → Pay & Tax → Salary Disputes (/payroll/salary-disputes)." },
+              { step: 2, action: "Click 'New Dispute', select the month in question." },
+              { step: 3, action: "Select the dispute type: Wrong LOP, Missing Allowance, Wrong Deduction, etc." },
+              { step: 4, action: "Describe the issue clearly (e.g. '3 days LOP deducted but I have approved leave for all 3 days')." },
+              { step: 5, action: "Submit — Payroll team reviews and resolves within 5 working days." },
+            ],
+            screenGuide: "Salary Disputes page shows your dispute history with status badges (Open / Under Review / Resolved). The new dispute form is a simple modal with a type dropdown and text area.",
+            example: "Your October payslip deducts 2 extra LOP days. You have approved leave for those days. Go to Salary Disputes, New Dispute, month = Oct 2026, Type = 'Wrong LOP'. Describe the issue. Submit. Payroll resolves it within the week.",
           },
         ],
       },
     ],
   },
 
+  // ─── CLIENT ────────────────────────────────────────────────────────────────
   client: {
     roleLabel: "Client",
-    description: "Approved aggregate view of your process performance, roster coverage, and quality metrics.",
+    description: "Approved, aggregate-only view of your contracted process performance, roster coverage, quality scores, and workforce metrics. No individual employee data is visible.",
     modules: [
       {
         id: "process-performance",
@@ -1081,9 +2216,10 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
     ],
   },
 
+  // ─── OPERATIONS MANAGER ────────────────────────────────────────────────────
   operations_manager: {
     roleLabel: "Operations Manager",
-    description: "Operations performance, team KPIs, escalation management, and branch-level reporting.",
+    description: "Operations-level oversight: daily performance dashboard, call analytics, quality monitoring, ops round approvals, sales analytics, and escalation management.",
     modules: [
       {
         id: "operations-performance",
@@ -1097,8 +2233,9 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
             id: "view-ops-dashboard",
             title: "Review Daily Operations Dashboard",
             description: "Get a top-down view of all processes under your scope.",
+            path: "/operations-dashboard",
             steps: [
-              { step: 1, action: "Go to Overview → Operations Dashboard (/operations-dashboard)" },
+              { step: 1, action: "Go to Overview → Operations Dashboard (/operations-dashboard)." },
               { step: 2, action: "See all processes: headcount, AHT, quality score, and absenteeism" },
               { step: 3, action: "Click any process to drill down to team-level detail" },
               { step: 4, action: "Use the shift filter to compare performance across shifts" },
@@ -1117,6 +2254,73 @@ const GUIDE_DATA: Record<string, RoleGuide> = {
               { step: 5, action: "Export for monthly performance review meetings" },
             ],
             example: "End of October. Open KPI Scorecard for Axis Inbound. Top performer: Divya TL (94/100). Bottom: Suresh TL (61/100 — quality gap). Schedule review with Suresh and assign coaching plan.",
+            path: "/operations-dashboard",
+            screenGuide: "Operations Dashboard shows process cards arranged in a grid. Each card has: headcount bar, AHT gauge, quality score, and a 3-day trend mini-chart. Clicking a card opens the TL-level drill-down.",
+          },
+        ],
+      },
+      {
+        id: "ops-ats",
+        title: "ATS Ops Round",
+        icon: <Briefcase className="h-4 w-4" />,
+        color: "#6366f1",
+        bgColor: "from-indigo-50 to-blue-50",
+        borderColor: "border-indigo-200",
+        activities: [
+          {
+            id: "ops-interview",
+            title: "Conduct Operations Interview for Candidates",
+            description: "Review and approve/reject candidates referred by HR for the operations round.",
+            path: "/ats/walkin-queue",
+            steps: [
+              { step: 1, action: "Go to ATS → Ops Round (/ats/walkin-queue) — you see candidates pending your round." },
+              { step: 2, action: "Click a candidate to open their full profile: resume, HR notes, initial assessment." },
+              { step: 3, action: "Conduct the interview (in-person or virtual) based on the predefined ops checklist." },
+              { step: 4, action: "Record your verdict: Approve for Joining, Conditional (training needed), Reject." },
+              { step: 5, action: "Add interview notes that are visible to HR for the offer letter and onboarding." },
+            ],
+            screenGuide: "Ops Round queue is a list of candidate cards. Each card shows the candidate's name, applied process, HR interview score, and the time they have been waiting. Click to expand details.",
+            example: "Reviewing Kapil for Axis Inbound Ops Round. He has 2 years of inbound voice experience, strong product knowledge. Conduct ops interview, score 78/100. Verdict = Approve. Note: 'Confident, good product fit'.",
+          },
+        ],
+      },
+      {
+        id: "ops-quality",
+        title: "Quality & Call Analytics",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "#ef4444",
+        bgColor: "from-red-50 to-rose-50",
+        borderColor: "border-red-200",
+        activities: [
+          {
+            id: "ops-quality-overview",
+            title: "Monitor Quality Across All Processes",
+            description: "See the quality score summary for every process and identify the ones needing attention.",
+            path: "/quality-dashboard",
+            steps: [
+              { step: 1, action: "Go to Overview → Quality Dashboard (/quality-dashboard)." },
+              { step: 2, action: "View quality scores for all processes in your scope." },
+              { step: 3, action: "Sort by score ascending — lowest quality processes appear first." },
+              { step: 4, action: "Click any process to see the TL-level and agent-level breakdown." },
+              { step: 5, action: "Escalate to the respective Process Manager for any process below target." },
+            ],
+            screenGuide: "Quality Dashboard is a grid of process cards. Red cards = below target, green = on track. The header shows the overall branch quality score and a trend arrow.",
+            example: "Monthly review: 4 of 6 processes are green (>80%). HDFC Outbound is 71% (red). Click it — 3 agents score below 65%. Call an ops-QA calibration session for HDFC Outbound by end of week.",
+          },
+          {
+            id: "call-master-ops",
+            title: "Analyse Call Volume and AHT Trends",
+            description: "Use Call Master data to spot process anomalies — sudden volume drops, AHT spikes.",
+            path: "/call-master",
+            steps: [
+              { step: 1, action: "Go to Call Master → Call Master Dashboard (/call-master)." },
+              { step: 2, action: "Select the date range and filter by process." },
+              { step: 3, action: "Look for anomalies: days where AHT is 30%+ above the process average." },
+              { step: 4, action: "Cross-reference with the quality dashboard — high AHT + low quality = skill gap." },
+              { step: 5, action: "Share findings with the Process Manager and Trainer for targeted intervention." },
+            ],
+            screenGuide: "Call Master shows a line chart of daily calls and AHT over the selected period. Below it is a table of each agent's call count, AHT, and abandonment rate.",
+            example: "Axis Inbound: AHT jumped from 4:20 to 5:45 on Oct 18 (Friday). Check quality that day — 3 agents audited, all scored low on 'Product Knowledge'. A new card variant was launched that day. Flag for immediate product training.",
           },
         ],
       },
@@ -1197,6 +2401,19 @@ function ActivityCard({ activity }: { activity: GuideActivity }) {
             <p className="text-sm text-blue-900 leading-relaxed">{activity.example}</p>
           </div>
 
+          {/* Screen guide */}
+          {activity.screenGuide && (
+            <div className="mt-3 rounded-xl bg-purple-50 border border-purple-200 p-4">
+              <div className="flex items-start gap-2">
+                <Info className="h-3.5 w-3.5 text-purple-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-purple-700 mb-1">What You'll See on Screen</p>
+                  <p className="text-sm text-purple-900 leading-relaxed">{activity.screenGuide}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Tip */}
           {activity.tip && (
             <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 p-4">
@@ -1204,6 +2421,19 @@ function ActivityCard({ activity }: { activity: GuideActivity }) {
                 <AlertCircle className="h-3.5 w-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
                 <p className="text-sm text-amber-800 leading-relaxed">{activity.tip}</p>
               </div>
+            </div>
+          )}
+
+          {/* Go to page */}
+          {activity.path && (
+            <div className="mt-3 flex">
+              <a
+                href={activity.path}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg px-3 py-2 transition-colors"
+              >
+                <ArrowRight className="h-3 w-3" />
+                Open this page in HRMS
+              </a>
             </div>
           )}
         </div>
