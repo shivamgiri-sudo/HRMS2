@@ -109,14 +109,18 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
 
   // "lines" is a reserved word in MySQL (LOAD DATA ... LINES TERMINATED BY) — using it as
   // a bare column alias fails to parse; line_count sidesteps that.
+  // Dated by qc_updated_date (when QC actually logged/reviewed the escalation),
+  // not report_completed_date (when the underlying DOC report was originally
+  // completed, which can be a year-plus earlier) — see the Escalations section
+  // below for the full rationale.
   const cre = await scalar<RowDataPacket & { line_count: number; reports: number }>(
     `SELECT COUNT(*) AS line_count, COUNT(DISTINCT ims_report_url) AS reports
-       FROM onfido_doc_escalation_cre_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
+       FROM onfido_doc_escalation_cre_raw WHERE qc_updated_date BETWEEN ? AND ? ${filterClause}`,
     [f.from, f.to, ...filterParams]
   );
   const crq = await scalar<RowDataPacket & { line_count: number; reports: number }>(
     `SELECT COUNT(*) AS line_count, COUNT(DISTINCT ims_report_url) AS reports
-       FROM onfido_doc_escalation_crq_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
+       FROM onfido_doc_escalation_crq_raw WHERE qc_updated_date BETWEEN ? AND ? ${filterClause}`,
     [f.from, f.to, ...filterParams]
   );
 
@@ -240,13 +244,13 @@ export async function getTlBreakdown(rawFilters: { from?: string; to?: string })
   );
   const [creRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name, COUNT(*) AS n
-       FROM onfido_doc_escalation_cre_raw WHERE report_completed_date BETWEEN ? AND ?
+       FROM onfido_doc_escalation_cre_raw WHERE qc_updated_date BETWEEN ? AND ?
        GROUP BY tl_name`,
     [f.from, f.to]
   );
   const [crqRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name, COUNT(*) AS n
-       FROM onfido_doc_escalation_crq_raw WHERE report_completed_date BETWEEN ? AND ?
+       FROM onfido_doc_escalation_crq_raw WHERE qc_updated_date BETWEEN ? AND ?
        GROUP BY tl_name`,
     [f.from, f.to]
   );
@@ -335,7 +339,7 @@ const METRIC_DEFS: Record<string, MetricDef> = {
     numeratorExpr: "SUM(total_error)", denominatorExpr: "SUM(total_audits)", recordFilter: "total_error > 0",
   },
   doc_client_escalations: {
-    key: "doc_client_escalations", table: "onfido_doc_escalation_cre_raw", dateColumn: "report_completed_date", kind: "count",
+    key: "doc_client_escalations", table: "onfido_doc_escalation_cre_raw", dateColumn: "qc_updated_date", kind: "count",
   },
   poa_volume: { key: "poa_volume", table: "onfido_poa_raw", dateColumn: "report_completed_date", kind: "count" },
   poa_aht: {
@@ -1383,6 +1387,15 @@ export async function getQualityBreakdown(
 // UNIONs the two raw tables rather than picking one, so an escalation
 // reported under either format counts once, and none of them JOIN across
 // tables — same per-table-aggregate-then-combine approach as getOverview.
+//
+// Dated by qc_updated_date, not report_completed_date: report_completed_date
+// is when the original DOC report was finished, which can be well over a
+// year before the client actually raised/QC-logged the escalation against
+// it (live data: report_completed_date 2024-05-21 vs qc_updated_date
+// 2026-07-09 on the same row is typical, not an outlier). A date-range
+// filter meant to answer "what did QC review this week/month" needs
+// qc_updated_date; report_completed_date silently drops or misdates every
+// escalation whose underlying report is older than the selected range.
 
 const escCre = "onfido_doc_escalation_cre_raw";
 const escCrq = "onfido_doc_escalation_crq_raw";
@@ -1401,12 +1414,12 @@ export async function getEscalationOverview(
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const cre = await scalar<RowDataPacket & { n: number; reports: number }>(
     `SELECT COUNT(*) AS n, COUNT(DISTINCT ims_report_url) AS reports
-       FROM ${escCre} WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+       FROM ${escCre} WHERE qc_updated_date BETWEEN ? AND ? ${clause}`,
     [f.from, f.to, ...params]
   );
   const crq = await scalar<RowDataPacket & { n: number; reports: number }>(
     `SELECT COUNT(*) AS n, COUNT(DISTINCT ims_report_url) AS reports
-       FROM ${escCrq} WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+       FROM ${escCrq} WHERE qc_updated_date BETWEEN ? AND ? ${clause}`,
     [f.from, f.to, ...params]
   );
   const kpi = (key: string, label: string, value: number | null, unit: KpiValue["unit"], note?: string): KpiValue => ({
@@ -1430,15 +1443,15 @@ export async function getEscalationTrend(
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const pool = await getOnfidoPool();
-  const expr = bucketExpr("report_completed_date", granularity);
+  const expr = bucketExpr("qc_updated_date", granularity);
   const [creRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${expr} AS bucket, COUNT(*) AS n FROM ${escCre}
-      WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+      WHERE qc_updated_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
     [f.from, f.to, ...params]
   );
   const [crqRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${expr} AS bucket, COUNT(*) AS n FROM ${escCrq}
-      WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+      WHERE qc_updated_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
     [f.from, f.to, ...params]
   );
   const byBucket = new Map<string, number>();
@@ -1462,7 +1475,7 @@ export async function getEscalationBreakdown(
   const pool = await getOnfidoPool();
   const side = (table: string) =>
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label, COUNT(*) AS cnt
-       FROM ${table} WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY label`;
+       FROM ${table} WHERE qc_updated_date BETWEEN ? AND ? ${clause} GROUP BY label`;
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT label, SUM(cnt) AS total FROM (${side(escCre)} UNION ALL ${side(escCrq)}) t
       GROUP BY label ORDER BY total DESC LIMIT 50`,
@@ -1496,26 +1509,26 @@ export async function getEscalationRecords(
 
   const [creRows] = await pool.query<RowDataPacket[]>(
     `SELECT *, 'CRE' AS escalation_source FROM ${escCre}
-      WHERE report_completed_date BETWEEN ? AND ? ${clause} AND ${dimCond}
-      ORDER BY report_completed_date DESC LIMIT ?`,
+      WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}
+      ORDER BY qc_updated_date DESC LIMIT ?`,
     [f.from, f.to, ...params, ...valParams, limit]
   );
   const [crqRows] = await pool.query<RowDataPacket[]>(
     `SELECT *, 'CRQ' AS escalation_source FROM ${escCrq}
-      WHERE report_completed_date BETWEEN ? AND ? ${clause} AND ${dimCond}
-      ORDER BY report_completed_date DESC LIMIT ?`,
+      WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}
+      ORDER BY qc_updated_date DESC LIMIT ?`,
     [f.from, f.to, ...params, ...valParams, limit]
   );
   const rows = [...creRows, ...crqRows]
-    .sort((a, b) => new Date(b.report_completed_date as string).getTime() - new Date(a.report_completed_date as string).getTime())
+    .sort((a, b) => new Date(b.qc_updated_date as string).getTime() - new Date(a.qc_updated_date as string).getTime())
     .slice(0, limit) as EscalationRecordRow[];
 
   const [[creCount]] = await pool.query<(RowDataPacket & { n: number })[]>(
-    `SELECT COUNT(*) AS n FROM ${escCre} WHERE report_completed_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
+    `SELECT COUNT(*) AS n FROM ${escCre} WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
     [f.from, f.to, ...params, ...valParams]
   );
   const [[crqCount]] = await pool.query<(RowDataPacket & { n: number })[]>(
-    `SELECT COUNT(*) AS n FROM ${escCrq} WHERE report_completed_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
+    `SELECT COUNT(*) AS n FROM ${escCrq} WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
     [f.from, f.to, ...params, ...valParams]
   );
   return { rows, total: Number(creCount.n) + Number(crqCount.n) };

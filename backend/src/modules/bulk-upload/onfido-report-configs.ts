@@ -255,6 +255,7 @@ export const ONFIDO_REPORT_CONFIGS: OnfidoReportConfig[] = [
     extract: [
       { column: "ims_report_url", header: "IMS report URL", type: "string" },
       { column: "report_completed_date", header: "Report Completed Date", type: "date" },
+      { column: "qc_updated_date", header: "Qc Updated Date", type: "date" },
       { column: "analyst_email", header: "Analyst Email", type: "string" },
       { column: "tl_name", header: "TL", type: "string" },
       { column: "am_name", header: "AM", type: "string" },
@@ -279,6 +280,7 @@ export const ONFIDO_REPORT_CONFIGS: OnfidoReportConfig[] = [
     extract: [
       { column: "ims_report_url", header: "IMS report URL", type: "string" },
       { column: "report_completed_date", header: "Report Completed Date", type: "date" },
+      { column: "qc_updated_date", header: "Qc Updated Date", type: "date" },
       { column: "analyst_email", header: "Analyst Email", type: "string" },
       { column: "tl_name", header: "TL' Name", type: "string" },
       { column: "am_name", header: "AM'A Name", type: "string" },
