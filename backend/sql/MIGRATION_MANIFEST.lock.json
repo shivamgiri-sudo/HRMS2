@@ -804,8 +804,7 @@
     "1761_esic_registration_automation.sql",
     "1763_noc_cases_page_access.sql",
     "1765_portal_sessions.sql",
-    "1766_roster_live_monitoring_branch_head_wfm_only.sql",
-    "1767_onfido_external_audit_add_total_columns.sql"
+    "1766_roster_live_monitoring_branch_head_wfm_only.sql"
   ],
   "approvedDeletions": [
     {
@@ -959,6 +958,7 @@
     "1653_insert_hrms_employees_to_dbbill.sql",
     "1757_roster_command_center_console_page_codes.sql",
     "175_clean_department_master.sql",
+    "1767_onfido_external_audit_add_total_columns.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
@@ -1029,7 +1029,6 @@
     "999_create_missing_engagement_tables.sql",
     "999_fix_missing_ceo_metrics_tables.sql",
     "999_password_expiry_policy.sql",
-    "1767_onfido_external_audit_add_total_columns.sql",
     "add_missing_page_catalog_entries.sql",
     "add_missing_report_pages.sql",
     "ats_typing_passages_seed.sql",
