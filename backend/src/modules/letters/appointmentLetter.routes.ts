@@ -208,7 +208,7 @@ router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES
   }
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
-            d.name AS designation_name
+            d.designation_name
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
       WHERE e.id = ? LIMIT 1`,
