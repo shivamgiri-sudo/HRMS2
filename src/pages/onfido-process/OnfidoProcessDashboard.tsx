@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, CalendarRange, Database, FileSearch, FileText, FlaskConical, LayoutGrid, Layers3,
+  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -65,7 +65,7 @@ type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string
 
 type ViewKey =
   | "overview" | "analyst" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
-  | "escalations" | "docraw" | "poa" | "poatrial" | "live";
+  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "live";
 type Granularity = "daily" | "weekly" | "monthly";
 
 interface VolumeTrendPoint { bucket: string; doc: number; poa: number }
@@ -165,6 +165,13 @@ interface PoaTrialOverview { taskCount: KpiValue; avgAht: KpiValue; considerRate
 interface PoaTrialTrendPoint { bucket: string; taskCount: number }
 type PoaTrialDimension = "tl_name" | "am_name";
 interface PoaTrialBreakdownRow { label: string; taskCount: number; avgAht: number | null; considerRate: number | null }
+
+interface ClientDocOverview {
+  totalTasks: KpiValue; docTasks: KpiValue; poaTasks: KpiValue; avgAht: KpiValue; distinctClients: KpiValue;
+}
+interface ClientDocTrendPoint { bucket: string; doc: number; poa: number }
+interface ClientDocBreakdownRow { clientName: string; task: "DOC" | "POA"; taskCount: number; aht: number | null }
+interface ClientDocRecordRow extends RawRecord { source_table: "ONFIDO_DOC_RAW" | "ONFIDO_POA_RAW" }
 
 interface LiveOverview {
   docLiveTaskCount: KpiValue; docLiveAht: KpiValue; docLiveAuditCount: KpiValue; docLiveErrorCount: KpiValue;
@@ -326,7 +333,7 @@ function ChartLegendRow() {
  *  search box) don't take one, so the Executive Filters TL/AM dropdowns hide there
  *  rather than silently doing nothing when changed. */
 const FILTERABLE_VIEWS = new Set<ViewKey>([
-  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial",
+  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc",
 ]);
 
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -342,6 +349,7 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "docraw", label: "DOC Raw", icon: Database },
   { key: "poa", label: "POA", icon: FileText },
   { key: "poatrial", label: "POA Trial", icon: FlaskConical },
+  { key: "clientdoc", label: "Client & Document Report", icon: FileBarChart2 },
   { key: "live", label: "Live", icon: Radio },
 ];
 
@@ -1866,6 +1874,211 @@ function PoaTrialView({
 }
 
 /**
+ * Item #6 of the 2026-09-12 client feedback: "DOC Check and POA Client and
+ * document wise need report" — a Document Name filter, month/week trend, and
+ * a Client Name / Task / AHT breakdown. DOC and POA are two physically
+ * separate raw tables (onfido_doc_raw, onfido_poa_raw), same UNION-with-a-tag
+ * shape as EscalationsView above — "Task" in the breakdown table is which
+ * queue the row came from (DOC or POA), the one dimension the client's own
+ * request can actually mean given DOC's own per-row task-type field is blank
+ * on 99.9% of rows (see the backend's getClientDocBreakdown comment).
+ */
+function ClientDocView({
+  range, tlFilter, amFilter, onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  const [granularity, setGranularity] = useState<"monthly" | "weekly">("monthly");
+  const [documentName, setDocumentName] = useState<string>("");
+  const [drilldown, setDrilldown] = useState<{ clientName: string; task: "DOC" | "POA" } | null>(null);
+  const qs = tlAmQS(tlFilter, amFilter);
+  const docQS = documentName ? `&documentName=${encodeURIComponent(documentName)}` : "";
+
+  const optionsQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-document-options"],
+    queryFn: () => hrmsApi.get<{ data: string[] }>(`/api/onfido-process/client-doc/document-options`),
+    staleTime: 5 * 60_000,
+  });
+  const overviewQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-overview", range, tlFilter, amFilter, documentName],
+    queryFn: () => hrmsApi.get<{ data: ClientDocOverview }>(`/api/onfido-process/client-doc/overview?from=${range.from}&to=${range.to}${qs}${docQS}`),
+  });
+  const trendQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-trend", range, tlFilter, amFilter, documentName, granularity],
+    queryFn: () => hrmsApi.get<{ data: ClientDocTrendPoint[] }>(`/api/onfido-process/client-doc/trend?from=${range.from}&to=${range.to}${qs}${docQS}&granularity=${granularity}`),
+  });
+  const breakdownQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-breakdown", range, tlFilter, amFilter, documentName],
+    queryFn: () => hrmsApi.get<{ data: ClientDocBreakdownRow[] }>(`/api/onfido-process/client-doc/breakdown?from=${range.from}&to=${range.to}${qs}${docQS}`),
+  });
+
+  const documentOptions = optionsQuery.data?.data ?? [];
+  const ov = overviewQuery.data?.data;
+  const points = trendQuery.data?.data ?? [];
+  const breakdown = breakdownQuery.data?.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="oc-filterbar">
+        <div className="oc-field">
+          <label>Document Name</label>
+          <select className="oc-select" value={documentName} onChange={(e) => setDocumentName(e.target.value)}>
+            <option value="">All documents</option>
+            {documentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {ov && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+          <KpiPlain kpi={ov.totalTasks} kc="var(--blue)" />
+          <KpiPlain kpi={ov.docTasks} kc="var(--teal)" />
+          <KpiPlain kpi={ov.poaTasks} kc="var(--orange)" />
+          <KpiPlain kpi={ov.avgAht} kc="var(--purple)" />
+        </div>
+      )}
+
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>DOC + POA Volume Trend</h3>
+          <PillGroup
+            value={granularity} onChange={setGranularity}
+            options={[{ key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+          />
+        </div>
+        <div className="oc-card-sub">
+          {documentName ? `Filtered to "${documentName}".` : "All documents."} DOC and POA task counts per bucket.
+        </div>
+        {points.length === 0 ? (
+          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+              </Bar>
+              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <h3>Client &amp; Document Report</h3>
+        <div className="oc-card-sub">Client Name / Task / AHT, as requested. Top 200 by volume — click a row for the underlying reports.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead><tr><th>Client Name</th><th>Task</th><th className="oc-right">Volume</th><th className="oc-right">AHT</th></tr></thead>
+            <tbody>
+              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
+              {breakdown.map((r) => (
+                <tr key={`${r.clientName}-${r.task}`} className="oc-row-click" onClick={() => setDrilldown({ clientName: r.clientName, task: r.task })}>
+                  <td>{r.clientName}</td>
+                  <td><span className="oc-badge">{r.task}</span></td>
+                  <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.aht !== null ? `${r.aht}s` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {drilldown && (
+        <ClientDocDrilldownSheet
+          open={!!drilldown}
+          clientName={drilldown.clientName}
+          task={drilldown.task}
+          documentName={documentName}
+          range={range}
+          tlFilter={tlFilter}
+          amFilter={amFilter}
+          onOpenChange={(v) => { if (!v) setDrilldown(null); }}
+          onOpenRecord={onOpenRecord}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * ClientDocView's own drill-down sheet — same reasoning as
+ * EscalationDrilldownSheet: DOC and POA are two physically separate tables,
+ * so this hits the dedicated /client-doc/records endpoint rather than the
+ * generic single-table /records/:table route. Each row carries a ready-to-use
+ * upload-type-code (`source_table`), so the row click opens the same shared
+ * RecordDrawer via onOpenRecord with no extra mapping step.
+ */
+function ClientDocDrilldownSheet({
+  open, clientName, task, documentName, range, tlFilter, amFilter, onOpenChange, onOpenRecord,
+}: {
+  open: boolean; clientName: string; task: "DOC" | "POA"; documentName: string;
+  range: { from: string; to: string }; tlFilter: string; amFilter: string;
+  onOpenChange: (v: boolean) => void; onOpenRecord: (record: RawRecord, table: string) => void;
+}) {
+  const qs = tlAmQS(tlFilter, amFilter);
+  const docQS = documentName ? `&documentName=${encodeURIComponent(documentName)}` : "";
+  const recordsQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-records", clientName, task, documentName, range, tlFilter, amFilter],
+    queryFn: () =>
+      hrmsApi.get<{ data: { rows: ClientDocRecordRow[]; total: number } }>(
+        `/api/onfido-process/client-doc/records?from=${range.from}&to=${range.to}${qs}${docQS}&clientName=${encodeURIComponent(clientName)}&task=${task}&limit=100`
+      ),
+    enabled: open,
+  });
+  const records = recordsQuery.data?.data;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="onfido-central-theme oc-sheet w-full overflow-y-auto sm:max-w-2xl">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2 !text-[color:var(--text)]">
+            <FileBarChart2 className="h-4 w-4" style={{ color: "var(--muted)" }} /> {clientName} — {task}
+          </SheetTitle>
+          <SheetDescription className="!text-[color:var(--muted)]">
+            {documentName ? `Document: ${documentName}` : "All documents"}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="mt-4">
+          <p className="mb-2" style={{ fontSize: 11, color: "var(--muted)" }}>Click a record for its full detail.</p>
+          <table className="oc-table">
+            <thead><tr><th>Date</th><th>Document</th><th>Analyst</th><th className="oc-right">AHT</th></tr></thead>
+            <tbody>
+              {(records?.rows ?? []).length === 0 && (
+                <tr className="oc-empty-row"><td colSpan={4}>{recordsQuery.isLoading ? "Loading…" : "No records"}</td></tr>
+              )}
+              {(records?.rows ?? []).map((r) => {
+                const row = r as Record<string, unknown>;
+                return (
+                  <tr key={r.id} className="oc-row-click" onClick={() => onOpenRecord(r, r.source_table)}>
+                    <td style={{ fontSize: 11 }}>{formatDateTime(row.report_date ?? row.report_completed_date)}</td>
+                    <td style={{ fontSize: 11 }}>{String(row.document_name ?? "(unspecified)")}</td>
+                    <td style={{ fontSize: 11 }}>{String(row.analyst_email ?? "-")}</td>
+                    <td className="oc-right" style={{ fontSize: 11 }}>
+                      {row.manual_processing_time_secs !== null && row.manual_processing_time_secs !== undefined
+                        ? `${row.manual_processing_time_secs}s` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {records && (
+            <div className="mt-2" style={{ fontSize: 11, color: "var(--muted)" }}>
+              Showing {records.rows.length} of {records.total.toLocaleString("en-IN")}
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/**
  * Live view — deliberately not wired to Executive Filters' date range (see
  * the backend's own comment): it always shows today / this month, the same
  * way the reference dashboard's own Live Dashboard tab does. Every source
@@ -2279,6 +2492,7 @@ export default function OnfidoProcessDashboard() {
           {view === "docraw" && <DocRawView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poa" && <PoaView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poatrial" && <PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "clientdoc" && <ClientDocView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
 
           {view === "overview" && (

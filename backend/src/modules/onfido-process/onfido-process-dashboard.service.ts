@@ -1534,6 +1534,196 @@ export async function getEscalationRecords(
   return { rows, total: Number(creCount.n) + Number(crqCount.n) };
 }
 
+// ── Client & Document Report (item #6 of the 2026-09-12 feedback: "DOC Check
+// and POA Client and document wise need report") ───────────────────────────
+//
+// The client's ask, verbatim from the email: filter by Document Name, a
+// month-wise and week-wise trend, and a table of Client Name / Task / AHT.
+// "Task" here means which queue the row is from — same UNION-with-a-tag
+// approach as the Escalations (CRE/CRQ) section above, tagging every row
+// "DOC" or "POA" rather than a per-row task subtype (onfido_doc_raw's own
+// per-row "Task Type Short Name" field is blank on 99.9% of rows, so it
+// cannot carry this distinction; DOC vs POA — which queue processed the
+// document — is the real, always-populated dimension the client is asking
+// to see broken out).
+//
+// document_name/ims_client_name on onfido_poa_raw and document_name on
+// onfido_doc_raw did not exist as columns until this fix — both queues'
+// upload files always carried a document-type column (confirmed in each
+// row's own raw_data JSON), it just was never extracted. document_name on
+// onfido_poa_raw is genuinely blank on ~43% of historical rows (older POA
+// exports didn't always carry a sub-document-type) — real data, not a bug in
+// this fix; the UI must show "(unspecified)" for it rather than hide the row.
+
+const cdDoc = "onfido_doc_raw";
+const cdPoa = "onfido_poa_raw";
+
+function documentNameFilter(documentName?: string): { clause: string; params: string[] } {
+  if (!documentName) return { clause: "", params: [] };
+  return { clause: "AND document_name = ?", params: [documentName] };
+}
+
+export interface ClientDocOverview {
+  totalTasks: KpiValue;
+  docTasks: KpiValue;
+  poaTasks: KpiValue;
+  avgAht: KpiValue;
+  distinctClients: KpiValue;
+}
+
+export async function getClientDocOverview(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string }
+): Promise<ClientDocOverview> {
+  const f = readFilters(rawFilters);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
+  const doc = await scalar<RowDataPacket & { n: number; aht: number | null; clients: number }>(
+    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, COUNT(DISTINCT ims_client_name) AS clients
+       FROM ${cdDoc} WHERE report_date BETWEEN ? AND ? ${tlClause} ${docClause}`,
+    [f.from, f.to, ...tlParams, ...docParams]
+  );
+  const poa = await scalar<RowDataPacket & { n: number; aht: number | null; clients: number }>(
+    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, COUNT(DISTINCT ims_client_name) AS clients
+       FROM ${cdPoa} WHERE report_completed_date BETWEEN ? AND ? ${tlClause} ${docClause}`,
+    [f.from, f.to, ...tlParams, ...docParams]
+  );
+  const docN = Number(doc.n ?? 0);
+  const poaN = Number(poa.n ?? 0);
+  // Volume-weighted combine, same reasoning as getOverview's POA-raw+trial AHT combine.
+  const weightedSum = (doc.aht !== null ? doc.aht * docN : 0) + (poa.aht !== null ? poa.aht * poaN : 0);
+  const weightedCount = (doc.aht !== null ? docN : 0) + (poa.aht !== null ? poaN : 0);
+  const combinedAht = weightedCount > 0 ? weightedSum / weightedCount : null;
+  const kpi = (key: string, label: string, value: number | null, unit: KpiValue["unit"], note?: string): KpiValue => ({
+    key, label, value, unit, availability: value === null ? "no_data" : "ok", note,
+  });
+  return {
+    totalTasks: kpi("clientdoc_total", "DOC + POA Tasks", docN + poaN, "count", `${docN} DOC + ${poaN} POA`),
+    docTasks: kpi("clientdoc_doc", "DOC Tasks", docN, "count"),
+    poaTasks: kpi("clientdoc_poa", "POA Tasks", poaN, "count"),
+    avgAht: kpi("clientdoc_aht", "Combined Avg AHT", combinedAht !== null ? Math.round(combinedAht) : null, "seconds"),
+    distinctClients: kpi("clientdoc_clients", "Distinct Clients", Math.max(Number(doc.clients ?? 0), Number(poa.clients ?? 0)), "count"),
+  };
+}
+
+export interface ClientDocTrendPoint { bucket: string; doc: number; poa: number }
+
+/** Month-wise / week-wise trend only — the client asked for exactly these two,
+ *  not the daily granularity the rest of the dashboard supports elsewhere. */
+export async function getClientDocTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string },
+  granularity: "monthly" | "weekly"
+): Promise<ClientDocTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
+  const pool = await getOnfidoPool();
+  const [docRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucketExpr("report_date", granularity)} AS bucket, COUNT(*) AS n
+       FROM ${cdDoc} WHERE report_date BETWEEN ? AND ? ${tlClause} ${docClause} GROUP BY bucket`,
+    [f.from, f.to, ...tlParams, ...docParams]
+  );
+  const [poaRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucketExpr("report_completed_date", granularity)} AS bucket, COUNT(*) AS n
+       FROM ${cdPoa} WHERE report_completed_date BETWEEN ? AND ? ${tlClause} ${docClause} GROUP BY bucket`,
+    [f.from, f.to, ...tlParams, ...docParams]
+  );
+  const byBucket = new Map<string, { doc: number; poa: number }>();
+  for (const r of docRows) {
+    const key = bucketLabel(r.bucket, granularity);
+    byBucket.set(key, { doc: Number(r.n), poa: byBucket.get(key)?.poa ?? 0 });
+  }
+  for (const r of poaRows) {
+    const key = bucketLabel(r.bucket, granularity);
+    byBucket.set(key, { doc: byBucket.get(key)?.doc ?? 0, poa: Number(r.n) });
+  }
+  return [...byBucket.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([bucket, v]) => ({ bucket, ...v }));
+}
+
+export interface ClientDocBreakdownRow { clientName: string; task: "DOC" | "POA"; taskCount: number; aht: number | null }
+
+/** The client's requested table shape: Client Name / Task / AHT. */
+export async function getClientDocBreakdown(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string }
+): Promise<ClientDocBreakdownRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
+  const pool = await getOnfidoPool();
+  const [docRows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(ims_client_name), ''), '(unassigned)') AS client_name,
+            COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM ${cdDoc} WHERE report_date BETWEEN ? AND ? ${tlClause} ${docClause} GROUP BY client_name`,
+    [f.from, f.to, ...tlParams, ...docParams]
+  );
+  const [poaRows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(ims_client_name), ''), '(unassigned)') AS client_name,
+            COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM ${cdPoa} WHERE report_completed_date BETWEEN ? AND ? ${tlClause} ${docClause} GROUP BY client_name`,
+    [f.from, f.to, ...tlParams, ...docParams]
+  );
+  const rows: ClientDocBreakdownRow[] = [
+    ...docRows.map((r): ClientDocBreakdownRow => ({
+      clientName: r.client_name, task: "DOC", taskCount: Number(r.n), aht: r.aht !== null ? Math.round(Number(r.aht)) : null,
+    })),
+    ...poaRows.map((r): ClientDocBreakdownRow => ({
+      clientName: r.client_name, task: "POA", taskCount: Number(r.n), aht: r.aht !== null ? Math.round(Number(r.aht)) : null,
+    })),
+  ];
+  return rows.sort((a, b) => b.taskCount - a.taskCount).slice(0, 200);
+}
+
+/** Real, observed Document Name values for the filter dropdown — the Form
+ *  Input Rule requires this be a dropdown built from the real domain, never
+ *  free text. Excludes blanks (onfido_poa_raw's ~43% unpopulated rows). */
+export async function getClientDocDocumentOptions(): Promise<string[]> {
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT document_name, COUNT(*) AS n FROM (
+       SELECT document_name FROM ${cdDoc} WHERE document_name IS NOT NULL AND TRIM(document_name) <> ''
+       UNION ALL
+       SELECT document_name FROM ${cdPoa} WHERE document_name IS NOT NULL AND TRIM(document_name) <> ''
+     ) t GROUP BY document_name ORDER BY n DESC LIMIT 500`
+  );
+  return rows.map((r) => r.document_name as string).sort((a, b) => a.localeCompare(b));
+}
+
+export interface ClientDocRecordRow extends RowDataPacket { source_table: "ONFIDO_DOC_RAW" | "ONFIDO_POA_RAW" }
+
+/** Raw records behind one Client+Task breakdown row — mirrors
+ *  getEscalationRecords' per-row source tagging, but the tag here is a
+ *  ready-to-use upload-type-code key (resolveTable already accepts either
+ *  form), so the frontend can pass it straight through to the existing
+ *  generic /records/:table/:id detail route with no extra mapping step. */
+export async function getClientDocRecords(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string },
+  clientName: string,
+  task: "DOC" | "POA",
+  limit = 50
+): Promise<{ rows: ClientDocRecordRow[]; total: number }> {
+  const f = readFilters(rawFilters);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
+  const pool = await getOnfidoPool();
+  const clientCond = clientName === "(unassigned)"
+    ? "(ims_client_name IS NULL OR TRIM(ims_client_name) = '')" : "ims_client_name = ?";
+  const clientParams = clientName === "(unassigned)" ? [] : [clientName];
+
+  const table = task === "DOC" ? cdDoc : cdPoa;
+  const dateCol = task === "DOC" ? "report_date" : "report_completed_date";
+  const sourceTable = task === "DOC" ? "ONFIDO_DOC_RAW" : "ONFIDO_POA_RAW";
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT *, '${sourceTable}' AS source_table FROM ${table}
+      WHERE ${dateCol} BETWEEN ? AND ? ${tlClause} ${docClause} AND ${clientCond}
+      ORDER BY ${dateCol} DESC LIMIT ?`,
+    [f.from, f.to, ...tlParams, ...docParams, ...clientParams, limit]
+  );
+  const [[countRow]] = await pool.query<(RowDataPacket & { n: number })[]>(
+    `SELECT COUNT(*) AS n FROM ${table} WHERE ${dateCol} BETWEEN ? AND ? ${tlClause} ${docClause} AND ${clientCond}`,
+    [f.from, f.to, ...tlParams, ...docParams, ...clientParams]
+  );
+  return { rows: rows as ClientDocRecordRow[], total: Number(countRow.n) };
+}
+
 // ── DOC Raw (per-task volume/AHT, onfido_doc_raw) ───────────────────────────
 //
 // Distinct from onfido_doc_external_audit_raw (which only ever carries

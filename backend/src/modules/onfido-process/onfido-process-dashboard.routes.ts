@@ -217,6 +217,42 @@ router.get("/escalations/records/:dimension", requireAuth, requireRole(...VIEWER
   res.json({ success: true, data });
 }));
 
+// Item #6 of the 2026-09-12 feedback: "DOC Check and POA Client and document
+// wise need report" — filter by Document Name, month/week trend, Client Name
+// / Task / AHT table.
+function readClientDocFilters(req: AuthenticatedRequest) {
+  const q = req.query as Record<string, string | undefined>;
+  return { from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, documentName: q.documentName };
+}
+router.get("/client-doc/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getClientDocOverview(readClientDocFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/client-doc/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  const granularity = q.granularity === "weekly" ? "weekly" : "monthly";
+  const data = await svc.getClientDocTrend(readClientDocFilters(req), granularity);
+  res.json({ success: true, data });
+}));
+router.get("/client-doc/breakdown", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getClientDocBreakdown(readClientDocFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/client-doc/document-options", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
+  const data = await svc.getClientDocDocumentOptions();
+  res.json({ success: true, data });
+}));
+router.get("/client-doc/records", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  if (q.clientName === undefined || (q.task !== "DOC" && q.task !== "POA")) {
+    return res.status(400).json({ success: false, message: "clientName and task ('DOC'|'POA') are required" });
+  }
+  const data = await svc.getClientDocRecords(
+    readClientDocFilters(req), q.clientName, q.task, q.limit ? Number(q.limit) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
 const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name"]);
 router.get("/doc-raw/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getDocRawOverview(readQueryFilters(req));
