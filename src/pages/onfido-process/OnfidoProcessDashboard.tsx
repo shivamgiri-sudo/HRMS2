@@ -561,7 +561,7 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
                 {initials(perf.email.split("@")[0])}
               </span>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: "#fff" }}>{perf.email}</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text)" }}>{perf.email}</div>
                 <div style={{ fontSize: 11, color: "var(--muted)" }}>
                   TL: {perf.tlName ?? "-"} · AM: {perf.amName ?? "-"} · QA: {perf.qaName ?? "-"}
                 </div>
@@ -572,12 +572,10 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
             </div>
           </div>
 
-          <div className="kr k5">
+          <div className="kr">
             <KpiPlain kpi={perf.totalTasks} kc="var(--blue)" />
             <KpiPlain kpi={perf.avgManualProcessingTime} kc="var(--purple)" />
             <KpiPlain kpi={perf.overallErrorRate} kc="var(--red)" />
-            <KpiPlain kpi={perf.manualFarRate} kc="var(--orange)" />
-            <KpiPlain kpi={perf.manualFrrRate} kc="var(--pink)" />
           </div>
           <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
             <KpiPlain kpi={perf.poaTasks} kc="var(--teal)" />
@@ -2219,7 +2217,7 @@ export default function OnfidoProcessDashboard() {
           {/* Header */}
           <div>
             <div className="oc-eyebrow" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>Quality &amp; Operations</div>
-            <h1 style={{ marginTop: 4, fontSize: 22, fontWeight: 800, color: "#fff" }}>Onfido Process Dashboard</h1>
+            <h1 style={{ marginTop: 4, fontSize: 22, fontWeight: 800, color: "var(--text)" }}>Onfido Process Dashboard</h1>
             <p style={{ marginTop: 4, maxWidth: 720, fontSize: 13, color: "var(--muted)" }}>
               DOC and POA queue volume, AHT, quality audits and client escalations — built from the
               report files uploaded through Bulk Upload Hub.
