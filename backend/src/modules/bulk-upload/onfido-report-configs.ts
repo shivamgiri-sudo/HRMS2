@@ -662,6 +662,18 @@ ONFIDO_REPORT_CONFIGS.push(ONFIDO_TASK_SKIP_CONFIG);
 // per-employee-per-day source, so month/AM/TL/AON/location rollups are computed
 // from it in application code — the same approach every other rollup in this
 // dashboard uses, rather than importing a pivot redundantly.
+// Item #8 of the 2026-09-12 feedback: "GD MCN SLA APS Day and slot wise
+// performance. (Required New Format)" — real headers read directly from the
+// owner's attachment ("GD MCN SLA APS Slot wise.xlsx", Sheet1, 250 rows: 10
+// days x (24 hourly slots + 1 daily "Total" summary row)). "Occopancy% " and
+// " Avail% " keep the real header spelling/whitespace (typo + trailing/
+// leading space) exactly as they appear in the source file — must match
+// verbatim for extraction to find them.
+const GD_MCN_SLA_HEADERS = [
+  "GMT", "IST", "Date", "GD%", "MCN%", "Deficit", "SLA%", "Commitment",
+  "FTE Delivered", "APS%", "Occopancy% ", " Avail% ",
+];
+
 const AGENT_DAILY_HEADERS = [
   "Day", "Week", "Date", "Emp ID", "Exception Tracker", "Emp. Name", "Onfido Mail ID",
   "Supervisor", "Trainer", "AM", "MO", "Designation", "Work Type", "DOJ", "Live Date",
@@ -710,6 +722,37 @@ export const ONFIDO_AGENT_DAILY_CONFIG: OnfidoReportConfig = {
   ],
 };
 ONFIDO_REPORT_CONFIGS.push(ONFIDO_AGENT_DAILY_CONFIG);
+
+export const ONFIDO_GD_MCN_SLA_CONFIG: OnfidoReportConfig = {
+  uploadTypeCode: "ONFIDO_GD_MCN_SLA",
+  uploadTypeName: "Onfido - GD MCN SLA APS (Day & Slot Wise)",
+  rpcName: "import_onfido_gd_mcn_sla_batch",
+  table: "onfido_gd_mcn_sla_raw",
+  description: "Global Delivery / MAS Callnet day-and-slot-wise SLA/staffing performance export (item #8 of the 2026-09-12 feedback).",
+  headers: GD_MCN_SLA_HEADERS,
+  // No per-row URL/ID in this file — it is an hourly staffing-SLA fact table,
+  // not a per-task export. The natural identity is Date + GMT slot (24 hourly
+  // rows per day, plus one "Total" daily-summary row whose GMT value is
+  // literally the text "Total" rather than a time — still unique per date).
+  dedupHeaders: ["Date", "GMT"],
+  dedupColumn: "slot_key",
+  extract: [
+    { column: "slot_key", header: "", type: "string" },
+    { column: "slot_date", header: "Date", type: "date" },
+    { column: "gmt_slot", header: "GMT", type: "string" },
+    { column: "ist_slot", header: "IST", type: "string" },
+    { column: "gd_pct", header: "GD%", type: "float" },
+    { column: "mcn_pct", header: "MCN%", type: "float" },
+    { column: "deficit", header: "Deficit", type: "float" },
+    { column: "sla_pct", header: "SLA%", type: "float" },
+    { column: "commitment", header: "Commitment", type: "float" },
+    { column: "fte_delivered", header: "FTE Delivered", type: "float" },
+    { column: "aps_pct", header: "APS%", type: "float" },
+    { column: "occupancy_pct", header: "Occopancy% ", type: "float" },
+    { column: "avail_pct", header: " Avail% ", type: "float" },
+  ],
+};
+ONFIDO_REPORT_CONFIGS.push(ONFIDO_GD_MCN_SLA_CONFIG);
 
 export function getOnfidoConfigByRpc(rpcName: string): OnfidoReportConfig | undefined {
   return ONFIDO_REPORT_CONFIGS.find((c) => c.rpcName === rpcName);
