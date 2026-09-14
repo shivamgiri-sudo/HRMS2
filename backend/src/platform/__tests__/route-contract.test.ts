@@ -147,16 +147,22 @@ const KNOWN_GAPS: Record<string, string> = {
   // the concurrent-agent commits that carried process-team-roster.service.ts and
   // shift-due.util.ts were merged. The route is now served; no longer a gap.
 
-  // ── ESIC Automation stubs — still empty Router as of 2026-09-14 ──────────────────────
-  // esic-automation.routes.ts exports only a bare Router(). A previous comment claimed
-  // the handlers landed, but the file is still a one-line stub. Re-added 2026-09-14.
-  // Remove once real handlers are implemented.
+  // ── ESIC Automation stubs — still empty Router, re-confirmed 2026-09-14 ───────────────
+  // esic-automation.routes.ts exports only a bare Router() — genuinely still true. The
+  // earlier same-day back-and-forth on this exact block (removed, re-added, removed again)
+  // was caused by a real mistake, not a route landing: a `git show origin/main:<path>`
+  // command on EsicRegistrationBotTab.tsx failed (the file was local-only, never committed
+  // anywhere), and its output redirect still truncated the LOCAL copy of that file to empty
+  // regardless of the failure — a shared-working-tree accident, not a code change. That
+  // untracked file has now been rebuilt (see its own header comment) and still calls all 3
+  // of these endpoints, same shape as before. In-progress work; remove once
+  // esic-automation.routes.ts actually implements the 3 handlers below.
   "GET /api/payroll/esic-automation/cases":
-    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:28 calls /cases for the list view. In-progress work; remove once handlers are implemented.",
+    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases for the list view. In-progress work; remove once handlers are implemented.",
   "GET /api/payroll/esic-automation/cases/:p":
-    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:30 calls /cases/:id for the detail view. In-progress work; remove once handlers are implemented.",
+    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id for the detail view. In-progress work; remove once handlers are implemented.",
   "POST /api/payroll/esic-automation/cases/:p/approve":
-    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx:31 calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
+    "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
