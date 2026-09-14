@@ -1285,6 +1285,78 @@ export async function regularizationAuditReport(
 }
 
 // ---------------------------------------------------------------------------
+// attendance-direct-edit-log
+// Shows every direct attendance status change made via the Attendance Lookup
+// "Change Status" dialog (attendance_manual_override). This is separate from
+// attendance_regularization — the two write paths are distinct by design:
+// regularizations go through an approval workflow; direct edits by
+// Payroll Head / Super Admin take effect immediately (or after super_admin
+// confirmation for locked payroll months) without creating a regularization row.
+// ---------------------------------------------------------------------------
+export async function attendanceDirectEditLog(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, "1900-01-01");
+  const to   = dateParam(filters.to,   "9999-12-31");
+
+  const clauses: string[] = ["e.id IS NOT NULL", "DATE(amo.created_at) >= ?", "DATE(amo.created_at) <= ?"];
+  const params: unknown[]  = [from, to];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  if (filters.status)  { clauses.push("amo.approval_status = ?"); params.push(String(filters.status)); }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("amo.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT amo.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           amo.attendance_date,
+           amo.old_status AS status_before,
+           amo.new_status AS status_after,
+           ROUND(COALESCE(amo.old_lwp, 0), 2) AS lwp_before,
+           ROUND(COALESCE(amo.new_lwp, 0), 2) AS lwp_after,
+           amo.reason,
+           amo.approval_status,
+           amo.payroll_month,
+           amo.is_payroll_month_locked AS payroll_month_locked,
+           amo.created_at AS submitted_at,
+           COALESCE(cb.full_name, cb.email) AS submitted_by,
+           amo.approved_at,
+           COALESCE(ab.full_name, ab.email) AS approved_by_name,
+           amo.rejected_at,
+           amo.rejection_reason
+      FROM attendance_manual_override amo
+      JOIN employees e ON e.id = amo.employee_id
+      LEFT JOIN auth_user cb ON cb.id = amo.created_by
+      LEFT JOIN employees cb_emp ON cb_emp.user_id = cb.id
+      LEFT JOIN auth_user ab ON ab.id = amo.approved_by
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY amo.created_at DESC, employee_name`;
+
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as string) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
 // habitual-absentee-list
 // ---------------------------------------------------------------------------
 export async function habitualAbsenteeList(
