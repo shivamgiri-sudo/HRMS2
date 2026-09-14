@@ -1330,9 +1330,9 @@ export async function attendanceDirectEditLog(
            amo.payroll_month,
            amo.is_payroll_month_locked AS payroll_month_locked,
            amo.created_at AS submitted_at,
-           COALESCE(cb.full_name, cb.email) AS submitted_by,
+           COALESCE(cb_emp.full_name, cb.email) AS submitted_by,
            amo.approved_at,
-           COALESCE(ab.full_name, ab.email) AS approved_by_name,
+           COALESCE(ab_emp.full_name, ab.email) AS approved_by_name,
            amo.rejected_at,
            amo.rejection_reason
       FROM attendance_manual_override amo
@@ -1340,6 +1340,7 @@ export async function attendanceDirectEditLog(
       LEFT JOIN auth_user cb ON cb.id = amo.created_by
       LEFT JOIN employees cb_emp ON cb_emp.user_id = cb.id
       LEFT JOIN auth_user ab ON ab.id = amo.approved_by
+      LEFT JOIN employees ab_emp ON ab_emp.user_id = ab.id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN department_master d ON d.id = e.department_id
