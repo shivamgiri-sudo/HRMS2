@@ -178,8 +178,10 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
            FROM exit_clearance_task GROUP BY exit_request_id
        ) clearance ON clearance.exit_request_id = er.id
       ${scopeWhere}
-      ORDER BY er.created_at DESC
-      LIMIT 100`,
+      ORDER BY
+        FIELD(er.status,'submitted','manager_review','hr_review','admin_review','accepted','notice_serving') DESC,
+        er.created_at DESC
+      LIMIT 200`,
     params,
   );
 
