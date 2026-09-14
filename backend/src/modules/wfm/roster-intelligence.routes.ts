@@ -21,8 +21,17 @@ const router = Router();
 
 router.use(requireAuth);
 
+// ADMIN_ROLES: used only by the /manager-digest (singular) self-service endpoint below,
+// to decide whether the caller may view someone else's digest rather than just their own —
+// unrelated to the Roster Console's Live Monitoring tab and left untouched by the
+// branch_head/wfm-only ruling (see LIVE_MONITORING_ROLES).
 const ADMIN_ROLES = ['super_admin', 'admin', 'hr', 'wfm'];
 const MANAGER_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'manager', 'operations_manager', 'process_manager'];
+// Owner ruling 2026-09-14: the Roster Console's Live Monitoring tab
+// (page_code WFM_ROSTER_LIVE_MONITORING, migration 1766) is branch_head + wfm only —
+// admin/hr's prior access to these 5 endpoints is revoked. super_admin needs no entry:
+// requireRole() unconditionally allows it regardless of the list passed in.
+const LIVE_MONITORING_ROLES = ['super_admin', 'wfm', 'branch_head'];
 
 /**
  * GET /api/roster-intelligence/manager-digest
@@ -101,7 +110,7 @@ router.get('/manager-digest', requireRole(...MANAGER_ROLES), async (req, res) =>
  * GET /api/roster-intelligence/manager-digests
  * Get digests for ALL managers (admin only) - for batch email sending
  */
-router.get('/manager-digests', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/manager-digests', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
     const digests = await generateManagerDailyDigests(date);
@@ -132,7 +141,7 @@ router.get('/branch-dashboard/:branchId', requireRole(...MANAGER_ROLES), async (
  * GET /api/roster-intelligence/branch-dashboards
  * Get dashboards for ALL branches (admin only)
  */
-router.get('/branch-dashboards', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/branch-dashboards', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
 
@@ -156,7 +165,7 @@ router.get('/branch-dashboards', requireRole(...ADMIN_ROLES), async (req, res) =
  * GET /api/roster-intelligence/unplanned-absences
  * Detect current unplanned absences (for real-time alerts)
  */
-router.get('/unplanned-absences', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/unplanned-absences', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
     const gracePeriod = req.query.gracePeriod ? parseInt(String(req.query.gracePeriod), 10) : 30;
@@ -210,7 +219,7 @@ router.get('/weekly-shrinkage/:branchId', requireRole(...MANAGER_ROLES), async (
  * POST /api/roster-intelligence/send-manager-digests
  * Trigger sending of manager daily digests (called by cron or manually)
  */
-router.post('/send-manager-digests', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/send-manager-digests', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.body.date ? String(req.body.date) : undefined;
     const dryRun = req.body.dryRun === true;
@@ -270,7 +279,7 @@ router.post('/send-manager-digests', requireRole(...ADMIN_ROLES), async (req, re
  * POST /api/roster-intelligence/send-unplanned-alerts
  * Send real-time alerts to managers for unplanned absences
  */
-router.post('/send-unplanned-alerts', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/send-unplanned-alerts', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const gracePeriod = req.body.gracePeriod ? parseInt(String(req.body.gracePeriod), 10) : 30;
     const dryRun = req.body.dryRun === true;
