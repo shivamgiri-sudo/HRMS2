@@ -796,7 +796,9 @@
     "1756_bank_exception_auto_assign_event.sql",
     "1758_grn_accounts_head_approval_stage.sql",
     "1760_exit_absconding_since.sql",
-    "1762_fnf_transfer_batch.sql"
+    "1762_fnf_transfer_batch.sql",
+    "1764_exit_clearance_task_attachment.sql",
+    "1764_noc_signatory_not_mandatory.sql"
   ],
   "approvedDeletions": [
     {

@@ -246,6 +246,15 @@ describe("migration manifest — duplicates", () => {
     // above (a real regression, caught by this test and re-added) while a fifth concurrent
     // batch independently registered 1747_gnc_allocation_masmis_uploader.sql against the
     // branch's own 1747_vendor_advance_payments.sql. Same shape as every jump above.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(89);
+    //
+    // 89 -> 90 (2026-09-14): merge conflict resolution re-registered two 1764 files
+    // (1764_exit_clearance_task_attachment.sql and 1764_noc_signatory_not_mandatory.sql)
+    // that were on HEAD's local branch but were silently dropped when the merge picked
+    // origin/main's manifest side. Both were committed on HEAD before the merge (bc8a5c77
+    // and a0d6707d) and the files exist on disk; the conflict resolution that chose
+    // origin/main's manifest section omitted them. Same numbering shape as every jump
+    // above — two unrelated concurrent sessions independently picked the same next-available
+    // number. Renaming either is the one thing that would break schema_migrations tracking.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(90);
   });
 });
