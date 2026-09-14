@@ -21,6 +21,7 @@ const NativeExitPass                = lazy(() => import("@/pages/NativeExitPass"
 const NativeExitPassPrint           = lazy(() => import("@/pages/NativeExitPassPrint"));
 const NativeExitPassVerify          = lazy(() => import("@/pages/NativeExitPassVerify"));
 const NativeHelpdesk                = lazy(() => import("@/pages/NativeHelpdesk"));
+const NativeHrmsGuide               = lazy(() => import("@/pages/NativeHrmsGuide"));
 const NativeUatFeedback             = lazy(() => import("@/pages/NativeUatFeedback"));
 const NativeUatTriageConsole        = lazy(() => import("@/pages/NativeUatTriageConsole"));
 const NativeUatReleaseBoard         = lazy(() => import("@/pages/NativeUatReleaseBoard"));
@@ -189,6 +190,9 @@ export const platformRouteElements = (
           every role. The backend enforces super_admin. */}
       <Route path="/settings/branch-payroll-hr" element={<ProtectedRoute><NativeBranchPayrollHrSignatory /></ProtectedRoute>} />
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
+
+      {/* HRMS Guide — public to all authenticated users */}
+      <Route path="/guide"                           element={<ProtectedRoute><NativeHrmsGuide /></ProtectedRoute>} />
 
       {/* Helpdesk / Support */}
       <Route path="/helpdesk"                        element={<ProtectedRoute><Gate pageCode="HELPDESK_KB"><NativeHelpdesk /></Gate></ProtectedRoute>} />

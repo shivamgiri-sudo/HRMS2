@@ -207,19 +207,24 @@ export const navGroups: NavGroup[] = [
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
           { label: "Roster",                 href: "/wfm/roster-view",           icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "See who is working what — filter by branch, process or person" },
-          { label: "Roster Analytics",       href: "/wfm/roster-analytics",      icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shrinkage intelligence, quality correlation, cost impact, forecasting" },
-          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER",      description: "Real-time attendance monitoring, manager effectiveness, live alerts" },
-          { label: "Roster Interventions",  href: "/wfm/roster-interventions",  icon: ic(ShieldAlert),   pageCode: "WFM_ROSTER",      description: "Track and manage retention interventions for at-risk employees" },
-          { label: "Roster Compliance",     href: "/wfm/roster-compliance",     icon: ic(ShieldCheck),   pageCode: "WFM_ROSTER",      description: "WFM rule violations — rest policy, consecutive days, week-off fairness" },
+          // Roster Command Center is now the merged console: Live Monitoring, Analytics,
+          // Trends & Publish, Compliance, Shift Effectiveness, Interventions and Audit
+          // Trail all live behind its tab bar (see RosterCommandCenter.tsx). The 6 nav
+          // entries this replaced (Roster Analytics, Roster Interventions, Roster
+          // Compliance, Shift Effectiveness, Roster Audit Trail — Roster Analytics Panel
+          // was never in this menu to begin with) are removed rather than left pointing at
+          // deleted pages. pageCode here is the first tab's code (WFM_ROSTER_LIVE_MONITORING)
+          // as a nav-visibility hint only — same convention as the Attendance Integrity
+          // entry above it in this file, see pageRoutePageCodes.ts's comment for why the
+          // route itself carries no single hard-gated page code.
+          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER_LIVE_MONITORING", description: "Live monitoring, analytics, compliance, shift effectiveness, interventions and audit trail — one console" },
           // Linked 2026-08-28, once its endpoints were mounted. It was deliberately kept out of
           // the menu while /api/quality-dashboard/tni-* returned 401 — a sidebar entry to a page
           // that cannot load is worse than no entry. Verified serving live: August returns 58
           // agents, 51 of them flagged for coaching.
           { label: "Training Needs (TNI)",  href: "/wfm/tni-analysis",          icon: ic(GraduationCap), pageCode: "WFM_ROSTER",      description: "Agent × parameter quality heatmap — who needs coaching, on what" },
-          { label: "Shift Effectiveness",   href: "/wfm/shift-effectiveness",   icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shift performance, break compliance, and optimization recommendations" },
           { label: "Capacity Dashboard",    href: "/wfm/capacity-dashboard",    icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "Headcount vs mandate, gap analysis, hiring demand projections" },
           { label: "Team Comparison",       href: "/wfm/team-comparison",       icon: ic(Trophy),        pageCode: "WFM_ROSTER",      description: "Compare adherence across managers, processes, and branches" },
-          { label: "Roster Audit Trail",    href: "/wfm/roster-audit",          icon: ic(History),       pageCode: "WFM_ROSTER",      description: "Track who changed what roster, when, and why for compliance" },
           { label: "Notification Hub",      href: "/wfm/notification-hub",      icon: ic(Bell),          pageCode: "WFM_ROSTER",      description: "Configure roster alerts — manager digest, unplanned absence, compliance" },
           { label: "Mobile Dashboard",      href: "/wfm/mobile-roster",         icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "PWA-optimized team roster view for managers on the floor" },
           { label: "Roster Builder",         href: "/wfm/roster-builder",        icon: ic(CalendarDays),  pageCode: "WFM_ROSTER_BUILDER", description: "Build and publish a process's weekly roster — grid or bulk upload" },
@@ -291,6 +296,7 @@ export const navGroups: NavGroup[] = [
         label: "Brand Sales",  href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Bellavita & GNC analytics",
         children: [
           { label: "Brand Analytics",   href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Sales dashboards & upload" },
+          { label: "Housing Dashboards", href: "/sales/housing-dashboards", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","coo","process_manager","operations_manager","branch_head","hr","manager"], description: "Housing Owner & Premium sales + CDR" },
         ],
       },
       {
@@ -382,6 +388,7 @@ export const navGroups: NavGroup[] = [
           { label: "Holiday Master",       href: "/payroll/holiday-master",           icon: ic(CalendarDays), roles: ["admin","super_admin","payroll_head","payroll_branch"],                                                 description: "Holidays & cost-centre mapping" },
           { label: "Holiday Work",         href: "/payroll/holiday-work",             icon: ic(ClipboardList),roles: ["admin","super_admin","wfm","payroll_head","payroll_branch"],                                          description: "Submit & approve holiday work requests" },
           { label: "NOC Management",       href: "/payroll/noc",                      icon: ic(FileCheck),    roles: ["super_admin","payroll_head","payroll_branch","payroll","admin"],                                       description: "Upload & validate NOC documents" },
+          { label: "NOC Clearance Chain",  href: "/payroll/noc-cases",                icon: ic(ShieldCheck),  roles: ["super_admin","payroll_head","hr","branch_hr","admin"],                                                 description: "8-signatory exit clearance & asset return tracking" },
           { label: "Config Flags",         href: "/payroll/config-flags",             icon: ic(Settings),     roles: ["admin","super_admin","payroll_head","payroll_branch"],                                                 description: "Payroll calculation feature flags" },
           { label: "Payroll Calendar",     href: "/payroll/calendar",                 icon: ic(CalendarDays), roles: ["super_admin","payroll_head","payroll_branch"],                                                         description: "Payroll milestone planning calendar" },
           { label: "EPF Compliance",       href: "/payroll/epf-compliance",           icon: ic(ShieldCheck),  roles: ["admin","super_admin","payroll_hr","payroll","hr","manager"],                                          description: "EPF/PF compliance tracking" },
@@ -466,6 +473,7 @@ export const navGroups: NavGroup[] = [
   {
     title: "Support",
     items: [
+      { label: "HRMS Guide",     href: "/guide",                             icon: ic(BookOpen),    public: true, description: "Role-based how-to guide for all modules" },
       { label: "Helpdesk",       href: "/helpdesk",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","process_manager","branch_head"], description: "Helpdesk" },
       { label: "Support Command",href: "/support/command-center",            icon: ic(ShieldCheck), pageCode: "SUPPORT_COMMAND_CENTER",    description: "Support ops" },
       { label: "Grievance",      href: "/support/grievance-command-center",  icon: ic(ClipboardList), pageCode: "GRIEVANCE_COMMAND_CENTER", description: "Grievances" },
