@@ -2765,18 +2765,6 @@ export default function OnfidoProcessDashboard() {
             </div>
           </div>
 
-          {/* DOC Quality KPIs */}
-          {overview && (overview.doc.manualFarRate || overview.doc.manualFrrRate) && (
-          <div>
-            <SectionHead hc="var(--blue)" title="DOC External Audit Quality" subtitle="FAR/FRR use stage-specific audit counts as denominator (reference formula)" />
-            <div className="kr k4">
-              {overview.doc.manualFarRate && <KpiTile kpi={overview.doc.manualFarRate} onDrill={setMetricDrilldown} />}
-              {overview.doc.manualFrrRate && <KpiTile kpi={overview.doc.manualFrrRate} onDrill={setMetricDrilldown} />}
-              {overview.doc.classificationRate && <KpiTile kpi={overview.doc.classificationRate} onDrill={setMetricDrilldown} />}
-              {overview.doc.extractionRate && <KpiTile kpi={overview.doc.extractionRate} onDrill={setMetricDrilldown} />}
-            </div>
-          </div>
-          )}
 
           {/* POA KPIs */}
           <div>
