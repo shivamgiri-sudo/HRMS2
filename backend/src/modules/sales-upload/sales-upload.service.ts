@@ -726,12 +726,154 @@ export async function getNeemansAprDashboard(month: string): Promise<Record<stri
 // currently empty (0 rows) besides. There is no way to map a per-cart-record table onto a
 // pre-aggregated KPI-snapshot shape without inventing numbers, so this is left flagged
 // rather than fixed — same "don't fabricate" rule as the other real gaps in this file.
-export async function getNeemansAbcCartSnap(_month: string): Promise<Record<string, unknown>[]> {
-  throw new Error(
-    "Neemans ABC cart snapshot is unavailable: db_masmis.neemans_cart stores individual " +
-    "cart records (cart_id, customer_name, agent, disposition, status...), not the " +
-    "aggregated section/metric snapshot this dashboard expects, and currently holds 0 rows."
-  );
+// ABC Cart Snap — built from neemans_allocation (workable/connected) + neemans_sale_raw
+// (sales/revenue/payment). neemans_cart has 0 rows and is not used.
+// Both tables share the Excel-serial date key. Weekly grouping uses the `week` column
+// in neemans_sale_raw (W-1…W-5); allocation is mapped to those weeks via a date-range join.
+// Verified live 2026-09-14 against 3,612 allocation rows and 3,800 sale_raw rows.
+export async function getNeemansAbcCartSnap(month: string): Promise<Record<string, unknown>> {
+  const ALLOC_MONTH = `CAST(a.date AS UNSIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(a.date AS UNSIGNED)-2) DAY),'%Y-%m') = ?`;
+  const SALE_MONTH  = `CAST(s.date AS UNSIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(s.date AS UNSIGNED)-2) DAY),'%Y-%m') = ?`;
+
+  // ── MTD ──────────────────────────────────────────────────────────────────
+  const [allocMtd] = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       COUNT(DISTINCT a.phone)                                                   AS workable,
+       SUM(a.calling_status='Connected')                                         AS connected,
+       COUNT(DISTINCT a.agent)                                                   AS login_count,
+       ROUND(SUM(a.calling_status='Connected')*100.0/NULLIF(COUNT(DISTINCT a.phone),0),1) AS connected_pct
+     FROM db_masmis.neemans_allocation a
+     WHERE ${ALLOC_MONTH}`, [month]);
+
+  const [saleMtd] = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       SUM(s.status='Sale Made')                                                 AS sale_count,
+       ROUND(SUM(CASE WHEN s.status='Sale Made' THEN s.amount ELSE 0 END),2)    AS revenue,
+       SUM(s.status='Sale Made' AND s.payment_status='cod')                      AS cod_count,
+       SUM(s.status='Sale Made' AND s.payment_status='paid')                     AS prepaid_count,
+       ROUND(SUM(s.status='Sale Made' AND s.payment_status='paid')*100.0/
+             NULLIF(SUM(s.status='Sale Made'),0),1)                              AS prepaid_pct
+     FROM db_masmis.neemans_sale_raw s
+     WHERE ${SALE_MONTH}`, [month]);
+
+  function merge(a: Record<string, unknown>, s: Record<string, unknown>) {
+    const workable   = Number(a.workable   ?? 0);
+    const connected  = Number(a.connected  ?? 0);
+    const saleCount  = Number(s.sale_count ?? 0);
+    return {
+      ...a, ...s,
+      connected_pct:    workable  > 0 ? +(connected / workable * 100).toFixed(1)   : 0,
+      conversion_pct:   connected > 0 ? +(saleCount / connected * 100).toFixed(1)  : 0,
+      call_per_agent:   Number(a.login_count ?? 0) > 0
+                          ? +(workable / Number(a.login_count)).toFixed(1) : 0,
+    };
+  }
+
+  const mtd = merge(allocMtd ?? {}, saleMtd ?? {});
+
+  // ── Weekly (W-1 … W-5) ───────────────────────────────────────────────────
+  const allocWeekly = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       wk.week,
+       COUNT(DISTINCT a.phone)                                                   AS workable,
+       SUM(a.calling_status='Connected')                                         AS connected,
+       COUNT(DISTINCT a.agent)                                                   AS login_count
+     FROM (SELECT DISTINCT date, week FROM db_masmis.neemans_sale_raw
+           WHERE ${SALE_MONTH}) wk
+     LEFT JOIN db_masmis.neemans_allocation a ON a.date = wk.date
+     GROUP BY wk.week ORDER BY wk.week`, [month]);
+
+  const saleWeekly = await queryMasmis<Record<string, unknown>>(
+    `SELECT week,
+       SUM(s.status='Sale Made')                                                 AS sale_count,
+       ROUND(SUM(CASE WHEN s.status='Sale Made' THEN s.amount ELSE 0 END),2)    AS revenue,
+       SUM(s.status='Sale Made' AND s.payment_status='cod')                      AS cod_count,
+       SUM(s.status='Sale Made' AND s.payment_status='paid')                     AS prepaid_count
+     FROM db_masmis.neemans_sale_raw s
+     WHERE ${SALE_MONTH}
+     GROUP BY week ORDER BY week`, [month]);
+
+  const saleWeekMap = new Map(saleWeekly.map((r) => [r.week, r]));
+  const weekly = allocWeekly.map((a) => merge(a, saleWeekMap.get(a.week as string) ?? {}));
+
+  // ── Daily (per date, sorted chronologically) ─────────────────────────────
+  const allocDaily = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       a.date AS date_key,
+       DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(a.date AS UNSIGNED)-2) DAY),'%d-%b') AS label,
+       COUNT(DISTINCT a.phone)          AS workable,
+       SUM(a.calling_status='Connected') AS connected,
+       COUNT(DISTINCT a.agent)           AS login_count
+     FROM db_masmis.neemans_allocation a
+     WHERE ${ALLOC_MONTH}
+     GROUP BY a.date ORDER BY CAST(a.date AS UNSIGNED)`, [month]);
+
+  const saleDaily = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       s.date AS date_key,
+       SUM(s.status='Sale Made')                                                 AS sale_count,
+       ROUND(SUM(CASE WHEN s.status='Sale Made' THEN s.amount ELSE 0 END),2)    AS revenue,
+       SUM(s.status='Sale Made' AND s.payment_status='cod')                      AS cod_count,
+       SUM(s.status='Sale Made' AND s.payment_status='paid')                     AS prepaid_count
+     FROM db_masmis.neemans_sale_raw s
+     WHERE ${SALE_MONTH}
+     GROUP BY s.date ORDER BY CAST(s.date AS UNSIGNED)`, [month]);
+
+  const saleDayMap = new Map(saleDaily.map((r) => [r.date_key, r]));
+  const daily = allocDaily.map((a) => merge(a, saleDayMap.get(a.date_key as string) ?? {}));
+
+  // ── Connected Disposition breakdown (MTD) ─────────────────────────────────
+  const dispRows = await queryMasmis<{ calling_status: string; cnt: number; pct: number }>(
+    `SELECT calling_status,
+       COUNT(*) AS cnt,
+       ROUND(COUNT(*)*100.0/SUM(COUNT(*)) OVER(),1) AS pct
+     FROM db_masmis.neemans_allocation a
+     WHERE ${ALLOC_MONTH} AND calling_status IS NOT NULL AND calling_status NOT IN ('','')
+     GROUP BY calling_status ORDER BY cnt DESC`, [month]);
+
+  return { mtd, weekly, daily, disposition: dispRows };
+}
+
+// Weekly agent stack-ranking by revenue (W-1…W-5 for the given month).
+// Per-agent per-week: total_leads, sales, revenue → achievement_pct vs
+// equal-share of monthly target → TQ (>90%) / MQ (>75%) / BQ (≤75%).
+// Verified live 2026-09-14 — neemans_sale_raw has 3,800 rows with W-1…W-5.
+export async function getNeemansWeeklyRanking(month: string): Promise<Record<string, unknown>> {
+  const MONTH_FILTER = `CAST(s.date AS UNSIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(s.date AS UNSIGNED)-2) DAY),'%Y-%m') = ?`;
+
+  const rows = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       s.name AS agent_name, s.emp_id,
+       s.week,
+       COUNT(*) AS total_leads,
+       SUM(s.status='Sale Made') AS sales,
+       ROUND(SUM(CASE WHEN s.status='Sale Made' THEN s.amount ELSE 0 END),2) AS revenue
+     FROM db_masmis.neemans_sale_raw s
+     WHERE ${MONTH_FILTER}
+     GROUP BY s.name, s.emp_id, s.week
+     ORDER BY s.name, s.week`, [month]);
+
+  const [targetRow] = await queryMasmis<{ target: number }>(
+    `SELECT target FROM db_masmis.neemans_month_targets WHERE month = ? LIMIT 1`, [month]);
+
+  const monthlyTarget = targetRow ? Number(targetRow.target) : null;
+
+  // Pivot: agent → { name, empId, weeks: { 'W-1': { revenue, target, achievementPct, rank }, … } }
+  const agents = new Map<string, { agent_name: string; emp_id: string; weeks: Record<string, unknown> }>();
+  const weeks = new Set<string>();
+
+  for (const r of rows) {
+    const key = String(r.emp_id ?? r.agent_name);
+    if (!agents.has(key)) agents.set(key, { agent_name: String(r.agent_name), emp_id: String(r.emp_id ?? ""), weeks: {} });
+    weeks.add(String(r.week));
+    const weekTarget = monthlyTarget != null ? monthlyTarget / 5 : null; // equal weekly share
+    const rev = Number(r.revenue ?? 0);
+    const achievePct = weekTarget && weekTarget > 0 ? +(rev / weekTarget * 100).toFixed(1) : null;
+    const rank = achievePct == null ? "—" : achievePct > 90 ? "TQ" : achievePct > 75 ? "MQ" : "BQ";
+    agents.get(key)!.weeks[String(r.week)] = { revenue: rev, target: weekTarget, achievementPct: achievePct, rank };
+  }
+
+  return { weeks: [...weeks].sort(), rows: [...agents.values()], monthlyTarget };
 }
 
 // db_masmis.neemans_sale_raw's real columns, verified live 2026-08-13: order_status,
@@ -955,5 +1097,305 @@ export async function uploadNeemansApr(
   }
   const monthLabel = currentMonthLabel();
   await logUpload("neemans_apr", monthLabel, count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+// ── AW (Aarohan Wealth) Dashboard ─────────────────────────────────────────────
+//
+// Primary table: db_masmis.aw_out — outbound daily agent performance.
+// Real columns verified live 2026-09-14 (34 agents, Sep-26):
+//   agent_name, emp_id, lob, total_calls, connected_calls, not_connected_calls,
+//   lrs_amount, trade_amount, mf_amount, net_login_hrs, acht, occupancy_on_calls, month.
+// All columns are stored as varchar(100) — numeric coercion required on read.
+// Secondary table: db_masmis.aw_billing — billing/activity data by billing_type.
+// Mandate table: db_masmis.aw_mandate (billing_type, mandate, per_fe_rate, month).
+// month format in aw_out/aw_billing: "Sep-26" (MMM-YY) — not a DATE column.
+export async function getAwDashboard(month: string): Promise<Record<string, unknown>> {
+  // Normalise caller's YYYY-MM → "Sep-26" to match aw_out.month varchar format
+  // The month param is always "YYYY-MM" from the API; convert here.
+  const [y, m] = month.split("-").map(Number);
+  const MON_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const awMonth = `${MON_LABELS[m - 1]}-${String(y).slice(2)}`;
+
+  // KPIs — aggregate across all agents
+  const [kpis] = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       SUM(CAST(NULLIF(total_calls,'') AS DECIMAL))         AS total_calls,
+       SUM(CAST(NULLIF(connected_calls,'') AS DECIMAL))     AS connected_calls,
+       SUM(CAST(NULLIF(not_connected_calls,'') AS DECIMAL)) AS not_connected,
+       COUNT(DISTINCT agent_name)                            AS active_agents,
+       SUM(CAST(NULLIF(net_login_hrs,'') AS DECIMAL))       AS total_login_hrs,
+       SUM(CAST(NULLIF(lrs_amount,'') AS DECIMAL))          AS lrs_amount,
+       SUM(CAST(NULLIF(trade_amount,'') AS DECIMAL))        AS trade_amount,
+       SUM(CAST(NULLIF(mf_amount,'') AS DECIMAL))           AS mf_amount
+     FROM db_masmis.aw_out
+     WHERE month = ?`, [awMonth]);
+
+  const totalCalls     = Number(kpis?.total_calls     ?? 0);
+  const connectedCalls = Number(kpis?.connected_calls ?? 0);
+  const connectedPct   = totalCalls > 0 ? +(connectedCalls / totalCalls * 100).toFixed(1) : 0;
+  const totalRevenue   = Number(kpis?.lrs_amount ?? 0) + Number(kpis?.trade_amount ?? 0) + Number(kpis?.mf_amount ?? 0);
+
+  // Per-agent breakdown
+  const agents = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       agent_name, emp_id, lob,
+       SUM(CAST(NULLIF(total_calls,'') AS DECIMAL))         AS total_calls,
+       SUM(CAST(NULLIF(connected_calls,'') AS DECIMAL))     AS connected_calls,
+       ROUND(SUM(CAST(NULLIF(connected_calls,'') AS DECIMAL))*100.0/
+             NULLIF(SUM(CAST(NULLIF(total_calls,'') AS DECIMAL)),0),1) AS connected_pct,
+       SUM(CAST(NULLIF(net_login_hrs,'') AS DECIMAL))       AS net_login_hrs,
+       ROUND(AVG(CAST(NULLIF(acht,'') AS DECIMAL)),0)       AS acht,
+       ROUND(AVG(CAST(NULLIF(occupancy_on_calls,'') AS DECIMAL))*100,1) AS occupancy_pct,
+       SUM(CAST(NULLIF(lrs_amount,'') AS DECIMAL))          AS lrs_amount,
+       SUM(CAST(NULLIF(trade_amount,'') AS DECIMAL))        AS trade_amount,
+       SUM(CAST(NULLIF(mf_amount,'') AS DECIMAL))           AS mf_amount
+     FROM db_masmis.aw_out
+     WHERE month = ?
+     GROUP BY agent_name, emp_id, lob
+     ORDER BY (SUM(CAST(NULLIF(lrs_amount,'') AS DECIMAL)) +
+               SUM(CAST(NULLIF(trade_amount,'') AS DECIMAL)) +
+               SUM(CAST(NULLIF(mf_amount,'') AS DECIMAL))) DESC`, [awMonth]);
+
+  // Mandate snapshot for the month
+  const mandateRows = await queryMasmis<Record<string, unknown>>(
+    `SELECT billing_type, mandate, per_fe_rate, login_hours_per_fte
+     FROM db_masmis.aw_mandate
+     WHERE DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(month AS UNSIGNED)-2) DAY),'%Y-%m') = ?
+       OR month = ?
+     LIMIT 10`, [month, awMonth]);
+
+  // Distinct months available (for the month picker)
+  const months = await queryMasmis<{ month: string }>(
+    `SELECT DISTINCT month FROM db_masmis.aw_out ORDER BY month DESC LIMIT 24`);
+
+  return {
+    kpis: { ...kpis, connected_pct: connectedPct, total_revenue: totalRevenue },
+    agents,
+    mandate: mandateRows,
+    months: months.map(r => r.month),
+  };
+}
+
+// ── AW Upload Functions (write to db_masmis.aw_* tables) ─────────────────────
+
+// aw_out: outbound daily agent report — 65 varchar columns, key = call_date + agent_id
+export async function uploadAwOut(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const callDate = getField(r, "callDate", "call_date", "Call Date");
+    const agentId  = getField(r, "agentId",  "agent_id",  "Agent ID");
+    if (!callDate && !agentId) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.aw_out
+         (call_date, agent_id, agent_name, total_calls, connected_calls, not_connected_calls,
+          total_talk_time, total_wrapup_time, total_pause_time, total_idle_time, pickup_time,
+          total_login_time, first_login_time, last_logout_time, emp_id, lob, sub_lob,
+          week, month, net_login_hrs, acht, occupancy_on_calls,
+          lrs_count, lrs_amount, trade_count, trade_amount, mf_count, mf_amount,
+          upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        callDate || null, agentId || null,
+        getField(r, "agentName", "agent_name", "Agent Name") || null,
+        getField(r, "totalCalls", "total_calls") || null,
+        getField(r, "connectedCalls", "connected_calls") || null,
+        getField(r, "notConnectedCalls", "not_connected_calls") || null,
+        getField(r, "totalTalkTime", "total_talk_time") || null,
+        getField(r, "totalWrapupTime", "total_wrapup_time") || null,
+        getField(r, "totalPauseTime", "total_pause_time") || null,
+        getField(r, "totalIdleTime", "total_idle_time") || null,
+        getField(r, "pickupTime", "pickup_time") || null,
+        getField(r, "totalLoginTime", "total_login_time") || null,
+        getField(r, "firstLoginTime", "first_login_time") || null,
+        getField(r, "lastLogoutTime", "last_logout_time") || null,
+        getField(r, "empId", "emp_id", "EMP ID") || null,
+        getField(r, "lob", "LOB") || null,
+        getField(r, "subLob", "sub_lob") || null,
+        getField(r, "week", "Week") || null,
+        getField(r, "month", "Month") || null,
+        getField(r, "netLoginHrs", "net_login_hrs") || null,
+        getField(r, "acht", "ACHT") || null,
+        getField(r, "occupancyOnCalls", "occupancy_on_calls") || null,
+        getField(r, "lrsCount", "lrs_count") || null,
+        getField(r, "lrsAmount", "lrs_amount") || null,
+        getField(r, "tradeCount", "trade_count") || null,
+        getField(r, "tradeAmount", "trade_amount") || null,
+        getField(r, "mfCount", "mf_count") || null,
+        getField(r, "mfAmount", "mf_amount") || null,
+        batchId,
+      ]
+    );
+    count++;
+  }
+  await logUpload("aw_out", currentMonthLabel(), count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+// aw_billing: daily billing/activity report per agent — similar shape to aw_out
+export async function uploadAwBilling(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const agentId = getField(r, "agentId", "agent_id", "Agent ID");
+    if (!agentId) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.aw_billing
+         (call_date, agent_id, agent_name, total_calls, connected_calls, not_connected_calls,
+          total_talk_time, total_wrapup_time, total_pause_time, total_idle_time,
+          total_login_time, net_login_hrs, acht, occupancy_pct,
+          lob, lob2, billing_type, week, month, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        getField(r, "callDate", "call_date") || null, agentId || null,
+        getField(r, "agentName", "agent_name") || null,
+        getField(r, "totalCalls", "total_calls") || null,
+        getField(r, "connectedCalls", "connected_calls") || null,
+        getField(r, "notConnectedCalls", "not_connected_calls") || null,
+        getField(r, "totalTalkTime", "total_talk_time") || null,
+        getField(r, "totalWrapupTime", "total_wrapup_time") || null,
+        getField(r, "totalPauseTime", "total_pause_time") || null,
+        getField(r, "totalIdleTime", "total_idle_time") || null,
+        getField(r, "totalLoginTime", "total_login_time") || null,
+        getField(r, "netLoginHrs", "net_login_hrs") || null,
+        getField(r, "acht", "ACHT") || null,
+        getField(r, "occupancyPct", "occupancy_pct") || null,
+        getField(r, "lob", "LOB") || null,
+        getField(r, "lob2") || null,
+        getField(r, "billingType", "billing_type") || null,
+        getField(r, "week") || null,
+        getField(r, "month", "Month") || null,
+        batchId,
+      ]
+    );
+    count++;
+  }
+  await logUpload("aw_billing", currentMonthLabel(), count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+// aw_mandate: billing type mandate headcount per month
+export async function uploadAwMandate(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const billingType = getField(r, "billingType", "billing_type", "Billing Type");
+    if (!billingType) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.aw_mandate (billing_type, mandate, per_fe_rate, login_hours_per_fte, month, upload_batch_id)
+       VALUES (?,?,?,?,?,?)`,
+      [
+        billingType,
+        getField(r, "mandate", "Mandate") || null,
+        getField(r, "perFeRate", "per_fe_rate") || null,
+        getField(r, "loginHoursPerFte", "login_hours_per_fte") || null,
+        getField(r, "month", "Month") || null,
+        batchId,
+      ]
+    );
+    count++;
+  }
+  await logUpload("aw_mandate", currentMonthLabel(), count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+// aw_inbound: inbound CDR (call_id, agent, disposition, call_date, talk_time, etc.)
+export async function uploadAwInbound(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const callId = getField(r, "callId", "call_id", "Call ID");
+    if (!callId) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.aw_inbound
+         (call_id, call_type, campaign, location, caller_no, skill, call_date,
+          start_time, end_time, talk_time, hold_time, duration, agent, agent_id,
+          disposition, wrapup_duration, handling_time, status, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        callId,
+        getField(r, "callType", "call_type") || null,
+        getField(r, "campaign") || null,
+        getField(r, "location") || null,
+        getField(r, "callerNo", "caller_no") || null,
+        getField(r, "skill") || null,
+        getField(r, "callDate", "call_date") || null,
+        getField(r, "startTime", "start_time") || null,
+        getField(r, "endTime", "end_time") || null,
+        getField(r, "talkTime", "talk_time") || null,
+        getField(r, "holdTime", "hold_time") || null,
+        getField(r, "duration") || null,
+        getField(r, "agent") || null,
+        getField(r, "agentId", "agent_id") || null,
+        getField(r, "disposition") || null,
+        getField(r, "wrapupDuration", "wrapup_duration") || null,
+        getField(r, "handlingTime", "handling_time") || null,
+        getField(r, "status") || null,
+        batchId,
+      ]
+    );
+    count++;
+  }
+  await logUpload("aw_inbound", currentMonthLabel(), count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+// aw_new_cdr: outbound CDR (call_id, campaign, agent, disposition, etc.)
+export async function uploadAwNewCdr(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const callId = getField(r, "callId", "call_id", "Call ID");
+    if (!callId) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.aw_new_cdr
+         (call_id, call_type, campaign, location, caller_no, skill, call_date,
+          start_time, end_time, talk_time, hold_time, duration, agent, agent_id,
+          disposition, wrapup_duration, handling_time, status, sub_lob, partner, slot, upload_batch_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        callId,
+        getField(r, "callType", "call_type") || null,
+        getField(r, "campaign") || null,
+        getField(r, "location") || null,
+        getField(r, "callerNo", "caller_no") || null,
+        getField(r, "skill") || null,
+        getField(r, "callDate", "call_date") || null,
+        getField(r, "startTime", "start_time") || null,
+        getField(r, "endTime", "end_time") || null,
+        getField(r, "talkTime", "talk_time") || null,
+        getField(r, "holdTime", "hold_time") || null,
+        getField(r, "duration") || null,
+        getField(r, "agent") || null,
+        getField(r, "agentId", "agent_id") || null,
+        getField(r, "disposition") || null,
+        getField(r, "wrapupDuration", "wrapup_duration") || null,
+        getField(r, "handlingTime", "handling_time") || null,
+        getField(r, "status") || null,
+        getField(r, "subLob", "sub_lob") || null,
+        getField(r, "partner") || null,
+        getField(r, "slot") || null,
+        batchId,
+      ]
+    );
+    count++;
+  }
+  await logUpload("aw_new_cdr", currentMonthLabel(), count, uploadedBy, batchId);
   return { rowsInserted: count };
 }

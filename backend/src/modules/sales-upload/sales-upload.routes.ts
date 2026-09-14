@@ -237,3 +237,48 @@ salesUploadRouter.post(
     return res.json({ success: true, data: result });
   })
 );
+
+// ── Neemans Weekly Stack Ranking ──────────────────────────────────────────────
+
+salesUploadRouter.get("/neemans-weekly-ranking", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getNeemansWeeklyRanking(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { weeks: [], rows: [], monthlyTarget: null } });
+  }
+}));
+
+// ── AW Dashboard (read-only) ──────────────────────────────────────────────────
+
+salesUploadRouter.get("/aw-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getAwDashboard(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, agents: [], mandate: [], months: [] } });
+  }
+}));
+
+// ── AW Upload Routes ──────────────────────────────────────────────────────────
+
+const AW_UPLOAD_HANDLERS = new Map<string, (buf: Buffer, by: string) => Promise<{ rowsInserted: number }>>([
+  ["aw-out",      svc.uploadAwOut],
+  ["aw-billing",  svc.uploadAwBilling],
+  ["aw-mandate",  svc.uploadAwMandate],
+  ["aw-inbound",  svc.uploadAwInbound],
+  ["aw-new-cdr",  svc.uploadAwNewCdr],
+]);
+
+salesUploadRouter.post(
+  "/upload-aw/:type",
+  requireRole("super_admin", "admin", "sales", "operations_manager"),
+  upload.single("file"),
+  h(async (req, res) => {
+    const handler = AW_UPLOAD_HANDLERS.get(String(req.params.type));
+    if (!handler) return res.status(400).json({ success: false, error: `Unknown AW upload type "${req.params.type}". Expected: ${[...AW_UPLOAD_HANDLERS.keys()].join(", ")}` });
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
+    const result = await handler(req.file.buffer, req.authUser?.email ?? "system");
+    return res.json({ success: true, rowsInserted: result.rowsInserted, data: result });
+  })
+);

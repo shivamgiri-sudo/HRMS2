@@ -174,6 +174,12 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   NEEMANS_ALLOCATION_MASMIS: "import_neemans_allocation_masmis_batch",
   NEEMANS_CART_MASMIS: "import_neemans_cart_masmis_batch",
   NEEMANS_APR_MASMIS: "import_neemans_apr_masmis_batch",
+  // AW (Aarohan Wealth) MASMIS — write into db_masmis.aw_* tables
+  AW_OUT_MASMIS: "import_aw_out_masmis_batch",
+  AW_BILLING_MASMIS: "import_aw_billing_masmis_batch",
+  AW_MANDATE_MASMIS: "import_aw_mandate_masmis_batch",
+  AW_INBOUND_MASMIS: "import_aw_inbound_masmis_batch",
+  AW_NEW_CDR_MASMIS: "import_aw_new_cdr_masmis_batch",
   // GNC MASMIS
   GNC_SALE_MASMIS: "import_gnc_sale_masmis_batch",
   GNC_ALLOCATION_MASMIS: "import_gnc_allocation_masmis_batch",
