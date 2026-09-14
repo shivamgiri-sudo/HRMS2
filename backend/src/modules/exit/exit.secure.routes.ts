@@ -289,22 +289,6 @@ async function handleExitStatusUpdate(req: any, res: any) {
     // Check if caller IS the employee's actual reporting manager (not just any manager-role user)
     let isReportingManager = false;
     if (isManager) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT e.reporting_manager_id, u.id AS user_id
-           FROM exit_request er
-           JOIN employees e ON e.id = er.employee_id
-           LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
-           LEFT JOIN auth_user u ON u.id = (
-             SELECT user_id FROM user_roles ur2
-             JOIN employees e2 ON e2.id = mgr.id
-             WHERE ur2.user_id = (
-               SELECT au.id FROM auth_user au WHERE au.email = e2.official_email LIMIT 1
-             ) LIMIT 1
-           )
-          WHERE er.id = ?`,
-        [req.params.id],
-      );
-      // Simpler: check if any employee linked to authUser is the reporting_manager_id
       const [mgrRows] = await db.execute<RowDataPacket[]>(
         `SELECT 1 FROM exit_request er
            JOIN employees e ON e.id = er.employee_id
