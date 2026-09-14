@@ -1047,6 +1047,7 @@ export interface AttritionMonthRow {
 }
 
 const rate1 = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+const rate2 = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 10000) / 100 : null);
 /** Same as rate1, but withholds a rate whose numerator exceeds its own denominator
  *  (more exits/UL-days than the group's average headcount/scheduled-days is not a
  *  real ratio — see getAttritionBreakdown's note on transient buckets like Training). */
@@ -1426,16 +1427,16 @@ export async function getQualityOverview(rawFilters: { from?: string; to?: strin
     key, label, value, unit, availability: value === null ? "no_data" : "ok", note,
   });
   const total = Number(agg.total ?? 0);
-  const rate = (n: number) => rate1(n, total);
+  const r2 = (n: number) => rate2(n, total);
   return {
     taskCount: kpi("quality_task_count", "Tasks Audited", total, "count"),
-    overallErrorRate: kpi("quality_overall_err", "Overall Error Rate", rate(Number(agg.errors ?? 0)), "percent", `${agg.errors ?? 0} of ${total}`),
-    farRate: kpi("quality_far", "Manual FAR Rate", rate(Number(agg.farN ?? 0)), "percent", `${agg.farN ?? 0} of ${total}`),
-    frrRate: kpi("quality_frr", "Manual FRR Rate", rate(Number(agg.frrN ?? 0)), "percent", `${agg.frrN ?? 0} of ${total}`),
-    classificationErrorRate: kpi("quality_class", "Classification Error Rate", rate(Number(agg.classN ?? 0)), "percent", `${agg.classN ?? 0} of ${total}`),
-    extractionErrorRate: kpi("quality_ext", "Extraction Error Rate", rate(Number(agg.extN ?? 0)), "percent", `${agg.extN ?? 0} of ${total}`),
-    addExtractionErrorRate: kpi("quality_add_ext", "Add. Extraction Error Rate", rate(Number(agg.addExtN ?? 0)), "percent", `${agg.addExtN ?? 0} of ${total}`),
-    rawExtractionErrorRate: kpi("quality_raw_ext", "Raw Extraction Error Rate", rate(Number(agg.rawExtN ?? 0)), "percent", `${agg.rawExtN ?? 0} of ${total}`),
+    overallErrorRate: kpi("quality_overall_err", "Overall Error Rate", r2(Number(agg.errors ?? 0)), "percent", `${agg.errors ?? 0} of ${total}`),
+    farRate: kpi("quality_far", "Manual FAR Rate", r2(Number(agg.farN ?? 0)), "percent", `${agg.farN ?? 0} of ${total}`),
+    frrRate: kpi("quality_frr", "Manual FRR Rate", r2(Number(agg.frrN ?? 0)), "percent", `${agg.frrN ?? 0} of ${total}`),
+    classificationErrorRate: kpi("quality_class", "Classification Error Rate", r2(Number(agg.classN ?? 0)), "percent", `${agg.classN ?? 0} of ${total}`),
+    extractionErrorRate: kpi("quality_ext", "Extraction Error Rate", r2(Number(agg.extN ?? 0)), "percent", `${agg.extN ?? 0} of ${total}`),
+    addExtractionErrorRate: kpi("quality_add_ext", "Add. Extraction Error Rate", r2(Number(agg.addExtN ?? 0)), "percent", `${agg.addExtN ?? 0} of ${total}`),
+    rawExtractionErrorRate: kpi("quality_raw_ext", "Raw Extraction Error Rate", r2(Number(agg.rawExtN ?? 0)), "percent", `${agg.rawExtN ?? 0} of ${total}`),
   };
 }
 

@@ -381,27 +381,30 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
   if (data.length === 0) {
     return <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
   }
+  const maxVal = Math.max(...data.map((d) => d.value), 0);
+  const xDomainMax = maxVal > 0 ? parseFloat((maxVal * 1.55).toFixed(2)) : 2;
   return (
     <div className="oc-card" style={{ "--hc": hc ?? "var(--red)" } as React.CSSProperties}>
       <h3>{title}</h3>
-      <ResponsiveContainer width="100%" height={Math.max(200, data.length * 40 + 60)}>
-        <BarChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 40 }} layout="vertical">
-          <CartesianGrid horizontal={false} stroke="rgba(42,58,82,0.25)" />
+      <ResponsiveContainer width="100%" height={Math.max(200, data.length * 44 + 60)}>
+        <BarChart data={data} margin={{ top: 8, right: 64, left: 0, bottom: 32 }} layout="vertical">
+          <CartesianGrid horizontal={false} stroke="rgba(42,58,82,0.18)" strokeDasharray="3 3" />
           <XAxis
-            type="number" domain={[0, "auto"]}
+            type="number" domain={[0, xDomainMax]}
             tickLine={false} axisLine={false}
             tick={{ fontSize: 11, fill: "var(--muted)" }}
             tickFormatter={(v: number) => `${v.toFixed(2)}%`}
+            label={{ value: "Error %", position: "insideBottom", offset: -20, fontSize: 11, fill: "var(--muted)" }}
           />
           <YAxis
-            type="category" dataKey="name" width={150}
+            type="category" dataKey="name" width={160}
             tickLine={false} axisLine={false}
             tick={{ fontSize: 11, fill: "var(--muted-strong)", fontWeight: 600 }}
           />
           <RTooltip content={<ScorecardBarTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-          <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28}>
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={26}>
             {data.map((d, i) => (
-              <Cell key={i} fill={barColor(d.value)} fillOpacity={0.82} />
+              <Cell key={i} fill={barColor(d.value)} fillOpacity={0.85} />
             ))}
             <LabelList
               dataKey="value"
@@ -1402,7 +1405,7 @@ function QualityView({
           <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={points.map((p) => ({ ...p, errorRate: p.errorRate ?? 0 }))} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+            <AreaChart data={points.map((p) => ({ ...p, errorRate: p.errorRate ?? 0 }))} margin={{ top: 28, right: 40, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="qTrendGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--red)" stopOpacity={0.18} />
