@@ -84,6 +84,80 @@ function mockDb(options: { payrollRows?: number } = {}) {
 
 beforeEach(() => vi.resetModules());
 
+describe("P&L reconciliation — seat-rate estimate", () => {
+  function mockWithSeatLines() {
+    mockDb();
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      // cc-noida-2 has no invoice or provision; its last invoice billed 10 seats at 30,000.
+      if (q.includes("FROM billing_invoice_particular_snapshot p") && q.includes("p.period_code >= ?")) {
+        return [[
+          { cost_centre_id: "cc-noida-2", period_code: "2026-07", bill_source_id: 9, service: "", particulars: "Telecalling seat", rate: 30000, qty: 10, amount: 300000 },
+          { cost_centre_id: "cc-noida-1", period_code: "2026-07", bill_source_id: 8, service: "", particulars: "Inbound seat", rate: 20000, qty: 5, amount: 100000 },
+        ], []];
+      }
+      return base(sql, params);
+    });
+  }
+
+  it("estimates revenue only for a cost centre with no invoice and no provision, inside the window", async () => {
+    mockWithSeatLines();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { asOfDate: "2026-09-15" });
+    const unbilled = out.rows.find((row) => row.costCentreId === "cc-noida-2")!;
+    const billed = out.rows.find((row) => row.costCentreId === "cc-noida-1")!;
+
+    expect(unbilled.revenueBasis).toBe("ESTIMATED");
+    expect(unbilled.revenueEstimated).toBe(L(3)); // closed month: the full 10 x 30,000
+    expect(unbilled.recognisedRevenue).toBe(L(3));
+    expect(unbilled.sourceStatus).toBe("ESTIMATED");
+    expect(unbilled.estimateSourcePeriod).toBe("2026-07");
+    expect(unbilled.issues).toContain("REVENUE_ESTIMATED_FROM_SEAT_RATE");
+
+    // The invoiced cost centre keeps exactly its invoice-based figure.
+    expect(billed.revenueBasis).toBe("INVOICE");
+    expect(billed.revenueEstimated).toBe(0);
+    expect(billed.recognisedRevenue).toBe(L(120));
+
+    expect(out.totals.revenueEstimated).toBe(L(3));
+    expect(out.totals.estimatedCostCentres).toBe(1);
+    expect(out.blockers.join(" ")).toContain("ESTIMATED as seat rate x seats");
+  });
+
+  it("shows margin as NA when the month has estimated revenue but no people cost at all", async () => {
+    mockDb({ payrollRows: 0 });
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("WITH invoice_actual AS")) return [[], []]; // nothing invoiced yet
+      if (q.includes("FROM pnl_running_salary_snapshot") && !q.includes("AS `rows`")) return [[], []]; // no people cost
+      if (q.includes("FROM billing_invoice_particular_snapshot p") && q.includes("p.period_code >= ?")) {
+        return [[{ cost_centre_id: "cc-noida-1", period_code: "2026-08", bill_source_id: 1, service: "", particulars: "Inbound seat", rate: 30000, qty: 10, amount: 300000 }], []];
+      }
+      return base(sql, params);
+    });
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-09", { asOfDate: "2026-09-15" });
+
+    expect(out.totals.revenueEstimated).toBe(L(1.5)); // 15 of 30 days of 10 x 30,000
+    expect(out.totals.payrollCost).toBe(0);
+    expect(out.totals.marginPct).toBeNull();
+    expect(out.blockers.join(" ")).toContain("margin is shown as NA");
+  });
+
+  it("never estimates a closed month outside the window", async () => {
+    mockWithSeatLines();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { asOfDate: "2026-11-02" });
+    const unbilled = out.rows.find((row) => row.costCentreId === "cc-noida-2")!;
+
+    expect(unbilled.revenueBasis).toBe("NONE");
+    expect(unbilled.recognisedRevenue).toBe(0);
+    expect(out.estimate.applied).toBe(false);
+  });
+});
+
 describe("P&L reconciliation", () => {
   it("builds active cost-centre P&L from recognised revenue, GRN, budget and payroll", async () => {
     mockDb();

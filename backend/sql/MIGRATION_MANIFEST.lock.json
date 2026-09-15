@@ -959,6 +959,7 @@
     "1757_roster_command_center_console_page_codes.sql",
     "175_clean_department_master.sql",
     "1767_onfido_external_audit_add_total_columns.sql",
+    "1775_pnl_seat_billing_line.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",

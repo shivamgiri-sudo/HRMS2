@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
-export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL";
+export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
+/** Where a cost centre's recognised revenue came from. ESTIMATED = seat rate x seats. */
+export type PnlRevenueBasis = "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
 
 export interface PnlSourceFreshness {
   source: string;
@@ -24,7 +26,12 @@ export interface PnlReconciliationRow {
   revenueProvision: number;
   revenueAccrual: number;
   creditNote: number;
+  revenueEstimated: number;
   recognisedRevenue: number;
+  revenueBasis: PnlRevenueBasis;
+  estimateSource: "configured" | "invoice" | null;
+  estimateSourcePeriod: string | null;
+  perDayRevenue: number;
   grnActual: number;
   allocatedBudget: number;
   branchBudget: number;
@@ -62,6 +69,9 @@ export interface PnlLiveReconciliation {
     revenueInvoice: number;
     revenueAccrual: number;
     creditNote: number;
+    revenueEstimated: number;
+    estimatedCostCentres: number;
+    perDayRevenue: number;
     grnActual: number;
     allocatedBudget: number;
     branchBudget: number;
@@ -75,6 +85,12 @@ export interface PnlLiveReconciliation {
   freshness: PnlSourceFreshness[];
   exceptions: Array<{ code: string; label: string; amount: number; count: number }>;
   blockers: string[];
+  estimate?: {
+    applied: boolean;
+    daysInMonth: number;
+    daysElapsed: number;
+    configurationAvailable: boolean;
+  };
 }
 
 export function usePnlLiveReconciliation(period: string, filters: { branchIds?: string[] } = {}) {

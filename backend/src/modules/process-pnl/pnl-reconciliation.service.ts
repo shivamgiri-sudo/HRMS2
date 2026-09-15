@@ -2,13 +2,19 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
-export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL";
+export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
+/** Where a cost centre's recognised revenue came from. ESTIMATED = seat rate x seats. */
+export type PnlRevenueBasis = "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
 
 export interface PnlReconciliationFilters {
   branchIds?: string[];
   includeInactive?: boolean;
+  /** IST calendar date the estimate window and month-to-date are measured from. Defaults to today. */
+  asOfDate?: string;
 }
 
 export interface PnlSourceFreshness {
@@ -31,7 +37,15 @@ export interface PnlReconciliationRow {
   revenueProvision: number;
   revenueAccrual: number;
   creditNote: number;
+  /** Seat rate x seats, used only when the cost centre has no invoice and no provision. */
+  revenueEstimated: number;
   recognisedRevenue: number;
+  revenueBasis: PnlRevenueBasis;
+  /** configured = P&L Configuration > Seat billing; invoice = the cost centre's last invoice. */
+  estimateSource: "configured" | "invoice" | null;
+  estimateSourcePeriod: string | null;
+  /** Monthly seat billing / days in month — the daily run-rate, whatever the revenue basis. */
+  perDayRevenue: number;
   grnActual: number;
   allocatedBudget: number;
   branchBudget: number;
@@ -64,6 +78,9 @@ export interface PnlReconciliationTotals {
   revenueInvoice: number;
   revenueAccrual: number;
   creditNote: number;
+  revenueEstimated: number;
+  estimatedCostCentres: number;
+  perDayRevenue: number;
   grnActual: number;
   allocatedBudget: number;
   branchBudget: number;
@@ -91,6 +108,13 @@ export interface PnlReconciliation {
   freshness: PnlSourceFreshness[];
   exceptions: PnlReconciliationException[];
   blockers: string[];
+  /** Basis of the seat-rate estimate, so the page can say what "estimated" means. */
+  estimate: {
+    applied: boolean;
+    daysInMonth: number;
+    daysElapsed: number;
+    configurationAvailable: boolean;
+  };
 }
 
 interface CostCentreRow extends RowDataPacket {
@@ -491,13 +515,29 @@ export async function getPnlReconciliation(
   ]);
 
   const payrollPosted = (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
+
+  // Seat-rate estimate for cost centres the month has not invoiced yet. Only inside the open
+  // billing window: a closed month with no invoice stays at zero instead of acquiring revenue
+  // nobody billed. A failure here degrades to "no estimate", never to a broken Live P&L.
+  const asOfDate = filters.asOfDate ?? getCurrentDateIST();
+  const estimateApplies = isEstimateWindow(period, asOfDate);
+  const seatBilling = await getSeatBillingEstimate(period, { branchIds: filters.branchIds, asOfDate })
+    .catch(() => null);
+  const seatByCc = new Map<string, CostCentreSeatBilling>(
+    (seatBilling?.costCentres ?? []).map((item) => [item.costCentreId, item]),
+  );
+
   const rows: PnlReconciliationRow[] = costCentres.map((cc) => {
     const rev = revenue.get(cc.id);
     const revenueInvoice = n(rev?.invoice_amount);
     const revenueProvision = n(rev?.provision_amount);
     const revenueAccrual = n(rev?.accrual_amount);
     const creditNote = n(rev?.credit_note);
-    const recognisedRevenue = revenueInvoice + revenueAccrual - creditNote;
+    const seat = seatByCc.get(String(cc.id));
+    const useEstimate = estimateApplies && revenueInvoice === 0 && revenueAccrual === 0 && (seat?.toDate ?? 0) > 0;
+    const revenueEstimated = useEstimate ? seat!.toDate : 0;
+    const revenueBasis: PnlRevenueBasis = revenueInvoice > 0 ? "INVOICE" : revenueAccrual > 0 ? "ACCRUAL" : useEstimate ? "ESTIMATED" : "NONE";
+    const recognisedRevenue = revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
     const grnActual = grn.get(cc.id) ?? 0;
     const allocatedBudget = budgets.byCostCentre.get(cc.id) ?? 0;
     const branchBudget = budgets.byBranch.get(cc.branch_id ? String(cc.branch_id) : "") ?? 0;
@@ -513,6 +553,7 @@ export async function getPnlReconciliation(
     addIssue(issues, grnActual > 0 && allocatedBudget === 0, "GRN_WITHOUT_COST_CENTRE_BUDGET");
     addIssue(issues, allocatedBudget > 0 && grnActual > allocatedBudget, "GRN_OVER_ALLOCATED_BUDGET");
     addIssue(issues, branchBudget === 0 && (allocatedBudget > 0 || grnActual > 0), "BRANCH_BUDGET_MISSING");
+    addIssue(issues, useEstimate, "REVENUE_ESTIMATED_FROM_SEAT_RATE");
     return {
       branchId: cc.branch_id ? String(cc.branch_id) : null,
       branchName: cc.branch_name ? String(cc.branch_name) : "Unassigned",
@@ -525,7 +566,12 @@ export async function getPnlReconciliation(
       revenueProvision,
       revenueAccrual,
       creditNote,
+      revenueEstimated,
       recognisedRevenue,
+      revenueBasis,
+      estimateSource: useEstimate ? (seat!.source === "configured" ? "configured" : "invoice") : null,
+      estimateSourcePeriod: useEstimate ? seat!.sourcePeriod : null,
+      perDayRevenue: seat?.perDay ?? 0,
       grnActual,
       allocatedBudget,
       branchBudget,
@@ -533,7 +579,9 @@ export async function getPnlReconciliation(
       staffPaid,
       operatingProfit,
       marginPct: pct(operatingProfit, recognisedRevenue),
-      sourceStatus: sourceStatus({ invoice: revenueInvoice, accrual: revenueAccrual, payroll: payrollCost, grn: grnActual, budget: allocatedBudget }, payrollPosted),
+      sourceStatus: useEstimate
+        ? "ESTIMATED"
+        : sourceStatus({ invoice: revenueInvoice, accrual: revenueAccrual, payroll: payrollCost, grn: grnActual, budget: allocatedBudget }, payrollPosted),
       issues,
     };
   });
@@ -575,6 +623,9 @@ export async function getPnlReconciliation(
     revenueInvoice: sum((row) => row.revenueInvoice),
     revenueAccrual: sum((row) => row.revenueAccrual),
     creditNote: sum((row) => row.creditNote),
+    revenueEstimated: sum((row) => row.revenueEstimated),
+    estimatedCostCentres: rows.filter((row) => row.revenueBasis === "ESTIMATED").length,
+    perDayRevenue: sum((row) => row.perDayRevenue),
     grnActual: sum((row) => row.grnActual),
     allocatedBudget: sum((row) => row.allocatedBudget),
     branchBudget: Array.from(branchMap.values()).reduce((total, row) => total + row.branchBudget, 0),
@@ -584,6 +635,14 @@ export async function getPnlReconciliation(
     marginPct: null,
   };
   totals.marginPct = pct(totals.operatingProfit, totals.revenue);
+  // An estimate fills the revenue side of a month whose people cost may not exist yet (the open
+  // month before its running-salary snapshot). Revenue against no people cost reads as a ~99%
+  // margin, which is not a margin at all — so say NA until there is a cost to set against it.
+  const peopleCostMissing = totals.payrollCost === 0 && totals.revenueEstimated > 0;
+  if (peopleCostMissing) {
+    totals.marginPct = null;
+    for (const branch of branchMap.values()) if (branch.payrollCost === 0) branch.marginPct = null;
+  }
 
   const blockers: string[] = [];
   if (!payrollPosted) {
@@ -600,6 +659,17 @@ export async function getPnlReconciliation(
   if ((freshness.find((item) => item.source === "GRN")?.rows ?? 0) === 0) {
     blockers.push("GRN snapshot has no rows for this period; indirect cost may be missing.");
   }
+  if (totals.estimatedCostCentres > 0) {
+    const partial = seatBilling && seatBilling.daysElapsed < seatBilling.daysInMonth
+      ? `, counted for ${seatBilling.daysElapsed} of ${seatBilling.daysInMonth} days`
+      : "";
+    blockers.push(
+      `${totals.estimatedCostCentres} cost centre(s) have no invoice or provision for ${period} yet, so their revenue is ESTIMATED as seat rate x seats (their last invoice, or lines configured under P&L Configuration > Seat billing)${partial}. It is replaced automatically once the month is invoiced.`,
+    );
+    if (peopleCostMissing) {
+      blockers.push(`No people cost exists for ${period} yet, so margin is shown as NA — estimated revenue against zero salary cost is not a margin.`);
+    }
+  }
 
   const mode: PnlReconciliationMode = blockers.length ? "LIVE_MTD" : "FINAL";
   return {
@@ -613,5 +683,11 @@ export async function getPnlReconciliation(
     freshness,
     exceptions: exceptionsOut,
     blockers,
+    estimate: {
+      applied: estimateApplies,
+      daysInMonth: seatBilling?.daysInMonth ?? 0,
+      daysElapsed: seatBilling?.daysElapsed ?? 0,
+      configurationAvailable: seatBilling?.configurationAvailable ?? false,
+    },
   };
 }

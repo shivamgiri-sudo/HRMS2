@@ -35,6 +35,16 @@ import { getCostLeakageReview, getStafflessCostCentreSpend } from "./pnl-cost-le
 import { getDailyTrend } from "./pnl-daily-trend.service.js";
 import { getPnlDrilldown } from "./pnl-drilldown.service.js";
 import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
+import {
+  createSeatBillingLine,
+  deactivateSeatBillingLine,
+  getLineCostCentre,
+  getOwnCostCentreBranch,
+  getSeatBillingCostCentreDetail,
+  getSeatBillingEstimate,
+  importSeatBillingFromInvoice,
+  updateSeatBillingLine,
+} from "./pnl-seat-billing.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
@@ -1578,6 +1588,98 @@ router.get(
     });
     const data = await getSeatRevenueForecast(period, branchId ? { branchId } : {});
     res.json({ success: true, data });
+  })
+);
+
+/**
+ * Seat billing — revenue per day from seat rate x seats, per cost centre and LOB line.
+ *
+ * Read: the per-cost-centre lines (configured, or from the cost centre's last invoice) and the
+ * resulting monthly / per-day / month-to-date figures. Write: finance maintains the lines from
+ * P&L Configuration > Seat billing. Every write is branch-checked against the cost centre it
+ * touches and audited in audit_action_log. See pnl-seat-billing.service.ts.
+ */
+router.get(
+  "/pnl/seat-billing",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await getSeatBillingEstimate(period, branchId ? { branchIds: [branchId] } : {});
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/seat-billing/cost-centres/:id",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const { branchId } = await getOwnCostCentreBranch(String(req.params.id));
+    await assertBranchOf(req, branchId);
+    const data = await getSeatBillingCostCentreDetail(String(req.params.id), String(req.query.period ?? ""));
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/seat-billing/lines",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const body = req.body ?? {};
+    const { branchId } = await getOwnCostCentreBranch(String(body.costCentreId ?? ""));
+    await assertBranchOf(req, branchId);
+    const data = await createSeatBillingLine(body, actor(req).id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.patch(
+  "/pnl/seat-billing/lines/:id",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const { costCentreId } = await getLineCostCentre(String(req.params.id));
+    const { branchId } = await getOwnCostCentreBranch(costCentreId);
+    await assertBranchOf(req, branchId);
+    // The cost centre of a line is fixed at creation; moving revenue between cost centres is a
+    // new line on the other one, so it cannot be smuggled in through an edit.
+    const { costCentreId: _ignored, ...patch } = req.body ?? {};
+    const data = await updateSeatBillingLine(String(req.params.id), patch, actor(req).id);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/seat-billing/lines/:id/deactivate",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const { costCentreId } = await getLineCostCentre(String(req.params.id));
+    const { branchId } = await getOwnCostCentreBranch(costCentreId);
+    await assertBranchOf(req, branchId);
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
+    const data = await deactivateSeatBillingLine(String(req.params.id), actor(req).id, reason);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/seat-billing/import",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const costCentreId = String(req.body?.costCentreId ?? "");
+    const { branchId } = await getOwnCostCentreBranch(costCentreId);
+    await assertBranchOf(req, branchId);
+    const data = await importSeatBillingFromInvoice(costCentreId, String(req.body?.period ?? ""), actor(req).id);
+    res.status(201).json({ success: true, data });
   })
 );
 

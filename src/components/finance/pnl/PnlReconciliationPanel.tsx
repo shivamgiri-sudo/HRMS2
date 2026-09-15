@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, RefreshCw, Settings2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PnlDrilldownDrawer } from "@/components/finance/pnl/PnlDrilldownDrawer";
 import type { PnlDrilldownMetric, PnlDrilldownParams } from "@/hooks/usePnlDrilldown";
@@ -29,8 +30,22 @@ function issueLabel(issue: string) {
 
 function statusTone(status: string) {
   if (status === "ACTUAL") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "ACCRUAL" || status === "PARTIAL") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "ACCRUAL" || status === "PARTIAL" || status === "ESTIMATED") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-rose-200 bg-rose-50 text-rose-700";
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function periodLabel(period: string | null | undefined) {
+  if (!period || !/^\d{4}-\d{2}$/.test(period)) return period ?? "";
+  const [y, m] = period.split("-");
+  return `${MONTHS[Number(m) - 1]}-${y.slice(2)}`;
+}
+
+function estimateTitle(row: PnlReconciliationRow) {
+  const basis = row.estimateSource === "configured"
+    ? "lines configured under P&L Configuration > Seat billing"
+    : `the ${periodLabel(row.estimateSourcePeriod)} invoice`;
+  return `Estimated: seat rate x seats from ${basis}. Replaced by the invoice once it is raised.`;
 }
 
 function sortRows(rows: PnlReconciliationRow[]) {
@@ -89,6 +104,13 @@ export function PnlReconciliationPanel({
     { label: "Recognised revenue", value: money(data.totals.revenue) },
     { label: "Invoice revenue", value: money(data.totals.revenueInvoice) },
     { label: "Accrued top-up", value: money(data.totals.revenueAccrual) },
+    {
+      // Seat rate x seats for cost centres with no invoice or provision yet — see pnl-seat-billing.service.ts.
+      label: `Estimated (seat rate) · ${data.totals.estimatedCostCentres ?? 0} CC`,
+      value: money(data.totals.revenueEstimated ?? 0),
+      estimated: (data.totals.revenueEstimated ?? 0) > 0,
+    },
+    { label: "Revenue per day (seat run-rate)", value: money(data.totals.perDayRevenue ?? 0) },
     { label: "Payroll cost", value: money(data.totals.payrollCost) },
     { label: "GRN actual", value: money(data.totals.grnActual) },
     {
@@ -115,9 +137,16 @@ export function PnlReconciliationPanel({
           <span className="text-sm font-medium text-slate-700">{data.company}</span>
           <span className="text-xs text-slate-500">Generated {new Date(data.generatedAt).toLocaleString()}</span>
         </div>
-        <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" asChild>
+            <Link to={`/finance/process-pnl/configuration?tab=seatbilling&period=${period}`}>
+              <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Seat billing settings
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
+          </Button>
+        </div>
       </div>
 
       {data.blockers.length > 0 && (
@@ -135,7 +164,7 @@ export function PnlReconciliationPanel({
         {metricCards.map((item) => (
           <div key={item.label} className="rounded-md border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-medium uppercase text-slate-500">{item.label}</p>
-            <p className={`mt-1 text-lg font-semibold tabular-nums ${item.danger ? "text-rose-700" : "text-slate-900"}`}>{item.value}</p>
+            <p className={`mt-1 text-lg font-semibold tabular-nums ${item.danger ? "text-rose-700" : item.estimated ? "text-amber-700" : "text-slate-900"}`}>{item.value}</p>
           </div>
         ))}
       </div>
@@ -207,6 +236,7 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2 text-right">Invoice</th>
                   <th className="px-3 py-2 text-right">Accrual</th>
                   <th className="px-3 py-2 text-right">Revenue</th>
+                  <th className="px-3 py-2 text-right" title="Monthly seat billing divided by days in the month">Per day</th>
                   <th className="px-3 py-2 text-right">Payroll</th>
                   <th className="px-3 py-2 text-right">GRN</th>
                   <th className="px-3 py-2 text-right">Budget</th>
@@ -230,8 +260,14 @@ export function PnlReconciliationPanel({
                         params: { metric: CELL_METRIC.recognisedRevenue, period, costCentreId: row.costCentreId },
                         label: `${row.costCentreCode} - ${row.costCentreName}`,
                       })}
-                      title="View the underlying rows"
-                    >{money(row.recognisedRevenue)}</td>
+                      title={row.revenueBasis === "ESTIMATED" ? estimateTitle(row) : "View the underlying rows"}
+                    >
+                      {row.revenueBasis === "ESTIMATED" && (
+                        <span className="mr-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>
+                      )}
+                      {money(row.recognisedRevenue)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.perDayRevenue ? money(row.perDayRevenue) : "—"}</td>
                     <td
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({

@@ -60,6 +60,7 @@ import {
   type SaveRatePayload,
 } from "@/hooks/usePnlConfiguration";
 import { PnlBulkUploadDialog } from "@/components/finance/PnlBulkUploadDialog";
+import { SeatBillingPanel } from "@/components/finance/pnl/SeatBillingPanel";
 
 type AnyRow = Record<string, any>;
 
@@ -795,6 +796,7 @@ export default function PnlMasterControlCenterPage() {
               <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
                 <TabsTrigger className="rounded-xl" value="overview">Control overview</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="commercial">Revenue &amp; contracts</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="seatbilling">Seat billing</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="delivery">Delivery &amp; adjustments</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="costs">Cost master</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="allocation">Allocation master</TabsTrigger>
@@ -802,6 +804,11 @@ export default function PnlMasterControlCenterPage() {
                 <TabsTrigger className="rounded-xl" value="plans">Plans &amp; periods</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="governance">Governance &amp; history</TabsTrigger>
               </TabsList>
+
+              {/* ── SEAT BILLING — revenue per day from seat rate x seats, per LOB line ── */}
+              <TabsContent value="seatbilling" className="space-y-4">
+                <SeatBillingPanel period={period} />
+              </TabsContent>
 
               {/* ── OVERVIEW ── */}
               <TabsContent value="overview" className="space-y-4">
