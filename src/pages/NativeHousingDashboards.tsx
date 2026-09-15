@@ -339,35 +339,51 @@ function HousingPremiumOverview({ filters, setFilters, tlOptions, refreshKey }: 
 type HousingTab = "owner" | "premium" | "upload";
 
 // Named export for inline use in ProcessOperationsPage (no DashboardLayout wrapper)
+// Carries the same Upload Data tab as the standalone page, which now redirects
+// here (Process Operations is the only home for process dashboards).
 export function HousingDashboardEmbed({ subProcess }: { subProcess: "owner" | "premium" | "both" }) {
-  const [tab, setTab] = useState<"owner" | "premium">(subProcess === "premium" ? "premium" : "owner");
+  const { hasAnyRole } = useWorkforceAccess();
+  const canUpload = hasAnyRole("super_admin", "admin", "process_manager", "operations_manager");
+  const [tab, setTab] = useState<HousingTab>(subProcess === "premium" ? "premium" : "owner");
   const [ownerFilters, setOwnerFilters] = useState<Filters>({});
   const [premiumFilters, setPremiumFilters] = useState<Filters>({});
-  const [refreshKey] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const { tlOptions: ownerTls } = useFilterOptions("/api/housing-dashboards/housing-owner");
   const { tlOptions: premiumTls } = useFilterOptions("/api/housing-dashboards/housing-premium");
 
-  const showBothTabs = subProcess === "both";
+  const tabs: HousingTab[] = [
+    ...(subProcess === "both" ? (["owner", "premium"] as const) : [subProcess]),
+    ...(canUpload ? (["upload"] as const) : []),
+  ];
+  const TAB_LABEL: Record<HousingTab, string> = { owner: "Housing Owner", premium: "Housing Premium", upload: "Upload Data" };
 
   return (
     <div style={{ fontFamily: "Inter, sans-serif" }}>
-      {showBothTabs && (
+      {tabs.length > 1 && (
         <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit mb-4">
-          {(["owner", "premium"] as const).map(t => (
+          {tabs.map(t => (
             <button key={t} onClick={() => setTab(t)}
               className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
               style={tab === t ? { background: "#1e40af", color: "#fff" } : { color: "#64748b" }}>
-              {t === "owner" ? "Housing Owner" : "Housing Premium"}
+              {TAB_LABEL[t]}
             </button>
           ))}
         </div>
       )}
-      {(tab === "owner" || subProcess === "owner") && (
+      {tab === "owner" && (
         <HousingOwnerOverview filters={ownerFilters} setFilters={setOwnerFilters} tlOptions={ownerTls} refreshKey={refreshKey} />
       )}
-      {(tab === "premium" || subProcess === "premium") && (
+      {tab === "premium" && (
         <HousingPremiumOverview filters={premiumFilters} setFilters={setPremiumFilters} tlOptions={premiumTls} refreshKey={refreshKey} />
+      )}
+      {tab === "upload" && canUpload && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <UploadCard label="Housing Owner — Sale Raw" endpoint="/api/housing-dashboards/housing-owner/upload/sale-raw" onUploaded={() => setRefreshKey(k => k + 1)} />
+          <UploadCard label="Housing Owner — CDR Data" endpoint="/api/housing-dashboards/housing-owner/upload/cdr-raw" onUploaded={() => setRefreshKey(k => k + 1)} />
+          <UploadCard label="Housing Premium — Sale Raw" endpoint="/api/housing-dashboards/housing-premium/upload/sale-raw" onUploaded={() => setRefreshKey(k => k + 1)} />
+          <UploadCard label="Housing Premium — CDR Raw" endpoint="/api/housing-dashboards/housing-premium/upload/cdr-raw" onUploaded={() => setRefreshKey(k => k + 1)} />
+        </div>
       )}
     </div>
   );

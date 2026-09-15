@@ -207,6 +207,9 @@ describe("application shell routing contracts", () => {
       // standalone copy of the Live Dashboard view.
       "/onfido-process/dashboard",
       "/process-live",
+      // Same, 2026-09-15: Housing opens in Process Operations' Sales view (the
+      // sidebar's "Housing Dashboards" entry links to that deep link).
+      "/sales/housing-dashboards",
       "/onboard",
       "/onboard-full",
       "/onboard-full-legacy",

@@ -8,9 +8,10 @@ const OnfidoProcessDashboard = lazy(() => import("./onfido-process/OnfidoProcess
 const isOnfidoProcess = (name: string | null | undefined) => (name ?? "").toLowerCase().includes("onfido");
 import {
   BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
-  BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard,
+  BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard, UploadPanel,
 } from "./NativeSalesDashboard";
 import { HousingDashboardEmbed } from "./NativeHousingDashboards";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // Process code → sales dashboard type. Derived from live process list 2026-09-15.
 const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
@@ -35,6 +36,8 @@ function currentMonthStr() {
 function ProcessSalesDashboardView({ processCode, processName }: { processCode: string; processName: string }) {
   const [month, setMonth] = useState(currentMonthStr());
   const mapping = PROCESS_SALES_MAP[processCode];
+  const { hasAnyRole } = useWorkforceAccess();
+  const canUpload = hasAnyRole("super_admin", "admin", "process_manager", "operations_manager");
 
   if (!mapping) {
     return (
@@ -74,9 +77,16 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       {mapping.type === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
       {mapping.type === "dalmia"    && <DalmiaDashboard />}
       {mapping.type === "housing"   && <HousingDashboardEmbed subProcess="both" />}
+
+      {/* This brand's sales uploads — the Brand Sales Analytics "Upload Data"
+          tab, narrowed to the selected process. Same roles as that tab. */}
+      {canUpload && UPLOAD_BRAND[mapping.type] && <UploadPanel brand={UPLOAD_BRAND[mapping.type]} />}
     </div>
   );
 }
+
+/** Sales dashboard type → the brand its uploads are filed under in UploadPanel. */
+const UPLOAD_BRAND: Record<string, string> = { bellavita: "Bellavita", gnc: "GNC", aw: "AW" };
 
 // Bellavita has both fresh + repeat (BVO) tabs
 function BellavitaBvoToggle({ month }: { month: string }) {

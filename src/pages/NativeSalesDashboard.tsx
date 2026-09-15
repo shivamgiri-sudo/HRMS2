@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Area,
+  Tooltip, ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Area, Cell,
 } from "recharts";
 import {
   TrendingUp, ShoppingCart, AlertTriangle, DollarSign, Package,
@@ -2048,8 +2048,14 @@ const UPLOAD_OPTIONS: { type: UploadType; label: string; brand: string; desc: st
 
 interface UploadLog { id: number; batch_id: string; upload_type: string; month_label: string; row_count: number; uploaded_by: string; created_at: string; }
 
-function UploadPanel() {
-  const [selectedType, setSelectedType] = useState<UploadType>("bellavita-sales");
+/**
+ * `brand` narrows the panel to one brand's uploads and upload history — how
+ * Process Operations' Sales view shows it for the selected process. Without it,
+ * every brand (the Brand Sales Analytics "Upload Data" tab).
+ */
+export function UploadPanel({ brand }: { brand?: string } = {}) {
+  const options = useMemo(() => (brand ? UPLOAD_OPTIONS.filter(o => o.brand === brand) : UPLOAD_OPTIONS), [brand]);
+  const [selectedType, setSelectedType] = useState<UploadType>(options[0]?.type ?? "bellavita-sales");
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -2060,9 +2066,10 @@ function UploadPanel() {
   const loadLogs = useCallback(async () => {
     try {
       const r = await hrmsApi.get<{ data: UploadLog[] }>("/api/sales-upload/logs?limit=30");
-      setLogs(r.data ?? []);
+      const types = new Set<string>(options.map(o => o.type));
+      setLogs((r.data ?? []).filter(l => !brand || types.has(l.upload_type)));
     } catch { }
-  }, []);
+  }, [brand, options]);
 
   useEffect(() => { void loadLogs(); }, [loadLogs]);
 
@@ -2098,14 +2105,14 @@ function UploadPanel() {
     <div className="space-y-5">
       <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
         <p className="mb-4 text-sm font-semibold text-slate-700 flex items-center gap-2">
-          <Upload size={14} className="text-blue-500" /> Upload Bellavita / GNC Data
+          <Upload size={14} className="text-blue-500" /> Upload {brand ?? "Bellavita / GNC / AW"} Data
         </p>
         <div className="space-y-3">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-600">Data Type</label>
             <select value={selectedType} onChange={e => setSelectedType(e.target.value as UploadType)}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
-              {UPLOAD_OPTIONS.map(o => <option key={o.type} value={o.type}>{o.label} ({o.brand}) — {o.desc}</option>)}
+              {options.map(o => <option key={o.type} value={o.type}>{o.label} ({o.brand}) — {o.desc}</option>)}
             </select>
           </div>
           <div>
