@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { usePnlLiveReconciliation } from "@/hooks/usePnlLiveReconciliation";
 import { useCeoOverview } from "@/hooks/useCeoOverview";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
@@ -131,6 +132,11 @@ export default function ProcessPnlPage() {
   };
   const bpoQuery = useBpoProcessPnl(filters);
   const statementQuery = usePnlStatement(filters, statementViewBy);
+  // The Live P&L can scope by branch only, so it drives the headline only when no client or
+  // search filter is applied (see useLiveBasis below). Same query key as the Live P&L tab, so
+  // opening that tab reuses this result instead of fetching twice.
+  const liveBasisEligible = !clientId && !search;
+  const liveQuery = usePnlLiveReconciliation(liveBasisEligible ? period : "", { branchIds: branchId ? [branchId] : [] });
   const [showYtd, setShowYtd] = useState(false);
   const ytdQuery = useQuery({
     queryKey: ["pnl-ytd-summary", period],
@@ -212,7 +218,21 @@ export default function ProcessPnlPage() {
   const fallbackRevenue = statementTotal("recognized_revenue");
   const useStatementFallback = Boolean(summary) && !bpoHasMoney
     && fallbackRevenue !== null && Math.abs(fallbackRevenue) > 0.5;
-  const kpiSource: "process" | "statement" = useStatementFallback ? "statement" : "process";
+
+  /*
+   * LIVE P&L BASIS (2026-09-15, owner decision). The process engine above prices revenue from
+   * process_revenue_rule, and while those rules cover only some processes it reports a partial
+   * company: August 2026 showed Onfido alone (Rs 94.3 L, OP -125.6%) because one approved rule
+   * was enough to switch the statement fallback off, and September was priced from 31 bulk-seeded
+   * Rs 18,000 placeholder rates. The Live P&L covers every MAS cost centre — invoices, then billing
+   * provisions, then seat rate x seats for cost centres not invoiced yet — so it drives the
+   * headline until every process has a revenue rule. Badged, never silent.
+   */
+  const live = liveQuery.data;
+  const processRulesComplete = (summary?.kpis.revenueModelCoveragePct ?? 0) >= 99.5;
+  const useLiveBasis = Boolean(summary) && liveBasisEligible && !processRulesComplete
+    && Boolean(live) && Math.abs(live?.totals.revenue ?? 0) > 0.5;
+  const kpiSource: "process" | "statement" | "live" = useLiveBasis ? "live" : useStatementFallback ? "statement" : "process";
 
   const pct = (part: number | null, whole: number | null) =>
     part !== null && whole !== null && whole !== 0 ? (part / whole) * 100 : 0;
@@ -227,13 +247,45 @@ export default function ProcessPnlPage() {
   const agentSalaryV = useStatementFallback ? (statementTotal("agent_salary") ?? 0) : summary?.kpis.agentSalary ?? 0;
   const dscV = useStatementFallback ? (statementTotal("total_dsc") ?? 0) : summary?.kpis.dsc ?? 0;
   const bmcV = useStatementFallback ? (statementTotal("total_bmc") ?? 0) : summary?.kpis.bmc ?? 0;
-  const revenueV = useStatementFallback ? (fallbackRevenue ?? 0) : summary?.kpis.recognizedRevenue ?? 0;
+  const revenueV = useLiveBasis
+    ? (live?.totals.revenue ?? 0)
+    : useStatementFallback ? (fallbackRevenue ?? 0) : summary?.kpis.recognizedRevenue ?? 0;
   const opV = useStatementFallback
     ? revenueV - (statementTotal("total_cost") ?? 0)
     : summary?.kpis.operatingProfit ?? 0;
 
-  const kpiItems = summary
+  const liveTotals = live?.totals;
+  const livePeopleCostMissing = (liveTotals?.payrollCost ?? 0) === 0;
+  const liveKpiItems = liveTotals
     ? [
+        { label: "Recognized revenue", value: liveTotals.revenue, kind: "currency" as const, tone: "good" as const },
+        ...((liveTotals.revenueEstimated ?? 0) > 0 ? [{
+          label: `of which estimated (seat rate · ${liveTotals.estimatedCostCentres} CC)`,
+          value: liveTotals.revenueEstimated,
+          kind: "currency" as const,
+          tone: "warning" as const,
+        }] : []),
+        { label: "Revenue per day", value: liveTotals.perDayRevenue ?? 0, kind: "currency" as const },
+        { label: livePeopleCostMissing ? "People cost (not run yet)" : "People cost", value: liveTotals.payrollCost, kind: "currency" as const, tone: "warning" as const },
+        ...(livePeopleCostMissing ? [] : [{ label: "People cost / revenue", value: pct(liveTotals.payrollCost, liveTotals.revenue), kind: "percent" as const }]),
+        { label: "Vendor (GRN) cost", value: liveTotals.grnActual, kind: "currency" as const, tone: "warning" as const },
+        {
+          label: livePeopleCostMissing ? "Operating profit (excl. people cost)" : "Operating profit",
+          value: liveTotals.operatingProfit,
+          kind: "currency" as const,
+          tone: livePeopleCostMissing ? ("warning" as const) : liveTotals.operatingProfit >= 0 ? ("good" as const) : ("danger" as const),
+        },
+        // marginPct is null when the month has no people cost yet — omitted rather than shown as 0%.
+        ...(liveTotals.marginPct == null ? [] : [{
+          label: "Operating margin",
+          value: liveTotals.marginPct,
+          kind: "percent" as const,
+          tone: liveTotals.marginPct >= 0 ? ("good" as const) : ("danger" as const),
+        }]),
+      ]
+    : [];
+
+  const kpiItems = !summary ? [] : useLiveBasis ? liveKpiItems : [
         { label: "Recognized revenue", value: revenueV, kind: "currency" as const, tone: "good" as const },
         { label: "Agent salary", value: agentSalaryV, kind: "currency" as const },
         { label: "Agent salary / revenue", value: useStatementFallback ? pct(agentSalaryV, revenueV) : summary.kpis.agentSalaryPctRevenue ?? 0, kind: "percent" as const },
@@ -274,8 +326,7 @@ export default function ProcessPnlPage() {
           { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
           { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
         ]),
-      ]
-    : [];
+      ];
 
   return (
     <DashboardLayout>
@@ -307,6 +358,14 @@ export default function ProcessPnlPage() {
                     title="Process-level revenue rules, delivery actuals, revenue components and monthly plans hold no rows, so the process engine reports zero. These figures come from the P&L Statement (invoiced revenue and payroll) instead. Configure the process tables to drive them from delivery."
                   >
                     from P&amp;L Statement
+                  </span>
+                )}
+                {kpiSource === "live" && (
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+                    title={`Process revenue rules cover ${(summary.kpis.revenueModelCoveragePct ?? 0).toFixed(0)}% of processes, so these figures come from the Live P&L: invoices, then billing provisions, then seat rate × seats for cost centres not invoiced yet. Seat rates per LOB are set under P&L Configuration › Seat billing.`}
+                  >
+                    from Live P&amp;L
                   </span>
                 )}
                 {(summary.kpis.lossMakingProcesses ?? 0) > 0 && (
