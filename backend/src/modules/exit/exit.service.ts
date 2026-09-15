@@ -673,7 +673,14 @@ export const exitService = {
     // entry) must not sit unactioned until tomorrow's 8am sweep. Only fires when this call
     // actually confirmed an LWD — an ordinary status transition with no LWD in the body does
     // nothing here, same as before this change.
-    if (confirmedLwdInput) {
+    //
+    // Excludes revoked/rejected/cancelled/withdrawn — the resignation-reversal outcomes the
+    // cron's own TERMINAL_STATUSES already excludes. The route reads lastWorkingDayConfirmed
+    // from the request body unconditionally, regardless of nextStatus, so a revoke call that
+    // happens to carry a stale/leftover LWD value must not spin up a clearance chain for a
+    // resignation that never happened.
+    const isReversalOutcome = ["revoked", "rejected", "cancelled", "withdrawn"].includes(nextStatus);
+    if (confirmedLwdInput && !isReversalOutcome) {
       const [dueRows] = await db.execute<RowDataPacket[]>(
         `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
         [id]

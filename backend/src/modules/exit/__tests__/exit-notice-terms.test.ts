@@ -97,7 +97,8 @@ const EXIT_ROW = {
 type Call = { sql: string; params: unknown[] };
 let calls: Call[];
 
-function mockDb(row: Record<string, unknown> = EXIT_ROW) {
+function mockDb(row: Record<string, unknown> = EXIT_ROW, opts: { lwdDue?: boolean } = {}) {
+  const lwdDue = opts.lwdDue ?? true;
   calls = [];
   dbExecute.mockReset();
   dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
@@ -109,6 +110,8 @@ function mockDb(row: Record<string, unknown> = EXIT_ROW) {
     if (/UPDATE exit_request SET status/.test(sql)) return [{ affectedRows: 1 }, []];
     if (/INSERT INTO exit_approval_log/.test(sql)) return [{ affectedRows: 1 }, []];
     if (/UPDATE employees SET active_status = 0/.test(sql)) return [{ affectedRows: 1 }, []];
+    // The immediate-fire LWD-due check (exit.service.ts) — see the describe block below.
+    if (/last_working_day_confirmed <= CURDATE\(\)/.test(sql)) return [lwdDue ? [{ 1: 1 }] : [], []];
     return [[], []];
   });
 }
@@ -288,6 +291,79 @@ describe("updateExitStatus — the confirmed LWD reaches the employee record", (
     await exitService.updateExitStatus("exit-1", "exited", "confirming", "actor-1", "notice_serving");
 
     expect(employeeUpdate()!.params).toContain("2026-09-30");
+  });
+});
+
+describe("updateExitStatus — immediate clearance-task creation for a backdated LWD", () => {
+  it("creates clearance tasks immediately when the confirmed LWD is already due", async () => {
+    mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: true });
+    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
+    const { exitService } = await import("../exit.service.js");
+
+    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
+      lastWorkingDayConfirmed: "2026-09-01", // in the past relative to the mocked "due" check
+      noticePeriodDays: 0,
+    });
+
+    expect(createDefaultClearanceTasks).toHaveBeenCalledTimes(1);
+    expect(createDefaultClearanceTasks).toHaveBeenCalledWith("exit-1", "emp-1");
+  });
+
+  it("does nothing when the LWD is not yet due", async () => {
+    mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: false });
+    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
+    const { exitService } = await import("../exit.service.js");
+
+    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review", {
+      lastWorkingDayConfirmed: "2026-12-31",
+      noticePeriodDays: 30,
+    });
+
+    expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
+  });
+
+  it("never creates clearance tasks for a revoked resignation, even with a due LWD in the same call", async () => {
+    // handleExitStatusUpdate (exit.secure.routes.ts) reads lastWorkingDayConfirmed from the
+    // request body unconditionally, regardless of nextStatus — so a revoke call carrying a
+    // stale LWD value must not spin up a clearance chain for a resignation that never happened.
+    mockDb({ ...EXIT_ROW, status: "notice_serving" }, { lwdDue: true });
+    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
+    const { exitService } = await import("../exit.service.js");
+
+    await exitService.updateExitStatus("exit-1", "revoked", "employee changed their mind", "actor-1", "notice_serving", {
+      lastWorkingDayConfirmed: "2026-09-01",
+      noticePeriodDays: 0,
+    });
+
+    expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
+  });
+
+  it("never creates clearance tasks for a rejected resignation, even with a due LWD in the same call", async () => {
+    mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: true });
+    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
+    const { exitService } = await import("../exit.service.js");
+
+    await exitService.updateExitStatus("exit-1", "rejected", "not approved", "actor-1", "manager_review", {
+      lastWorkingDayConfirmed: "2026-09-01",
+      noticePeriodDays: 0,
+    });
+
+    expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the call carries no LWD at all, regardless of status", async () => {
+    mockDb({ ...EXIT_ROW, status: "manager_review" }, { lwdDue: true });
+    const { createDefaultClearanceTasks } = await import("../exit-intelligence.service.js");
+    (createDefaultClearanceTasks as ReturnType<typeof vi.fn>).mockClear();
+    const { exitService } = await import("../exit.service.js");
+
+    await exitService.updateExitStatus("exit-1", "accepted", "ok", "actor-1", "manager_review");
+
+    expect(createDefaultClearanceTasks).not.toHaveBeenCalled();
   });
 });
 
