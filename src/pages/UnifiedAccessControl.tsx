@@ -13,6 +13,7 @@ import {
   Layers,
   Loader2,
   Lock,
+  MapPin,
   Pencil,
   Plus,
   RefreshCw,
@@ -83,6 +84,31 @@ interface UserOption {
 interface UserRole {
   role_key: string;
   role_name: string;
+}
+
+interface BranchOption {
+  id: string;
+  branch_name: string;
+  branch_code: string;
+}
+
+interface ProcessOption {
+  id: string;
+  process_name: string;
+  process_code: string;
+}
+
+interface ScopeAssignment {
+  id: string;
+  role_key: string;
+  role_name?: string;
+  scope_type: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  process_id?: string | null;
+  process_name?: string | null;
+  assigned_at?: string | null;
+  active_status: number;
 }
 
 interface PageCatalogEntry {
@@ -274,6 +300,11 @@ export default function UnifiedAccessControl() {
   const [permSearch, setPermSearch] = useState("");
   const [paletteSearch, setPaletteSearch] = useState("");
 
+  // Scope assignment state
+  const [scopeRole, setScopeRole] = useState("");
+  const [scopeBranchId, setScopeBranchId] = useState("");
+  const [scopeProcessId, setScopeProcessId] = useState("");
+
   // Drag-and-drop builder state
   const [dragPayload, setDragPayload] = useState<DragPayload | null>(null);
   const [builderRole, setBuilderRole] = useState("");
@@ -312,6 +343,36 @@ export default function UnifiedAccessControl() {
       return res.data ?? [];
     },
     enabled: !!selectedUser,
+  });
+
+  const { data: userScopes = [], isLoading: scopesLoading } = useQuery<ScopeAssignment[]>({
+    queryKey: ["access-control", "user-scopes", selectedUser?.id],
+    queryFn: async () => {
+      if (!selectedUser) return [];
+      const res = await hrmsApi.get<{ data: ScopeAssignment[] }>(`/api/access/roles/user-scopes/${selectedUser.id}`);
+      return res.data ?? [];
+    },
+    enabled: !!selectedUser,
+  });
+
+  const { data: branches = [] } = useQuery<BranchOption[]>({
+    queryKey: ["access-control", "branches"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: BranchOption[] }>("/api/access/branches");
+      return res.data ?? [];
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const { data: scopeProcesses = [] } = useQuery<ProcessOption[]>({
+    queryKey: ["access-control", "scope-processes", scopeBranchId],
+    queryFn: async () => {
+      const qs = scopeBranchId ? `?branchId=${encodeURIComponent(scopeBranchId)}` : "";
+      const res = await hrmsApi.get<{ data: ProcessOption[] }>(`/api/access/processes${qs}`);
+      return res.data ?? [];
+    },
+    enabled: !!scopeBranchId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: roleSummaries = [], isFetching: roleSummariesLoading } = useQuery<RoleSummary[]>({
@@ -430,6 +491,36 @@ export default function UnifiedAccessControl() {
       queryClient.invalidateQueries({ queryKey: ["access-control"] });
     },
     onError: (error: any) => toast.error(error?.message ?? "Failed to revoke role"),
+  });
+
+  const assignScopeMutation = useMutation({
+    mutationFn: async ({ roleKey, branchId, processId }: { roleKey: string; branchId: string; processId?: string }) => {
+      if (!selectedUser) return;
+      await hrmsApi.post("/api/access/roles/assign-scope", {
+        user_id: selectedUser.id,
+        role_key: roleKey,
+        scope_type: processId ? "process" : "branch",
+        branch_id: branchId || null,
+        process_id: processId || null,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Scope assigned");
+      setScopeRole("");
+      setScopeBranchId("");
+      setScopeProcessId("");
+      queryClient.invalidateQueries({ queryKey: ["access-control", "user-scopes", selectedUser?.id] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to assign scope"),
+  });
+
+  const removeScopeMutation = useMutation({
+    mutationFn: async (scopeId: string) => hrmsApi.delete(`/api/access/roles/remove-scope/${scopeId}`),
+    onSuccess: () => {
+      toast.success("Scope removed");
+      queryClient.invalidateQueries({ queryKey: ["access-control", "user-scopes", selectedUser?.id] });
+    },
+    onError: (error: any) => toast.error(error?.message ?? "Failed to remove scope"),
   });
 
   const updatePermissionsMutation = useMutation({
@@ -852,6 +943,112 @@ export default function UnifiedAccessControl() {
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Branch / Process Scope Assignments */}
+              <div className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <MapPin className="h-5 w-5 text-blue-600" />
+                  <div>
+                    <h2 className="text-lg font-black text-slate-950">Branch &amp; Process Scope</h2>
+                    <p className="text-sm text-slate-500">Control which branch/process data this user can see. A role with no mapping sees nothing on scoped pages.</p>
+                  </div>
+                </div>
+
+                {!selectedUser ? (
+                  <p className="text-sm text-slate-400 italic">Select a user to manage scope assignments.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Current scopes */}
+                    {scopesLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                    ) : userScopes.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">No scope assignments — user may see nothing on scoped pages or everything depending on role defaults.</p>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {userScopes.map((s) => (
+                          <div key={s.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge variant="secondary">{s.role_name ?? s.role_key}</Badge>
+                              <span className="text-slate-400">→</span>
+                              <span className="font-semibold text-slate-700">{s.branch_name ?? "—"}</span>
+                              {s.process_name && <span className="text-slate-500">/ {s.process_name}</span>}
+                              <span className="text-xs text-slate-400">({s.scope_type})</span>
+                            </div>
+                            <button
+                              onClick={() => removeScopeMutation.mutate(s.id)}
+                              disabled={removeScopeMutation.isPending}
+                              className="rounded-lg p-1 text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                              title="Remove scope"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Add new scope */}
+                    {selectedUserRoles.length > 0 && (
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-3 space-y-2">
+                        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide flex items-center gap-1">
+                          <Plus className="h-3.5 w-3.5" /> Add mapping
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <Select value={scopeRole} onValueChange={(v) => setScopeRole(v)}>
+                            <SelectTrigger className="text-sm rounded-xl bg-white">
+                              <SelectValue placeholder="Role…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {selectedUserRoles.map((r) => (
+                                <SelectItem key={r.role_key} value={r.role_key}>{r.role_name || r.role_key}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select value={scopeBranchId} onValueChange={(v) => { setScopeBranchId(v); setScopeProcessId(""); }}>
+                            <SelectTrigger className="text-sm rounded-xl bg-white">
+                              <SelectValue placeholder="Branch…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {branches.length === 0 ? (
+                                <SelectItem value="__none__" disabled>No branches available</SelectItem>
+                              ) : branches.map((b) => (
+                                <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select value={scopeProcessId} onValueChange={setScopeProcessId} disabled={!scopeBranchId}>
+                            <SelectTrigger className="text-sm rounded-xl bg-white">
+                              <SelectValue placeholder={scopeBranchId ? "Whole branch" : "Pick branch first"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {scopeProcesses.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            disabled={!scopeRole || !scopeBranchId || assignScopeMutation.isPending}
+                            onClick={() => {
+                              if (!scopeRole || !scopeBranchId) return;
+                              assignScopeMutation.mutate({
+                                roleKey: scopeRole,
+                                branchId: scopeBranchId,
+                                processId: scopeProcessId || undefined,
+                              });
+                            }}
+                          >
+                            {assignScopeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                            Add mapping
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
