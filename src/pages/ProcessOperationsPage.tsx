@@ -1,5 +1,105 @@
 import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
 import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
+import {
+  BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
+  BvoDashboard, LpDashboard, ProcessDataPanel,
+} from "./NativeSalesDashboard";
+
+// Process code → sales dashboard type. Derived from live process list 2026-09-15.
+const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
+  BELLA_VITA:          { type: "bellavita", label: "Bellavita / BVO" },
+  NEEMANS:             { type: "neemans",   label: "Neemans" },
+  GNC:                 { type: "gnc",       label: "GNC" },
+  APPRICIATE_WEALTH:   { type: "aw",        label: "AW (Aarohan Wealth)" },
+  CLOVIA:              { type: "clovia",    label: "Clovia" },
+  DALMIA_CEMENT:       { type: "dalmia",    label: "Dalmia" },
+  DU_DIGITAL:          { type: "du",        label: "DU Digital" },
+  HOUSING_COM:         { type: "housing",   label: "Housing.com" },
+  HOUSING_OWNER:       { type: "housing",   label: "Housing Owner" },
+  HOUSING_PREMIUM:     { type: "housing",   label: "Housing Premium" },
+};
+
+function currentMonthStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Inline sales dashboard view — renders the correct component for the selected process.
+function ProcessSalesDashboardView({ processCode, processName }: { processCode: string; processName: string }) {
+  const [month, setMonth] = useState(currentMonthStr());
+  const mapping = PROCESS_SALES_MAP[processCode];
+
+  if (!mapping) {
+    return (
+      <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
+        <p className="text-sm font-semibold text-slate-700">No sales dashboard for {processName}</p>
+        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, and Housing processes.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Month selector — shared across all views that need it */}
+      {!["clovia", "du", "dalmia"].includes(mapping.type) && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Month</span>
+          <input type="month" value={month} onChange={e => setMonth(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700" />
+        </div>
+      )}
+
+      {/* Render the process-specific dashboard */}
+      {mapping.type === "bellavita" && (
+        <div className="space-y-5">
+          <div className="flex gap-2">
+            <span className="text-xs font-bold uppercase tracking-widest text-slate-400 self-center">View:</span>
+            <BellavitaBvoToggle month={month} />
+          </div>
+        </div>
+      )}
+      {mapping.type === "neemans"   && <NeemansDashboard month={month} />}
+      {mapping.type === "gnc"       && <GncDashboard month={month} />}
+      {mapping.type === "aw"        && <AwDashboard month={month} />}
+      {mapping.type === "bvo"       && <BvoDashboard month={month} />}
+      {mapping.type === "lp"        && <LpDashboard />}
+      {mapping.type === "clovia"    && <ProcessDataPanel process="Clovia" uploadTypes={["CLOVIA_EMAIL_DAILY","CLOVIA_CHAT_DAILY","CLOVIA_CRM_DISPOSITION","CLOVIA_QUALITY_AUDIT","CLOVIA_RECHURN_CALLS","CLOVIA_TEAM_ALIGNMENT"]} color="#E40B92" />}
+      {mapping.type === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
+      {mapping.type === "dalmia"    && <ProcessDataPanel process="Dalmia" uploadTypes={["DALMIA_AFTER_HOUR","DALMIA_DD_RAW","DALMIA_OUTBOUND_RAW"]} color="#B45309" />}
+      {mapping.type === "housing"   && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-blue-800">Housing Dashboard</p>
+            <p className="text-xs text-blue-600 mt-0.5">Full housing owner / premium sales + CDR analytics available on the dedicated Housing Dashboards page.</p>
+          </div>
+          <a href="/sales/housing-dashboards" className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition whitespace-nowrap">
+            Open Housing <ChevronRight size={14} />
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Bellavita has both fresh + repeat (BVO) tabs
+function BellavitaBvoToggle({ month }: { month: string }) {
+  const [sub, setSub] = useState<"bellavita" | "bvo">("bellavita");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit">
+        {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"]] as const).map(([k, lbl]) => (
+          <button key={k} onClick={() => setSub(k)}
+            className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+            style={sub === k ? { background: "#1A1A1A", color: "#D4AF37" } : { color: "#64748B" }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+      {sub === "bellavita" && <BellavitaDashboard month={month} />}
+      {sub === "bvo"       && <BvoDashboard month={month} />}
+    </div>
+  );
+}
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -4197,7 +4297,8 @@ export default function ProcessOperationsPage() {
   const [drill, setDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
-  const [view, setView] = useState<"kpi" | "live">("kpi");
+  const [view, setView] = useState<"kpi" | "live" | "sales">("kpi");
+  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]);
 
   const { data: listData, isLoading: listLoading, isError: listErrored, refetch: refetchList } = useQuery({
     queryKey: ["process-operations", "processes"],
@@ -4398,12 +4499,18 @@ export default function ProcessOperationsPage() {
                   ))}
                 </div>
               </div>
-              {/* View toggle: KPI Metrics / Live Dashboard */}
+              {/* View toggle: KPI Metrics / Sales Dashboard / Live Dashboard */}
               <div style={{ display: "inline-flex", borderRadius: 10, background: "rgba(255,255,255,.10)", padding: 3, alignSelf: "flex-end" }}>
                 <button type="button" onClick={() => setView("kpi")}
                   style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "kpi" ? "#fff" : "transparent", color: view === "kpi" ? "#183b59" : "#d0e8f5", boxShadow: view === "kpi" ? "0 3px 8px rgba(0,0,0,.15)" : "none" }}>
                   KPI Metrics
                 </button>
+                {hasSalesDashboard && (
+                  <button type="button" onClick={() => setView("sales")}
+                    style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "sales" ? "#e89b19" : "transparent", color: view === "sales" ? "#fff" : "#d0e8f5", boxShadow: view === "sales" ? "0 3px 8px rgba(0,0,0,.20)" : "none" }}>
+                    Sales Dashboard
+                  </button>
+                )}
                 <button type="button" onClick={() => setView("live")}
                   style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "live" ? "#10b8d4" : "transparent", color: view === "live" ? "#fff" : "#d0e8f5", boxShadow: view === "live" ? "0 3px 8px rgba(0,0,0,.20)" : "none" }}>
                   Live Dashboard
@@ -4442,6 +4549,12 @@ export default function ProcessOperationsPage() {
             <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">No process in your access is currently reporting a metric.</div>
           ) : !current ? (
             <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">Select a process above to view its metrics.</div>
+          ) : view === "sales" && currentProcess ? (
+            /* ── Sales Dashboard view ────────────────────────────────────────── */
+            <ProcessSalesDashboardView
+              processCode={currentProcess.processCode ?? ""}
+              processName={currentProcess.processName}
+            />
           ) : view === "live" ? (
             /* ── Live Dashboard (Dialler) view ─────────────────────────────── */
             <div>

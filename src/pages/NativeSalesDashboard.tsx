@@ -235,7 +235,7 @@ interface BbOverall {
 }
 interface BbCampaign { campaign: string; orders: number; rto_pct: number; cod_pct: number; paid_pct: number; aov: number; net_revenue: number; }
 
-function BellavitaDashboard({ month }: { month: string }) {
+export function BellavitaDashboard({ month }: { month: string }) {
   const [overall, setOverall] = useState<BbOverall | null>(null);
   const [campaigns, setCampaigns] = useState<BbCampaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -382,7 +382,7 @@ interface GncSummary { total_sales: number; total_revenue: number; avg_order: nu
 interface GncProduct { product: string; units: number; revenue: number }
 interface GncApr     { total: number }
 
-function GncDashboard({ month }: { month: string }) {
+export function GncDashboard({ month }: { month: string }) {
   const [summary, setSummary] = useState<GncSummary | null>(null);
   const [products, setProducts] = useState<GncProduct[]>([]);
   const [apr, setApr] = useState<GncApr | null>(null);
@@ -499,7 +499,7 @@ interface NmsAprKpis { total_calls: number; agent_count: number; avg_occupancy_p
 interface NmsAprAgent { agent_id: string; agent_name: string; calls: number; occupancy_pct: number; acht: number; }
 interface NmsAgentDetail { id: number; agent_id: string; agent_name: string; team: string; doj: string | null; active: boolean; }
 
-function NeemansDashboard({ month }: { month: string }) {
+export function NeemansDashboard({ month }: { month: string }) {
   const { hasAnyRole } = useWorkforceAccess();
   const canManage = hasAnyRole("super_admin", "admin", "operations_manager");
   const { toast } = useToast();
@@ -1404,7 +1404,7 @@ interface AwAgent {
 }
 interface AwMandate { billing_type: string; mandate: number; per_fe_rate: number; login_hours_per_fte: number; }
 
-function AwDashboard({ month }: { month: string }) {
+export function AwDashboard({ month }: { month: string }) {
   const [kpis, setKpis]     = useState<AwKpis | null>(null);
   const [agents, setAgents] = useState<AwAgent[]>([]);
   const [mandate, setMandate] = useState<AwMandate[]>([]);
@@ -1620,7 +1620,7 @@ interface BvoDaily { date: string; orders: number; revenue: number; paid_count: 
 interface BvoProduct { product: string; orders: number; revenue: number; }
 interface BvoPayment { status: string; cnt: number; revenue: number; }
 
-function BvoDashboard({ month }: { month: string }) {
+export function BvoDashboard({ month }: { month: string }) {
   const [kpis, setKpis]       = useState<BvoKpis | null>(null);
   const [daily, setDaily]     = useState<BvoDaily[]>([]);
   const [products, setProducts] = useState<BvoProduct[]>([]);
@@ -1801,7 +1801,7 @@ interface LpSummaryRow { campaign: string; leads: number; agents: number; dispos
 interface LpAgentRow   { agent_name: string; campaign: string; leads: number; dispositions: number; }
 interface LpDispRow    { disposition: string; campaign: string; cnt: number; }
 
-function LpDashboard() {
+export function LpDashboard() {
   const [summary, setSummary]       = useState<LpSummaryRow[]>([]);
   const [agents, setAgents]         = useState<LpAgentRow[]>([]);
   const [dispositions, setDispos]   = useState<LpDispRow[]>([]);
@@ -1941,7 +1941,7 @@ function LpDashboard() {
 // isn't in db_masmis so no transaction-level sales dashboard is available.
 // Shows upload status, recent batches, and links to ProcessOperations for KPIs.
 
-function ProcessDataPanel({ process: processName, uploadTypes, color }: {
+export function ProcessDataPanel({ process: processName, uploadTypes, color }: {
   process: string; uploadTypes: string[]; color: string;
 }) {
   const [logs, setLogs] = useState<any[]>([]);
