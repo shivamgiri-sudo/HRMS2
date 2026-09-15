@@ -80,7 +80,7 @@ interface EmployeeTableProps {
 }
 
 export function EmployeeTable({
-  employees,
+  employees: employeesProp,
   onView,
   onEdit,
   onResetPassword,
@@ -94,6 +94,7 @@ export function EmployeeTable({
   onSelectionChange,
   onBulkAction,
 }: EmployeeTableProps) {
+  const employees = Array.isArray(employeesProp) ? employeesProp : [];
   const handleSort = (key: string) => {
     onSort?.(key as keyof Employee);
   };
