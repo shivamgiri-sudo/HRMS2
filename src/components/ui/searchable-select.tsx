@@ -205,7 +205,7 @@ export function SearchableSelect({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] p-0"
+        className="min-w-[var(--radix-popover-trigger-width)] w-max max-w-[480px] p-0"
         align="start"
       >
         {list}

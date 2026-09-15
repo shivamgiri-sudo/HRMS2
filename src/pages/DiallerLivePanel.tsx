@@ -23,7 +23,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { getAuthToken } from "@/lib/hrmsApi";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type DiallerProcess = "inbound" | "reginald-cart" | "molecular-email" | "reginald-email" | null;
+type DiallerProcess = "inbound" | "reginald-cart" | "molecular-email" | "reginald-email" | "billing" | "gs1" | null;
 interface Filters { from: string; to: string }
 
 // ── Process detection ─────────────────────────────────────────────────────────
@@ -39,6 +39,10 @@ export function detectDiallerProcess(processName: string): DiallerProcess {
   if (n.includes("molecular")) return "molecular-email";
   // Reginald (alone or with cart/abandon/abc/men) → cart dashboard which now includes email APR
   if (n.includes("reginald")) return "reginald-cart";
+  // Domestic Billing / Finnable (must come after all outbound checks to avoid false-positives)
+  if (n.includes("billing") || n.includes("finnable")) return "billing";
+  // GS1 India
+  if (n.includes("gs1")) return "gs1";
   return null;
 }
 
@@ -525,7 +529,7 @@ function CartDashboard({ f }: { f: Filters }) {
       })())}
       {sub === "email-apr" && (
         <div>
-          <InfoBox html="<strong>Reginald Email APR</strong> — Analyst time from <code>vicidial_agent_log_10_25</code> campaign <code>EMAIL</code>. Email ticket counts (received, closed, pending, reopen) need to be uploaded via Bulk Upload Hub → <em>EMAIL_TICKET_DAILY</em>." />
+          <InfoBox html="<strong>Reginald Email APR</strong> — Analyst time from <code>vicidial_agent_log_10_25</code> campaign <code>EMAIL</code>. Email ticket counts available in the <strong>Tickets</strong> tab. Upload via <strong>Bulk Upload Hub → EMAIL_TICKET_DAILY</strong>." />
           {emailAprSummQ.isLoading ? <Spinner /> : emailAprSummQ.error || !emailAprSummQ.data ? <Err msg="Failed to load email APR summary" /> : (() => {
             const d = emailAprSummQ.data;
             return (
@@ -559,18 +563,30 @@ function CartDashboard({ f }: { f: Filters }) {
 
 // ── EMAIL APR DASHBOARD ───────────────────────────────────────────────────────
 type EmailAprAgentRow = { user: string; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; totalBreak: string; acht: string; utilization: number };
+type EmailTicketData = {
+  dashboard: string; from: string; to: string;
+  totalTickets: number; emailClosed: number; openPending: number; emailReopen: number;
+  avgClosurePct: number;
+  daily: { date: string; totalTickets: number; emailClosed: number; openPending: number; emailReopen: number; openingPending: number; closurePct: number }[];
+  hasData: boolean;
+};
 
 function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-email" | "reginald-email"; label: string; campaign: string; f: Filters }) {
-  const [sub, setSub] = useState<"overview" | "daily" | "agents">("overview");
+  const [sub, setSub] = useState<"overview" | "daily" | "agents" | "tickets">("overview");
   const summQ = useQuery({ queryKey: ["pld", proc, "summary", f], queryFn: () => fetchLive<{ totalLoginTime: string; totalTalk: string; totalPause: string; totalLbTime: string; totalTbTime: string; totalWbTime: string; avgUtilization: number; agentCount: number }>(`${proc}/summary`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
   const agentQ = useQuery({ queryKey: ["pld", proc, "agents", f], queryFn: () => fetchLive<EmailAprAgentRow[]>(`${proc}/agents`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "agents" });
   const dailyQ = useQuery({ queryKey: ["pld", proc, "daily", f], queryFn: () => fetchLive<{ date: string; loginTime: string; talk: string; wait: string; dispo: string; pause: string; utilization: number; agentCount: number }[]>(`${proc}/daily`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
+  const ticketsQ = useQuery({ queryKey: ["pld", proc, "tickets", f], queryFn: () => fetchLive<EmailTicketData>(`${proc}/tickets`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "tickets" });
+
+  const TICKETS_UPLOAD_INFO = "Email ticket counts available in the <strong>Tickets</strong> tab. Upload via <strong>Bulk Upload Hub → EMAIL_TICKET_DAILY</strong>.";
 
   return (
     <div>
-      <InfoBox html={`<strong>${label}</strong> — APR from <code>vicidial_agent_log_10_25</code> campaign <code>${campaign}</code>. Email ticket metrics (received, closed, pending, closure%) require <code>molecular_db_email</code> on 122.184.128.89 — shown separately in the GAS dashboard.`} />
+      <InfoBox html={`<strong>${label}</strong> — APR from <code>vicidial_agent_log_10_25</code> campaign <code>${campaign}</code>. ${TICKETS_UPLOAD_INFO}`} />
       <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-        {(["overview", "daily", "agents"] as const).map(t => <button key={t} onClick={() => setSub(t)} style={{ height: 30, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: ".15s", background: sub === t ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9", color: sub === t ? "#fff" : "#334155" }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>)}
+        {([["overview", "Overview"], ["daily", "Daily"], ["agents", "Agents"], ["tickets", "Tickets"]] as const).map(([t, lbl]) => (
+          <button key={t} onClick={() => setSub(t)} style={{ height: 30, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: ".15s", background: sub === t ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9", color: sub === t ? "#fff" : "#334155" }}>{lbl}</button>
+        ))}
       </div>
       {sub === "overview" && (summQ.isLoading ? <Spinner /> : summQ.error || !summQ.data ? <Err msg="Failed to load summary" /> : (() => {
         const d = summQ.data;
@@ -586,6 +602,384 @@ function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-emai
           <DataTable<EmailAprAgentRow> cols={[{ h: "Agent ID", k: "user", left: true }, { h: "Calls", k: "aprCalls" }, { h: "Net Login", k: "netLoginTime" }, { h: "Talk", k: "talk" }, { h: "Wait", k: "wait" }, { h: "Dispo", k: "dispo" }, { h: "Pause", k: "pause" }, { h: "LB", k: "lbTime" }, { h: "TB", k: "tbTime" }, { h: "WB", k: "wbTime" }, { h: "Total Break", k: "totalBreak" }, { h: "ACHT", k: "acht" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={agentQ.data} />
         </Panel>
       ))}
+      {sub === "tickets" && (
+        ticketsQ.isLoading ? <Spinner /> : ticketsQ.error || !ticketsQ.data ? <Err msg="Failed to load ticket data" /> : (() => {
+          const td = ticketsQ.data;
+          if (!td.hasData) {
+            return <InfoBox html="No ticket data uploaded for this date range. Upload via <strong>Bulk Upload Hub → EMAIL_TICKET_DAILY</strong>." />;
+          }
+          const closurePctColor = (v: number) => v >= 80 ? "#16a34a" : v >= 60 ? "#d97706" : "#dc2626";
+          const closurePctBg = (v: number) => v >= 80 ? "#eaf8ef" : v >= 60 ? "#fff8e7" : "#fff0f2";
+          return (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
+                <KpiCard label="Total Tickets" value={td.totalTickets.toLocaleString()} color={KPIG[0]} />
+                <KpiCard label="Email Closed" value={td.emailClosed.toLocaleString()} color="linear-gradient(135deg,#047857,#10b981)" />
+                <KpiCard label="Open / Pending" value={td.openPending.toLocaleString()} color="linear-gradient(135deg,#be123c,#f43f5e)" />
+                <KpiCard label="Avg Closure %" value={`${td.avgClosurePct.toFixed(1)}%`} color={td.avgClosurePct >= 80 ? "linear-gradient(135deg,#047857,#10b981)" : td.avgClosurePct >= 60 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#be123c,#f43f5e)"} />
+              </div>
+              <Panel title="Daily Ticket Breakdown" sub={`${td.daily.length} days`}>
+                <DataTable cols={[
+                  { h: "Date", k: "date" as const, left: true, fmt: (v: unknown) => new Date(String(v)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) },
+                  { h: "Total", k: "totalTickets" as const },
+                  { h: "Closed", k: "emailClosed" as const },
+                  { h: "Open/Pending", k: "openPending" as const },
+                  { h: "Reopen", k: "emailReopen" as const },
+                  { h: "Opening Pending", k: "openingPending" as const },
+                  { h: "Closure %", k: "closurePct" as const, fmt: (v: unknown) => <span style={{ fontWeight: 900, color: closurePctColor(Number(v)), background: closurePctBg(Number(v)), borderRadius: 6, padding: "2px 7px" }}>{Number(v).toFixed(1)}%</span> },
+                ]} rows={td.daily} />
+              </Panel>
+            </div>
+          );
+        })()
+      )}
+    </div>
+  );
+}
+
+// ── BILLING DASHBOARD ─────────────────────────────────────────────────────────
+interface BillingRow {
+  process: string; lob: string;
+  approvedHC: number; targetHrs: number; deliveredHrs: number; deliveredFTE: number;
+  billingHrs: number; billingAmount: number; variance: number; utilization: number;
+  needHcPerDay: number; planningDays: number; agentCount: number;
+}
+
+function BillingDashboard({ f }: { f: Filters }) {
+  const [month, setMonth] = useState(f.from.slice(0, 7));
+
+  const dashQ = useQuery({
+    queryKey: ["pld", "billing", "dashboard", month],
+    queryFn: () => fetchLive<{ month: string; dataTillDate: string; rows: BillingRow[]; generatedAt: string }>("billing/dashboard", { month }),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const fmtRs = (v: number) => `₹${v.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+
+  const rows = dashQ.data?.rows ?? [];
+  const totalApprovedHC = rows.reduce((s, r) => s + r.approvedHC, 0);
+  const totalDeliveredFTE = rows.reduce((s, r) => s + r.deliveredFTE, 0);
+  const totalBillingAmount = rows.reduce((s, r) => s + r.billingAmount, 0);
+  const totalBillingHrs = rows.reduce((s, r) => s + r.billingHrs, 0);
+  const overallUtilization = totalApprovedHC > 0 ? (totalDeliveredFTE / totalApprovedHC) * 100 : 0;
+
+  const varianceColor = (v: number) => v >= 0 ? "#16a34a" : "#dc2626";
+  const varianceBg = (v: number) => v >= 0 ? "#eaf8ef" : "#fff0f2";
+  const utilColor = (v: number) => v >= 80 ? "#16a34a" : v >= 60 ? "#d97706" : "#dc2626";
+  const utilBg = (v: number) => v >= 80 ? "#eaf8ef" : v >= 60 ? "#fff8e7" : "#fff0f2";
+
+  return (
+    <div>
+      {/* Month picker */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, padding: "10px 14px", background: "#fff", border: "1px solid #dce4ed", borderRadius: 12, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#697586" }}>Billing Month:</span>
+        <input
+          type="month"
+          value={month}
+          onChange={e => setMonth(e.target.value)}
+          style={{ height: 32, border: "1px solid #dce4ed", borderRadius: 8, padding: "0 8px", fontSize: 12, fontWeight: 700, background: "#f9fbfd", outline: "none" }}
+        />
+        {dashQ.data?.dataTillDate && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", background: "#e7f6fb", border: "1px solid #c8edf5", borderRadius: 999, padding: "3px 9px" }}>
+            Data till: {dashQ.data.dataTillDate}
+          </span>
+        )}
+        {dashQ.data?.generatedAt && (
+          <span style={{ fontSize: 10, color: "#697586", marginLeft: "auto" }}>Generated: {dashQ.data.generatedAt}</span>
+        )}
+      </div>
+
+      <InfoBox html="<strong>Domestic Billing Dashboard</strong> — Approved headcount configuration from <strong>Bulk Upload Hub → DOMESTIC_BILLING_APPROVED_HC</strong>. Billing amounts and FTE delivery are derived from approved HC, target hours, and delivered hours per LOB." />
+
+      {dashQ.isLoading ? <Spinner /> : dashQ.error || !dashQ.data ? <Err msg="Failed to load billing dashboard" /> : (
+        <div>
+          {/* Summary KPI cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
+            <KpiCard
+              label="Total Approved HC"
+              value={totalApprovedHC.toLocaleString()}
+              sub="Sum across all LOBs"
+              color={KPIG[0]}
+            />
+            <KpiCard
+              label="Total Delivered FTE"
+              value={totalDeliveredFTE.toFixed(2)}
+              sub="FTE across all LOBs"
+              color="linear-gradient(135deg,#047857,#10b981)"
+            />
+            <KpiCard
+              label="Total Billing Amount"
+              value={fmtRs(totalBillingAmount)}
+              sub={`Billing Hrs: ${totalBillingHrs.toFixed(1)}`}
+              color="linear-gradient(135deg,#6d28d9,#8b5cf6)"
+            />
+            <KpiCard
+              label="Overall Utilization"
+              value={`${overallUtilization.toFixed(1)}%`}
+              sub="Delivered FTE / Approved HC"
+              color={overallUtilization >= 80 ? "linear-gradient(135deg,#047857,#10b981)" : overallUtilization >= 60 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#be123c,#f43f5e)"}
+            />
+          </div>
+
+          {/* Main LOB table */}
+          <Panel title="LOB-wise Billing Matrix" sub={`${rows.length} LOB${rows.length !== 1 ? "s" : ""}`}>
+            <DataTable<BillingRow> cols={[
+              { h: "Process", k: "process", left: true },
+              { h: "LOB", k: "lob", left: true },
+              { h: "Approved HC", k: "approvedHC" },
+              { h: "Target Hrs", k: "targetHrs", fmt: (v: unknown) => Number(v).toFixed(1) },
+              { h: "Delivered Hrs", k: "deliveredHrs", fmt: (v: unknown) => Number(v).toFixed(1) },
+              { h: "Delivered FTE", k: "deliveredFTE", fmt: (v: unknown) => Number(v).toFixed(2) },
+              {
+                h: "Variance", k: "variance", fmt: (v: unknown) => {
+                  const val = Number(v);
+                  return <span style={{ fontWeight: 900, color: varianceColor(val), background: varianceBg(val), borderRadius: 6, padding: "2px 7px" }}>{val >= 0 ? "+" : ""}{val.toFixed(2)}</span>;
+                }
+              },
+              {
+                h: "Utilization %", k: "utilization", fmt: (v: unknown) => {
+                  const val = Number(v);
+                  return <span style={{ fontWeight: 900, color: utilColor(val), background: utilBg(val), borderRadius: 6, padding: "2px 7px" }}>{val.toFixed(1)}%</span>;
+                }
+              },
+              { h: "Billing Hrs", k: "billingHrs", fmt: (v: unknown) => Number(v).toFixed(1) },
+              { h: "Billing Amount", k: "billingAmount", fmt: (v: unknown) => fmtRs(Number(v)) },
+              { h: "Need HC/Day", k: "needHcPerDay", fmt: (v: unknown) => Number(v).toFixed(1) },
+            ]} rows={rows} />
+          </Panel>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── GS1 INDIA LIVE DASHBOARD ──────────────────────────────────────────────────
+type GS1OverviewT = {
+  emailTasks: number; emailGtin: number;
+  dataKartTasks: number; dataKartGtin: number;
+  approvalSku: number; auditErrors: number;
+  daily: { date: string; emailTasks: number; dataKartTasks: number }[];
+};
+type GS1EmailT = {
+  tasksAssigned: number; gtinProcessed: number; imagesUploaded: number; slaWithin15Pct: number;
+  byAnalyst: { analyst: string; tasks: number; gtin: number; images: number; slaPct: number }[];
+  daily: { date: string; tasks: number; gtin: number; images: number }[];
+};
+type GS1DataKartT = {
+  dataReceived: number; gtinCount: number; withinTatPct: number; avgGtinPerTask: number;
+  byAnalyst: { analyst: string; tasks: number; gtin: number; withinTatPct: number; avgGtinPerTask: number }[];
+  daily: { date: string; tasks: number; gtin: number }[];
+};
+type GS1ApprovalT = {
+  totalSku: number; auditCount: number; auditErrors: number; errorRatePct: number; uniqueGcp: number;
+  byCompany: { company: string; sku: number; audits: number; errors: number; errorPct: number }[];
+  byAnalyst: { analyst: string; audits: number; errors: number; errorPct: number }[];
+};
+
+type GS1Sub = "overview" | "email" | "datakart" | "approval";
+
+function GS1Dashboard({ f }: { f: Filters }) {
+  const [sub, setSub] = useState<GS1Sub>("overview");
+  const fmtD = (v: unknown) => { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); };
+
+  const overviewQ = useQuery({ queryKey: ["pld", "gs1", "overview", f], queryFn: () => fetchLive<GS1OverviewT>("gs1/overview", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
+  const emailQ = useQuery({ queryKey: ["pld", "gs1", "email", f], queryFn: () => fetchLive<GS1EmailT>("gs1/email", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email" });
+  const dataKartQ = useQuery({ queryKey: ["pld", "gs1", "datakart", f], queryFn: () => fetchLive<GS1DataKartT>("gs1/datakart", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "datakart" });
+  const approvalQ = useQuery({ queryKey: ["pld", "gs1", "approval", f], queryFn: () => fetchLive<GS1ApprovalT>("gs1/approval", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "approval" });
+
+  const subs: { key: GS1Sub; label: string }[] = [
+    { key: "overview", label: "Overview" },
+    { key: "email", label: "Email" },
+    { key: "datakart", label: "Data Kart" },
+    { key: "approval", label: "Approval" },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
+        {subs.map(s => (
+          <button key={s.key} onClick={() => setSub(s.key)} style={{ height: 30, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: ".15s", background: sub === s.key ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9", color: sub === s.key ? "#fff" : "#334155" }}>{s.label}</button>
+        ))}
+      </div>
+
+      {/* OVERVIEW */}
+      {sub === "overview" && (
+        overviewQ.isLoading ? <Spinner /> : overviewQ.error || !overviewQ.data ? <Err msg="Failed to load GS1 overview" /> : (() => {
+          const d = overviewQ.data;
+          const kpis = [
+            { label: "Email Tasks", value: d.emailTasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
+            { label: "Email GTIN", value: d.emailGtin.toLocaleString(), sub: "Total GTIN via email", color: KPIG[0] },
+            { label: "Data Kart Tasks", value: d.dataKartTasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[9] },
+            { label: "Data Kart GTIN", value: d.dataKartGtin.toLocaleString(), sub: "Total GTIN via data kart", color: KPIG[3] },
+            { label: "Approval SKU", value: d.approvalSku.toLocaleString(), sub: "SKU sent for approval", color: KPIG[1] },
+            { label: "Audit Errors", value: d.auditErrors.toLocaleString(), sub: "Errors in audit", color: d.auditErrors > 0 ? KPIG[2] : KPIG[1] },
+          ];
+          return (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
+                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+              </div>
+              {d.daily && d.daily.length > 0 ? (
+                <Panel title="Daily Email + Data Kart Trend (Tasks Stacked)">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={d.daily}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Bar dataKey="emailTasks" fill="#2f6fed" name="Email Tasks" stackId="a" />
+                      <Bar dataKey="dataKartTasks" fill="#10b8d4" name="Data Kart Tasks" stackId="a" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Panel>
+              ) : (
+                <InfoBox html="<strong>No daily trend data.</strong> Upload GS1 data via Bulk Upload Hub → <em>GS1_EMAIL_DAILY / GS1_DATAKART_DAILY / GS1_APPROVAL_AUDIT</em>." />
+              )}
+            </div>
+          );
+        })()
+      )}
+
+      {/* EMAIL */}
+      {sub === "email" && (
+        emailQ.isLoading ? <Spinner /> : emailQ.error || !emailQ.data ? <Err msg="Failed to load GS1 email data" /> : (() => {
+          const d = emailQ.data;
+          const kpis = [
+            { label: "Tasks Assigned", value: d.tasksAssigned.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
+            { label: "GTIN Processed", value: d.gtinProcessed.toLocaleString(), sub: "Total GTIN done", color: KPIG[0] },
+            { label: "Images Uploaded", value: d.imagesUploaded.toLocaleString(), sub: "Product images", color: KPIG[9] },
+            { label: "SLA ≤15min %", value: `${d.slaWithin15Pct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.slaWithin15Pct >= 80 ? KPIG[1] : KPIG[2] },
+          ];
+          return (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
+                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+              </div>
+              <SectionTitle title="By Analyst" />
+              {d.byAnalyst.length === 0 ? (
+                <InfoBox html="No analyst data. Upload GS1 data via Bulk Upload Hub → <em>GS1_EMAIL_DAILY</em>." />
+              ) : (
+                <Panel title="Analyst-wise Email Performance" sub={`${d.byAnalyst.length} analysts`}>
+                  <DataTable cols={[
+                    { h: "Analyst", k: "analyst" as const, left: true },
+                    { h: "Tasks", k: "tasks" as const },
+                    { h: "GTIN", k: "gtin" as const },
+                    { h: "Images", k: "images" as const },
+                    { h: "SLA %", k: "slaPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
+                  ]} rows={d.byAnalyst} />
+                </Panel>
+              )}
+              <SectionTitle title="Day-wise" />
+              {d.daily.length === 0 ? (
+                <InfoBox html="No daily data. Upload GS1 data via Bulk Upload Hub → <em>GS1_EMAIL_DAILY</em>." />
+              ) : (
+                <Panel title="Daily Email Metrics" sub={`${d.daily.length} days`}>
+                  <DataTable cols={[
+                    { h: "Date", k: "date" as const, left: true, fmt: fmtD },
+                    { h: "Tasks", k: "tasks" as const },
+                    { h: "GTIN", k: "gtin" as const },
+                    { h: "Images", k: "images" as const },
+                  ]} rows={d.daily} />
+                </Panel>
+              )}
+            </div>
+          );
+        })()
+      )}
+
+      {/* DATA KART */}
+      {sub === "datakart" && (
+        dataKartQ.isLoading ? <Spinner /> : dataKartQ.error || !dataKartQ.data ? <Err msg="Failed to load GS1 Data Kart data" /> : (() => {
+          const d = dataKartQ.data;
+          const kpis = [
+            { label: "Data Received", value: d.dataReceived.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
+            { label: "GTIN Count", value: d.gtinCount.toLocaleString(), sub: "Total GTIN processed", color: KPIG[0] },
+            { label: "Within TAT %", value: `${d.withinTatPct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.withinTatPct >= 80 ? KPIG[1] : KPIG[2] },
+            { label: "Avg GTIN/Task", value: d.avgGtinPerTask.toFixed(1), sub: "GTIN per task", color: KPIG[9] },
+          ];
+          return (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
+                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+              </div>
+              <SectionTitle title="By Analyst" />
+              {d.byAnalyst.length === 0 ? (
+                <InfoBox html="No analyst data. Upload GS1 data via Bulk Upload Hub → <em>GS1_DATAKART_DAILY</em>." />
+              ) : (
+                <Panel title="Analyst-wise Data Kart Performance" sub={`${d.byAnalyst.length} analysts`}>
+                  <DataTable cols={[
+                    { h: "Analyst", k: "analyst" as const, left: true },
+                    { h: "Tasks", k: "tasks" as const },
+                    { h: "GTIN", k: "gtin" as const },
+                    { h: "Within TAT %", k: "withinTatPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
+                    { h: "Avg GTIN/Task", k: "avgGtinPerTask" as const, fmt: (v: unknown) => Number(v).toFixed(1) },
+                  ]} rows={d.byAnalyst} />
+                </Panel>
+              )}
+              <SectionTitle title="Day-wise" />
+              {d.daily.length === 0 ? (
+                <InfoBox html="No daily data. Upload GS1 data via Bulk Upload Hub → <em>GS1_DATAKART_DAILY</em>." />
+              ) : (
+                <Panel title="Daily Data Kart Metrics" sub={`${d.daily.length} days`}>
+                  <DataTable cols={[
+                    { h: "Date", k: "date" as const, left: true, fmt: fmtD },
+                    { h: "Tasks", k: "tasks" as const },
+                    { h: "GTIN", k: "gtin" as const },
+                  ]} rows={d.daily} />
+                </Panel>
+              )}
+            </div>
+          );
+        })()
+      )}
+
+      {/* APPROVAL */}
+      {sub === "approval" && (
+        approvalQ.isLoading ? <Spinner /> : approvalQ.error || !approvalQ.data ? <Err msg="Failed to load GS1 Approval data" /> : (() => {
+          const d = approvalQ.data;
+          const kpis = [
+            { label: "Total SKU", value: d.totalSku.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
+            { label: "Audit Count", value: d.auditCount.toLocaleString(), sub: "Total audits done", color: KPIG[0] },
+            { label: "Audit Errors", value: d.auditErrors.toLocaleString(), sub: "Errors found", color: d.auditErrors > 0 ? KPIG[2] : KPIG[1] },
+            { label: "Error Rate %", value: `${d.errorRatePct.toFixed(1)}%`, sub: "Target < 5%", color: d.errorRatePct < 5 ? KPIG[1] : KPIG[2] },
+            { label: "Unique GCP", value: d.uniqueGcp.toLocaleString(), sub: "Distinct companies", color: KPIG[9] },
+          ];
+          return (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
+                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+              </div>
+              <SectionTitle title="By Company" />
+              {d.byCompany.length === 0 ? (
+                <InfoBox html="No company data. Upload GS1 data via Bulk Upload Hub → <em>GS1_APPROVAL_AUDIT</em>." />
+              ) : (
+                <Panel title="Company-wise Approval" sub={`${d.byCompany.length} companies`}>
+                  <DataTable cols={[
+                    { h: "Company", k: "company" as const, left: true },
+                    { h: "SKU", k: "sku" as const },
+                    { h: "Audits", k: "audits" as const },
+                    { h: "Errors", k: "errors" as const },
+                    { h: "Error %", k: "errorPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
+                  ]} rows={d.byCompany} />
+                </Panel>
+              )}
+              <SectionTitle title="By Analyst" />
+              {d.byAnalyst.length === 0 ? (
+                <InfoBox html="No analyst data. Upload GS1 data via Bulk Upload Hub → <em>GS1_APPROVAL_AUDIT</em>." />
+              ) : (
+                <Panel title="Analyst-wise Audit" sub={`${d.byAnalyst.length} analysts`}>
+                  <DataTable cols={[
+                    { h: "Analyst", k: "analyst" as const, left: true },
+                    { h: "Audits", k: "audits" as const },
+                    { h: "Errors", k: "errors" as const },
+                    { h: "Error %", k: "errorPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
+                  ]} rows={d.byAnalyst} />
+                </Panel>
+              )}
+            </div>
+          );
+        })()
+      )}
     </div>
   );
 }
@@ -599,7 +993,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
     return (
       <div style={{ margin: "16px 0", padding: "16px 20px", background: "linear-gradient(135deg,#fff8e7,#fffaf0)", border: "1px solid #fde68a", borderRadius: 14, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
         <strong>No live dialler data available</strong> for <em>{processName}</em>.
-        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email (APR), Reginald Email (APR).</div>
+        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email (APR), Reginald Email (APR), Domestic Billing / Finnable, GS1 India.</div>
       </div>
     );
   }
@@ -611,6 +1005,8 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
       {proc === "reginald-cart" && <CartDashboard f={filters} />}
       {proc === "molecular-email" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={filters} />}
       {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
+      {proc === "billing" && <BillingDashboard f={filters} />}
+      {proc === "gs1" && <GS1Dashboard f={filters} />}
     </div>
   );
 }

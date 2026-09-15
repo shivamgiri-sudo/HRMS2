@@ -4829,7 +4829,7 @@ export default function ProcessOperationsPage() {
               )}
               {/* Process filter */}
               {processes.length > 0 && (
-                <div style={{ minWidth: 280 }}>
+                <div style={{ minWidth: 320 }}>
                   <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Process</label>
                   <SearchableSelect
                     aria-label="Select a process"

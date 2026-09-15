@@ -45,6 +45,8 @@ import {
   getAprSummary, getAprDaily, getAprAgents, type EmailProcess,
 } from './apr.service.js';
 import { getEmailTickets } from './email-ticket.service.js';
+import { getBillingDashboard } from './domestic-billing.service.js';
+import { getGs1Overview, getGs1Email, getGs1DataKart, getGs1Approval } from './gs1.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -103,5 +105,14 @@ const reg = emailH('reginald-email');
 router.get('/reginald-email/summary', reg.summary);
 router.get('/reginald-email/daily',   reg.daily);
 router.get('/reginald-email/agents',  reg.agents);
+
+// ── GS1 India ─────────────────────────────────────────────────────────────────
+router.get('/gs1/overview',  wrap(req => getGs1Overview(req.query as Q)));
+router.get('/gs1/email',     wrap(req => getGs1Email(req.query as Q)));
+router.get('/gs1/datakart',  wrap(req => getGs1DataKart(req.query as Q)));
+router.get('/gs1/approval',  wrap(req => getGs1Approval(req.query as Q)));
+
+// ── Domestic Billing Dashboard ────────────────────────────────────────────────
+router.get('/billing/dashboard', wrap(req => getBillingDashboard(req.query as Q)));
 
 export default router;

@@ -412,6 +412,16 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_dalmia_after_hour_batch",
   "import_dalmia_dd_batch",
   "import_dalmia_outbound_batch",
+  // Domestic Billing Approved Headcount — month/process/LOB-grain planning table.
+  "import_domestic_billing_approved_hc_batch",
+  // GS1 India — email GTIN processing daily actuals, DataKart task daily
+  // actuals, and Approval/Audit quality review raw log. All three write into
+  // dedicated mas_hrms tables; the GS1 process_id is resolved by name at
+  // import time. See gs1-email-daily-bulk.service.ts,
+  // gs1-datakart-daily-bulk.service.ts, gs1-approval-audit-bulk.service.ts.
+  "import_gs1_email_daily_batch",
+  "import_gs1_datakart_daily_batch",
+  "import_gs1_approval_audit_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -1069,6 +1079,38 @@ async function dispatchImport(
       "../bulk-upload/dalmia-outbound-bulk.service.js"
     );
     const data = await importDalmiaOutboundBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_domestic_billing_approved_hc_batch") {
+    const { importDomesticBillingApprovedHcBatch } = await import(
+      "../bulk-upload/domestic-billing-approved-hc-bulk.service.js"
+    );
+    const data = await importDomesticBillingApprovedHcBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_gs1_email_daily_batch") {
+    const { importGs1EmailDailyBatch } = await import(
+      "../bulk-upload/gs1-email-daily-bulk.service.js"
+    );
+    const data = await importGs1EmailDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_gs1_datakart_daily_batch") {
+    const { importGs1DatakartDailyBatch } = await import(
+      "../bulk-upload/gs1-datakart-daily-bulk.service.js"
+    );
+    const data = await importGs1DatakartDailyBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_gs1_approval_audit_batch") {
+    const { importGs1ApprovalAuditBatch } = await import(
+      "../bulk-upload/gs1-approval-audit-bulk.service.js"
+    );
+    const data = await importGs1ApprovalAuditBatch(id, userId);
     return { success: true, data };
   }
 

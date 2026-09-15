@@ -1046,6 +1046,8 @@ const MIGRATION_MANIFEST: string[] = [
   // credentials from .env (ONFIDO_DB_*). File kept on disk; moved to knownUnlisted so it cannot
   // be accidentally re-scheduled through the standard runner.
   "1768_clovia_feedback_fix_column_names.sql", // Registered 2026-09-15. Fixes upload_template_master required/optional columns for CLOVIA_FEEDBACK to match real export headers (spaces not underscores; "C-SAT/D-SAT" not "CSAT_DSAT"). BATCH-1789448243216 and BATCH-1789448209967 were stuck at 'uploaded'/0 rows because the frontend header-validation found no matching columns.
+  "1769_gs1_dashboard_tables.sql", // Registered 2026-09-15. Creates gs1_email_daily_actual, gs1_datakart_daily_actual, gs1_approval_audit_raw tables for GS1 India dashboard LOBs, and registers GS1_EMAIL_DAILY / GS1_DATAKART_DAILY / GS1_APPROVAL_AUDIT upload templates.
+  "1770_domestic_billing_approved_hc.sql", // Registered 2026-09-15. Creates domestic_billing_approved_hc: per-month/process/LOB approved headcount targets and FTE rates for the Domestic Billing P&L engine. Unique key on (month, process, lob). Seeds default Sep-2026 targets matching GAS DEFAULT_APPROVED_TARGETS (Bla Bli Blu Inbound/Cart ABC, Finnable, Molecular MEmail, Reginald RTO/Email/Abandon Cart, GS1). Adds DOMESTIC_BILLING_APPROVED_HC to upload_template_master.
   ];
 
 export type MigrationHealth = {
