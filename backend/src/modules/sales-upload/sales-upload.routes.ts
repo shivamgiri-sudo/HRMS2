@@ -93,8 +93,10 @@ salesUploadRouter.get("/neemans-abc-cart-snap", h(async (req, res) => {
   const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
   try {
     return res.json({ success: true, data: await svc.getNeemansAbcCartSnap(month) });
-  } catch {
-    return res.json({ success: true, _unavailable: true, data: [] });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[neemans-abc-cart-snap] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: [], _error: msg });
   }
 }));
 

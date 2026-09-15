@@ -732,8 +732,11 @@ export async function getNeemansAprDashboard(month: string): Promise<Record<stri
 // in neemans_sale_raw (W-1…W-5); allocation is mapped to those weeks via a date-range join.
 // Verified live 2026-09-14 against 3,612 allocation rows and 3,800 sale_raw rows.
 export async function getNeemansAbcCartSnap(month: string): Promise<Record<string, unknown>> {
-  const ALLOC_MONTH = `CAST(a.date AS UNSIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(a.date AS UNSIGNED)-2) DAY),'%Y-%m') = ?`;
-  const SALE_MONTH  = `CAST(s.date AS UNSIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(s.date AS UNSIGNED)-2) DAY),'%Y-%m') = ?`;
+  // Aliased variants — use when the table is referenced by that alias in the same query.
+  const ALLOC_MONTH = `CAST(a.date AS SIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(a.date AS SIGNED)-2) DAY),'%Y-%m') = ?`;
+  const SALE_MONTH  = `CAST(s.date AS SIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(s.date AS SIGNED)-2) DAY),'%Y-%m') = ?`;
+  // No-alias variant — for subqueries / CTEs where the table has no alias assigned.
+  const DATE_MONTH  = `CAST(date AS SIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(date AS SIGNED)-2) DAY),'%Y-%m') = ?`;
 
   // ── MTD ──────────────────────────────────────────────────────────────────
   const [allocMtd] = await queryMasmis<Record<string, unknown>>(
@@ -779,7 +782,7 @@ export async function getNeemansAbcCartSnap(month: string): Promise<Record<strin
        SUM(a.calling_status='Connected')                                         AS connected,
        COUNT(DISTINCT a.agent)                                                   AS login_count
      FROM (SELECT DISTINCT date, week FROM db_masmis.neemans_sale_raw
-           WHERE ${SALE_MONTH}) wk
+           WHERE ${DATE_MONTH}) wk
      LEFT JOIN db_masmis.neemans_allocation a ON a.date = wk.date
      GROUP BY wk.week ORDER BY wk.week`, [month]);
 
@@ -800,13 +803,13 @@ export async function getNeemansAbcCartSnap(month: string): Promise<Record<strin
   const allocDaily = await queryMasmis<Record<string, unknown>>(
     `SELECT
        a.date AS date_key,
-       DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(a.date AS UNSIGNED)-2) DAY),'%d-%b') AS label,
+       DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(a.date AS SIGNED)-2) DAY),'%d-%b') AS label,
        COUNT(DISTINCT a.phone)          AS workable,
        SUM(a.calling_status='Connected') AS connected,
        COUNT(DISTINCT a.agent)           AS login_count
      FROM db_masmis.neemans_allocation a
      WHERE ${ALLOC_MONTH}
-     GROUP BY a.date ORDER BY CAST(a.date AS UNSIGNED)`, [month]);
+     GROUP BY a.date ORDER BY CAST(a.date AS SIGNED)`, [month]);
 
   const saleDaily = await queryMasmis<Record<string, unknown>>(
     `SELECT
@@ -817,7 +820,7 @@ export async function getNeemansAbcCartSnap(month: string): Promise<Record<strin
        SUM(s.status='Sale Made' AND s.payment_status='paid')                     AS prepaid_count
      FROM db_masmis.neemans_sale_raw s
      WHERE ${SALE_MONTH}
-     GROUP BY s.date ORDER BY CAST(s.date AS UNSIGNED)`, [month]);
+     GROUP BY s.date ORDER BY CAST(s.date AS SIGNED)`, [month]);
 
   const saleDayMap = new Map(saleDaily.map((r) => [r.date_key, r]));
   const daily = allocDaily.map((a) => merge(a, saleDayMap.get(a.date_key as string) ?? {}));
@@ -839,7 +842,7 @@ export async function getNeemansAbcCartSnap(month: string): Promise<Record<strin
 // equal-share of monthly target → TQ (>90%) / MQ (>75%) / BQ (≤75%).
 // Verified live 2026-09-14 — neemans_sale_raw has 3,800 rows with W-1…W-5.
 export async function getNeemansWeeklyRanking(month: string): Promise<Record<string, unknown>> {
-  const MONTH_FILTER = `CAST(s.date AS UNSIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(s.date AS UNSIGNED)-2) DAY),'%Y-%m') = ?`;
+  const MONTH_FILTER = `CAST(s.date AS SIGNED) > 0 AND DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(s.date AS SIGNED)-2) DAY),'%Y-%m') = ?`;
 
   const rows = await queryMasmis<Record<string, unknown>>(
     `SELECT
@@ -888,7 +891,7 @@ export async function getNeemansWeeklyRanking(month: string): Promise<Record<str
 // telephony-connection column (no 'Not Connected'/'IVR' concept exists in this table at
 // all — every row here is already a logged sales disposition, not a raw call log), so
 // rto_pct and connected_pct are left NULL rather than invented.
-const NEEMANS_DATE_SQL = "DATE_ADD('1900-01-01', INTERVAL (CAST(`date` AS UNSIGNED) - 2) DAY)";
+const NEEMANS_DATE_SQL = "DATE_ADD('1900-01-01', INTERVAL (CAST(`date` AS SIGNED) - 2) DAY)";
 
 export async function getNeemansDashboard(month: string): Promise<Record<string, unknown>> {
   // 9 KPI cards
@@ -1161,7 +1164,7 @@ export async function getAwDashboard(month: string): Promise<Record<string, unkn
   const mandateRows = await queryMasmis<Record<string, unknown>>(
     `SELECT billing_type, mandate, per_fe_rate, login_hours_per_fte
      FROM db_masmis.aw_mandate
-     WHERE DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(month AS UNSIGNED)-2) DAY),'%Y-%m') = ?
+     WHERE DATE_FORMAT(DATE_ADD('1900-01-01', INTERVAL (CAST(month AS SIGNED)-2) DAY),'%Y-%m') = ?
        OR month = ?
      LIMIT 10`, [month, awMonth]);
 
