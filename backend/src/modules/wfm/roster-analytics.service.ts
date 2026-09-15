@@ -470,16 +470,25 @@ export async function getQualityAdherenceCorrelation(
     [...params, firstDay, lastDay]
   );
 
-  // Get quality data per employee (from KPI scores)
+  // Get quality data per employee (from KPI scores). There is no single "QUALITY"
+  // metric_code in this system — quality is role-specific (TL_GPI_QUALITY_SCORE,
+  // QA_GPI_OVERALL_QUALITY_SCORE, PROCESS_DELIVERY_QUALITY, etc., all tagged
+  // family='quality' in kpi_metric_master) — and kpi_score has no score_value/
+  // metric_code/score_date columns at all (real columns: metric_id, period
+  // char(7) 'YYYY-MM', actual_value). The previous query referenced none of the
+  // real schema, so this always 500'd rather than degrading to "no quality data
+  // yet" the way an empty kpi_score table (0 rows today) should read. Averaging
+  // across every quality-family metric an employee has for the month is the
+  // honest reading of "quality" this correlation was asking for, not a guess at
+  // one specific metric id.
   const [qualityRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       employee_id,
-       AVG(score_value) AS avg_quality
-     FROM kpi_score
-     WHERE metric_code = 'QUALITY'
-       AND score_date BETWEEN ? AND ?
-     GROUP BY employee_id`,
-    [firstDay, lastDay]
+    `SELECT ks.employee_id, AVG(ks.actual_value) AS avg_quality
+     FROM kpi_score ks
+     JOIN kpi_metric_master km ON km.id = ks.metric_id
+     WHERE km.family = 'quality'
+       AND ks.period = ?
+     GROUP BY ks.employee_id`,
+    [period]
   );
 
   const qualityMap = new Map<string, number>();
