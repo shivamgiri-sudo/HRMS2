@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1168,
-  "columnCount": 17378,
+  "tableCount": 1172,
+  "columnCount": 17431,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -19716,6 +19716,67 @@
       "user_id",
       "user_type",
       "absolute_expires_at"
+    ],
+    "gs1_email_daily_actual": [
+      "id",
+      "process_id",
+      "upload_batch_id",
+      "report_date",
+      "analyst_name",
+      "executive_id",
+      "mail_date",
+      "mail_received",
+      "gtin_processed",
+      "image_count",
+      "sla_within_15min",
+      "data_type",
+      "tat_minutes",
+      "created_by",
+      "created_at"
+    ],
+    "gs1_datakart_daily_actual": [
+      "id",
+      "process_id",
+      "upload_batch_id",
+      "report_date",
+      "analyst_name",
+      "task_date",
+      "task_count",
+      "gtin_count",
+      "within_tat",
+      "tat_minutes",
+      "process_type",
+      "created_by",
+      "created_at"
+    ],
+    "gs1_approval_audit_raw": [
+      "id",
+      "process_id",
+      "upload_batch_id",
+      "audit_date",
+      "auditee_name",
+      "auditor_name",
+      "audit_result",
+      "error_category",
+      "error_flag",
+      "gcp_code",
+      "company_name",
+      "sku_count",
+      "created_by",
+      "created_at"
+    ],
+    "domestic_billing_approved_hc": [
+      "id",
+      "upload_batch_id",
+      "month",
+      "process",
+      "lob",
+      "approved_headcount",
+      "fte_rate",
+      "planning_rule",
+      "active",
+      "created_by",
+      "created_at"
     ]
   }
 }
