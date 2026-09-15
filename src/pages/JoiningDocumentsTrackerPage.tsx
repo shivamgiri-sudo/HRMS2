@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { FileCheck, Users, CheckCircle2, Clock, CircleDashed, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2 } from "lucide-react";
+import { FileCheck, Users, CheckCircle2, Clock, CircleDashed, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2, Eye } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsBentoTile } from "@/components/ui/hrms-modern";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
@@ -561,6 +561,15 @@ export default function JoiningDocumentsTrackerPage() {
                           )}
                         </td>
                         <td className="px-4 py-3">
+                          <div className="flex items-center gap-1">
+                            <button
+                              title="View documents"
+                              aria-label="View documents"
+                              onClick={e => { e.stopPropagation(); navigate(`/employees/${row.employee_id}/joining-documents`); }}
+                              className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button size="sm" variant="outline" className="min-h-[36px]" onClick={e => e.stopPropagation()}>
@@ -569,6 +578,7 @@ export default function JoiningDocumentsTrackerPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => navigate(`/employees/${row.employee_id}/joining-documents`)}>
+                                <Eye className="h-3.5 w-3.5 mr-2" />
                                 View Documents
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
@@ -583,6 +593,7 @@ export default function JoiningDocumentsTrackerPage() {
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          </div>
                         </td>
                       </tr>
                     ))}
