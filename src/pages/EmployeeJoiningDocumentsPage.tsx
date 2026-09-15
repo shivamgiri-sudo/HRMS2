@@ -947,12 +947,34 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
             </div>
           )}
 
-          {/* "Already open" notice when poll is idle */}
+          {/* "Already open" notice with resend option when poll is idle */}
           {open && pollPhase === "idle" && (
-            <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
-              A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
-              {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
-              Wait for it to be signed, or ask the employee to check their email.
+            <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+              <p className="text-sm text-cyan-900">
+                A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
+                {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <p className="text-xs text-cyan-700">Employee hasn&apos;t received or lost the email?</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="min-h-[36px] gap-1.5 border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-50"
+                  onClick={async () => {
+                    if (!window.confirm("Resend the signing link to the employee's email address?")) return;
+                    try {
+                      await hrmsApi.post(`/api/employees/${employeeId}/joining-kit/${open.id}/resend`, {});
+                      toast({ title: "Email resent", description: "A fresh signing link has been sent to the employee." });
+                      void load();
+                    } catch (err: any) {
+                      toast({ title: "Resend failed", description: err?.message || "Unable to resend.", variant: "destructive" });
+                    }
+                  }}
+                >
+                  <Send className="h-3.5 w-3.5" /> Resend email
+                </Button>
+              </div>
             </div>
           )}
 

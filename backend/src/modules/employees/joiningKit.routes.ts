@@ -16,7 +16,7 @@ import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getPublicKitSession, getPublicKitFile, startKitEsign } from "./joiningKitPublic.service.js";
-import { queueJoiningKit, dispatchJoiningKit } from "./joiningKitDispatch.service.js";
+import { queueJoiningKit, dispatchJoiningKit, resendKitEsignLink } from "./joiningKitDispatch.service.js";
 import { kitEligibleDocuments } from "./joiningKitAssembly.service.js";
 
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -140,6 +140,15 @@ joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: Authenticat
       err instanceof Error ? err.message : err,
     );
   });
+}));
+
+/** Re-send the signing email for an already-sent kit without touching the provider. */
+joiningKitRouter.post("/:employeeId/joining-kit/:kitId/resend", h(async (req: AuthenticatedRequest, res) => {
+  const result = await resendKitEsignLink(
+    String(req.params.kitId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, ...result });
 }));
 
 /** Current kit state for a listing screen. */
