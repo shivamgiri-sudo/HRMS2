@@ -120,6 +120,9 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
   }
 
   const { revenue, peopleCost, indirectCost, operatingProfit, marginPct, staffPaid, revenuePerHead } = data;
+  // Seat-rate estimate for cost centres not invoiced yet — the same figure the Live P&L tab adds.
+  const estimated = data.revenueEstimated ?? 0;
+  const revenueLabel = estimated > 0.5 ? "Revenue" : "Invoiced revenue";
   const branchOptions = (data.options.branches ?? []).map((b) => ({ value: b.id, label: b.name }));
   const hiddenHeads = data.closedBranchesHidden.reduce((total, b) => total + b.staffPaid, 0);
   const width = (part: number) => (revenue > 0 ? Math.max(0, Math.min(100, (part / revenue) * 100)) : 0);
@@ -193,8 +196,10 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
           </div>
           <p className="mt-1.5 max-w-[85ch] text-[13px] text-slate-700 dark:text-slate-300">
             Invoices are raised in arrears, so a large part of this month is normally billed during the
-            next one. Revenue below is what has actually been invoiced — treat the margins as
-            incomplete rather than as a fall in trading, and read them again once billing closes.
+            next one.{" "}
+            {estimated > 0.5
+              ? <>Revenue below includes {lakh(estimated)} estimated from seat rate × seats for cost centres not invoiced yet (the same figure as the Live P&amp;L tab); it is replaced by the invoices as they are raised.</>
+              : <>Revenue below is what has actually been invoiced — treat the margins as incomplete rather than as a fall in trading, and read them again once billing closes.</>}
           </p>
           {data.billing.gaps.length > 0 && (
             <ul className="mt-2.5 flex flex-col gap-1">
@@ -233,7 +238,9 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
             {data.trend.map((t) => `${t.period.slice(5)} ${t.marginPct === null ? "—" : t.marginPct.toFixed(0) + "%"}`).join(" · ")}
           </div>
         </article>
-        <Kpi label="Invoiced revenue" value={lakh(revenue)} detail={`${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`} />
+        <Kpi label={revenueLabel} value={lakh(revenue)} detail={estimated > 0.5
+          ? `incl. ${lakh(estimated)} seat-rate estimate · ${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`
+          : `${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`} />
         <Kpi label="People cost" value={lakh(peopleCost)}
           detail={`${revenue > 0 ? ((peopleCost / revenue) * 100).toFixed(1) : "—"}% of revenue · ${staffPaid.toLocaleString("en-IN")} paid`}
           title="Full month's payroll (gross + employer PF/ESIC/gratuity, from the locked salary run) for every paid employee. The P&L Statement tab's Agent + DSC + BMC salary lines will read lower: that split comes from a separate day-by-day earned-to-date estimate that only covers employees it can compute attendance for, and does not include the leave-reversal step the payroll run applies. Both are real, correctly-computed numbers on different bases — this one is what payroll actually paid." />
@@ -269,7 +276,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
 
         <div className="flex flex-col gap-2.5">
           {[
-            { name: "Invoiced revenue", value: revenue, w: 100, fill: "bg-teal-700" },
+            { name: revenueLabel, value: revenue, w: 100, fill: "bg-teal-700" },
             { name: "People cost", value: peopleCost, w: width(peopleCost), fill: "bg-teal-700/45" },
             { name: "Indirect cost", value: indirectCost, w: width(indirectCost), fill: "bg-teal-700/25" },
             { name: "Operating profit", value: operatingProfit, w: width(operatingProfit), fill: "bg-emerald-700", bold: true },
@@ -442,7 +449,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
       )}
 
       <p className="text-[12.5px] text-slate-500">
-        Invoiced revenue and GRN spend from the db_bill mirror; people cost from the payroll run for
+        Invoiced revenue and GRN spend from the db_bill mirror{estimated > 0.5 ? ", plus the seat-rate estimate for cost centres not invoiced yet (as on the Live P&L tab)" : ""}; people cost from the payroll run for
         this month, not a recomputed snapshot. Revenue per head is monthly, per paid employee.
       </p>
     </div>

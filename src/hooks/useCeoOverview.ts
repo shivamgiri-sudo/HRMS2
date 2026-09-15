@@ -88,6 +88,9 @@ export interface CeoBillingCompleteness {
 export interface CeoOverview {
   period: string;
   revenue: number;
+  /** Portion of `revenue` that is the seat-rate estimate for cost centres not invoiced yet
+   *  (same figure the Live P&L adds). Optional: older backends do not send it. */
+  revenueEstimated?: number;
   peopleCost: number;
   indirectCost: number;
   operatingProfit: number;

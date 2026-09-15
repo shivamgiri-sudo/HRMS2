@@ -1,6 +1,9 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
+import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -44,6 +47,8 @@ export interface CeoBranchRow {
   flag: string | null;
   isCostCentre: boolean;
   isClosed: boolean;
+  /** Seat-rate estimate included in `revenue` for cost centres not invoiced yet (0 when none). */
+  revenueEstimated?: number;
 }
 
 export interface CeoOpportunity {
@@ -135,6 +140,8 @@ export interface CeoFocus {
 export interface CeoOverview {
   period: string;
   revenue: number;
+  /** Portion of `revenue` that is the seat-rate estimate (same figure as Live P&L), 0 when none. */
+  revenueEstimated: number;
   peopleCost: number;
   indirectCost: number;
   operatingProfit: number;
@@ -850,6 +857,39 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
  * overview passes — the trend is a shape, not a drill-down, and paying 1.7s per point for it
  * would make the page slower than the engine it replaced.
  */
+/**
+ * Seat-rate estimate per branch for cost centres the month has not invoiced yet (2026-09-15, owner
+ * decision to align this tab with Live P&L). Read from getPnlReconciliation — the Live P&L — so both
+ * tabs add exactly the same figure: invoices, then provisions, then seat rate x seats, only inside
+ * the open billing window (current + previous IST month). Never under a process filter, because
+ * cost centres carry no process. Cached briefly: the overview and its trend ask for the same month.
+ */
+const estimateCache = new Map<string, { at: number; value: Promise<Map<string, number>> }>();
+function estimateByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  if (s.processIds.length || !isEstimateWindow(period, getCurrentDateIST())) return Promise.resolve(new Map());
+  const key = `${period}|${[...s.branchIds].sort().join(",")}|${[...s.costCentreIds].sort().join(",")}`;
+  const hit = estimateCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+  const value = (async () => {
+    const out = new Map<string, number>();
+    try {
+      const rec = await getPnlReconciliation(period, { branchIds: s.branchIds });
+      const only = new Set(s.costCentreIds);
+      for (const row of rec.rows) {
+        if (!(row.revenueEstimated > 0) || !row.branchId) continue;
+        if (only.size && !only.has(row.costCentreId)) continue;
+        out.set(row.branchId, (out.get(row.branchId) ?? 0) + row.revenueEstimated);
+      }
+    } catch {
+      // Supplementary: if the estimate cannot be read, invoiced revenue still stands on its own.
+    }
+    return out;
+  })();
+  estimateCache.set(key, { at: Date.now(), value });
+  if (estimateCache.size > 40) estimateCache.delete(estimateCache.keys().next().value as string);
+  return value;
+}
+
 async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoint[]> {
   const [year, month] = endPeriod.split("-").map(Number);
   const periods: string[] = [];
@@ -867,10 +907,10 @@ async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoin
   const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
   return Promise.all(
     periods.map(async (period) => {
-      const [rev, ppl, spend] = await Promise.all([
-        revenueByBranch(period, s), peopleByBranch(period, s), spendByBranch(period, s),
+      const [rev, ppl, spend, est] = await Promise.all([
+        revenueByBranch(period, s), peopleByBranch(period, s), spendByBranch(period, s), estimateByBranch(period, s),
       ]);
-      const revenue = sum(rev);
+      const revenue = sum(rev) + sum(est);
       const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
       const operatingProfit = revenue - people - sum(spend);
       return {
@@ -1119,7 +1159,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   const scope = scopeOf(filters);
   const selectedBranches = new Set(scope.branchIds);
   const empty: CeoOverview = {
-    period, revenue: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
+    period, revenue: 0, revenueEstimated: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
     marginPct: null, staffPaid: 0, revenuePerHead: null, branches: [], opportunities: [],
     trend: [], options: { processes: [], costCentres: [], branches: [] }, focus: null,
     billing: { lines: 0, baselineLines: 0, pctOfBaseline: null, incomplete: false, gaps: [] },
@@ -1133,11 +1173,12 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   );
   const nameOfBranch = (id: string) =>
     String(branchRows.find((r) => String(r.id) === id)?.branch_name ?? "Unnamed");
-  const [revenue, people, spend, budget, trend, options, billing] = await Promise.all([
+  const [revenue, people, spend, budget, trend, options, billing, estimate] = await Promise.all([
     revenueByBranch(period, scope), peopleByBranch(period, scope),
     spendByBranch(period, scope), budgetByBranch(period),
     marginTrend(period, scope), filterOptions(period, scope),
     billingCompleteness(period, scope, nameOfBranch),
+    estimateByBranch(period, scope),
   ]);
 
   /*
@@ -1177,7 +1218,8 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     const ids = branchRows
       .filter((r) => String(r.branch_name ?? "").trim().toUpperCase() === entry.name.trim().toUpperCase())
       .map((r) => String(r.id));
-    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0), 0);
+    const est = ids.reduce((t, i) => t + (estimate.get(i) ?? 0), 0);
+    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0), 0) + est;
     const pay = ids.reduce(
       (t, i) => {
         const p = people.get(i);
@@ -1226,6 +1268,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
       flag: rev > 0 && pay.cost <= 0 ? "no payroll attributed" : null,
       isCostCentre,
       isClosed,
+      revenueEstimated: est,
     };
     traded.push({ row, ids, hiddenAsClosed });
   }
@@ -1260,12 +1303,14 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     }),
     { revenue: 0, peopleCost: 0, indirectCost: 0, staffPaid: 0 },
   );
+  const revenueEstimated = allRows.reduce((acc, b) => acc + (b.revenueEstimated ?? 0), 0);
   const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
   const unbranched = people.get("")?.staff ?? 0;
 
   return {
     period,
     ...totals,
+    revenueEstimated,
     operatingProfit,
     marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null,
     revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
