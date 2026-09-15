@@ -38,6 +38,14 @@ export const PROJECTS: ProjectConfig[] = [
     campaigns: ["Exicom_TC_Battery","Exicom_EV_Battery","EV_Charger833"], mandate: 5, required: 5, hasFCR: false },
   { key: "dubangladesh",name: "DU Bangladesh", icon: "🇧🇩", color: "#F39C12", table: "cdr_in_4",   pattern: "B",
     campaigns: ["DU_Bangladesh_Bangla","DU_Bangladesh_Eng","DU_Bangladesh_Hindi"], mandate: 3, required: 3, hasFCR: false },
+  // Live on cdr_in_249 (10 language-variant campaigns), confirmed live 2026-09-15:
+  // ~1,700 calls/30 days, active through today. required/mandate set to 9 --
+  // the observed daily distinct-agent-login count (8-9 over the last 14 days),
+  // not an invented target, since no contractual mandate figure exists for this
+  // process anywhere in this codebase.
+  { key: "dalmia",      name: "Dalmia",        icon: "🏭", color: "#16A085", table: "cdr_in_249",   pattern: "B",
+    campaigns: ["Dalmia_Hindi","Dalmia_English","Dalmia_Kannada","Dalmia_Tamil","Dalmia_Bengoli","Dalmia_Malayalam","Dalmia_Odiya","Dalmia_Marathi","Dalmia_Telugu","Dalmia_Assamese"],
+    mandate: 9, required: 9, hasFCR: false },
 ];
 
 type DailyRow = {

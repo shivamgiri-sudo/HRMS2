@@ -38,7 +38,55 @@ const RPC_BY_TYPE: Record<string, string> = {
   NEEMANS_APR_MASMIS: "import_neemans_apr_masmis_batch",
   NEEMANS_MONTH_TARGET_MASMIS: "import_neemans_month_target_batch",
   NEEMANS_AGENT_DETAILS_MASMIS: "import_neemans_agent_details_batch",
+  AW_BILLING_MASMIS: "import_aw_billing_batch",
+  AW_INBOUND_MASMIS: "import_aw_inbound_batch",
+  AW_MANDATE_MASMIS: "import_aw_mandate_batch",
+  AW_NEW_CDR_MASMIS: "import_aw_new_cdr_batch",
+  AW_OUT_MASMIS: "import_aw_out_batch",
+  OWNER_SALE_MASMIS: "import_owner_sale_batch",
+  OWNER_CDR_MASMIS: "import_owner_cdr_batch",
+  OWNER_AGENT_DETAILS_MASMIS: "import_owner_agent_details_batch",
+  PRE_SALE_MASMIS: "import_pre_sale_batch",
+  PRE_CDR_MASMIS: "import_pre_cdr_batch",
+  PRE_AGENT_DETAILS_MASMIS: "import_pre_agent_details_batch",
+  CL_APR_MASMIS: "import_cl_apr_batch",
+  CL_CHAT_MASMIS: "import_cl_chat_batch",
+  CL_DISPO_MASMIS: "import_cl_dispo_batch",
+  CL_EMAIL_RAW_MASMIS: "import_cl_email_raw_batch",
+  CL_FEEDBACK_MASMIS: "import_cl_feedback_batch",
+  CL_IB_CDR_MASMIS: "import_cl_ib_cdr_batch",
+  CL_OUTBOUND_MASMIS: "import_cl_outbound_batch",
+  CL_QUALITY_MASMIS: "import_cl_quality_batch",
+  CL_RECHURN_CALL_MASMIS: "import_cl_rechurn_call_batch",
+  BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch",
+  BIRLANU_APR_MASMIS: "import_birlanu_apr_batch",
+  SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch",
+  SATYA_CDR_MASMIS: "import_satya_cdr_batch",
+  LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch",
+  LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch",
+  LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch",
+  LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
+  GNC_CHAT_MASMIS: "import_gnc_chat_batch",
 };
+
+/** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,
+ * strip everything but letters/digits. Applied here too so this pre-check agrees
+ * with what the backend will actually accept -- an exact-match check here already
+ * caused 3 real "required column missing" failures this session (GNC APR/
+ * Allocation, all 3 original Neemans uploaders) where the real header was
+ * present but spelled/cased/spaced differently than the catalog's required_columns
+ * entry. Normalizing removes that whole class of false rejection. */
+function normalizeHeaderKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+function getNormalized(row: Record<string, unknown>, column: string): string {
+  for (const k of Object.keys(row)) {
+    if (normalizeHeaderKey(k) === normalizeHeaderKey(column)) {
+      return String(row[k] ?? "").trim();
+    }
+  }
+  return "";
+}
 
 const STAGE_CHUNK_SIZE = 500;
 
@@ -153,7 +201,7 @@ export function BellavitaMasmisUploader({
       const required = template.required_columns || [];
       const stagedRows = rows.map((row, index) => {
         const errors = required.filter(
-          (col) => String(row[col] ?? "").trim() === "",
+          (col) => getNormalized(row, col) === "",
         ).map((col) => `${col} is required`);
         return {
           rowNo: index + 1,

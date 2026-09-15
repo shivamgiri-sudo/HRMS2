@@ -194,7 +194,10 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
 }
 
 // ── Single project detail view ─────────────────────────────────────────────────
-function ProjectDetailView({ projectKey, from, to }: { projectKey: string; from: string; to: string }) {
+// Exported so Process Performance V2's per-company "Inbound" dashboard tab can
+// reuse this exact live dialer_db view instead of standing up a second copy of
+// the same summary/trend/hourly fetch-and-render logic.
+export function ProjectDetailView({ projectKey, from, to }: { projectKey: string; from: string; to: string }) {
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [trend, setTrend] = useState<ProjectTrend[]>([]);
   const [hourly, setHourly] = useState<HourlyPoint[]>([]);

@@ -142,3 +142,10 @@ backend/backend-dev-restart.err
 privacy-inventory-findings.json
 **/privacy-inventory-findings.json
 *privacy-findings*.json
+
+# Standalone Google Apps Script reference files (not part of this app's
+# build) -- consolidated-dashboard-email-report.gs has a hardcoded root
+# MySQL password (dialer_db on 122.184.128.90) in its CONFIG block. Kept
+# on disk for reference only; excluded by directory so it can never enter
+# this public repo's history via a broad `git add`.
+/scripts/apps-script/
