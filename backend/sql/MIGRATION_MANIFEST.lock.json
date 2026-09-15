@@ -804,7 +804,16 @@
     "1761_esic_registration_automation.sql",
     "1763_noc_cases_page_access.sql",
     "1765_portal_sessions.sql",
-    "1766_roster_live_monitoring_branch_head_wfm_only.sql"
+    "1766_roster_live_monitoring_branch_head_wfm_only.sql",
+    "1768_clovia_feedback_fix_column_names.sql",
+    "1769_gs1_dashboard_tables.sql",
+    "1770_domestic_billing_approved_hc.sql",
+    "1771_exit_clearance_dedicated_pages.sql",
+    "1772_exit_clearance_it_role_retarget.sql",
+    "1773_branch_wfm_role_and_page_access.sql",
+    "1774_trainer_clearance_removed.sql",
+    "1775_pnl_seat_billing_line.sql",
+    "1776_wfm_process_operations_access.sql"
   ],
   "approvedDeletions": [
     {
@@ -959,7 +968,6 @@
     "1757_roster_command_center_console_page_codes.sql",
     "175_clean_department_master.sql",
     "1767_onfido_external_audit_add_total_columns.sql",
-    "1775_pnl_seat_billing_line.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
