@@ -296,9 +296,9 @@ export const navGroups: NavGroup[] = [
         ],
       },
       {
-        label: "Brand Sales",  href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Bellavita & GNC analytics",
+        label: "Brand Sales",  href: "/process-operations?process=BELLA_VITA&view=sales", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], pageCode: "PROCESS_OPERATIONS", description: "Brand sales dashboards — in Process Operations",
         children: [
-          { label: "Brand Analytics",   href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Sales dashboards & upload" },
+          { label: "Brand Analytics",   href: "/process-operations?process=BELLA_VITA&view=sales", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], pageCode: "PROCESS_OPERATIONS", description: "Sales dashboards & upload — pick the process in Process Operations" },
           { label: "Housing Dashboards", href: "/process-operations?process=HOUSING_OWNER&view=sales", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","coo","process_manager","operations_manager","branch_head","hr","manager"], pageCode: "PROCESS_OPERATIONS", description: "Housing Owner & Premium sales + CDR — in Process Operations" },
         ],
       },

@@ -22,6 +22,10 @@ const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
   CLOVIA:              { type: "clovia",    label: "Clovia" },
   DALMIA_CEMENT:       { type: "dalmia",    label: "Dalmia" },
   DU_DIGITAL:          { type: "du",        label: "DU Digital" },
+  // LP = Lawyers Panel (owner, 2026-09-15). Worked by the Eresolution team (NOIDA):
+  // the LP call records' agents who are HRMS employees are all active on
+  // Eresolution. The LAWYER_PANEL process_master row is inactive, with no staff.
+  ERESOLUTION:         { type: "lp",        label: "Lawyers Panel (LP)" },
   HOUSING_COM:         { type: "housing",   label: "Housing.com" },
   HOUSING_OWNER:       { type: "housing",   label: "Housing Owner" },
   HOUSING_PREMIUM:     { type: "housing",   label: "Housing Premium" },
@@ -45,7 +49,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
     return (
       <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
         <p className="text-sm font-semibold text-slate-700">No sales dashboard for {processName}</p>
-        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, and Housing processes.</p>
+        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
       </div>
     );
   }
@@ -53,7 +57,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
   return (
     <div className="space-y-5">
       {/* Month selector — shared across all views that need it */}
-      {!["clovia", "du", "dalmia"].includes(mapping.type) && (
+      {!["clovia", "du", "dalmia", "lp"].includes(mapping.type) && (
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Month</span>
           <input type="month" value={month} onChange={e => setMonth(e.target.value)}

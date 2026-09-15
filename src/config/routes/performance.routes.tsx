@@ -27,7 +27,6 @@ const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
 const NativeOpsCommandCenter         = lazy(() => import("@/pages/NativeOpsCommandCenter"));
 const NativeInboundDashboard         = lazy(() => import("@/pages/NativeInboundDashboard"));
-const NativeSalesDashboard           = lazy(() => import("@/pages/NativeSalesDashboard"));
 const NativeTATMatrix                = lazy(() => import("@/pages/NativeTATMatrix"));
 const NativeTATDashboard             = lazy(() => import("@/pages/NativeTATDashboard"));
 const NativePIPManagement            = lazy(() => import("@/pages/NativePIPManagement"));
@@ -138,7 +137,9 @@ export const performanceRouteElements = (
           this older standalone copy is no longer served. */}
       <Route path="/process-live" element={<Navigate to="/process-operations?view=live" replace />} />
       <Route path="/call-master/inbound/:projectKey" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/sales/brand-analytics" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager']}><Gate pageCode="SALES_BRAND_ANALYTICS"><NativeSalesDashboard /></Gate></ProtectedRoute>} />
+      {/* Every Brand Sales view now lives in Process Operations' Sales view — per
+          brand process, with that brand's uploads; LP under Eresolution. */}
+      <Route path="/sales/brand-analytics" element={<Navigate to="/process-operations?process=BELLA_VITA&view=sales" replace />} />
       {/* Housing lives in Process Operations (Sales view, with its Upload Data tab). */}
       <Route path="/sales/housing-dashboards" element={<Navigate to="/process-operations?process=HOUSING_OWNER&view=sales" replace />} />
 

@@ -1517,7 +1517,9 @@ export async function getBvoDashboard(month: string): Promise<Record<string, unk
   return { kpis: kpis ?? {}, daily, products, paymentMix, months: months.map(r => r.month_key) };
 }
 
-// ── LP (LuckPay / Lending Partner) Dashboard ──────────────────────────────────
+// ── LP (Lawyers Panel) Dashboard ──────────────────────────────────────────────
+// LP = Lawyers Panel (owner, 2026-09-15) — not LuckPay, the unrelated e-sign
+// provider. Worked by the Eresolution team (NOIDA).
 //
 // Source tables: db_masmis.CR_lp_regional (896 rows), CR_lp_non_regional (955 rows),
 // CR_lp_feedback (2,210 rows). All verified live 2026-09-15. Coverage: Aug 2026.

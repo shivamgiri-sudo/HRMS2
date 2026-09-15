@@ -1791,7 +1791,9 @@ export function BvoDashboard({ month }: { month: string }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── LP (LUCKPAY / LENDING PARTNER) DASHBOARD ─────────────────────────────────
+// ── LP (LAWYERS PANEL) DASHBOARD ─────────────────────────────────────────────
+// LP = Lawyers Panel (owner, 2026-09-15), worked by the Eresolution team (NOIDA);
+// shown in Process Operations under the Eresolution process.
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // Source: db_masmis.CR_lp_regional (896 rows), CR_lp_non_regional (955), CR_lp_feedback (2,210).

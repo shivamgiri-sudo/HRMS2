@@ -210,6 +210,8 @@ describe("application shell routing contracts", () => {
       // Same, 2026-09-15: Housing opens in Process Operations' Sales view (the
       // sidebar's "Housing Dashboards" entry links to that deep link).
       "/sales/housing-dashboards",
+      // And Brand Sales: each brand's Sales view (LP under Eresolution).
+      "/sales/brand-analytics",
       "/onboard",
       "/onboard-full",
       "/onboard-full-legacy",
