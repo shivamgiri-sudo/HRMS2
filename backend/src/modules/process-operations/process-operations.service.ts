@@ -37,6 +37,7 @@ import { getCachedAllocationSummary } from "../process-pnl/canonical-pnl.service
 const VIEWER_ROLES: string[] = [
   "admin", "ceo", "coo", "manager", "process_manager", "operations_manager",
   "branch_head", "qa", "quality_analyst", "tq_head", "hr", "team_leader",
+  "wfm", "branch_wfm", // scoped by the user's own assignment (all / branch); see routes file
 ];
 
 /** How long a section's metrics may go without a reading before they read as history. */

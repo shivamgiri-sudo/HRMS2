@@ -2,6 +2,9 @@ import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./onfido-process-dashboard.service.js";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { readableProcessIds } from "../process-operations/process-operations.service.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -12,8 +15,36 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 /** Who may open the Onfido process dashboard. super_admin short-circuits requireRole. */
 const VIEWER_ROLES = [
   "admin", "ceo", "coo", "manager", "process_manager", "team_leader",
-  "branch_head", "qa", "quality_analyst", "wfm",
+  "branch_head", "qa", "quality_analyst", "wfm", "branch_wfm",
 ] as const;
+
+/**
+ * Branch/process scope, on top of the role check. This dashboard lives inside
+ * Process Operations, whose picker offers Onfido only to users scoped to it
+ * (readableProcessIds: all / branch / process assignments; super_admin, admin
+ * and ceo see everything). Without the same check here, a branch-scoped user
+ * from another branch — a wfm user in Ahmedabad, say — could still read Onfido
+ * by calling this API directly.
+ */
+let onfidoProcessId: string | null = null;
+async function requireOnfidoScope(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!onfidoProcessId) {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM process_master WHERE process_code = 'ONFIDO' LIMIT 1");
+      onfidoProcessId = rows[0] ? String(rows[0].id) : null;
+    }
+    const allowed = await readableProcessIds(req.authUser!.id);
+    if (!onfidoProcessId || !allowed.has(onfidoProcessId)) {
+      res.status(403).json({ success: false, message: "Onfido is outside your branch or process scope." });
+      return;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+router.use(requireAuth, requireOnfidoScope);
 
 function readQueryFilters(req: AuthenticatedRequest) {
   const q = req.query as Record<string, string | undefined>;

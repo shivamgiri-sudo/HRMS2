@@ -23,6 +23,10 @@ const VIEWER_ROLES = [
   "super_admin", "admin", "ceo", "coo", "manager", "process_manager",
   "operations_manager", "branch_head", "qa", "quality_analyst", "tq_head",
   "hr", "team_leader",
+  // wfm / branch_wfm (2026-09-15): Onfido's dashboard moved in here and wfm had it.
+  // Read-only, and row-scoped like every role here — a branch-scoped WFM user sees
+  // only that branch's processes (readableProcessIds); no assignment = nothing.
+  "wfm", "branch_wfm",
 ] as const;
 
 /** Shared by both the summary and drill-down routes below, so a drawer opened
