@@ -61,13 +61,14 @@ const useDrill = () => useContext(DrillDispatch);
 // ── Process detection ─────────────────────────────────────────────────────────
 export function detectDiallerProcess(processName: string): DiallerProcess {
   const n = processName.toLowerCase();
-  // Inbound (BLA BLI BLU, B-3, Inbound Customer Services, etc.). "bla bli", not a
-  // bare "bla"/"bli"/"blu": that matched "Bluevine Technologies" and showed it Bla
-  // Bli Blu's calls. The backend's detectLiveDashboard (live-dashboard-keys.ts)
-  // must agree — src/tests/live-dashboard-scope-parity.test.ts checks.
+  // Bla Bli Blu's inbound (B-3 IB) only. "bla bli", not a bare "bla"/"bli"/"blu":
+  // that matched "Bluevine Technologies". And no generic "inbound" rule: it matched
+  // "INBOUND CUSTOMER SERVICES" (NOIDA, a separate process), while the agents on
+  // this dashboard's INBOUND campaign are all Bla Bli Blu (NOIDA-2) employees —
+  // both showed another process Bla Bli Blu's calls. The backend's
+  // detectLiveDashboard (live-dashboard-keys.ts) must agree —
+  // src/tests/live-dashboard-scope-parity.test.ts checks.
   if (n.includes("bla bli") || n.includes("bla_bli") || n.includes("blabli") || n.includes("b-3") || n.includes("b3 ") || n.includes("b3_")) return "inbound";
-  // Inbound by exact keywords (not Reginald)
-  if ((n.includes("inbound") || n.includes("cdr_in")) && !n.includes("reginald")) return "inbound";
   // Reginald Email specifically (if process explicitly named with "email")
   if (n.includes("reginald") && n.includes("email")) return "reginald-email";
   // Molecular Email

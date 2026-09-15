@@ -22,10 +22,13 @@ describe("live dashboard: frontend and backend agree on which process opens whic
     expect(detectLiveDashboard(name)).toBe(detectDiallerProcess(name));
   });
 
-  it("does not give Bluevine the Bla Bli Blu inbound dashboard", () => {
-    expect(detectDiallerProcess("Bluevine Technologies")).toBeNull();
-    expect(detectLiveDashboard("Bluevine Technologies")).toBeNull();
+  it("gives the Bla Bli Blu inbound dashboard to Bla Bli Blu only", () => {
     expect(detectDiallerProcess("Bla Bli Blu")).toBe("inbound");
+    // Separate processes whose names merely resemble it.
+    for (const other of ["Bluevine Technologies", "INBOUND CUSTOMER SERVICES"]) {
+      expect(detectDiallerProcess(other)).toBeNull();
+      expect(detectLiveDashboard(other)).toBeNull();
+    }
   });
 
   it("maps Dalmia by process code on the backend (the frontend opens it from the Sales view)", () => {

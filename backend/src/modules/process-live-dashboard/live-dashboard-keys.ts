@@ -20,10 +20,11 @@ export type LiveDashboard =
 export function detectLiveDashboard(processName: string, processCode?: string | null): LiveDashboard | null {
   if ((processCode ?? '').toUpperCase() === 'DALMIA_CEMENT') return 'dalmia';
   const n = processName.toLowerCase();
-  // "bla bli" rather than bare "bla"/"bli"/"blu": the bare form matched
-  // "Bluevine Technologies" and showed it Bla Bli Blu's inbound calls.
+  // Bla Bli Blu's inbound only: "bla bli" rather than bare "bla"/"bli"/"blu"
+  // (matched "Bluevine Technologies"), and no generic "inbound" rule (matched
+  // "INBOUND CUSTOMER SERVICES", a separate NOIDA process; the INBOUND
+  // campaign's agents are all Bla Bli Blu employees).
   if (n.includes('bla bli') || n.includes('bla_bli') || n.includes('blabli') || n.includes('b-3') || n.includes('b3 ') || n.includes('b3_')) return 'inbound';
-  if ((n.includes('inbound') || n.includes('cdr_in')) && !n.includes('reginald')) return 'inbound';
   if (n.includes('reginald') && n.includes('email')) return 'reginald-email';
   if (n.includes('molecular')) return 'molecular-email';
   if (n.includes('reginald')) return 'reginald-cart';
