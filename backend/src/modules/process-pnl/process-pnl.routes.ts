@@ -46,6 +46,7 @@ import {
   updateSeatBillingLine,
 } from "./pnl-seat-billing.service.js";
 import { getPnlTrendSeries } from "./pnl-trend-series.service.js";
+import { getPnlInsights } from "./pnl-insights.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
@@ -1734,6 +1735,31 @@ router.get(
       count: req.query.count ? Number(req.query.count) : undefined,
       branchScope: branchScope ?? null,
       costCentreBranchId,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * P&L Insights — margin heatmap, profit contribution, unit economics and revenue mix, all read
+ * from the Live P&L rows. See pnl-insights.service.ts. Same scoping as the trend: a branch-scoped
+ * user only ever gets their own branch.
+ */
+router.get(
+  "/pnl/insights",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await asForbidden(resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    }));
+    const data = await getPnlInsights({
+      period: String(req.query.period ?? ""),
+      months: req.query.months ? Number(req.query.months) : undefined,
+      branchScope: branchScope ?? null,
     });
     res.json({ success: true, data });
   })

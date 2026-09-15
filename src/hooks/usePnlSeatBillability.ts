@@ -3,6 +3,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 export interface PnlSeatBillabilityRow {
   costCentreId: string;
+  costCentreCode?: string;
   costCentreName: string;
   processId: string | null;
   processName: string | null;

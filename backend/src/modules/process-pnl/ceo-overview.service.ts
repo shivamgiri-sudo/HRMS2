@@ -4,6 +4,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -160,7 +161,7 @@ export interface CeoOverview {
    */
   options: {
     processes: { id: string; name: string }[];
-    costCentres: { id: string; code: string }[];
+    costCentres: { id: string; code: string; processName: string | null }[];
     branches: { id: string; name: string }[];
   };
   /** Present only when exactly one process or cost centre is selected. */
@@ -437,7 +438,11 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
 async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
 
-  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "gr.accounting_period = ?"];
+  // OWN_COMPANY_SQL on the app side too (2026-09-15). The mirror half below always had it; this
+  // half did not, so GRN allocated to Ispark/IDC cost centres was counted as MAS indirect cost —
+  // Rs 3.94 L on NOIDA-DIALDESK plus Rs 1.33 L on non-MAS NOIDA cost centres in June 2026, the whole
+  // IDC gap between this tab (4.20%) and Live P&L (5.99%). Same scope rule as revenue: MAS only.
+  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "gr.accounting_period = ?", OWN_COMPANY_SQL];
   const appParams: unknown[] = [period];
   if (s.costCentreIds.length) {
     appWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
@@ -973,11 +978,12 @@ async function filterOptions(period: string, scope: CeoScope) {
     : "";
   const costCentres = hasInvoice
     ? (await db.execute<RowDataPacket[]>(
-        `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code
+        `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code, ${ccProcessNameSql()} AS process_name
            FROM billing_invoice_particular_snapshot p
            JOIN cost_centre_master ccm
              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+           ${ccProcessJoin()}
           WHERE p.period_code = ?
             AND ccm.active_status = 1
           ${costCentreBranchCondition}
@@ -988,7 +994,9 @@ async function filterOptions(period: string, scope: CeoScope) {
 
   return {
     processes: processes.map((r: RowDataPacket) => ({ id: String(r.id), name: String(r.name) })),
-    costCentres: costCentres.map((r: RowDataPacket) => ({ id: String(r.id), code: String(r.code) })),
+    costCentres: costCentres.map((r: RowDataPacket) => ({
+      id: String(r.id), code: String(r.code), processName: r.process_name ? String(r.process_name) : null,
+    })),
   };
 }
 
@@ -1038,9 +1046,14 @@ async function buildFocus(
     staffZeroPaid = n(paid[0]?.zero_paid);
   } else if (costCentreId) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1`, [costCentreId],
+      `SELECT cost_centre_code,
+              COALESCE((SELECT NULLIF(TRIM(pm.process_name), '') FROM process_master pm WHERE pm.id = cost_centre_master.process_id LIMIT 1),
+                       NULLIF(TRIM(process_name_bill), ''), NULLIF(TRIM(billing_client_name), '')) AS process_name
+         FROM cost_centre_master WHERE id = ? LIMIT 1`, [costCentreId],
     );
-    label = rows[0]?.cost_centre_code ? String(rows[0].cost_centre_code) : "Cost centre";
+    label = rows[0]?.cost_centre_code
+      ? costCentreLabel(String(rows[0].cost_centre_code), rows[0].process_name ? String(rows[0].process_name) : null)
+      : "Cost centre";
   }
 
   // Invoice lines and budget both key on the cost centre CODE, so resolve the codes in scope once.
@@ -1316,8 +1329,16 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     { revenue: 0, peopleCost: 0, indirectCost: 0, staffPaid: 0 },
   );
   const revenueEstimated = allRows.reduce((acc, b) => acc + (b.revenueEstimated ?? 0), 0);
-  const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
   const unbranched = people.get("")?.staff ?? 0;
+  // Staff with no branch are still MAS payroll (the rule in peopleByBranch's header): they belong
+  // to no branch row, but the company total must carry them or it disagrees with Live P&L, which
+  // counts every MAS wage. Only in the unfiltered view — a branch/process/cost-centre filter
+  // cannot contain someone with no branch.
+  if (!scope.branchIds.length && !scope.processIds.length && !scope.costCentreIds.length) {
+    totals.peopleCost += people.get("")?.cost ?? 0;
+    totals.staffPaid += unbranched;
+  }
+  const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
   const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated)
     ? (operatingProfit / totals.revenue) * 100
     : null;

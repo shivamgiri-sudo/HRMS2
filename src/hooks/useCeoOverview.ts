@@ -108,7 +108,7 @@ export interface CeoOverview {
    */
   options: {
     processes: { id: string; name: string }[];
-    costCentres: { id: string; code: string }[];
+    costCentres: { id: string; code: string; processName?: string | null }[];
     branches: { id: string; name: string }[];
   };
   /** Present only when exactly one process or cost centre is selected. */

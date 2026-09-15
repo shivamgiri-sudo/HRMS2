@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { ccProcessNameSql } from "./cost-centre-label.js";
 
 /**
  * Per-cost-centre seat count vs actual headcount vs billability%.
@@ -26,8 +27,10 @@ const n = (v: unknown): number => {
 
 export interface PnlSeatBillabilityRow {
   costCentreId: string;
+  costCentreCode: string;
   costCentreName: string;
   processId: string | null;
+  /** Mapped process, else the billing process name (cost-centre-label.ts). */
   processName: string | null;
   branchId: string | null;
   mandatedSeats: number | null;
@@ -54,8 +57,8 @@ export async function getSeatBillability(filters: { branchId?: string; processId
   if (filters.processId) params.push(filters.processId);
 
   const [rows] = await db.query<RowDataPacket[]>(
-    `SELECT ccm.id AS costCentreId, ccm.cost_centre_name AS costCentreName,
-            ccm.process_id AS processId, pm.process_name AS processName,
+    `SELECT ccm.id AS costCentreId, ccm.cost_centre_code AS costCentreCode, ccm.cost_centre_name AS costCentreName,
+            ccm.process_id AS processId, ${ccProcessNameSql("ccm", "pm")} AS processName,
             ccm.branch_id AS branchId, ccm.mandated_seats AS mandatedSeats,
             (SELECT COUNT(*) FROM employees e WHERE e.cost_centre_id = ccm.id AND e.active_status = 1) AS actualHeadcount,
             (SELECT sr.seat_rate_monthly
@@ -76,6 +79,7 @@ export async function getSeatBillability(filters: { branchId?: string; processId
     const configured = mandatedSeats != null && mandatedSeats > 0;
     return {
       costCentreId: String(row.costCentreId),
+      costCentreCode: String(row.costCentreCode ?? ""),
       costCentreName: String(row.costCentreName ?? "Unnamed cost centre"),
       processId: row.processId != null ? String(row.processId) : null,
       processName: row.processName != null ? String(row.processName) : null,

@@ -7,6 +7,7 @@ import type { PnlDrilldownMetric, PnlDrilldownParams } from "@/hooks/usePnlDrill
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePnlLiveReconciliation, type PnlReconciliationRow } from "@/hooks/usePnlLiveReconciliation";
+import { costCentreText } from "./costCentreLabel";
 
 function money(value: number | null | undefined, compact = true) {
   return new Intl.NumberFormat("en-IN", {
@@ -249,7 +250,10 @@ export function PnlReconciliationPanel({
                   <tr key={row.costCentreId} className="border-t align-top">
                     <td className="px-3 py-2">
                       <p className="font-medium text-slate-800">{row.costCentreCode}</p>
-                      <p className="truncate text-[11px] text-slate-500">{row.costCentreName}</p>
+                      {/* The process the cost centre serves; its own name only when that says something the code does not. */}
+                      <p className="max-w-[240px] truncate text-[11px] text-slate-500" title={row.costCentreProcess ?? row.costCentreName}>
+                        {row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : "")}
+                      </p>
                     </td>
                     <td className="px-3 py-2 text-slate-600">{row.branchName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(row.revenueInvoice)}</td>
@@ -258,7 +262,7 @@ export function PnlReconciliationPanel({
                       className="cursor-pointer px-3 py-2 text-right font-medium tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.recognisedRevenue, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title={row.revenueBasis === "ESTIMATED" ? estimateTitle(row) : "View the underlying rows"}
                     >
@@ -272,7 +276,7 @@ export function PnlReconciliationPanel({
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.payrollCost, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title="View the underlying rows"
                     >{money(row.payrollCost)}</td>
@@ -280,7 +284,7 @@ export function PnlReconciliationPanel({
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.grnActual, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title="View the underlying rows"
                     >{money(row.grnActual)}</td>
@@ -288,7 +292,7 @@ export function PnlReconciliationPanel({
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.allocatedBudget, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title="View the underlying rows"
                     >{money(row.allocatedBudget)}</td>
@@ -314,7 +318,11 @@ export function PnlReconciliationPanel({
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
           <p className="mb-2 text-sm font-semibold">Unmapped Items</p>
           {data.exceptions.map((item) => (
-            <p key={item.code}>{item.label}: {item.count.toLocaleString("en-IN")} rows, {money(item.amount)}</p>
+            <p key={item.code}>
+              {item.label}: {item.count.toLocaleString("en-IN")} rows, {money(item.amount)}
+              {/* Since 2026-09-15 this payroll is in company and branch cost (MAS wages), just in no cost-centre row. */}
+              {item.code === "PAYROLL_UNMAPPED_COST_CENTRE" && (data.totals.unallocatedPayroll ?? 0) > 0 && " — included in company and branch cost; map these staff to a cost centre to attribute it."}
+            </p>
           ))}
         </div>
       )}

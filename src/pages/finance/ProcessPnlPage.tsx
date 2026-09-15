@@ -21,6 +21,7 @@ import { PnlDailyTrendChart } from "@/components/finance/pnl/PnlDailyTrendChart"
 import { PnlSeatForecastCard } from "@/components/finance/pnl/PnlSeatForecastCard";
 import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
 import { PnlTrendExplorer } from "@/components/finance/pnl/PnlTrendExplorer";
+import { PnlInsightsPanel } from "@/components/finance/pnl/PnlInsightsPanel";
 import { PnlTrendCharts } from "@/components/finance/pnl/PnlTrendCharts";
 import { PnlReceivablesAgeingPanel } from "@/components/finance/pnl/PnlReceivablesAgeingPanel";
 import { PnlSeatBillabilityPanel } from "@/components/finance/pnl/PnlSeatBillabilityPanel";
@@ -85,7 +86,7 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "matrix" | "statement" | "alerts">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts">("overview");
   const [statementViewBy, setStatementViewBy] = useState<PnlStatementViewBy>("process");
   const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
   const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
@@ -464,6 +465,7 @@ export default function ProcessPnlPage() {
             <TabsTrigger value="overview" className={tabTriggerClass}>CEO Overview</TabsTrigger>
             <TabsTrigger value="live" className={tabTriggerClass}>Live P&amp;L</TabsTrigger>
             <TabsTrigger value="trend" className={tabTriggerClass}>P&amp;L Trend</TabsTrigger>
+            <TabsTrigger value="insights" className={tabTriggerClass}>Insights</TabsTrigger>
             <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
             <TabsTrigger value="statement" className={tabTriggerClass}>P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
@@ -610,6 +612,12 @@ export default function ProcessPnlPage() {
               built on the Live P&L so its numbers agree with the tab beside it. */}
           <TabsContent value="trend" className="flex-1 overflow-auto px-4 py-3 m-0">
             <PnlTrendExplorer period={period} branchId={branchId || undefined} />
+          </TabsContent>
+
+          {/* Margin heatmap, profit contribution, unit economics and revenue confidence — also read
+              from the Live P&L rows, so every figure agrees with the Live P&L tab. */}
+          <TabsContent value="insights" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <PnlInsightsPanel period={period} branchId={branchId || undefined} />
           </TabsContent>
 
           <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">

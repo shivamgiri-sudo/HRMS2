@@ -24,6 +24,8 @@ export interface TrendPoint {
   op: number | null;
   opPct: number | null;
   salaryMissing: boolean;
+  /** No indirect cost recorded for the month anywhere — OP% is NA. */
+  idcMissing?: boolean;
   isPartial: boolean;
 }
 
@@ -36,7 +38,7 @@ export interface TrendSeries {
   notes: string[];
   options: {
     branches: Array<{ id: string; name: string }>;
-    costCentres: Array<{ id: string; code: string; name: string; branchId: string | null; branchName: string }>;
+    costCentres: Array<{ id: string; code: string; name: string; processName?: string | null; branchId: string | null; branchName: string }>;
   };
 }
 

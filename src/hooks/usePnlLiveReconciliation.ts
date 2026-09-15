@@ -20,6 +20,8 @@ export interface PnlReconciliationRow {
   costCentreId: string;
   costCentreCode: string;
   costCentreName: string;
+  /** The process this cost centre serves (mapped process, else billing name); null when unknown. */
+  costCentreProcess?: string | null;
   companyName: string | null;
   active: boolean;
   revenueInvoice: number;
@@ -65,6 +67,9 @@ export interface PnlLiveReconciliation {
   generatedAt: string;
   totals: {
     activeCostCentres: number;
+    /** Payroll of staff with no cost centre — included in payrollCost/OP, in no row. */
+    unallocatedPayroll?: number;
+    unallocatedStaff?: number;
     revenue: number;
     revenueInvoice: number;
     revenueAccrual: number;

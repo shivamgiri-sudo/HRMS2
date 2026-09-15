@@ -94,7 +94,36 @@ describe("getPnlTrendSeries", () => {
     const sunday = out.points.find((p) => p.key === "2026-08-02")!; // a Sunday
     const monday = out.points.find((p) => p.key === "2026-08-03")!;
     expect(monday.salary!).toBeGreaterThan(sunday.salary!);
-    expect(out.points.find((p) => p.key === "2026-08-05")!.idc).toBeCloseTo(L(43), 0); // GRN on its bill date
+    // IDC accrues evenly — a GRN billed on the 5th must not make the 5th a -500% day.
+    for (const p of out.points) expect(p.idc).toBeCloseTo(L(43) / 31, 2);
+    expect(Math.max(...out.points.map((p) => Math.abs(p.opPct ?? 0)))).toBeLessThan(100);
+  });
+
+  it("a month with no indirect cost recorded anywhere shows no OP%, in every grain", async () => {
+    getPnlReconciliation.mockImplementation(async (period: string) => ({ ...rec(period), idcMissing: period === "2026-07" }));
+    const month = await getPnlTrendSeries({ grain: "month", scopeType: "company", anchor: "2026-08", count: 3, asOfDate: "2026-09-15" });
+    const jul = month.points.find((p) => p.key === "2026-07")!;
+    expect(jul).toMatchObject({ idcMissing: true, opPct: null });
+    expect(month.points.find((p) => p.key === "2026-08")!.opPct).not.toBeNull();
+    expect(month.totals.opPct, "a window total cannot mix in a month with no overheads").toBeNull();
+    expect(month.notes.join(" ")).toMatch(/no indirect cost/i);
+    const day = await getPnlTrendSeries({ grain: "day", scopeType: "company", anchor: "2026-07", asOfDate: "2026-09-15" });
+    expect(day.points.every((p) => p.opPct === null && p.idcMissing)).toBe(true);
+  });
+
+  it("a branch carries its staff with no cost centre; negative revenue has no margin", async () => {
+    getPnlReconciliation.mockImplementation(async (period: string) => {
+      const base = rec(period);
+      return {
+        ...base,
+        branches: [{ branchId: "b-noida", branchName: "NOIDA", unallocatedPayroll: L(2) }],
+        rows: base.rows.map((r) => ({ ...r, recognisedRevenue: period === "2026-06" ? -L(1) : r.recognisedRevenue })),
+      };
+    });
+    const out = await getPnlTrendSeries({ grain: "month", scopeType: "branch", scopeId: "b-noida", anchor: "2026-08", count: 3, asOfDate: "2026-09-15" });
+    const aug = out.points.find((p) => p.key === "2026-08")!;
+    expect(aug.salary).toBeCloseTo(L(196) / 2 + L(2), 0);
+    expect(out.points.find((p) => p.key === "2026-06")!.opPct).toBeNull();
   });
 
   it("the open month stops at today", async () => {

@@ -187,3 +187,64 @@ describe("P&L reconciliation", () => {
     expect(out.rows[0].sourceStatus).toBe("PARTIAL");
   });
 });
+
+describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => {
+  /** Wrap mockDb's answers, overriding the queries a test cares about. */
+  function withOverrides(overrides: (q: string) => unknown[] | undefined, options?: { payrollRows?: number }) {
+    mockDb(options);
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const hit = overrides(String(sql));
+      return hit ? [hit, []] : base(sql, params);
+    });
+  }
+
+  it("counts pay of staff with no cost centre in branch and company cost, but in no row", async () => {
+    withOverrides((q) => (q.includes("e.cost_centre_id IS NULL") && q.includes("GROUP BY e.branch_id")
+      ? [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(6) }]
+      : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    // Baseline: revenue 120, payroll 60 (rows), GRN 25 → OP 35. Plus Rs 6 L of unmapped staff.
+    expect(out.totals.unallocatedPayroll).toBe(L(6));
+    expect(out.totals.payrollCost).toBe(L(66));
+    expect(out.totals.operatingProfit).toBe(L(29));
+    expect(out.totals.marginPct).toBeCloseTo((29 / 120) * 100, 6);
+    expect(out.branches[0]).toMatchObject({ unallocatedPayroll: L(6), payrollCost: L(66), operatingProfit: L(29) });
+    expect(out.rows.reduce((t, r) => t + r.payrollCost, 0), "rows keep only what is really theirs").toBe(L(60));
+    expect(out.blockers.join(" ")).toMatch(/no cost centre is included/);
+  });
+
+  it("ignores unmapped payroll while payroll is not posted (running snapshot has no such staff)", async () => {
+    withOverrides((q) => (q.includes("e.cost_centre_id IS NULL") && q.includes("GROUP BY e.branch_id")
+      ? [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(6) }]
+      : undefined), { payrollRows: 0 });
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    expect(out.totals.unallocatedPayroll).toBe(0);
+  });
+
+  it("shows NA, not an inflated margin, when no GRN exists anywhere for the month", async () => {
+    withOverrides((q) => (q.includes("FROM grn_cost_allocation") || q.includes("FROM grn_entry_line_snapshot") ? [] : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-03", { branchIds: ["branch-noida"] });
+    expect(out.idcMissing).toBe(true);
+    expect(out.totals.grnActual).toBe(0);
+    expect(out.totals.marginPct).toBeNull();
+    expect(out.branches.every((b) => b.marginPct === null)).toBe(true);
+    expect(out.rows.every((r) => r.marginPct === null)).toBe(true);
+    expect(out.blockers.join(" ")).toMatch(/No indirect cost \(GRN\)/);
+  });
+
+  it("never reports a margin on negative revenue (credit notes above invoices)", async () => {
+    withOverrides((q) => (q.includes("WITH invoice_actual AS")
+      ? [{ cost_centre_id: "cc-noida-1", cost_centre_code: "BSS/IB/Noida/534", invoice_amount: L(1), provision_amount: 0, accrual_amount: 0, credit_note: L(1.27) }]
+      : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-06", { branchIds: ["branch-noida"] });
+    const row = out.rows.find((r) => r.costCentreId === "cc-noida-1")!;
+    expect(row.recognisedRevenue).toBeCloseTo(-L(0.27), 2);
+    expect(row.marginPct).toBeNull();
+    expect(out.totals.marginPct).toBeNull();
+  });
+});

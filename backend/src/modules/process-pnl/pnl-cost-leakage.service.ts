@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
 
 /**
  * Cost Leakage Review — money that is real, but that no process's P&L can see.
@@ -91,6 +92,7 @@ async function stafflessCostCentres(from: string, to: string): Promise<LeakageBu
   if ((await tableExists("cost_centre_master")) && (await tableExists("grn_request"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, bm.branch_name,
+              MAX(${ccProcessNameSql()}) AS process_name,
               COUNT(g.id) AS grn_count,
               SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS amount
          FROM cost_centre_master ccm
@@ -98,6 +100,7 @@ async function stafflessCostCentres(from: string, to: string): Promise<LeakageBu
            ON g.cost_centre_id = ccm.id AND ${LIVE_GRN_STATUS}
           AND g.accounting_period BETWEEN ? AND ?
          LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+         ${ccProcessJoin()}
         WHERE ccm.active_status = 1
           AND NOT EXISTS (SELECT 1 FROM employees e
                            WHERE e.cost_centre_id = ccm.id AND e.active_status = 1)
@@ -110,7 +113,10 @@ async function stafflessCostCentres(from: string, to: string): Promise<LeakageBu
       amount += n(r.amount);
       rows.push({
         id: String(r.id),
-        label: String(r.cost_centre_name ?? r.cost_centre_code ?? "Unnamed cost centre"),
+        label: r.cost_centre_code
+          ? costCentreLabel(String(r.cost_centre_code), r.process_name ? String(r.process_name)
+            : r.cost_centre_name && r.cost_centre_name !== r.cost_centre_code ? String(r.cost_centre_name) : null)
+          : String(r.cost_centre_name ?? "Unnamed cost centre"),
         detail: [r.branch_name, `${n(r.grn_count)} GRN${n(r.grn_count) === 1 ? "" : "s"}`]
           .filter(Boolean).join(" · "),
         count: n(r.grn_count),

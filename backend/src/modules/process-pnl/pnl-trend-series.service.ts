@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getPnlReconciliation, type PnlReconciliation } from "./pnl-reconciliation.service.js";
+import { costCentreLabel } from "./cost-centre-label.js";
 
 /**
  * P&L trend — revenue, salary cost, IDC and OP% by day, week or month, for the company, one
@@ -43,6 +44,8 @@ export interface TrendPoint {
   op: number | null;
   opPct: number | null;
   salaryMissing: boolean;
+  /** No indirect cost recorded for the month anywhere (Live P&L idcMissing) — OP% is NA. */
+  idcMissing: boolean;
   /** true when the bucket extends past today (open month / current week). */
   isPartial: boolean;
 }
@@ -56,7 +59,7 @@ export interface TrendSeries {
   notes: string[];
   options: {
     branches: Array<{ id: string; name: string }>;
-    costCentres: Array<{ id: string; code: string; name: string; branchId: string | null; branchName: string }>;
+    costCentres: Array<{ id: string; code: string; name: string; processName: string | null; branchId: string | null; branchName: string }>;
   };
 }
 
@@ -106,7 +109,7 @@ const addDays = (date: string, k: number) => { const d = new Date(`${date}T00:00
 const cache = new Map<string, { at: number; data: Promise<PnlReconciliation> }>();
 export function clearTrendCache() { cache.clear(); }
 
-function monthlyReconciliation(period: string, branchIds: string[], asOfDate: string): Promise<PnlReconciliation> {
+export function monthlyReconciliation(period: string, branchIds: string[], asOfDate: string): Promise<PnlReconciliation> {
   const key = `${period}|${[...branchIds].sort().join(",")}|${asOfDate}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
@@ -117,7 +120,7 @@ function monthlyReconciliation(period: string, branchIds: string[], asOfDate: st
   return data;
 }
 
-async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
@@ -126,29 +129,31 @@ async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>)
   return out;
 }
 
-interface ScopeTotals { revenue: number; revenueEstimated: number; payroll: number; grn: number; label: string }
+interface ScopeTotals { revenue: number; revenueEstimated: number; payroll: number; grn: number; label: string; idcMissing: boolean }
 
 function scopeTotals(rec: PnlReconciliation, scope: { type: TrendScopeType; id: string | null }): ScopeTotals {
   if (scope.type === "cost_centre") {
     const row = rec.rows.find((r) => r.costCentreId === scope.id);
     return {
       revenue: n(row?.recognisedRevenue), revenueEstimated: n(row?.revenueEstimated),
-      payroll: n(row?.payrollCost), grn: n(row?.grnActual),
-      label: row ? `${row.costCentreCode} — ${row.costCentreName}` : "Cost centre",
+      payroll: n(row?.payrollCost), grn: n(row?.grnActual), idcMissing: Boolean(rec.idcMissing),
+      label: row ? costCentreLabel(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)) : "Cost centre",
     };
   }
   if (scope.type === "branch") {
     const rows = rec.rows.filter((r) => r.branchId === scope.id);
     const sum = (f: (r: typeof rows[number]) => number) => rows.reduce((t, r) => t + f(r), 0);
+    // The branch's staff with no cost centre are in its rollup, not in any row — same as Live P&L.
+    const unallocated = n(rec.branches.find((b) => b.branchId === scope.id)?.unallocatedPayroll);
     return {
       revenue: sum((r) => r.recognisedRevenue), revenueEstimated: sum((r) => r.revenueEstimated),
-      payroll: sum((r) => r.payrollCost), grn: sum((r) => r.grnActual),
+      payroll: sum((r) => r.payrollCost) + unallocated, grn: sum((r) => r.grnActual), idcMissing: Boolean(rec.idcMissing),
       label: rows[0]?.branchName ?? rec.branches.find((b) => b.branchId === scope.id)?.branchName ?? "Branch",
     };
   }
   return {
     revenue: rec.totals.revenue, revenueEstimated: rec.totals.revenueEstimated ?? 0,
-    payroll: rec.totals.payrollCost, grn: rec.totals.grnActual, label: rec.company,
+    payroll: rec.totals.payrollCost, grn: rec.totals.grnActual, label: rec.company, idcMissing: Boolean(rec.idcMissing),
   };
 }
 
@@ -175,31 +180,12 @@ async function attendanceWeights(period: string, scope: { type: TrendScopeType; 
   return out;
 }
 
-async function grnWeights(period: string, scope: { type: TrendScopeType; id: string | null }): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (!(await tableExists("grn_request"))) return out;
-  const from = `${period}-01`, to = `${shiftMonth(period, 1)}-01`;
-  let sql: string; const params: unknown[] = [];
-  if (scope.type === "cost_centre" && (await tableExists("grn_cost_allocation"))) {
-    sql = `SELECT DATE_FORMAT(g.bill_date, '%Y-%m-%d') AS d, SUM(a.pnl_cost_amount) AS w
-             FROM grn_cost_allocation a JOIN grn_request g ON g.id = a.grn_request_id
-            WHERE a.cost_centre_id = ? AND g.bill_date >= ? AND g.bill_date < ?
-              AND g.status NOT IN ('draft','rejected','cancelled')
-            GROUP BY d`;
-    params.push(scope.id, from, to);
-  } else {
-    sql = `SELECT DATE_FORMAT(g.bill_date, '%Y-%m-%d') AS d, SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS w
-             FROM grn_request g
-            WHERE g.bill_date >= ? AND g.bill_date < ? AND g.status NOT IN ('draft','rejected','cancelled')
-              ${scope.type === "branch" ? "AND g.branch_id = ?" : ""}
-            GROUP BY d`;
-    params.push(from, to);
-    if (scope.type === "branch") params.push(scope.id);
-  }
-  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-  for (const r of rows) if (n(r.w) > 0) out.set(String(r.d), n(r.w));
-  return out;
-}
+/*
+ * Indirect cost is spread evenly over the month's days (accrual), NOT by GRN bill date.
+ * Changed 2026-09-15 after the OP% check: rent, power and vendor bills are monthly costs, but
+ * they are billed on a handful of dates — spreading by bill date put most of August's Rs 75 L on
+ * the 1st, so one day read -575% and the weeks after read 13-36% against a 7% month.
+ */
 
 /** Spread `total` over `days` by `weights` (evenly when the weights sum to nothing). */
 export function distribute(total: number, days: string[], weights: Map<string, number>): Map<string, number> {
@@ -209,7 +195,7 @@ export function distribute(total: number, days: string[], weights: Map<string, n
   return out;
 }
 
-interface DayValue { date: string; revenue: number; revenueEstimated: number; salary: number | null; idc: number; partial: boolean }
+interface DayValue { date: string; revenue: number; revenueEstimated: number; salary: number | null; idc: number; partial: boolean; idcMissing: boolean }
 
 async function dailyValues(period: string, scope: { type: TrendScopeType; id: string | null }, branchIds: string[], asOfDate: string): Promise<{ days: DayValue[]; totals: ScopeTotals }> {
   const rec = await monthlyReconciliation(period, branchIds, asOfDate);
@@ -217,11 +203,11 @@ async function dailyValues(period: string, scope: { type: TrendScopeType; id: st
   const all = Array.from({ length: daysIn(period) }, (_, i) => dayKey(period, i + 1));
   const open = asOfDate.slice(0, 7) === period;
   const days = open ? all.filter((d) => d <= asOfDate) : all;
-  const [att, grn] = await Promise.all([attendanceWeights(period, scope), grnWeights(period, scope)]);
+  const att = await attendanceWeights(period, scope);
   const rev = distribute(t.revenue, days, new Map());
   const est = distribute(t.revenueEstimated, days, new Map());
   const sal = distribute(t.payroll, days, att);
-  const idc = distribute(t.grn, days, grn);
+  const idc = distribute(t.grn, days, new Map());
   return {
     totals: t,
     days: days.map((d) => ({
@@ -231,12 +217,14 @@ async function dailyValues(period: string, scope: { type: TrendScopeType; id: st
       salary: t.payroll > 0 ? sal.get(d) ?? 0 : null,
       idc: idc.get(d) ?? 0,
       partial: open,
+      idcMissing: t.idcMissing,
     })),
   };
 }
 
-function toPoint(key: string, label: string, start: string, end: string, v: { revenue: number; revenueEstimated: number; salary: number | null; idc: number }, isPartial: boolean): TrendPoint {
+function toPoint(key: string, label: string, start: string, end: string, v: { revenue: number; revenueEstimated: number; salary: number | null; idc: number; idcMissing?: boolean }, isPartial: boolean): TrendPoint {
   const salaryMissing = v.salary === null;
+  const idcMissing = Boolean(v.idcMissing);
   const cost = salaryMissing ? null : (v.salary as number) + v.idc;
   const op = cost === null ? null : v.revenue - cost;
   return {
@@ -248,8 +236,10 @@ function toPoint(key: string, label: string, start: string, end: string, v: { re
     idc: r2(v.idc),
     cost: cost === null ? null : r2(cost),
     op: op === null ? null : r2(op),
-    opPct: op === null || Math.abs(v.revenue) < 0.5 ? null : r2((op / v.revenue) * 100),
+    // Positive revenue only (a credit-note month reads as a flipped margin), and never without overheads.
+    opPct: op === null || idcMissing || v.revenue < 0.5 ? null : r2((op / v.revenue) * 100),
     salaryMissing,
+    idcMissing,
     isPartial,
   };
 }
@@ -286,14 +276,14 @@ export async function getPnlTrendSeries(input: {
       const t = scopeTotals(recs[i], scope);
       label = t.label;
       return toPoint(p, monthLabel(p), `${p}-01`, dayKey(p, daysIn(p)), {
-        revenue: t.revenue, revenueEstimated: t.revenueEstimated, salary: t.payroll > 0 ? t.payroll : null, idc: t.grn,
+        revenue: t.revenue, revenueEstimated: t.revenueEstimated, salary: t.payroll > 0 ? t.payroll : null, idc: t.grn, idcMissing: t.idcMissing,
       }, p === today);
     });
   } else if (grain === "day") {
     const { days, totals } = await dailyValues(anchor, scope, branchIds, asOfDate);
     label = totals.label;
     points = days.map((d) => toPoint(d.date, dayLabel(d.date), d.date, d.date, d, d.date === asOfDate));
-    notes.push("Daily revenue is the month's revenue spread evenly across its days; salary follows each day's attendance; IDC follows GRN bill dates. Days add up to the month exactly.");
+    notes.push("Daily revenue and IDC are the month's figures spread evenly across its days (accrual); salary follows each day's attendance. Days add up to the month exactly.");
   } else {
     const count = Math.min(Math.max(input.count ?? 8, 2), MAX_WEEKS);
     const lastDay = anchor === today ? asOfDate : dayKey(anchor, daysIn(anchor));
@@ -303,11 +293,12 @@ export async function getPnlTrendSeries(input: {
     for (let p = firstWeek.slice(0, 7); p <= lastDay.slice(0, 7); p = shiftMonth(p, 1)) periods.push(p);
     const months = await pool(periods, 3, (p) => dailyValues(p, scope, branchIds, asOfDate));
     label = months[months.length - 1]?.totals.label ?? "";
-    const byWeek = new Map<string, { revenue: number; revenueEstimated: number; salary: number | null; idc: number; missing: boolean; partial: boolean }>();
+    const byWeek = new Map<string, { revenue: number; revenueEstimated: number; salary: number | null; idc: number; missing: boolean; partial: boolean; idcMissing: boolean }>();
     for (const m of months) for (const d of m.days) {
       if (d.date < firstWeek) continue;
       const wk = weekStart(d.date);
-      const b = byWeek.get(wk) ?? { revenue: 0, revenueEstimated: 0, salary: 0, idc: 0, missing: false, partial: false };
+      const b = byWeek.get(wk) ?? { revenue: 0, revenueEstimated: 0, salary: 0, idc: 0, missing: false, partial: false, idcMissing: false };
+      if (d.idcMissing) b.idcMissing = true;
       b.revenue += d.revenue; b.revenueEstimated += d.revenueEstimated; b.idc += d.idc;
       if (d.salary === null) b.missing = true; else b.salary = (b.salary ?? 0) + d.salary;
       if (d.date === asOfDate || addDays(wk, 6) > lastDay) b.partial = true;
@@ -321,9 +312,10 @@ export async function getPnlTrendSeries(input: {
 
   if (points.some((p) => p.revenueEstimated > 0)) notes.push("Dashed revenue is estimated from seat rate × seats (last invoice or P&L Configuration › Seat billing) for cost centres not invoiced yet.");
   if (points.some((p) => p.salaryMissing)) notes.push("No people cost exists yet for some periods — their OP% is left blank instead of showing revenue against zero salary.");
+  if (points.some((p) => p.idcMissing)) notes.push("Some months have no indirect cost (GRN) mapped to any cost centre — their OP% is left blank rather than showing a margin with every overhead missing.");
 
   const sum = (f: (p: TrendPoint) => number) => r2(points.reduce((t, p) => t + f(p), 0));
-  const salaryKnown = points.every((p) => !p.salaryMissing);
+  const salaryKnown = points.every((p) => !p.salaryMissing && !p.idcMissing);
   const revenue = sum((p) => p.revenue);
   const salary = salaryKnown ? sum((p) => p.salary ?? 0) : null;
   const idc = sum((p) => p.idc);
@@ -340,7 +332,7 @@ export async function getPnlTrendSeries(input: {
     notes,
     options: {
       branches: anchorRec.branches.filter((b) => b.branchId).map((b) => ({ id: String(b.branchId), name: b.branchName })),
-      costCentres: anchorRec.rows.map((r) => ({ id: r.costCentreId, code: r.costCentreCode, name: r.costCentreName, branchId: r.branchId, branchName: r.branchName })),
+      costCentres: anchorRec.rows.map((r) => ({ id: r.costCentreId, code: r.costCentreCode, name: r.costCentreName, processName: r.costCentreProcess ?? null, branchId: r.branchId, branchName: r.branchName })),
     },
   };
 }

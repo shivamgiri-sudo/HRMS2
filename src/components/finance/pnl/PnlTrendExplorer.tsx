@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { costCentreText } from "./costCentreLabel";
 import { usePnlTrendSeries, type TrendGrain, type TrendPoint, type TrendScopeType } from "@/hooks/usePnlTrendSeries";
 
 /**
@@ -181,10 +182,11 @@ export function PnlTrendExplorer({ period, branchId }: { period: string; branchI
   }, [data]);
 
   const branchOptions = (data?.options.branches ?? []).map((b) => ({ value: b.id, label: b.name }));
-  const ccOptions = (data?.options.costCentres ?? []).map((c) => ({ value: c.id, label: c.name === c.code ? c.code : `${c.name}`, hint: `${c.code} · ${c.branchName}`, keywords: `${c.code} ${c.branchName}` }));
+  const ccOptions = (data?.options.costCentres ?? []).map((c) => ({ value: c.id, label: costCentreText(c.code, c.processName ?? (c.name !== c.code ? c.name : null)), hint: c.branchName, keywords: `${c.code} ${c.processName ?? ""} ${c.name} ${c.branchName}` }));
   const t = data?.totals;
-  const complete = rows.filter((r) => !r.salaryMissing);
-  const missingLabels = rows.filter((r) => r.salaryMissing).map((r) => r.label);
+  // Tiles total only periods with every cost line: no payroll run yet, or no GRN recorded at all, is left out.
+  const complete = rows.filter((r) => !r.salaryMissing && !r.idcMissing);
+  const missingLabels = rows.filter((r) => r.salaryMissing || r.idcMissing).map((r) => r.label);
   const sumOf = (list: Row[], f: (r: Row) => number) => list.reduce((acc, r) => acc + f(r), 0);
   const knownRevenue = sumOf(complete, (r) => r.revenue);
   const knownCost = sumOf(complete, (r) => (r.salary ?? 0) + r.idc);
@@ -201,7 +203,7 @@ export function PnlTrendExplorer({ period, branchId }: { period: string; branchI
   const opDomain: [number, number] = [Math.floor(opLo / opStep) * opStep, Math.ceil(opHi / opStep) * opStep || opStep];
   const opTicks = Array.from({ length: Math.round((opDomain[1] - opDomain[0]) / opStep) + 1 }, (_, i) => opDomain[0] + i * opStep);
   const excludedNote = missingLabels.length
-    ? `excl. ${missingLabels.length > 2 ? `${missingLabels.length} periods` : missingLabels.join(", ")} (no salary yet)`
+    ? `excl. ${missingLabels.length > 2 ? `${missingLabels.length} periods` : missingLabels.join(", ")} (a cost line not recorded yet)`
     : undefined;
   const monthly = grain === "month";
   const rangeLabel = grain === "day" ? `Days of ${periodLabel(period)}` : `Last ${count} ${grain === "week" ? "weeks" : "months"} to ${periodLabel(period)}`;

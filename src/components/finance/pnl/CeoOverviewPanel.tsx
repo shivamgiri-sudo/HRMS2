@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useCeoOverview, type CeoBranchRow, type CeoFocus, type CeoOpportunity } from "@/hooks/useCeoOverview";
 import { FilterMultiSelect } from "./FilterMultiSelect";
 import { PnlFullWaterfallCard } from "./PnlFullWaterfallCard";
+import { costCentreText } from "./costCentreLabel";
 
 /**
  * The CEO view of the P&L.
@@ -152,7 +153,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         <FilterMultiSelect
           label="Cost centre"
           allLabel="All cost centres"
-          options={data.options.costCentres.map((c) => ({ value: c.id, label: c.code }))}
+          options={data.options.costCentres.map((c) => ({ value: c.id, label: costCentreText(c.code, c.processName) }))}
           selected={costCentreIds}
           onChange={setCostCentreIds}
         />

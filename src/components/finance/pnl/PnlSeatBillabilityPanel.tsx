@@ -65,7 +65,10 @@ export function PnlSeatBillabilityPanel({ filters }: { filters?: PnlSeatBillabil
           <tbody className="divide-y divide-border">
             {data.costCentres.map((row) => (
               <tr key={row.costCentreId}>
-                <td className="px-3 py-2 font-semibold text-foreground">{row.costCentreName}</td>
+                <td className="px-3 py-2">
+                  <span className="block font-semibold text-foreground">{row.costCentreCode || row.costCentreName}</span>
+                  {row.costCentreCode && row.costCentreName !== row.costCentreCode && <span className="block text-[11px] text-muted-foreground">{row.costCentreName}</span>}
+                </td>
                 <td className="px-3 py-2 text-muted-foreground">{row.processName ?? "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{row.mandatedSeats ?? "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{row.actualHeadcount}</td>

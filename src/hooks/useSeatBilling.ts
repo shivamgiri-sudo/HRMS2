@@ -33,6 +33,8 @@ export interface CostCentreSeatBilling {
   costCentreId: string;
   costCentreCode: string;
   costCentreName: string;
+  /** Mapped process, else billing process name; null when unknown. */
+  processName?: string | null;
   branchId: string | null;
   branchName: string | null;
   source: "configured" | "invoice" | "none";

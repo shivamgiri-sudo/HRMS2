@@ -7,6 +7,7 @@ import { getBranchMeterConsumption, type MeterUtilityType } from "./meter.servic
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 import { refuse } from "./finance-error.js";
+import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 /**
  * Branch Budget foundation (PR 2): normalized cost-centre allocation for branch-planned budget
  * lines. Reuses the shared allocatePoolAmount() primitive (bpo-pnl.calculation.ts) so branch
@@ -816,9 +817,10 @@ export async function resyncLineAllocations(
 
 export async function getLineAllocations(budgetLineId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.*, ccm.cost_centre_name, ccm.cost_centre_code
+    `SELECT a.*, ccm.cost_centre_name, ccm.cost_centre_code, ${ccProcessNameSql()} AS cost_centre_process
        FROM finance_budget_line_allocation a
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+       ${ccProcessJoin()}
       WHERE a.budget_line_id = ?
       ORDER BY ccm.cost_centre_name`,
     [budgetLineId]

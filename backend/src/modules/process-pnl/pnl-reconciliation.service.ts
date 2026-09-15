@@ -4,6 +4,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -31,6 +32,8 @@ export interface PnlReconciliationRow {
   costCentreId: string;
   costCentreCode: string;
   costCentreName: string;
+  /** The process this cost centre serves (mapped process, else billing process name); null if unknown. */
+  costCentreProcess: string | null;
   companyName: string | null;
   active: boolean;
   revenueInvoice: number;
@@ -61,6 +64,8 @@ export interface PnlBranchRollup {
   branchId: string | null;
   branchName: string;
   costCentres: number;
+  /** Part of payrollCost that belongs to this branch's staff with no cost centre. */
+  unallocatedPayroll: number;
   revenue: number;
   grnActual: number;
   allocatedBudget: number;
@@ -74,6 +79,10 @@ export interface PnlBranchRollup {
 
 export interface PnlReconciliationTotals {
   activeCostCentres: number;
+  /** Payroll of MAS staff with no cost centre. Real MAS cost, so it IS in payrollCost and
+   *  operatingProfit here and in the branch rollups — but in no cost-centre row. */
+  unallocatedPayroll: number;
+  unallocatedStaff: number;
   revenue: number;
   revenueInvoice: number;
   revenueAccrual: number;
@@ -108,6 +117,8 @@ export interface PnlReconciliation {
   freshness: PnlSourceFreshness[];
   exceptions: PnlReconciliationException[];
   blockers: string[];
+  /** No indirect cost (GRN) exists for the month anywhere in the company — margin is NA. */
+  idcMissing: boolean;
   /** Basis of the seat-rate estimate, so the page can say what "estimated" means. */
   estimate: {
     applied: boolean;
@@ -121,6 +132,7 @@ interface CostCentreRow extends RowDataPacket {
   id: string;
   cost_centre_code: string | null;
   cost_centre_name: string | null;
+  process_name: string | null;
   company_name: string | null;
   active_status: number | null;
   branch_id: string | null;
@@ -149,7 +161,9 @@ const n = (value: unknown) => {
   const out = Number(value ?? 0);
   return Number.isFinite(out) ? out : 0;
 };
-const pct = (part: number, whole: number) => (whole !== 0 ? (part / whole) * 100 : null);
+// A margin needs positive revenue: on a negative base (credit notes above invoices) the ratio flips
+// sign and reads as a large positive margin — BSS/OB/Noida/974 showed +164.7% in June 2026.
+const pct = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
 
 function addIssue(target: string[], condition: boolean, issue: string) {
   if (condition) target.push(issue);
@@ -165,9 +179,10 @@ async function readCostCentres(filters: PnlReconciliationFilters): Promise<CostC
   }
   const [rows] = await db.execute<CostCentreRow[]>(
     `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.company_name,
-            ccm.active_status, ccm.branch_id, bm.branch_name
+            ccm.active_status, ccm.branch_id, bm.branch_name, ${ccProcessNameSql()} AS process_name
        FROM cost_centre_master ccm
        LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+       ${ccProcessJoin()}
       WHERE ${where.join(" AND ")}
       ORDER BY COALESCE(bm.branch_name, 'Unassigned'), ccm.cost_centre_code`,
     params,
@@ -393,6 +408,36 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
   return out;
 }
 
+/**
+ * Payroll of staff with no cost centre, by their branch (owner rule, recorded in
+ * ceo-overview.service.ts: every employee here is MAS Callnet, so their wages are MAS cost even
+ * without a mapping). Until 2026-09-15 this was only listed as an exception and left out of the
+ * totals, which overstated OP: Rs 1.11 L for 7 people in August 2026 (7.09% instead of 6.70%).
+ * Final payroll run only — the running-salary snapshot is keyed by cost centre, so it has none.
+ */
+async function readUnallocatedPayroll(period: string, branchIds: string[] | undefined): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
+  if (!(await tableExists("salary_prep_line"))) return [];
+  const branchClause = branchIds?.length ? `AND e.branch_id IN (${marks(branchIds)})` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.branch_id AS branch_id, MAX(bm.branch_name) AS branch_name,
+            COUNT(*) AS staff,
+            SUM(COALESCE(l.gross_salary, 0)
+              + COALESCE(l.pf_employer, 0)
+              + COALESCE(l.esic_employer, 0)
+              + COALESCE(l.gratuity, 0)) AS amount
+       FROM salary_prep_line l
+       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN employees e ON e.id = l.employee_id
+       LEFT JOIN branch_master bm ON bm.id = e.branch_id
+      WHERE r.run_month = ? AND e.cost_centre_id IS NULL ${branchClause}
+      GROUP BY e.branch_id`,
+    [period, ...(branchIds ?? [])],
+  );
+  return rows
+    .map((r) => ({ branchId: r.branch_id ? String(r.branch_id) : null, branchName: r.branch_name ? String(r.branch_name) : "Unassigned", cost: n(r.amount), staff: n(r.staff) }))
+    .filter((r) => r.cost !== 0 || r.staff > 0);
+}
+
 async function sourceFreshness(source: string, table: string, period: string, periodColumn = "period_code"): Promise<PnlSourceFreshness> {
   if (!(await tableExists(table))) return { source, table, rows: 0, latestSyncedAt: null, status: "MISSING" };
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -497,7 +542,7 @@ export async function getPnlReconciliation(
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
-  const [costCentres, revenue, grn, budgets, payroll, freshness, exceptionsOut] = await Promise.all([
+  const [costCentres, revenue, grn, budgets, payroll, freshness, exceptionsOut, unallocated] = await Promise.all([
     readCostCentres(filters),
     readRevenue(period),
     readGrn(period),
@@ -512,6 +557,7 @@ export async function getPnlReconciliation(
       runningSalaryFreshness(period),
     ]),
     exceptions(period),
+    readUnallocatedPayroll(period, filters.branchIds),
   ]);
 
   const payrollPosted = (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
@@ -560,6 +606,7 @@ export async function getPnlReconciliation(
       costCentreId: String(cc.id),
       costCentreCode: String(cc.cost_centre_code ?? ""),
       costCentreName: String(cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre"),
+      costCentreProcess: cc.process_name ? String(cc.process_name) : null,
       companyName: cc.company_name ? String(cc.company_name) : null,
       active: Number(cc.active_status ?? 0) === 1,
       revenueInvoice,
@@ -593,6 +640,7 @@ export async function getPnlReconciliation(
       branchId: row.branchId,
       branchName: row.branchName,
       costCentres: 0,
+      unallocatedPayroll: 0,
       revenue: 0,
       grnActual: 0,
       allocatedBudget: 0,
@@ -616,9 +664,31 @@ export async function getPnlReconciliation(
     branchMap.set(key, current);
   }
 
+  // Staff with no cost centre: their pay joins their branch and the company, never a row.
+  const unallocatedPayroll = payrollPosted ? unallocated : [];
+  for (const u of unallocatedPayroll) {
+    const key = u.branchId ?? "unassigned";
+    const current = branchMap.get(key) ?? {
+      branchId: u.branchId, branchName: u.branchName, costCentres: 0, unallocatedPayroll: 0, revenue: 0,
+      grnActual: 0, allocatedBudget: 0, branchBudget: 0, payrollCost: 0, staffPaid: 0,
+      operatingProfit: 0, marginPct: null, issues: [],
+    };
+    current.unallocatedPayroll += u.cost;
+    current.payrollCost += u.cost;
+    current.staffPaid += u.staff;
+    current.operatingProfit -= u.cost;
+    if (!current.issues.includes("PAYROLL_WITHOUT_COST_CENTRE")) current.issues.push("PAYROLL_WITHOUT_COST_CENTRE");
+    current.marginPct = pct(current.operatingProfit, current.revenue);
+    branchMap.set(key, current);
+  }
+  const unallocatedCost = unallocatedPayroll.reduce((t, u) => t + u.cost, 0);
+  const unallocatedStaff = unallocatedPayroll.reduce((t, u) => t + u.staff, 0);
+
   const sum = (pick: (row: PnlReconciliationRow) => number) => rows.reduce((total, row) => total + pick(row), 0);
   const totals: PnlReconciliationTotals = {
     activeCostCentres: rows.filter((row) => row.active).length,
+    unallocatedPayroll: unallocatedCost,
+    unallocatedStaff,
     revenue: sum((row) => row.recognisedRevenue),
     revenueInvoice: sum((row) => row.revenueInvoice),
     revenueAccrual: sum((row) => row.revenueAccrual),
@@ -629,12 +699,22 @@ export async function getPnlReconciliation(
     grnActual: sum((row) => row.grnActual),
     allocatedBudget: sum((row) => row.allocatedBudget),
     branchBudget: Array.from(branchMap.values()).reduce((total, row) => total + row.branchBudget, 0),
-    payrollCost: sum((row) => row.payrollCost),
-    staffPaid: sum((row) => row.staffPaid),
-    operatingProfit: sum((row) => row.operatingProfit),
+    payrollCost: sum((row) => row.payrollCost) + unallocatedCost,
+    staffPaid: sum((row) => row.staffPaid) + unallocatedStaff,
+    operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost,
     marginPct: null,
   };
   totals.marginPct = pct(totals.operatingProfit, totals.revenue);
+  // No GRN mapped anywhere in the company for the month (readGrn is company-wide, whatever the
+  // branch filter) means the overhead data is absent, not that overheads were nil: March 2026 read
+  // 40.6% with Rs 0 of indirect cost — its 406 mirror GRNs match no MAS cost centre (Feb: 367, 32.6%). A margin without any overhead is not comparable with any other
+  // month, so it is NA — the same treatment as a month with no people cost.
+  const idcMissing = grn.size === 0 && totals.payrollCost > 0;
+  if (idcMissing) {
+    totals.marginPct = null;
+    for (const branch of branchMap.values()) branch.marginPct = null;
+    for (const row of rows) row.marginPct = null;
+  }
   // An estimate fills the revenue side of a month whose people cost may not exist yet (the open
   // month before its running-salary snapshot). Revenue against no people cost reads as a ~99%
   // margin, which is not a margin at all — so say NA until there is a cost to set against it.
@@ -658,6 +738,12 @@ export async function getPnlReconciliation(
   }
   if ((freshness.find((item) => item.source === "GRN")?.rows ?? 0) === 0) {
     blockers.push("GRN snapshot has no rows for this period; indirect cost may be missing.");
+  }
+  if (idcMissing) {
+    blockers.push(`No indirect cost (GRN) maps to any MAS cost centre for ${period} — the month's GRNs, if any, carry cost-centre codes that match none — so OP would exclude every overhead. Margin is shown as NA rather than an inflated figure.`);
+  }
+  if (unallocatedCost !== 0) {
+    blockers.push(`Rs ${(unallocatedCost / 100000).toFixed(2)} L of payroll for ${unallocatedStaff} employee(s) with no cost centre is included in company and branch cost (it belongs to no cost-centre row). Map them to a cost centre to attribute it.`);
   }
   if (totals.estimatedCostCentres > 0) {
     const partial = seatBilling && seatBilling.daysElapsed < seatBilling.daysInMonth
@@ -683,6 +769,7 @@ export async function getPnlReconciliation(
     freshness,
     exceptions: exceptionsOut,
     blockers,
+    idcMissing,
     estimate: {
       applied: estimateApplies,
       daysInMonth: seatBilling?.daysInMonth ?? 0,

@@ -61,6 +61,7 @@ import {
 } from "@/hooks/usePnlConfiguration";
 import { PnlBulkUploadDialog } from "@/components/finance/PnlBulkUploadDialog";
 import { SeatBillingPanel } from "@/components/finance/pnl/SeatBillingPanel";
+import { costCentreText } from "@/components/finance/pnl/costCentreLabel";
 
 type AnyRow = Record<string, any>;
 
@@ -505,7 +506,12 @@ export default function PnlMasterControlCenterPage() {
   const costCentreList = useCostCentreList({ status: "active", branch_id: branchFilter || undefined });
   const costCentres = costCentreList.data?.data ?? [];
   const costCentreName = useMemo(
-    () => new Map(costCentres.map((cc: any) => [cc.id, cc.cost_centre_name as string])),
+    // Code + the process it serves (owner request 2026-09-15), same rule as the backend's
+    // cost-centre-label.ts: mapped process, else billing process name, else billing client.
+    () => new Map(costCentres.map((cc: any) => [
+      cc.id,
+      costCentreText(String(cc.cost_centre_code || cc.cost_centre_name || cc.id), cc.process_name || cc.process_name_bill || cc.billing_client_name || null),
+    ])),
     [costCentres]
   );
   // useHasRole is variadic (...roles: string[]). Passing an array made roles === [[...]],
@@ -1235,7 +1241,7 @@ export default function PnlMasterControlCenterPage() {
                           <Label className="text-xs text-slate-600 mb-1 block">Cost centre</Label>
                           <select className={selectClass} value={rpForm.cost_centre_id} onChange={(e) => setRpForm((f) => ({ ...f, cost_centre_id: e.target.value }))}>
                             <option value="">Select cost centre…</option>
-                            {costCentres.map((cc: any) => <option key={cc.id} value={cc.id}>{cc.cost_centre_name}</option>)}
+                            {costCentres.map((cc: any) => <option key={cc.id} value={cc.id}>{costCentreName.get(cc.id) ?? cc.cost_centre_name}</option>)}
                           </select>
                         </div>
                         <div>
@@ -1301,7 +1307,7 @@ export default function PnlMasterControlCenterPage() {
                         <tbody>
                           {rewardPenaltyEntries.map((row: any) => (
                             <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
-                              <td className="px-4 py-2 text-slate-700">{row.cost_centre_name ?? costCentreName.get(row.cost_centre_id) ?? row.cost_centre_id}</td>
+                              <td className="px-4 py-2 text-slate-700">{costCentreName.get(row.cost_centre_id) ?? row.cost_centre_name ?? row.cost_centre_id}</td>
                               <td className="px-4 py-2">
                                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${row.entry_type === "reward" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
                                   {row.entry_type === "reward" ? "Reward" : "Penalty"}

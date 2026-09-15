@@ -179,7 +179,8 @@ function CostCentreDrawer({
           {cc && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
               <SourceBadge cc={cc} />
-              <span>{cc.costCentreName}</span>
+              {cc.processName && <span className="font-semibold text-blue-700">{cc.processName}</span>}
+              {cc.costCentreName !== cc.costCentreCode && <span>{cc.costCentreName}</span>}
               <span>· {cc.branchName ?? "No branch"}</span>
               <span>· {periodLabel(period)}</span>
             </div>
@@ -466,7 +467,7 @@ export function SeatBillingPanel({ period, branchId }: { period: string; branchI
     const needle = search.trim().toLowerCase();
     return (data?.costCentres ?? []).filter((cc) =>
       (sourceFilter === "all" || cc.source === sourceFilter)
-      && (!needle || `${cc.costCentreCode} ${cc.costCentreName} ${cc.branchName ?? ""} ${cc.lines.map((l) => l.lineLabel).join(" ")}`.toLowerCase().includes(needle)));
+      && (!needle || `${cc.costCentreCode} ${cc.costCentreName} ${cc.processName ?? ""} ${cc.branchName ?? ""} ${cc.lines.map((l) => l.lineLabel).join(" ")}`.toLowerCase().includes(needle)));
   }, [data, search, sourceFilter]);
 
   if (query.isLoading) return <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-72" /></div>;
@@ -551,7 +552,9 @@ export function SeatBillingPanel({ period, branchId }: { period: string; branchI
               <TableRow key={cc.costCentreId} className="cursor-pointer hover:bg-blue-50/60" onClick={() => setOpenId(cc.costCentreId)}>
                 <TableCell>
                   <p className="text-xs font-medium text-slate-800">{cc.costCentreCode}</p>
-                  <p className="max-w-64 truncate text-[11px] text-slate-500">{cc.costCentreName}</p>
+                  <p className="max-w-64 truncate text-[11px] text-slate-500" title={cc.processName ?? cc.costCentreName}>
+                    {cc.processName ?? (cc.costCentreName !== cc.costCentreCode ? cc.costCentreName : "")}
+                  </p>
                 </TableCell>
                 <TableCell className="text-xs text-slate-600">{cc.branchName ?? "—"}</TableCell>
                 <TableCell><SourceBadge cc={cc} /></TableCell>

@@ -1,4 +1,5 @@
 import type { BranchBudgetAllocationRecord } from "@/hooks/useBranchBudget";
+import { CostCentreName } from "./costCentreLabel";
 
 function money(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -27,7 +28,9 @@ export function BudgetLineAllocationTable({ allocations }: { allocations: Branch
         <tbody>
           {allocations.map((row) => (
             <tr key={row.id} className="border-b border-slate-100 last:border-0">
-              <td className="px-3 py-2">{row.cost_centre_name}</td>
+              <td className="px-3 py-2">
+                <CostCentreName code={row.cost_centre_code || row.cost_centre_name} processName={row.cost_centre_process} />
+              </td>
               <td className="px-3 py-2">{Number(row.allocation_percentage).toFixed(2)}%</td>
               <td className="px-3 py-2">{money(Number(row.gross_amount))}</td>
               <td className="px-3 py-2">{money(Number(row.pnl_cost_amount))}</td>

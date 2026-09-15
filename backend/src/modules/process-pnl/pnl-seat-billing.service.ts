@@ -5,6 +5,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 
 /**
  * Seat-billing revenue estimate: what a cost centre earns per day, from seat rate x seats.
@@ -156,6 +157,8 @@ export interface CostCentreSeatBilling {
   costCentreId: string;
   costCentreCode: string;
   costCentreName: string;
+  /** Mapped process, else the billing process name (cost-centre-label.ts); null when unknown. */
+  processName: string | null;
   branchId: string | null;
   branchName: string | null;
   source: "configured" | "invoice" | "none";
@@ -192,6 +195,7 @@ interface CcRow extends RowDataPacket {
   id: string;
   cost_centre_code: string;
   cost_centre_name: string | null;
+  process_name: string | null;
   branch_id: string | null;
   branch_name: string | null;
 }
@@ -208,9 +212,11 @@ async function readOwnCostCentres(filters: { branchIds?: string[]; costCentreId?
     params.push(filters.costCentreId);
   }
   const [rows] = await db.execute<CcRow[]>(
-    `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.branch_id, bm.branch_name
+    `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.branch_id, bm.branch_name,
+            ${ccProcessNameSql()} AS process_name
        FROM cost_centre_master ccm
        LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+       ${ccProcessJoin()}
       WHERE ${where.join(" AND ")}`,
     params,
   );
@@ -363,6 +369,7 @@ export async function getSeatBillingEstimate(
       costCentreId: id,
       costCentreCode: String(cc.cost_centre_code ?? ""),
       costCentreName: String(cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre"),
+      processName: cc.process_name ? String(cc.process_name) : null,
       branchId: cc.branch_id ? String(cc.branch_id) : null,
       branchName: cc.branch_name ? String(cc.branch_name) : null,
       source,
