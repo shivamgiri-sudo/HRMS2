@@ -237,43 +237,36 @@ router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm"
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ error: "rows array required" });
   }
-  // A single multi-row INSERT instead of one round trip per row — with a few
-  // hundred rows the old per-row loop alone could take longer than the
-  // frontend's 30s request timeout, which is what produced the "batch didn't
-  // upload" report even though staging had actually succeeded.
-  const values: unknown[] = [];
-  const placeholders: string[] = [];
-  for (const row of rows) {
-    placeholders.push("(?, ?, ?, ?, ?, ?, ?)");
-    values.push(
-      randomUUID(), req.params.id, row.row_no,
-      row.raw_data ? JSON.stringify(row.raw_data) : null,
-      row.normalized_data ? JSON.stringify(row.normalized_data) : null,
-      row.row_status ?? "pending",
-      row.error_messages ? JSON.stringify(row.error_messages) : null
-    );
-  }
-  // withDeadlockRetry is safe here for the same reason as the /batches INSERT above:
-  // one autocommit statement, and every row's id was generated once above the retry, so
-  // a retry replays the identical INSERT rather than double-staging rows. This is the
-  // exact write that silently lost BATCH-1788948395588-R6909's 14 resubmitted rows to a
-  // deadlock — the batch header had already been created with "14 valid" before this
-  // statement ran, and when it lost the deadlock the rows were simply never saved, with
-  // nothing left to show for it beyond a batch that claimed rows it didn't have.
+  // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
+  // retry on any chunk replays the identical INSERT and never double-stages a row.
+  // IDs are assigned here once — not inside the retry lambda — for the same reason.
+  const staged: Array<unknown[]> = rows.map((row) => [
+    randomUUID(), req.params.id, row.row_no,
+    row.raw_data ? JSON.stringify(row.raw_data) : null,
+    row.normalized_data ? JSON.stringify(row.normalized_data) : null,
+    row.row_status ?? "pending",
+    row.error_messages ? JSON.stringify(row.error_messages) : null,
+  ]);
+
+  // Large Onfido/POA files send 20k+ rows in a single call. One monolithic INSERT
+  // of 20k rows and their JSON blobs can exceed MySQL's lock-wait timeout and collide
+  // with sibling uploads on the same table (the 2026-09-14 DOC_RAW staging failures).
+  // Chunk at 2 000 rows: each INSERT stays under ~4 MB, retries are fast, and the
+  // full 20k completes in ~10 chunks instead of one slow giant statement.
   //
-  // Also the exact write behind losing 6 Onfido DOC_RAW files (~137k rows) the same week —
-  // that one was ER_LOCK_WAIT_TIMEOUT rather than ER_LOCK_DEADLOCK (both retried the same way
-  // here), from several ~2000-row chunk uploads landing minutes apart and colliding on this
-  // same table. A quick default backoff (100/200/300/400ms) is tuned for a momentary deadlock
-  // between two short statements; a lock-wait-timeout on a chunk this size reflects a real,
-  // possibly multi-second hold by a sibling chunk insert, so this call site gets a longer,
-  // more generous backoff and more attempts than the default — the client-side timeout on
-  // this endpoint (180s normal upload, 60s resubmit) has the headroom for it.
-  await withDeadlockRetry(() => db.execute(
-    `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
-     VALUES ${placeholders.join(", ")}`,
-    values
-  ), { attempts: 6, delayMs: 400 });
+  // withDeadlockRetry is still correct per-chunk: each chunk is one autocommit
+  // statement and its IDs were generated once above, so a retry is idempotent.
+  const STAGE_CHUNK = 2000;
+  for (let i = 0; i < staged.length; i += STAGE_CHUNK) {
+    const slice = staged.slice(i, i + STAGE_CHUNK);
+    const placeholders = slice.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const values = slice.flat();
+    await withDeadlockRetry(() => db.execute(
+      `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
+       VALUES ${placeholders}`,
+      values
+    ), { attempts: 6, delayMs: 400 });
+  }
   res.status(201).json({ success: true, count: rows.length });
 }));
 

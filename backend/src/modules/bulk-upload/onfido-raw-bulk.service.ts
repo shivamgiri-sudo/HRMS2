@@ -231,22 +231,29 @@ export async function importOnfidoRawBatch(
     await Promise.all(chunks.slice(i, i + CONCURRENCY).map(insertChunk));
   }
 
-  if (importedRowIds.length > 0) {
+  // 20k-row files produce 20k IDs — a single WHERE id IN (?) with 20k placeholders
+  // is slow and can stall the connection. Chunked at 500 to keep each statement fast.
+  const ROW_UPDATE_CHUNK = 500;
+  for (let i = 0; i < importedRowIds.length; i += ROW_UPDATE_CHUNK) {
+    const slice = importedRowIds.slice(i, i + ROW_UPDATE_CHUNK);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
-       WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds
+       WHERE id IN (${slice.map(() => "?").join(",")})`,
+      slice
     );
   }
   if (errorUpdates.length > 0) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
-    const ids = errorUpdates.map((u) => u.rowId);
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-       WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
-    );
+    for (let i = 0; i < errorUpdates.length; i += ROW_UPDATE_CHUNK) {
+      const slice = errorUpdates.slice(i, i + ROW_UPDATE_CHUNK);
+      const cases = slice.map(() => "WHEN ? THEN ?").join(" ");
+      const caseParams = slice.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+      const ids = slice.map((u) => u.rowId);
+      await db.execute(
+        `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
+         WHERE id IN (${ids.map(() => "?").join(",")})`,
+        [...caseParams, ...ids]
+      );
+    }
   }
 
   const finalStatus =
