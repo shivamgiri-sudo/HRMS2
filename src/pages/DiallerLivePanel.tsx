@@ -61,8 +61,11 @@ const useDrill = () => useContext(DrillDispatch);
 // ── Process detection ─────────────────────────────────────────────────────────
 export function detectDiallerProcess(processName: string): DiallerProcess {
   const n = processName.toLowerCase();
-  // Inbound (BLA BLI BLU, B-3, Inbound Customer Services, etc.)
-  if (n.includes("bla") || n.includes("bli") || n.includes("blu") || n.includes("b-3") || n.includes("b3 ") || n.includes("b3_")) return "inbound";
+  // Inbound (BLA BLI BLU, B-3, Inbound Customer Services, etc.). "bla bli", not a
+  // bare "bla"/"bli"/"blu": that matched "Bluevine Technologies" and showed it Bla
+  // Bli Blu's calls. The backend's detectLiveDashboard (live-dashboard-keys.ts)
+  // must agree — src/tests/live-dashboard-scope-parity.test.ts checks.
+  if (n.includes("bla bli") || n.includes("bla_bli") || n.includes("blabli") || n.includes("b-3") || n.includes("b3 ") || n.includes("b3_")) return "inbound";
   // Inbound by exact keywords (not Reginald)
   if ((n.includes("inbound") || n.includes("cdr_in")) && !n.includes("reginald")) return "inbound";
   // Reginald Email specifically (if process explicitly named with "email")

@@ -34,6 +34,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireLiveScope } from './live-dashboard-scope.js';
 import {
   getInboundSummary, getInboundMonthly, getInboundDaily, getInboundHourly,
   getInboundAgents, getInboundApr, getInboundDisposition, getInboundRepeat,
@@ -57,7 +58,8 @@ import {
 } from './dalmia.service.js';
 
 const router = Router();
-router.use(requireAuth);
+// Role + branch scope per endpoint group — see live-dashboard-scope.ts.
+router.use(requireAuth, requireLiveScope);
 
 function wrap(fn: (req: Request, res: Response) => Promise<unknown>) {
   return async (req: Request, res: Response) => {
