@@ -1003,24 +1003,28 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   const attendanceSource = await resolveAttendanceSource(employee);
 
-  // Gross is the contractual monthly remuneration the employee signs against.
+  // CTC is the contractual monthly remuneration the employee signs against in
+  // the employment-agreement appendix. It must come from exactly one source:
+  // the Payroll Head approved salary package (employee_payroll_head_review
+  // status='approved' AND package_accepted=1). Using any other source risks
+  // printing a figure the Payroll Head never signed off on.
   //
-  // Priority order (highest to lowest):
-  //   1. salary_package_master.gross — the authoritative offer figure assigned
-  //      by Payroll Head. This is exactly the number the appointment letter PDF
-  //      salary table already prints, so both documents now agree.
-  //   2. employee_salary_snapshot.gross — covers existing/legacy employees who
-  //      were never assigned through the package master flow.
-  //   3. Component sum — snapshot exists but gross column is 0 (DEFAULT 0 on
-  //      that table, so 0 ≠ null and a ?? fallback never fires). 15,518 rows.
-  //   4. ctc_offered (guarded) — last resort; see guard below.
-  //   5. null (blank on contract) — honest; fabricated zero is not.
+  // salary_component_assignments was the previous source but it is NOT
+  // consulted here for amounts: an active assignment row may exist without an
+  // approved review (264 employees measured 2026-09-08), so reading from it
+  // would bypass the approval gate.
+  //
+  // The appendix text says "inclusive of all expenses", matching CTC.
+  // gross (take-home + statutory deductions) was previously used but CTC is
+  // what the Payroll Head sets as the total cost of the offer.
   const [[packageRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT p.gross AS package_gross
-       FROM salary_component_assignments a
-       JOIN salary_package_master p ON p.id = a.package_id
-      WHERE a.employee_id = ? AND a.status = 'active' AND a.package_id IS NOT NULL
-      ORDER BY a.effective_date DESC
+    `SELECT p.ctc AS package_gross
+       FROM employee_payroll_head_review r
+       JOIN salary_package_master p ON p.id = r.salary_package_id
+      WHERE r.employee_id = ?
+        AND r.status = 'approved'
+        AND r.package_accepted = 1
+        AND r.salary_package_id IS NOT NULL
       LIMIT 1`,
     [employeeId],
   ).catch(() => [[null] as unknown as RowDataPacket[], []]);

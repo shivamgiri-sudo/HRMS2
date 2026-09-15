@@ -82,17 +82,21 @@ type Doc = PDFKit.PDFDocument;
 
 function drawLetterhead(doc: Doc, lh: BranchLetterhead) {
   const top = 34;
-  const width = doc.page.width - PAGE.margin * 2;
+  // Reserve the left 100pt for the logo so the right-aligned company name and
+  // address never overlap it, regardless of the logo's actual aspect ratio.
+  const logoMaxW = 100;
+  const textX = PAGE.margin + logoMaxW + 10; // 166pt from page edge
+  const textW = doc.page.width - PAGE.margin - textX; // ~373pt remaining
   const logo = logoPath();
   if (logo) {
-    try { doc.image(logo, PAGE.margin, top, { height: 26 }); } catch { /* text fallback below */ }
+    try { doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] }); } catch { /* text fallback below */ }
   }
   doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
-    .text(COMPANY_NAME, PAGE.margin, top, { width, align: "right" });
+    .text(COMPANY_NAME, textX, top, { width: textW, align: "right" });
 
   const addr = [lh.branchName, ...lh.addressLines].filter(Boolean).join(", ");
   doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
-    .text(addr, PAGE.margin, top + 12, { width, align: "right", height: 20, ellipsis: true });
+    .text(addr, textX, top + 12, { width: textW, align: "right", height: 20, ellipsis: true });
 
   const ruleY = top + 34;
   doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)

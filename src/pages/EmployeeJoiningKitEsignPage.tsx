@@ -172,12 +172,27 @@ export default function EmployeeJoiningKitEsignPage() {
                 </div>
                 {/* The signer must be able to read the exact file being signed,
                     not a summary of it. Sized against the viewport rather than a
-                    fixed 560px so an A4 page is legible without pinch-zooming. */}
+                    fixed 560px so an A4 page is legible without pinch-zooming.
+                    Mobile browsers (iOS/Android) block PDF iframes — the "Open
+                    full screen" link above covers those cases. */}
                 <iframe
                   title="Joining documents"
                   src={`/api/public/joining-kit/esign/${token}/download#view=FitH`}
                   className="h-[calc(100vh-160px)] min-h-[600px] w-full bg-white"
+                  onError={() => {/* browser swallows iframe load errors; user has the download link */}}
                 />
+                <p className="px-5 py-3 text-center text-xs text-slate-400">
+                  If the document does not appear above, use{" "}
+                  <a
+                    href={`/api/public/joining-kit/esign/${token}/download`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-400 underline"
+                  >
+                    Download to read offline
+                  </a>{" "}
+                  to open it in a new tab.
+                </p>
               </div>
             </div>
 
