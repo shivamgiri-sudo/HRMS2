@@ -1248,23 +1248,22 @@ function EnhancedSectionBlock({ s, staleAfterDays, period, onOpenDrill, isActive
               No metrics match this filter.
             </p>
           ) : (
-            <div style={hero ? { display: "grid", gap: 10, gridTemplateColumns: "240px 1fr", alignItems: "start" } : { display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
               {hero && (
-                <HeroKpiCard r={hero} staleAfter={staleAfterDays} period={period}
-                  onOpen={() => onOpenDrill(hero.metricKey)} />
+                <div style={{ gridColumn: "span 2", minWidth: 0 }}>
+                  <HeroKpiCard r={hero} staleAfter={staleAfterDays} period={period}
+                    onOpen={() => onOpenDrill(hero.metricKey)} />
+                </div>
               )}
-              {/* Rest — auto-fill grid, min 160px for tighter packing */}
-              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
-                {rest.map((r, i) => (
-                  <EnhancedMetricCard
-                    key={r.metricKey} r={r}
-                    accent={GAS_KPI_ACCENTS[i % GAS_KPI_ACCENTS.length]}
-                    staleAfter={staleAfterDays}
-                    period={period}
-                    onOpen={() => onOpenDrill(r.metricKey)}
-                  />
-                ))}
-              </div>
+              {rest.map((r, i) => (
+                <EnhancedMetricCard
+                  key={r.metricKey} r={r}
+                  accent={GAS_KPI_ACCENTS[i % GAS_KPI_ACCENTS.length]}
+                  staleAfter={staleAfterDays}
+                  period={period}
+                  onOpen={() => onOpenDrill(r.metricKey)}
+                />
+              ))}
             </div>
           )}
         </div>

@@ -866,6 +866,38 @@ const emailDailyTrend = (proc: "molecular-email" | "reginald-email" | "finnable"
   ],
 });
 
+// ── Reginald All Dashboard — Cart + Molecular Email + Reginald Email in one place ──
+type ReginaldTab = "cart" | "molecular" | "email";
+function ReginaldAllDashboard({ f }: { f: Filters }) {
+  const [tab, setTab] = useState<ReginaldTab>("cart");
+  const TABS: { key: ReginaldTab; label: string; badge?: string }[] = [
+    { key: "cart",     label: "Abandoned Cart" },
+    { key: "molecular", label: "Molecular Email", badge: "APR" },
+    { key: "email",    label: "Reginald Email",   badge: "APR" },
+  ];
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, background: "rgba(255,255,255,.06)", borderRadius: 10, padding: 4, width: "fit-content" }}>
+        {TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            cursor: "pointer", borderRadius: 8, padding: "6px 14px", fontSize: 11, fontWeight: 900, border: 0,
+            transition: "background .15s,color .15s",
+            background: tab === t.key ? "#fff" : "transparent",
+            color: tab === t.key ? "#1a3a5c" : "#9cb8d4",
+            boxShadow: tab === t.key ? "0 3px 8px rgba(0,0,0,.15)" : "none",
+          }}>
+            {t.label}
+            {t.badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, background: tab === t.key ? "#e0edff" : "rgba(255,255,255,.12)", color: tab === t.key ? "#2f6fed" : "#9cb8d4", borderRadius: 4, padding: "1px 5px" }}>{t.badge}</span>}
+          </button>
+        ))}
+      </div>
+      {tab === "cart"      && <CartDashboard f={f} />}
+      {tab === "molecular" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={f} />}
+      {tab === "email"     && <EmailAprDashboard proc="reginald-email"  label="Reginald Email"  campaign="EMAIL"   f={f} />}
+    </div>
+  );
+}
+
 function CartDashboard({ f }: { f: Filters }) {
   const [sub, setSub] = useState<CartSub>("sales");
   const drill = useDrill();
@@ -1840,7 +1872,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
         <style>{DRILL_STYLES}</style>
         <DateRangeFilter f={filters} onChange={setFilters} />
         {proc === "inbound" && <InboundDashboard f={filters} />}
-        {proc === "reginald-cart" && <CartDashboard f={filters} />}
+        {proc === "reginald-cart" && <ReginaldAllDashboard f={filters} />}
         {proc === "molecular-email" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={filters} />}
         {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
         {proc === "billing" && <BillingDashboard f={filters} />}
