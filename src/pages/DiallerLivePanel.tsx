@@ -106,6 +106,8 @@ async function fetchLive<T>(path: string, params: Record<string, string>): Promi
 function monthStart(): string { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); }
 function todayStr(): string { return new Date().toISOString().slice(0, 10); }
 function fmtDay(v: unknown): string { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
+function fmtSecAxis(s: number): string { if (s <= 0) return "0"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); if (h > 0) return `${h}h`; return `${m}m`; }
+function fmtSecShort(s: number): string { if (s <= 0) return "0s"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = Math.round(s % 60); if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; }
 /**
  * Normalises a row's date cell to the YYYY-MM-DD the API expects.
  *
@@ -590,8 +592,8 @@ function InboundDashboard({ f }: { f: Filters }) {
                 <Panel title="Call Volume Breakdown">
                   <ResponsiveContainer width="100%" height={200}><BarChart data={[{ name: "Handled", value: d.handled }, { name: "Abnd>20s", value: d.abndAfter }, { name: "Abnd≤20s", value: d.abndWithin }]}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="value" radius={[5, 5, 0, 0]}><Cell fill="#10b981" /><Cell fill="#f59e0b" /><Cell fill="#ef4444" /></Bar></BarChart></ResponsiveContainer>
                 </Panel>
-                <Panel title="Time Breakdown (Handled calls, seconds)">
-                  <ResponsiveContainer width="100%" height={200}><BarChart data={[{ name: "Talk", value: d.handledTalkSec ?? 0 }, { name: "Hold", value: d.holdSec ?? 0 }, { name: "ACW", value: d.handledAcwSec ?? 0 }]}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip /><Bar dataKey="value" fill="#2f6fed" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer>
+                <Panel title="Time Breakdown (Handled calls, duration)">
+                  <ResponsiveContainer width="100%" height={200}><BarChart data={[{ name: "Talk", value: d.handledTalkSec ?? 0 }, { name: "Hold", value: d.holdSec ?? 0 }, { name: "ACW", value: d.handledAcwSec ?? 0 }]}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} tickFormatter={fmtSecAxis} /><Tooltip formatter={(v: number) => [fmtSecShort(v), "Duration"]} /><Bar dataKey="value" fill="#2f6fed" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer>
                 </Panel>
               </div>
             </div>
@@ -657,7 +659,7 @@ function InboundDashboard({ f }: { f: Filters }) {
                 { h: "Ans ≤20s", k: "calls20" }, { h: "SL%", k: "sl", fmt: v => <PctBadge v={Number(v)} /> }, { h: "AL%", k: "al", fmt: v => <PctBadge v={Number(v)} /> },
                 { h: "AHT Sec", k: "ahtSec" }, { h: "WT Sec", k: "avgWrapSec" }, { h: "Login HC", k: "loginCount" }, { h: "CPA", k: "cpa" },
                 { h: "Abnd ≤20s", k: "abndWithin" }, { h: "Abnd >20s", k: "abndAfter" },
-                { h: "Talk Sec", k: "handledTalkSec" }, { h: "Hold Sec", k: "holdSec" },
+                { h: "Talk Time", k: "handledTalkSec", fmt: v => fmtSecShort(Number(v)) }, { h: "Hold Time", k: "holdSec", fmt: v => fmtSecShort(Number(v)) },
                 { h: "Repeat", k: "repeatCalls" }, { h: "Repeat %", k: "repeatPct", fmt: v => `${Number(v).toFixed(1)}%` },
               ]} rows={slotQ.data} />
             </Panel>

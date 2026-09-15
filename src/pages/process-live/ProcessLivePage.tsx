@@ -69,6 +69,8 @@ interface Filters { from: string; to: string }
 
 const monthStart = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0,10); };
 const todayStr = () => new Date().toISOString().slice(0,10);
+const fmtSecAxis = (s: number): string => { if (s <= 0) return "0"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); if (h > 0) return `${h}h`; return `${m}m`; };
+const fmtSecShort = (s: number): string => { if (s <= 0) return "0s"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = Math.round(s % 60); if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; };
 
 async function fetchLive<T>(path: string, params: Record<string,string>): Promise<T> {
   const qs = new URLSearchParams(params).toString();
@@ -278,10 +280,10 @@ function IBOverview({ f }: { f:Filters }) {
             </BarChart>
           </ResponsiveContainer>
         </Panel>
-        <Panel title="Time Breakdown (handled calls, seconds)">
+        <Panel title="Time Breakdown (handled calls, duration)">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={[{name:"Talk",value:d.handledTalkSec??0},{name:"Hold",value:d.holdSec??0},{name:"ACW (Wrap)",value:d.handledAcwSec??0}]}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0"/><XAxis dataKey="name" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}}/><Tooltip/>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0"/><XAxis dataKey="name" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}} tickFormatter={fmtSecAxis}/><Tooltip formatter={(v: number) => [fmtSecShort(v), "Duration"]}/>
               <Bar dataKey="value" fill="#2f6fed" radius={[6,6,0,0]}/>
             </BarChart>
           </ResponsiveContainer>
@@ -396,7 +398,7 @@ function IBHourly({ f }: { f:Filters }) {
     {h:"AL%",k:"al",fmt:v=><Pct v={Number(v)}/>},{h:"AHT Sec",k:"ahtSec"},
     {h:"WT Sec",k:"avgWrapSec"},{h:"Login HC",k:"loginCount"},{h:"CPA",k:"cpa"},
     {h:"Abnd ≤20s",k:"abndWithin"},{h:"Abnd >20s",k:"abndAfter"},
-    {h:"Talk Time",k:"talkTime"},{h:"Talk Sec",k:"handledTalkSec"},{h:"Hold Sec",k:"holdSec"},
+    {h:"Talk Time",k:"talkTime"},{h:"Talk Time (fmt)",k:"handledTalkSec",fmt:(v)=>fmtSecShort(Number(v))},{h:"Hold Time",k:"holdSec",fmt:(v)=>fmtSecShort(Number(v))},
     {h:"Repeat",k:"repeatCalls"},{h:"Repeat %",k:"repeatPct",fmt:v=>`${Number(v).toFixed(1)}%`},
   ];
 
