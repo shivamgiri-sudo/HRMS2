@@ -3,7 +3,7 @@
  *
  * Source tables  : cdr_ob_25 (CDR), vicidial_agent_log_10_25 (APR)
  *                  mas_hrms.reginald_abandoned_cart_sales_raw (Sales — uploaded via REGINALD_ABANDONED_CART_SALES)
- * Campaigns      : ABANDON, KANNADA, KERALA, TAMIL, TELUGU
+ * Campaigns      : ABANDON, KERALA, TAMIL, TELUGU, RTO, NDRMO, NDRRM, NPSRM, RTOMO
  * Handled logic  : talk_sec > 0 (connected = talk happened)
  *
  * All data points match GAS Day-wise / Analyst-wise / Yearly dashboard:
@@ -22,14 +22,16 @@
 
 import type { RowDataPacket } from 'mysql2';
 import { dialerQuery } from '../../db/dialerDb.js';
-import { n, pct, round, fmtSec, parseRange } from './dialler-utils.js';
+import { n, pct, round, fmtSec, fmtDuration, parseRange } from './dialler-utils.js';
+import { resolveEmployeeNames, codeKey } from './employee-names.js';
+import { cachedLive } from './live-cache.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket as MasRow } from 'mysql2';
 
 const CDR_TABLE = 'cdr_ob_25';
 const APR_TABLE = 'vicidial_agent_log_10_25';
 
-export const CART_CAMPAIGNS = ['ABANDON', 'KANNADA', 'KERALA', 'TAMIL', 'TELUGU'];
+export const CART_CAMPAIGNS = ['ABANDON', 'KERALA', 'TAMIL', 'TELUGU', 'RTO', 'NDRMO', 'NDRRM', 'NPSRM', 'RTOMO'];
 const CAMP_IN = CART_CAMPAIGNS.map(() => '?').join(',');
 
 // ── Summary (overall KPIs) ────────────────────────────────────────────────────
@@ -58,6 +60,11 @@ export interface CampaignRow {
 }
 
 export async function getCartSummary(rawFilters: { from?: string; to?: string }): Promise<CartSummary> {
+  const range = parseRange(rawFilters);
+  return cachedLive('cart-summary', range, () => computeCartSummary(range));
+}
+
+async function computeCartSummary(rawFilters: { from?: string; to?: string }): Promise<CartSummary> {
   const { from, to } = parseRange(rawFilters);
 
   const [overallRows, campRows, aprRows] = await Promise.all([
@@ -89,7 +96,7 @@ export async function getCartSummary(rawFilters: { from?: string; to?: string })
     dialerQuery<RowDataPacket>(`
       SELECT SUM(talk_sec) AS talkSec, SUM(dispo_sec) AS dispoSec, SUM(dead_sec) AS deadSec, SUM(wait_sec) AS waitSec
       FROM ${APR_TABLE}
-      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY)
         AND UPPER(campaign_id) IN (${CAMP_IN})
     `, [from, to, ...CART_CAMPAIGNS]),
   ]);
@@ -146,6 +153,11 @@ export interface CartDayRow {
 }
 
 export async function getCartDaily(rawFilters: { from?: string; to?: string }): Promise<CartDayRow[]> {
+  const range = parseRange(rawFilters);
+  return cachedLive('cart-daily', range, () => computeCartDaily(range));
+}
+
+async function computeCartDaily(rawFilters: { from?: string; to?: string }): Promise<CartDayRow[]> {
   const { from, to } = parseRange(rawFilters);
 
   const [cdrRows, aprRows] = await Promise.all([
@@ -168,7 +180,7 @@ export async function getCartDaily(rawFilters: { from?: string; to?: string }): 
         SUM(dead_sec) AS deadSec, SUM(wait_sec) AS waitSec,
         COUNT(DISTINCT user) AS agents
       FROM ${APR_TABLE}
-      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY)
         AND UPPER(campaign_id) IN (${CAMP_IN})
       GROUP BY DATE(event_time) ORDER BY date
     `, [from, to, ...CART_CAMPAIGNS]),
@@ -219,7 +231,38 @@ export interface CartMonthRow {
   avgWrapSec: number; avgWrap: string;
 }
 
+/** Calendar months overlapping [from, to], each clipped to the range — the same
+ *  edges the single range query used, so each slice yields that month's row. */
+function monthSlices(from: string, to: string): { from: string; to: string }[] {
+  const slices: { from: string; to: string }[] = [];
+  let [y, m] = from.slice(0, 7).split('-').map(Number);
+  for (;;) {
+    const ym = `${y}-${String(m).padStart(2, '0')}`;
+    if (ym > to.slice(0, 7)) break;
+    const monthEnd = `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+    slices.push({ from: `${ym}-01` < from ? from : `${ym}-01`, to: monthEnd > to ? to : monthEnd });
+    if (++m > 12) { m = 1; y++; }
+  }
+  return slices;
+}
+
+/**
+ * One calendar month at a time, each cached on its own. A closed month's
+ * figures never change, so they are reused across days and users and a
+ * multi-month view only pays for months not yet seen. Months run one after
+ * another so a wide range cannot take over the five-connection dialler pool —
+ * the reason a long range used to leave this tab stuck.
+ */
 export async function getCartMonthly(rawFilters: { from?: string; to?: string }): Promise<CartMonthRow[]> {
+  const { from, to } = parseRange(rawFilters);
+  const rows: CartMonthRow[] = [];
+  for (const slice of monthSlices(from, to)) {
+    rows.push(...await cachedLive('cart-monthly', slice, () => computeCartMonthly(slice)));
+  }
+  return rows;
+}
+
+async function computeCartMonthly(rawFilters: { from?: string; to?: string }): Promise<CartMonthRow[]> {
   const { from, to } = parseRange(rawFilters);
 
   const [cdrRows, aprRows] = await Promise.all([
@@ -240,7 +283,7 @@ export async function getCartMonthly(rawFilters: { from?: string; to?: string })
       SELECT DATE_FORMAT(event_time,'%Y-%m') AS month,
         SUM(talk_sec) AS talkSec, SUM(dispo_sec) AS dispoSec, SUM(dead_sec) AS deadSec
       FROM ${APR_TABLE}
-      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY)
         AND UPPER(campaign_id) IN (${CAMP_IN})
       GROUP BY month ORDER BY month
     `, [from, to, ...CART_CAMPAIGNS]),
@@ -282,7 +325,10 @@ export async function getCartMonthly(rawFilters: { from?: string; to?: string })
 // ── Analyst-wise table (CDR + APR merged) ─────────────────────────────────────
 
 export interface CartAnalystRow {
+  /** Employee code (cdr_ob_25.Agent). */
   analyst: string;
+  /** Employee name from HRMS; null when the code has no HRMS record. */
+  analystName: string | null;
   loginDays: number;
   totalDialed: number;
   uniqueDialed: number;
@@ -298,6 +344,11 @@ export interface CartAnalystRow {
 }
 
 export async function getCartAnalysts(rawFilters: { from?: string; to?: string }): Promise<CartAnalystRow[]> {
+  const range = parseRange(rawFilters);
+  return cachedLive('cart-analysts', range, () => computeCartAnalysts(range));
+}
+
+async function computeCartAnalysts(rawFilters: { from?: string; to?: string }): Promise<CartAnalystRow[]> {
   const { from, to } = parseRange(rawFilters);
 
   const [cdrRows, aprRows] = await Promise.all([
@@ -322,7 +373,7 @@ export async function getCartAnalysts(rawFilters: { from?: string; to?: string }
         SUM(dead_sec) AS deadSec, SUM(wait_sec) AS waitSec, SUM(pause_sec) AS pauseSec,
         COUNT(DISTINCT DATE(event_time)) AS loginDays
       FROM ${APR_TABLE}
-      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY)
         AND UPPER(campaign_id) IN (${CAMP_IN})
       GROUP BY user LIMIT 200
     `, [from, to, ...CART_CAMPAIGNS]),
@@ -330,6 +381,7 @@ export async function getCartAnalysts(rawFilters: { from?: string; to?: string }
 
   const aprMap: Record<string, RowDataPacket> = {};
   for (const r of aprRows) aprMap[String(r.user ?? '').toUpperCase().trim()] = r;
+  const names = await resolveEmployeeNames(cdrRows.map(r => String(r.analyst ?? '')));
 
   return cdrRows.map(r => {
     const analyst = String(r.analyst ?? '');
@@ -351,6 +403,7 @@ export async function getCartAnalysts(rawFilters: { from?: string; to?: string }
 
     return {
       analyst,
+      analystName: names.get(codeKey(analyst)) ?? null,
       loginDays,
       totalDialed: n(r.totalDialed),
       uniqueDialed: n(r.uniqueDialed),
@@ -370,18 +423,29 @@ export async function getCartAnalysts(rawFilters: { from?: string; to?: string }
 // ── APR with LB/TB/WB ────────────────────────────────────────────────────────
 
 export interface CartAprRow {
-  user: string; aprCalls: number;
+  user: string;
+  /** Employee name from HRMS; null when the code has no HRMS record. */
+  agentName: string | null;
+  aprCalls: number;
   netLoginSec: number; netLoginTime: string;
   talkSec: number; talk: string;
   waitSec: number; wait: string;
   dispoSec: number; dispo: string;
   pauseSec: number; pause: string;
-  lbTime: string; tbTime: string; wbTime: string;
+  lbTime: string; tbTime: string; wbTime: string; mbTime: string; qbTime: string;
   utilization: number;
 }
 
 export async function getCartApr(rawFilters: { from?: string; to?: string }): Promise<CartAprRow[]> {
+  const range = parseRange(rawFilters);
+  return cachedLive('cart-apr', range, () => computeCartApr(range));
+}
+
+async function computeCartApr(rawFilters: { from?: string; to?: string }): Promise<CartAprRow[]> {
   const { from, to } = parseRange(rawFilters);
+  // Break codes are the dialler's own sub_status values: LB lunch, TB tea,
+  // WB washroom, MB meeting, QB quality. MB and QB were never broken out;
+  // both exist in vicidial_agent_log_10_25 (QB is rare — 15 events in 2026).
   const sql = `
     SELECT user,
       SUM(wait_sec) AS waitSec, SUM(talk_sec) AS talkSec,
@@ -389,26 +453,33 @@ export async function getCartApr(rawFilters: { from?: string; to?: string }): Pr
       SUM(CASE WHEN UPPER(sub_status)='LB' THEN pause_sec ELSE 0 END) AS lbSec,
       SUM(CASE WHEN UPPER(sub_status)='TB' THEN pause_sec ELSE 0 END) AS tbSec,
       SUM(CASE WHEN UPPER(sub_status) IN ('WB','WC','WASHR') THEN pause_sec ELSE 0 END) AS wbSec,
+      SUM(CASE WHEN UPPER(sub_status)='MB' THEN pause_sec ELSE 0 END) AS mbSec,
+      SUM(CASE WHEN UPPER(sub_status)='QB' THEN pause_sec ELSE 0 END) AS qbSec,
       COUNT(*) AS aprCalls
     FROM ${APR_TABLE}
-    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+    WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY)
       AND UPPER(campaign_id) IN (${CAMP_IN})
     GROUP BY user ORDER BY talkSec DESC LIMIT 200
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to, ...CART_CAMPAIGNS]);
+  const names = await resolveEmployeeNames(rows.map(r => String(r.user ?? '')));
   return rows.map(r => {
     const waitSec = n(r.waitSec), talkSec = n(r.talkSec), dispoSec = n(r.dispoSec), pauseSec = n(r.pauseSec);
-    const lbSec = n(r.lbSec), tbSec = n(r.tbSec), wbSec = n(r.wbSec);
     const netLoginSec = waitSec + talkSec + dispoSec + pauseSec;
+    const user = String(r.user ?? '');
+    // Every duration uses fmtDuration's fixed H:MM:SS so a column never mixes
+    // "47:36" (minutes) with "1:40:53" (hours).
     return {
-      user: String(r.user ?? ''),
+      user,
+      agentName: names.get(codeKey(user)) ?? null,
       aprCalls: n(r.aprCalls),
-      netLoginSec: Math.round(netLoginSec), netLoginTime: fmtSec(netLoginSec),
-      talkSec: Math.round(talkSec), talk: fmtSec(talkSec),
-      waitSec: Math.round(waitSec), wait: fmtSec(waitSec),
-      dispoSec: Math.round(dispoSec), dispo: fmtSec(dispoSec),
-      pauseSec: Math.round(pauseSec), pause: fmtSec(pauseSec),
-      lbTime: fmtSec(lbSec), tbTime: fmtSec(tbSec), wbTime: fmtSec(wbSec),
+      netLoginSec: Math.round(netLoginSec), netLoginTime: fmtDuration(netLoginSec),
+      talkSec: Math.round(talkSec), talk: fmtDuration(talkSec),
+      waitSec: Math.round(waitSec), wait: fmtDuration(waitSec),
+      dispoSec: Math.round(dispoSec), dispo: fmtDuration(dispoSec),
+      pauseSec: Math.round(pauseSec), pause: fmtDuration(pauseSec),
+      lbTime: fmtDuration(n(r.lbSec)), tbTime: fmtDuration(n(r.tbSec)), wbTime: fmtDuration(n(r.wbSec)),
+      mbTime: fmtDuration(n(r.mbSec)), qbTime: fmtDuration(n(r.qbSec)),
       utilization: netLoginSec > 0 ? pct(waitSec + talkSec, netLoginSec) : 0,
     };
   });

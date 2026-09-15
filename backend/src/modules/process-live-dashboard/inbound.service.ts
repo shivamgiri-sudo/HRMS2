@@ -22,31 +22,8 @@
 
 import type { RowDataPacket } from 'mysql2';
 import { dialerQuery } from '../../db/dialerDb.js';
-import { db } from '../../db/mysql.js';
-import { n, pct, round, fmtSec, finalMetric, parseRange, type MetricResult } from './dialler-utils.js';
-
-/**
- * The dialler's agent log identifies agents only by employee code (its `user`
- * column, e.g. MAS62353); it carries no name. Names live in HRMS, so resolve
- * them from mas_hrms.employees. Codes with no HRMS record resolve to null.
- */
-async function resolveEmployeeNames(codes: string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(codes.map(c => c.trim().toUpperCase()).filter(Boolean))];
-  const names = new Map<string, string>();
-  if (unique.length === 0) return names;
-  // employee_code is compared bare so its index is used — wrapping it in
-  // UPPER()/TRIM() forces a full scan. Dialler codes are already upper-case;
-  // the JS side normalises both sides for the lookup.
-  const [rows] = await db.query<RowDataPacket[]>(
-    `SELECT employee_code AS code,
-            TRIM(COALESCE(NULLIF(TRIM(full_name), ''), CONCAT_WS(' ', first_name, last_name))) AS name
-       FROM employees
-      WHERE employee_code IN (?)`,
-    [unique],
-  );
-  for (const r of rows) if (r.name) names.set(String(r.code).trim().toUpperCase(), String(r.name));
-  return names;
-}
+import { n, pct, round, fmtSec, fmtDateTime, finalMetric, parseRange, type MetricResult } from './dialler-utils.js';
+import { resolveEmployeeNames, codeKey } from './employee-names.js';
 
 const CDR_TABLE = 'cdr_in_10_4';
 const APR_TABLE = 'vicidial_agent_log_10_4';
@@ -57,7 +34,7 @@ const APR_TABLE = 'vicidial_agent_log_10_4';
  * 1–15 Sep 2026: INBOUND holds exactly the six agents in cdr_in_10_4, BLABLIBL
  * the three outbound agents the business flagged (e.g. MAS62353, MAS61459).
  */
-const INBOUND_CAMPAIGN = 'INBOUND';
+const INBOUND_CAMPAIGN = 'BLABLIBL';
 const DISPO_TABLE = 'data_master_in';
 const CLIENT_ID = 487;
 const NO_AGENT = 'Inbound No Agent';
@@ -275,7 +252,7 @@ export async function getInboundAgents(rawFilters: { from?: string; to?: string 
         SUM(CASE WHEN UPPER(sub_status) IN ('WB','WC','WASHR') THEN pause_sec ELSE 0 END) AS wbSec,
         COUNT(*) AS aprCalls
       FROM ${APR_TABLE}
-      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
       GROUP BY user LIMIT 200
     `, [from, to, INBOUND_CAMPAIGN]),
   ]);
@@ -359,7 +336,7 @@ export async function getInboundApr(rawFilters: { from?: string; to?: string }):
       COUNT(*) AS aprCalls,
       MIN(event_time) AS loginStart, MAX(event_time) AS logout
     FROM ${APR_TABLE}
-    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
+    WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
     GROUP BY user ORDER BY talkSec DESC LIMIT 200
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to, INBOUND_CAMPAIGN]);
@@ -371,7 +348,7 @@ export async function getInboundApr(rawFilters: { from?: string; to?: string }):
     const user = String(r.user ?? '');
     return {
       user,
-      agentName: names.get(user.trim().toUpperCase()) ?? null,
+      agentName: names.get(codeKey(user)) ?? null,
       aprCalls: n(r.aprCalls),
       netLoginSec: Math.round(netLoginSec), netLoginTime: fmtSec(netLoginSec),
       talkSec: Math.round(talkSec), talk: fmtSec(talkSec),
@@ -380,8 +357,8 @@ export async function getInboundApr(rawFilters: { from?: string; to?: string }):
       pauseSec: Math.round(pauseSec), pause: fmtSec(pauseSec),
       lbTime: fmtSec(lbSec), tbTime: fmtSec(tbSec), wbTime: fmtSec(wbSec),
       utilization: netLoginSec > 0 ? pct(waitSec + talkSec, netLoginSec) : 0,
-      loginStart: r.loginStart ? String(r.loginStart) : '',
-      logout: r.logout ? String(r.logout) : '',
+      loginStart: fmtDateTime(r.loginStart),
+      logout: fmtDateTime(r.logout),
     };
   });
 }

@@ -114,6 +114,15 @@ const LABEL_STYLE_ORANGE: React.CSSProperties = { fontSize: 9, fontWeight: 800, 
 
 function fmtDay(v: unknown): string { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
 function fmtSecAxis(s: number): string { if (s <= 0) return "0"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); if (h > 0) return `${h}h`; return `${m}m`; }
+/** A monthly view spans at least the last three calendar months — with the
+ *  day filter's default (1st of this month to today) it showed a single row.
+ *  An earlier "from" chosen in the filter still wins. */
+function monthlyFrom(f: { from: string; to: string }): string {
+  const [y, m] = f.to.slice(0, 7).split("-").map(Number);
+  const d = new Date(y, m - 3, 1);
+  const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  return start < f.from ? start : f.from;
+}
 function fmtSecShort(s: number): string { if (s <= 0) return "0s"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = Math.round(s % 60); if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; }
 /**
  * Normalises a row's date cell to the YYYY-MM-DD the API expects.
@@ -215,6 +224,15 @@ function rowToFields<T extends Record<string, unknown>>(cols: Col<T>[], row: T) 
     fields.push({ label: humaniseKey(k), value: String(v) });
   }
   return fields;
+}
+
+/** Agent-name column for tables keyed by employee code. Names come from HRMS;
+ *  a code with no HRMS record says so rather than showing a blank cell. */
+function nameCol<T>(k: string): Col<T> {
+  return {
+    h: "Agent Name", k, left: true,
+    fmt: (v: unknown) => v ? String(v) : <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Not in HRMS</span>,
+  };
 }
 
 function DataTable<T extends Record<string, unknown>>({ cols, rows, onRowClick, drillTitle }: {
@@ -724,7 +742,7 @@ function InboundDashboard({ f }: { f: Filters }) {
         aprQ.isLoading ? <Spinner /> : aprQ.error || !aprQ.data ? <Err msg="Failed to load APR" /> : (
           <Panel title="Agent Productivity Report (APR)" sub={`${aprQ.data.length} agents`}>
             <DataTable cols={[
-              { h: "Agent Name", k: "agentName" as const, left: true, fmt: (v: unknown) => v ? String(v) : <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Not in HRMS</span> },
+              nameCol("agentName"),
               { h: "Agent ID", k: "user" as const, left: true }, { h: "APR Calls", k: "aprCalls" as const }, { h: "Net Login", k: "netLoginTime" as const },
               { h: "Talk", k: "talk" as const }, { h: "Wait", k: "wait" as const }, { h: "Dispo", k: "dispo" as const }, { h: "Pause", k: "pause" as const },
               { h: "LB", k: "lbTime" as const }, { h: "TB", k: "tbTime" as const }, { h: "WB", k: "wbTime" as const },
@@ -800,7 +818,7 @@ function InboundDashboard({ f }: { f: Filters }) {
 // ── REGINALD CART DASHBOARD ───────────────────────────────────────────────────
 type CartSummaryT = { offered: number; connected: number; abandoned: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; talk: string; avgTalk: string; aht: string; avgWrap: string; loginCount: number; lt30: number; ge30: number; generatedAt: string; byCampaign: { campaign: string; offered: number; connected: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; avgTalk: string }[] };
 type CartDayT = { date: string; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; loginCount: number; avgTalk: string; aht: string; avgWrap: string; avgIdle: string };
-type CartAnalystT = { analyst: string; loginDays: number; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; lt30: number; ge30: number; avgTalk: string; aht: string; avgWrap: string; avgWait: string; netLoginTime: string; utilization: number };
+type CartAnalystT = { analyst: string; analystName: string | null; loginDays: number; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; lt30: number; ge30: number; avgTalk: string; aht: string; avgWrap: string; avgWait: string; netLoginTime: string; utilization: number };
 
 type CartSub = "sales" | "overview" | "monthly" | "daily" | "analysts" | "apr" | "email-apr";
 
@@ -904,9 +922,10 @@ function CartDashboard({ f }: { f: Filters }) {
   const fmtD = fmtDay;
   const summQ = useQuery({ queryKey: ["pld", "cart", "summary", f], queryFn: () => fetchLive<CartSummaryT>("reginald-cart/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
   const dayQ = useQuery({ queryKey: ["pld", "cart", "daily", f], queryFn: () => fetchLive<CartDayT[]>("reginald-cart/daily", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
-  const monthQ = useQuery({ queryKey: ["pld", "cart", "monthly", f], queryFn: () => fetchLive<{ month: string; monthLabel: string; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; loginCount: number; avgTalk: string; aht: string; avgWrap: string }[]>("reginald-cart/monthly", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
+  const monthFrom = monthlyFrom(f);
+  const monthQ = useQuery({ queryKey: ["pld", "cart", "monthly", monthFrom, f.to], queryFn: () => fetchLive<{ month: string; monthLabel: string; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; loginCount: number; avgTalk: string; aht: string; avgWrap: string }[]>("reginald-cart/monthly", { from: monthFrom, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
   const analystQ = useQuery({ queryKey: ["pld", "cart", "analysts", f], queryFn: () => fetchLive<CartAnalystT[]>("reginald-cart/analysts", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "analysts" });
-  const aprQ = useQuery({ queryKey: ["pld", "cart", "apr", f], queryFn: () => fetchLive<{ user: string; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; utilization: number }[]>("reginald-cart/apr", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "apr" });
+  const aprQ = useQuery({ queryKey: ["pld", "cart", "apr", f], queryFn: () => fetchLive<{ user: string; agentName: string | null; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; mbTime: string; qbTime: string; utilization: number }[]>("reginald-cart/apr", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "apr" });
   const salesQ = useQuery({ queryKey: ["pld", "cart", "sales", f], queryFn: () => fetchLive<CartSalesT>("reginald-cart/sales", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "sales" });
   const emailAprSummQ = useQuery({ queryKey: ["pld", "reginald-email", "summary", f], queryFn: () => fetchLive<{ totalLoginTime: string; totalTalk: string; totalPause: string; totalLbTime: string; totalTbTime: string; avgUtilization: number; agentCount: number }>("reginald-email/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email-apr" });
   const emailAprAgentsQ = useQuery({ queryKey: ["pld", "reginald-email", "agents", f], queryFn: () => fetchLive<EmailAprAgentRow[]>("reginald-email/agents", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email-apr" });
@@ -939,19 +958,29 @@ function CartDashboard({ f }: { f: Filters }) {
           </Panel>
         </div>
       ))}
-      {sub === "monthly" && (monthQ.isLoading ? <Spinner /> : monthQ.error || !monthQ.data ? <Err msg="Failed" /> : (
+      {sub === "monthly" && (monthQ.isLoading ? (
+        <div>
+          <Spinner />
+          <div style={{ textAlign: "center", fontSize: 12, color: "#697586", marginTop: -20 }}>
+            Totalling {monthFrom.slice(0, 7)} to {f.to.slice(0, 7)} from the dialler's full call log. A month not viewed recently can take a minute or two; after that it opens instantly.
+          </div>
+        </div>
+      ) : monthQ.error || !monthQ.data ? <Err msg="Could not load monthly data" /> : (
         <Panel title="Monthly Performance">
           <DataTable cols={[{ h: "Month", k: "monthLabel" as const, left: true }, { h: "Total CDR", k: "totalDialed" as const }, { h: "Unique Dialled", k: "uniqueDialed" as const }, { h: "Unique Connected", k: "uniqueConnected" as const }, { h: "Connect%", k: "connectPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }, { h: "Avg Daily Login", k: "loginCount" as const }, { h: "Avg Talk", k: "avgTalk" as const }, { h: "AHT", k: "aht" as const }, { h: "Avg Wrap", k: "avgWrap" as const }]} rows={monthQ.data} />
         </Panel>
       ))}
       {sub === "analysts" && (analystQ.isLoading ? <Spinner /> : analystQ.error || !analystQ.data ? <Err msg="Failed to load analysts" /> : (
         <Panel title="Analyst-wise Performance (CDR + APR)" sub={`${analystQ.data.length} analysts`}>
-          <DataTable<CartAnalystT> cols={[{ h: "Analyst", k: "analyst", left: true }, { h: "Login Days", k: "loginDays" }, { h: "Total CDR", k: "totalDialed" }, { h: "Unique Dialled", k: "uniqueDialed" }, { h: "Unique Connected", k: "uniqueConnected" }, { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> }, { h: "<30s", k: "lt30" }, { h: "≥30s", k: "ge30" }, { h: "Avg Talk", k: "avgTalk" }, { h: "AHT", k: "aht" }, { h: "Avg Wrap", k: "avgWrap" }, { h: "Avg Wait", k: "avgWait" }, { h: "Net Login", k: "netLoginTime" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={analystQ.data} />
+          <DataTable<CartAnalystT> cols={[nameCol("analystName"), { h: "Analyst ID", k: "analyst", left: true }, { h: "Login Days", k: "loginDays" }, { h: "Total CDR", k: "totalDialed" }, { h: "Unique Dialled", k: "uniqueDialed" }, { h: "Unique Connected", k: "uniqueConnected" }, { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> }, { h: "<30s", k: "lt30" }, { h: "≥30s", k: "ge30" }, { h: "Avg Talk", k: "avgTalk" }, { h: "AHT", k: "aht" }, { h: "Avg Wrap", k: "avgWrap" }, { h: "Avg Wait", k: "avgWait" }, { h: "Net Login", k: "netLoginTime" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={analystQ.data} />
         </Panel>
       ))}
       {sub === "apr" && (aprQ.isLoading ? <Spinner /> : aprQ.error || !aprQ.data ? <Err msg="Failed to load APR" /> : (
         <Panel title="Agent Productivity Report (APR)" sub={`${aprQ.data.length} agents`}>
-          <DataTable cols={[{ h: "Agent ID", k: "user" as const, left: true }, { h: "APR Calls", k: "aprCalls" as const }, { h: "Net Login", k: "netLoginTime" as const }, { h: "Talk", k: "talk" as const }, { h: "Wait", k: "wait" as const }, { h: "Dispo", k: "dispo" as const }, { h: "Pause", k: "pause" as const }, { h: "LB", k: "lbTime" as const }, { h: "TB", k: "tbTime" as const }, { h: "WB", k: "wbTime" as const }, { h: "Utilization", k: "utilization" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }]} rows={aprQ.data} />
+          <DataTable cols={[nameCol("agentName"), { h: "Agent ID", k: "user" as const, left: true }, { h: "APR Calls", k: "aprCalls" as const }, { h: "Net Login", k: "netLoginTime" as const }, { h: "Talk", k: "talk" as const }, { h: "Wait", k: "wait" as const }, { h: "Dispo", k: "dispo" as const }, { h: "Pause", k: "pause" as const }, { h: "LB", k: "lbTime" as const }, { h: "TB", k: "tbTime" as const }, { h: "WB", k: "wbTime" as const }, { h: "MB", k: "mbTime" as const }, { h: "QB", k: "qbTime" as const }, { h: "Utilization", k: "utilization" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }]} rows={aprQ.data} />
+          <div style={{ marginTop: 8, fontSize: 11, color: "#697586" }}>
+            LB lunch · TB tea · WB washroom · MB meeting · QB quality break. All times are hours:minutes:seconds.
+          </div>
         </Panel>
       ))}
       {sub === "sales" && (salesQ.isLoading ? <Spinner /> : salesQ.error || !salesQ.data ? <Err msg="Failed to load sales data" /> : (() => {
@@ -1013,6 +1042,7 @@ function CartDashboard({ f }: { f: Filters }) {
           {emailAprAgentsQ.isLoading ? <Spinner /> : emailAprAgentsQ.error || !emailAprAgentsQ.data ? <Err msg="Failed to load email agents" /> : (
             <Panel title="Email Analyst APR" sub={`${emailAprAgentsQ.data.length} agents`}>
               <DataTable<EmailAprAgentRow> cols={[
+                nameCol("agentName"),
                 { h: "Agent ID", k: "user", left: true }, { h: "Calls", k: "aprCalls" }, { h: "Net Login", k: "netLoginTime" },
                 { h: "Talk", k: "talk" }, { h: "Wait", k: "wait" }, { h: "Dispo", k: "dispo" }, { h: "Pause", k: "pause" },
                 { h: "LB", k: "lbTime" }, { h: "TB", k: "tbTime" }, { h: "WB", k: "wbTime" },
@@ -1028,7 +1058,7 @@ function CartDashboard({ f }: { f: Filters }) {
 }
 
 // ── EMAIL APR DASHBOARD ───────────────────────────────────────────────────────
-type EmailAprAgentRow = { user: string; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; totalBreak: string; acht: string; utilization: number };
+type EmailAprAgentRow = { user: string; agentName: string | null; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; totalBreak: string; acht: string; utilization: number };
 type EmailTicketData = {
   dashboard: string; from: string; to: string;
   totalTickets: number; emailClosed: number; openPending: number; emailReopen: number;
@@ -1383,7 +1413,7 @@ function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-emai
       ))}
       {sub === "agents" && (agentQ.isLoading ? <Spinner /> : agentQ.error || !agentQ.data ? <Err msg="Failed to load agents" /> : (
         <Panel title={`${label} — Analyst APR`} sub={`${agentQ.data.length} agents`}>
-          <DataTable<EmailAprAgentRow> cols={[{ h: "Agent ID", k: "user", left: true }, { h: "Calls", k: "aprCalls" }, { h: "Net Login", k: "netLoginTime" }, { h: "Talk", k: "talk" }, { h: "Wait", k: "wait" }, { h: "Dispo", k: "dispo" }, { h: "Pause", k: "pause" }, { h: "LB", k: "lbTime" }, { h: "TB", k: "tbTime" }, { h: "WB", k: "wbTime" }, { h: "Total Break", k: "totalBreak" }, { h: "ACHT", k: "acht" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={agentQ.data} />
+          <DataTable<EmailAprAgentRow> cols={[nameCol("agentName"), { h: "Agent ID", k: "user", left: true }, { h: "Calls", k: "aprCalls" }, { h: "Net Login", k: "netLoginTime" }, { h: "Talk", k: "talk" }, { h: "Wait", k: "wait" }, { h: "Dispo", k: "dispo" }, { h: "Pause", k: "pause" }, { h: "LB", k: "lbTime" }, { h: "TB", k: "tbTime" }, { h: "WB", k: "wbTime" }, { h: "Total Break", k: "totalBreak" }, { h: "ACHT", k: "acht" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={agentQ.data} />
         </Panel>
       ))}
       {sub === "tickets" && (

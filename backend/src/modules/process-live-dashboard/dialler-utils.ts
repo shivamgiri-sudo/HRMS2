@@ -20,6 +20,33 @@ export function round(v: number, digits = 2): number {
 }
 
 /** Format seconds as H:MM:SS or M:SS */
+/**
+ * Always H:MM:SS ("0:47:36", "1:40:53"). For APR time columns: fmtSec drops the
+ * hour below sixty minutes, so a column mixed "47:36" (47 min) with "1:40:53"
+ * and read as 47 hours. Kept separate so fmtSec's M:SS stays for AHT-style values.
+ */
+export function fmtDuration(sec: number): string {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * A dialler DATETIME as "DD/MM/YYYY HH:mm". The dialler pool sets no
+ * `dateStrings`, so these arrive as JS Dates, and String(date) produced
+ * "Tue Sep 01 2026 09:59:49 GMT+0530 (India Standard Time)". Local getters
+ * recover the stored wall-clock time; plain "YYYY-MM-DD HH:MM:SS" strings are
+ * handled too. Empty or unparseable input returns ''.
+ */
+export function fmtDateTime(v: unknown): string {
+  if (v === null || v === undefined || v === '') return '';
+  const d = v instanceof Date ? v : new Date(String(v).replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return String(v);
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export function fmtSec(sec: number): string {
   const s = Math.floor(sec);
   const h = Math.floor(s / 3600);

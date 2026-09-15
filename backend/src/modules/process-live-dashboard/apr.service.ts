@@ -19,7 +19,8 @@
 
 import type { RowDataPacket } from 'mysql2';
 import { dialerQuery } from '../../db/dialerDb.js';
-import { n, pct, fmtSec, round, parseRange } from './dialler-utils.js';
+import { n, pct, fmtSec, fmtDuration, fmtDateTime, round, parseRange } from './dialler-utils.js';
+import { resolveEmployeeNames, codeKey } from './employee-names.js';
 
 const APR_TABLE = 'vicidial_agent_log_10_25';
 
@@ -59,7 +60,7 @@ export async function getAprSummary(process: EmailProcess, rawFilters: { from?: 
       SUM(CASE WHEN UPPER(sub_status) IN ('WB','WC','WASHR') THEN pause_sec ELSE 0 END) AS wbSec,
       COUNT(DISTINCT user) AS agentCount
     FROM ${APR_TABLE}
-    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
+    WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to, campaign]);
   const r = rows[0] ?? {};
@@ -103,7 +104,7 @@ export async function getAprDaily(process: EmailProcess, rawFilters: { from?: st
       SUM(dispo_sec) AS dispoSec, SUM(pause_sec) AS pauseSec,
       COUNT(DISTINCT user) AS agentCount
     FROM ${APR_TABLE}
-    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
+    WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
     GROUP BY DATE(event_time) ORDER BY date
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to, campaign]);
@@ -127,6 +128,8 @@ export async function getAprDaily(process: EmailProcess, rawFilters: { from?: st
 
 export interface AprAgentRow {
   user: string;
+  /** Employee name from HRMS; null when the code has no HRMS record. */
+  agentName: string | null;
   aprCalls: number;
   netLoginSec: number; netLoginTime: string;
   talkSec: number; talk: string;
@@ -155,10 +158,11 @@ export async function getAprAgents(process: EmailProcess, rawFilters: { from?: s
       COUNT(*) AS aprCalls,
       MIN(event_time) AS loginStart, MAX(event_time) AS logout
     FROM ${APR_TABLE}
-    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
+    WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
     GROUP BY user ORDER BY talkSec DESC LIMIT 200
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to, campaign]);
+  const names = await resolveEmployeeNames(rows.map(r => String(r.user ?? '')));
   return rows.map(r => {
     const waitSec = n(r.waitSec), talkSec = n(r.talkSec), dispoSec = n(r.dispoSec), pauseSec = n(r.pauseSec);
     const lbSec = n(r.lbSec), tbSec = n(r.tbSec), wbSec = n(r.wbSec);
@@ -166,22 +170,27 @@ export async function getAprAgents(process: EmailProcess, rawFilters: { from?: s
     const aprCalls = n(r.aprCalls);
     const achtSec = aprCalls > 0 ? Math.round((talkSec + dispoSec) / aprCalls) : 0;
     const totalBreakSec = lbSec + tbSec + wbSec;
+    const user = String(r.user ?? '');
+    // Time totals use fmtDuration's fixed H:MM:SS so a column never mixes
+    // "28:01" (minutes) with "112:47:28" (hours). ACHT is a per-task average,
+    // so it keeps fmtSec's M:SS like every other AHT on these dashboards.
     return {
-      user: String(r.user ?? ''),
+      user,
+      agentName: names.get(codeKey(user)) ?? null,
       aprCalls,
-      netLoginSec: Math.round(netLoginSec), netLoginTime: fmtSec(netLoginSec),
-      talkSec: Math.round(talkSec), talk: fmtSec(talkSec),
-      waitSec: Math.round(waitSec), wait: fmtSec(waitSec),
-      dispoSec: Math.round(dispoSec), dispo: fmtSec(dispoSec),
-      pauseSec: Math.round(pauseSec), pause: fmtSec(pauseSec),
-      lbSec: Math.round(lbSec), lbTime: fmtSec(lbSec),
-      tbSec: Math.round(tbSec), tbTime: fmtSec(tbSec),
-      wbSec: Math.round(wbSec), wbTime: fmtSec(wbSec),
-      totalBreakSec: Math.round(totalBreakSec), totalBreak: fmtSec(totalBreakSec),
+      netLoginSec: Math.round(netLoginSec), netLoginTime: fmtDuration(netLoginSec),
+      talkSec: Math.round(talkSec), talk: fmtDuration(talkSec),
+      waitSec: Math.round(waitSec), wait: fmtDuration(waitSec),
+      dispoSec: Math.round(dispoSec), dispo: fmtDuration(dispoSec),
+      pauseSec: Math.round(pauseSec), pause: fmtDuration(pauseSec),
+      lbSec: Math.round(lbSec), lbTime: fmtDuration(lbSec),
+      tbSec: Math.round(tbSec), tbTime: fmtDuration(tbSec),
+      wbSec: Math.round(wbSec), wbTime: fmtDuration(wbSec),
+      totalBreakSec: Math.round(totalBreakSec), totalBreak: fmtDuration(totalBreakSec),
       achtSec, acht: fmtSec(achtSec),
       utilization: netLoginSec > 0 ? pct(waitSec + talkSec, netLoginSec) : 0,
-      loginStart: r.loginStart ? String(r.loginStart) : '',
-      logout: r.logout ? String(r.logout) : '',
+      loginStart: fmtDateTime(r.loginStart),
+      logout: fmtDateTime(r.logout),
     };
   });
 }
