@@ -528,11 +528,22 @@ export default function NativeAppointmentLetterQueue() {
           {drawer.mode === "preview" && (
             <div className="shrink-0 flex items-start gap-2.5 px-6 py-3 bg-amber-50 border-b border-amber-100">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-              <p className="text-xs text-amber-800">
-                This is a draft — no signature, no letter number, no DB write. Review the name, designation,
-                joining date and salary carefully before issuing.
-                If anything looks wrong, fix it in the employee profile or salary package first.
-              </p>
+              <div className="text-xs text-amber-800">
+                <p>
+                  This is a draft — no signature, no letter number, no DB write. Review the name, designation,
+                  joining date and salary carefully before issuing.
+                  If anything looks wrong, fix it in the employee profile or salary package first.
+                </p>
+                {drawer.row.warnings.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {drawer.row.warnings.map((w) => (
+                      <li key={w.code} className="flex items-start gap-1.5 font-medium">
+                        <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0 text-amber-600" />{w.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
 

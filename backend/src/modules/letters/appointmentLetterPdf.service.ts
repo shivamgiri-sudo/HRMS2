@@ -268,22 +268,6 @@ const TERMS: Array<[string, string[]]> = [
   ]],
 ];
 
-const ANNEXURE_DOCS = [
-  "Six recent passport-sized photographs.",
-  "A copy of your updated Curriculum Vitae.",
-  "A copy of this Appointment Letter.",
-  "Proof of Address (rent agreement, ration card, voter's ID, driving licence, electricity bill or landline bill).",
-  "Secondary School Certificate (10th) / 10th marksheet.",
-  "Senior Secondary School Certificate (12th) / 12th marksheet.",
-  "Bachelor's degree, all years' marksheets, graduation degree certificate, diploma or certification course.",
-  "Post-graduation certificate.",
-  "Additional qualifications.",
-  "Proof of Identity (passport, driving licence, voter's ID, bank passbook with photo or PAN card).",
-  "Appointment letter of last organisation served.",
-  "Last pay slip drawn.",
-  "Form 16 (Part A) from the previous employer, or salary certificate.",
-];
-
 /** Render the letter. Returns unsigned PDF bytes ready for the company DSC. */
 export async function renderAppointmentLetterPdf(input: AppointmentLetterInput): Promise<Buffer> {
   const issue = input.issueDate ?? new Date();
@@ -334,7 +318,7 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     }
 
     body(doc, "All terms and conditions will be governed by the Company's policies as stated from time to time, and the Company may at its sole discretion, as it deems fit, revoke or change such policies.");
-    body(doc, "The terms of this offer shall be kept strictly confidential. You shall execute all the documents indicated in Annexure-I so as to give effect to this offer.");
+    body(doc, "The terms of this offer shall be kept strictly confidential.");
     body(doc, "Please return the duplicate copy of this letter duly signed in token of your having accepted the offer, and initial each page in acceptance of the terms and conditions set out herein, within 10 days of the issuance of this letter, failing which this offer stands automatically withdrawn.");
     body(doc, `We welcome you and wish you every success in your career with ${COMPANY_NAME}`);
     // Keep the closing block together — ensureRoom for both lines prevents
@@ -343,17 +327,6 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     doc.moveDown(0.4);
     body(doc, "Sincerely,");
     body(doc, `Date of Joining: ${istDisplayDate(input.dateOfJoining)}`);
-
-    doc.addPage();
-    heading(doc, "ANNEXURE-I");
-    doc.font("Helvetica-Bold").fontSize(9).text("DOCUMENTS / CREDENTIALS REQUIRED AT THE TIME OF JOINING");
-    doc.moveDown(0.3);
-    ANNEXURE_DOCS.forEach((t, i) => body(doc, `${i + 1}. ${t}`));
-    doc.moveDown(0.3);
-    doc.font("Helvetica-Bold").fontSize(9).text("DOCUMENTS TO BE DULY FILLED AND SIGNED AT THE TIME OF JOINING");
-    doc.moveDown(0.3);
-    ["Employee's Record Form", "Code of Conduct", "Phone Undertaking / Asset Undertaking", "ESI Form", "EPF Form"]
-      .forEach((t, i) => body(doc, `${i + 1}. ${t}`));
 
     // The company block goes on the final page, inside the reserved band.
     signaturePage(doc, { ...input, issueDate: issue });
