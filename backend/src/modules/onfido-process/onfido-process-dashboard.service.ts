@@ -1048,10 +1048,35 @@ export interface AttritionMonthRow {
 
 const rate1 = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
 const rate2 = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 10000) / 100 : null);
-/** Same as rate1, but withholds a rate whose numerator exceeds its own denominator
- *  (more exits/UL-days than the group's average headcount/scheduled-days is not a
- *  real ratio — see getAttritionBreakdown's note on transient buckets like Training). */
-const rate1Guarded = (n: number, d: number) => (n <= d ? rate1(n, d) : null);
+/** Avg HC as the business defines it: (opening + closing) / 2, to two decimals. */
+const twoPointAvg = (opening: number, closing: number) => Math.round(((opening + closing) / 2) * 100) / 100;
+
+/** On-floor rows only — HC and attrition are counted on the floor, never in training. */
+const ONFLOOR = `LOWER(COALESCE(state,'onfloor')) = 'onfloor'`;
+
+/** First and last calendar day of a YYYY-MM month, as ISO dates. Lets month
+ *  queries filter with a sargable `work_date BETWEEN` instead of wrapping the
+ *  indexed column in DATE_FORMAT(). */
+function monthBounds(ym: string): { start: string; end: string } {
+  const [y, m] = ym.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return { start: `${ym}-01`, end: `${ym}-${String(last).padStart(2, "0")}` };
+}
+
+/** The reference dashboard's AON buckets, in its display order. The upload
+ *  spells them several ways across months ("0-30" / "0 to 30", and the top
+ *  bucket as both "Above than 90" and "Above then 90"), so each is matched by
+ *  pattern rather than by exact string. */
+const AON_BUCKETS: { match: RegExp; label: string }[] = [
+  { match: /^0\s*(-|to)\s*30$/, label: "0 to 30" },
+  { match: /^31\s*(-|to)\s*60$/, label: "31 to 60" },
+  { match: /^61\s*(-|to)\s*90$/, label: "61 to 90" },
+  { match: /^(above\s*(than|then)?\s*90|90\s*\+|>\s*90)$/, label: "Above 90" },
+];
+function aonDisplayLabel(raw: string): string | null {
+  const key = raw.trim().toLowerCase().replace(/\s+/g, " ");
+  return AON_BUCKETS.find((b) => b.match.test(key))?.label ?? null;
+}
 
 /**
  * Shared TL/AM filter builder for every Attrition/Quality/ETM/Task Skip
@@ -1071,16 +1096,22 @@ function tlAmFilter(tlName?: string, amName?: string): { clause: string; params:
 /**
  * One correctly-scoped row per real calendar month overlapping [from, to].
  *
- * avgHc is the mean of every day's real headcount across the whole month, not
- * a naive (openingHc + closingHc) / 2 — confirmed live that the two-point
- * version breaks down badly at TL/AM granularity: a transient bucket like the
- * "Training" TL can show 1-2 people on its first/last day of a month while 50+
- * people rotate through it that same month, so two-point "avg HC" of ~1-2
- * against 50+ exits produced a 3775% shrinkage rate. Averaging the real daily
- * HC across every day in the month is still 100% derived from the source
- * file — no fabrication — it is just a materially less noisy sample than two
- * arbitrary single days, and matches how "average headcount for the period"
- * is normally defined in workforce reporting.
+ * Formulas are the business's own, from its reference Attrition & Shrinkage
+ * dashboard (the "attrition correction file", 2026-09-15):
+ *   Opening HC   = on-floor HC on the month's first available day
+ *   Closing HC   = on-floor HC on the month's last available day
+ *   Avg HC       = (Opening HC + Closing HC) / 2
+ *   Attrition %  = attrition / Avg HC
+ *   UL / Actual Shrinkage % = UL (or Actual UL) / Scheduled
+ * all to two decimals. Checked against the reference's Month Wise Detail
+ * table: every month Jan–Aug 2026 reproduces it exactly (e.g. Jan 36 /
+ * ((229 + 224) / 2) = 15.89%). The previous mean-of-every-day Avg HC
+ * disagreed with the published figure in every month (Aug: 32.3% vs 33.91%).
+ *
+ * Transient on-floor-less buckets such as the "Training" TL, whose two-point
+ * average used to produce 3000%+ rates, are excluded at the breakdown level
+ * (getAttritionBreakdown) exactly as the reference does, rather than by
+ * changing the formula here.
  */
 export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<AttritionMonthRow[]> {
   const f = readFilters(rawFilters);
@@ -1096,13 +1127,15 @@ export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?
        GROUP BY ym, work_date ORDER BY ym, work_date`,
     [f.from, f.to, ...params]
   );
-  const hcByMonth = new Map<string, { opening: number; closing: number; sum: number; days: number }>();
+  // Rows are ordered by date, so the first row of a month is its opening HC and
+  // the last is its closing HC.
+  const hcByMonth = new Map<string, { opening: number; closing: number }>();
   for (const r of dayRows) {
     const ym = r.ym as string;
     const hc = Number(r.hc ?? 0);
     const entry = hcByMonth.get(ym);
-    if (!entry) hcByMonth.set(ym, { opening: hc, closing: hc, sum: hc, days: 1 });
-    else { entry.closing = hc; entry.sum += hc; entry.days += 1; }
+    if (!entry) hcByMonth.set(ym, { opening: hc, closing: hc });
+    else entry.closing = hc;
   }
 
   const [aggRows] = await pool.query<RowDataPacket[]>(
@@ -1116,16 +1149,16 @@ export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?
   );
 
   return aggRows.map((r): AttritionMonthRow => {
-    const hcInfo = hcByMonth.get(r.ym) ?? { opening: 0, closing: 0, sum: 0, days: 0 };
-    const avgHc = hcInfo.days > 0 ? Math.round((hcInfo.sum / hcInfo.days) * 10) / 10 : 0;
+    const hcInfo = hcByMonth.get(r.ym) ?? { opening: 0, closing: 0 };
+    const avgHc = twoPointAvg(hcInfo.opening, hcInfo.closing);
     const attrition = Number(r.attrition ?? 0);
     const scheduled = Number(r.scheduled ?? 0);
     return {
       month: r.ym, openingHc: hcInfo.opening, closingHc: hcInfo.closing, avgHc,
-      attritionCount: attrition, attritionRate: rate1(attrition, avgHc),
+      attritionCount: attrition, attritionRate: rate2(attrition, avgHc),
       scheduled, unplannedLeave: Number(r.ul ?? 0), actualUl: Number(r.actualUl ?? 0),
-      ulShrinkageRate: rate1Guarded(Number(r.ul ?? 0), scheduled),
-      actualShrinkageRate: rate1Guarded(Number(r.actualUl ?? 0), scheduled),
+      ulShrinkageRate: rate2(Number(r.ul ?? 0), scheduled),
+      actualShrinkageRate: rate2(Number(r.actualUl ?? 0), scheduled),
     };
   });
 }
@@ -1172,9 +1205,17 @@ export type AttritionDimension = "am_name" | "tl_name" | "aon_bucket" | "locatio
 
 export interface AttritionBreakdownRow {
   label: string;
+  month: string;
+  openingHc: number;
+  closingHc: number;
+  avgHc: number;
   attritionCount: number;
   attritionRate: number | null;
+  scheduled: number;
+  unplannedLeave: number;
+  actualUl: number;
   ulShrinkageRate: number | null;
+  actualShrinkageRate: number | null;
   note?: string;
 }
 
@@ -1189,61 +1230,199 @@ export async function getAttritionBreakdown(
   const pool = await getOnfidoPool();
   const col = dimension;
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { start, end } = monthBounds(targetMonth);
 
-  // Same fix as getAttritionMonthlyDetail: average every day's HC across the
-  // month for this group, not just its first/last day — a transient bucket
-  // (e.g. TL "Training") can carry very few people on any single day while
-  // dozens rotate through it across the month, so a two-point average against
-  // a whole month's exits produced rates over 3000%.
-  const onfloor = `LOWER(COALESCE(state,'onfloor')) = 'onfloor'`;
-  const [dayRows] = await pool.query<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(TRIM(${col}), ''), '(unassigned)') AS label, work_date, SUM(hc) AS hc
-       FROM onfido_agent_daily_raw WHERE DATE_FORMAT(work_date, '%Y-%m') = ? ${clause} AND ${onfloor}
-       GROUP BY label, work_date ORDER BY label, work_date`,
-    [targetMonth, ...params]
+  // Opening/closing are every group's on-floor HC on the MONTH's first and last
+  // available day — not the first/last day that group happens to appear. A TL
+  // who took over mid-month therefore opens at 0, exactly as the reference
+  // shows (e.g. its Sep-26 TL table: opening 0, closing 6).
+  const [[bounds]] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(MIN(work_date), '%Y-%m-%d') AS firstDay, DATE_FORMAT(MAX(work_date), '%Y-%m-%d') AS lastDay
+       FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ? ${clause} AND ${ONFLOOR}`,
+    [start, end, ...params]
   );
-  const hcByLabel = new Map<string, { sum: number; days: number }>();
-  for (const r of dayRows) {
-    const label = r.label as string;
-    const hc = Number(r.hc ?? 0);
-    const entry = hcByLabel.get(label);
-    if (!entry) hcByLabel.set(label, { sum: hc, days: 1 });
-    else { entry.sum += hc; entry.days += 1; }
-  }
+  if (!bounds?.firstDay) return [];
 
+  // HC and attrition are on-floor; scheduled and UL span every state, the same
+  // split getAttritionMonthlyDetail uses, so the rows reconcile to the month.
   const [aggRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${col}), ''), '(unassigned)') AS label,
-            COALESCE(SUM(CASE WHEN ${onfloor} THEN attrition_flag ELSE 0 END),0) AS attrition,
+            COALESCE(SUM(CASE WHEN ${ONFLOOR} AND work_date = ? THEN hc ELSE 0 END),0) AS openingHc,
+            COALESCE(SUM(CASE WHEN ${ONFLOOR} AND work_date = ? THEN hc ELSE 0 END),0) AS closingHc,
+            COALESCE(SUM(CASE WHEN ${ONFLOOR} THEN hc ELSE 0 END),0) AS onfloorHcDays,
+            COALESCE(SUM(CASE WHEN ${ONFLOOR} THEN attrition_flag ELSE 0 END),0) AS attrition,
             COALESCE(SUM(scheduled),0) AS scheduled,
-            COALESCE(SUM(unplanned_leave),0) AS ul
-       FROM onfido_agent_daily_raw WHERE DATE_FORMAT(work_date, '%Y-%m') = ? ${clause}
+            COALESCE(SUM(unplanned_leave),0) AS ul,
+            COALESCE(SUM(actual_ul),0) AS actualUl
+       FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ? ${clause}
        GROUP BY label`,
-    [targetMonth, ...params]
+    [bounds.firstDay, bounds.lastDay, start, end, ...params]
   );
 
-  return aggRows
-    .map((r): AttritionBreakdownRow => {
-      const hcInfo = hcByLabel.get(r.label) ?? { sum: 0, days: 0 };
-      const avgHc = hcInfo.days > 0 ? hcInfo.sum / hcInfo.days : 0;
+  const rows = aggRows
+    // A group with no on-floor presence all month — the "Training" AM/TL, the
+    // "Practice" AON bucket — is not a team with a headcount. The reference
+    // omits these, and a two-point average over them is how rates of 3000%+
+    // were produced before, so they are left out rather than rated.
+    .filter((r) => Number(r.onfloorHcDays ?? 0) > 0)
+    .map((r): AttritionBreakdownRow | null => {
+      const raw = String(r.label);
+      // An AON label outside the known buckets is shown as-is, never dropped:
+      // dropping it silently shrinks the table below the month's own totals.
+      const label = dimension === "aon_bucket" ? (aonDisplayLabel(raw) ?? raw) : raw;
+      const openingHc = Number(r.openingHc ?? 0);
+      const closingHc = Number(r.closingHc ?? 0);
+      const avgHc = twoPointAvg(openingHc, closingHc);
       const attrition = Number(r.attrition ?? 0);
-      // A bucket whose average headcount is smaller than its own exit count
-      // for the month cannot be a real, stable team — that combination only
-      // shows up for transient placeholder buckets like TL "Training" or
-      // "Support" (onboarding washouts / floaters get tagged there, not a
-      // person who was ever really "on" that team's daily roster). Rather
-      // than publish a >100%-style rate for those, the rate is withheld with
-      // a note — the same way the reference dashboard's own TL Wise table
-      // omits "Training"/"Support" from its attrition-rate rows entirely.
-      const rateIsMeaningful = avgHc >= attrition;
+      const scheduled = Number(r.scheduled ?? 0);
       return {
-        label: r.label,
+        label, month: targetMonth, openingHc, closingHc, avgHc,
         attritionCount: attrition,
-        attritionRate: rateIsMeaningful ? rate1(attrition, avgHc) : null,
-        ulShrinkageRate: rate1Guarded(Number(r.ul ?? 0), Number(r.scheduled ?? 0)),
-        note: rateIsMeaningful ? undefined : `Avg HC (${Math.round(avgHc * 10) / 10}) is smaller than exits — likely a transient bucket, not a stable team`,
+        attritionRate: rate2(attrition, avgHc),
+        scheduled, unplannedLeave: Number(r.ul ?? 0), actualUl: Number(r.actualUl ?? 0),
+        ulShrinkageRate: rate2(Number(r.ul ?? 0), scheduled),
+        actualShrinkageRate: rate2(Number(r.actualUl ?? 0), scheduled),
       };
     })
-    .sort((a, b) => b.attritionCount - a.attritionCount);
+    .filter((r): r is AttritionBreakdownRow => r !== null);
+
+  // Ordering follows the reference: AM alphabetical, AON by bucket, TL (and
+  // anything else) worst attrition first.
+  if (dimension === "am_name") return rows.sort((a, b) => a.label.localeCompare(b.label));
+  if (dimension === "aon_bucket") {
+    const rank = (l: string) => { const i = AON_BUCKETS.findIndex((b) => b.label === l); return i === -1 ? AON_BUCKETS.length : i; };
+    return rows.sort((a, b) => rank(a.label) - rank(b.label) || a.label.localeCompare(b.label));
+  }
+  return rows.sort((a, b) => (b.attritionRate ?? -1) - (a.attritionRate ?? -1) || b.attritionCount - a.attritionCount);
+}
+
+export interface AttritionAonMonthRow { month: string; buckets: Record<string, number | null> }
+
+/**
+ * Attrition % per AON bucket, per calendar month — the "AON Month Wise ·
+ * Attrition %" chart. Each month uses its own first/last on-floor day for the
+ * two-point Avg HC, exactly as getAttritionMonthlyDetail does for the total.
+ */
+export async function getAttritionAonMonthly(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<AttritionAonMonthRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(work_date, '%Y-%m-%d') AS day, TRIM(aon_bucket) AS aon,
+            COALESCE(SUM(hc),0) AS hc, COALESCE(SUM(attrition_flag),0) AS attrition
+       FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ? ${clause} AND ${ONFLOOR}
+       GROUP BY day, aon ORDER BY day`,
+    [f.from, f.to, ...params]
+  );
+
+  // month -> { firstDay, lastDay, per bucket: hc by day + attrition }
+  const months = new Map<string, { first: string; last: string; buckets: Map<string, { hcByDay: Map<string, number>; attrition: number }> }>();
+  const extraLabels = new Set<string>();
+  for (const r of rows) {
+    const raw = String(r.aon ?? "").trim() || "(unassigned)";
+    const label = aonDisplayLabel(raw) ?? raw;
+    if (!AON_BUCKETS.some((b) => b.label === label)) extraLabels.add(label);
+    const day = String(r.day);
+    const ym = day.slice(0, 7);
+    let m = months.get(ym);
+    if (!m) { m = { first: day, last: day, buckets: new Map() }; months.set(ym, m); }
+    if (day < m.first) m.first = day;
+    if (day > m.last) m.last = day;
+    let b = m.buckets.get(label);
+    if (!b) { b = { hcByDay: new Map(), attrition: 0 }; m.buckets.set(label, b); }
+    b.hcByDay.set(day, (b.hcByDay.get(day) ?? 0) + Number(r.hc ?? 0));
+    b.attrition += Number(r.attrition ?? 0);
+  }
+
+  return [...months.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, m]) => {
+    const buckets: Record<string, number | null> = {};
+    // Unrecognised labels are reported alongside the known buckets, not dropped.
+    for (const label of [...AON_BUCKETS.map((b) => b.label), ...extraLabels]) {
+      const b = m.buckets.get(label);
+      buckets[label] = b ? rate2(b.attrition, twoPointAvg(b.hcByDay.get(m.first) ?? 0, b.hcByDay.get(m.last) ?? 0)) : null;
+    }
+    return { month, buckets };
+  });
+}
+
+export interface AttritionReasonGroup {
+  type: "Voluntary" | "Involuntary" | "Unspecified";
+  totals: number[];
+  total: number;
+  reasons: { reason: string; counts: number[]; total: number }[];
+}
+export interface AttritionReasonMonthly {
+  months: string[];
+  groups: AttritionReasonGroup[];
+  grandTotals: number[];
+  grandTotal: number;
+}
+
+/**
+ * Month-on-month attrition count by type and reason — the Voluntary vs
+ * Involuntary chart and the Reason-wise table. On-floor exits only, the same
+ * population as the Attrition Count, so every month's grand total equals it.
+ *
+ * The upload spells both columns inconsistently ("Involuntary" / "InVoluntary",
+ * "Health Issue" / "Health issue"), so values are grouped case-insensitively and
+ * shown in their most common spelling. Exits with no type are kept, under
+ * "Unspecified", rather than dropped — otherwise the grand total stops matching.
+ */
+export async function getAttritionReasonMonthly(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<AttritionReasonMonthly> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(work_date, '%Y-%m') AS ym, TRIM(attrition_type) AS type, TRIM(attrition_reason) AS reason,
+            COALESCE(SUM(attrition_flag),0) AS n
+       FROM onfido_agent_daily_raw WHERE attrition_flag = 1 AND work_date BETWEEN ? AND ? ${clause} AND ${ONFLOOR}
+       GROUP BY ym, type, reason`,
+    [f.from, f.to, ...params]
+  );
+
+  const months = [...new Set(rows.map((r) => String(r.ym)))].sort();
+  const mIdx = new Map(months.map((m, i) => [m, i]));
+  const typeOf = (t: unknown): AttritionReasonGroup["type"] => {
+    const k = String(t ?? "").trim().toLowerCase();
+    return k === "voluntary" ? "Voluntary" : k === "involuntary" ? "Involuntary" : "Unspecified";
+  };
+
+  // group -> reasonKey -> { counts, spellings }
+  const acc = new Map<AttritionReasonGroup["type"], Map<string, { counts: number[]; spellings: Map<string, number> }>>();
+  for (const r of rows) {
+    const type = typeOf(r.type);
+    const spelling = String(r.reason ?? "").trim() || "Not specified";
+    const key = spelling.toLowerCase();
+    const n = Number(r.n ?? 0);
+    let g = acc.get(type);
+    if (!g) { g = new Map(); acc.set(type, g); }
+    let e = g.get(key);
+    if (!e) { e = { counts: months.map(() => 0), spellings: new Map() }; g.set(key, e); }
+    e.counts[mIdx.get(String(r.ym))!] += n;
+    e.spellings.set(spelling, (e.spellings.get(spelling) ?? 0) + n);
+  }
+
+  const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+  const groups: AttritionReasonGroup[] = (["Voluntary", "Involuntary", "Unspecified"] as const)
+    .filter((type) => acc.has(type))
+    .map((type) => {
+      const reasons = [...acc.get(type)!.values()]
+        .map((e) => ({
+          reason: [...e.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0],
+          counts: e.counts,
+          total: sum(e.counts),
+        }))
+        .sort((a, b) => b.total - a.total);
+      const totals = months.map((_, i) => sum(reasons.map((x) => x.counts[i])));
+      return { type, totals, total: sum(totals), reasons };
+    });
+
+  const grandTotals = months.map((_, i) => sum(groups.map((g) => g.totals[i])));
+  return { months, groups, grandTotals, grandTotal: sum(grandTotals) };
 }
 
 export interface AttritionExitRow {

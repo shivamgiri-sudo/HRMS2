@@ -140,6 +140,14 @@ router.get("/attrition/exits", requireAuth, requireRole(...VIEWER_ROLES), h(asyn
   const data = await svc.listAttritionExits(readQueryFilters(req));
   res.json({ success: true, data });
 }));
+router.get("/attrition/aon-monthly", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getAttritionAonMonthly(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/attrition/reason-monthly", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getAttritionReasonMonthly(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
 
 router.get("/etm/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getEtmOverview(readQueryFilters(req));
