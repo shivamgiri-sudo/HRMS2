@@ -11,7 +11,7 @@ import { db } from "../../db/mysql.js";
  */
 
 export const CLOVIA_FEEDBACK_HEADERS = [
-  "Unique", "Call_Date", "Date", "Advisor_Id", "Phone_Number", "Language", "Option", "CSAT_DSAT",
+  "Unique", "Call Date", "Date", "Advisor Id", "Phone Number", "Language", "Option", "C-SAT/D-SAT",
 ] as const;
 
 export function parseNullableFlag(raw: unknown): number | null {
@@ -97,7 +97,7 @@ export async function importCloviaFeedbackBatch(
     }
 
     const uniqueRef = String(data["Unique"] ?? "").trim();
-    const callDate = parseCallDate(data["Call_Date"]);
+    const callDate = parseCallDate(data["Call Date"]);
     const reportDate = parseDate(data["Date"]) ?? callDate?.slice(0, 10) ?? null;
     if (!uniqueRef || !callDate || !reportDate) {
       const msg = `Row ${row.row_no}: "Unique", "Call_Date" and "Date" are all required — together they are the row's identity`;
@@ -118,11 +118,11 @@ export async function importCloviaFeedbackBatch(
             csat_flag = VALUES(csat_flag)`,
         [
           randomUUID(), processId, reportDate, callDate, uniqueRef,
-          String(data["Advisor_Id"] ?? "").trim() || null,
-          String(data["Phone_Number"] ?? "").trim() || null,
+          String(data["Advisor Id"] ?? "").trim() || null,
+          String(data["Phone Number"] ?? "").trim() || null,
           String(data["Language"] ?? "").trim() || null,
           String(data["Option"] ?? "").trim() || null,
-          parseNullableFlag(data["CSAT_DSAT"]),
+          parseNullableFlag(data["C-SAT/D-SAT"]),
           batchId,
           importedByUserId,
         ] as never[],

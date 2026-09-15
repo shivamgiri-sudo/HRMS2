@@ -1045,6 +1045,7 @@ const MIGRATION_MANIFEST: string[] = [
   // which have no ALTER privileges on onfido_db. Migration must be run manually with onfido
   // credentials from .env (ONFIDO_DB_*). File kept on disk; moved to knownUnlisted so it cannot
   // be accidentally re-scheduled through the standard runner.
+  "1768_clovia_feedback_fix_column_names.sql", // Registered 2026-09-15. Fixes upload_template_master required/optional columns for CLOVIA_FEEDBACK to match real export headers (spaces not underscores; "C-SAT/D-SAT" not "CSAT_DSAT"). BATCH-1789448243216 and BATCH-1789448209967 were stuck at 'uploaded'/0 rows because the frontend header-validation found no matching columns.
   ];
 
 export type MigrationHealth = {
