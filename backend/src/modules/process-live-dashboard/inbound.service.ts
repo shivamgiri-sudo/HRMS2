@@ -50,6 +50,14 @@ async function resolveEmployeeNames(codes: string[]): Promise<Map<string, string
 
 const CDR_TABLE = 'cdr_in_10_4';
 const APR_TABLE = 'vicidial_agent_log_10_4';
+/**
+ * The APR table carries two campaigns: INBOUND (the agents answering this
+ * dashboard's calls) and BLABLIBL (Bla Bli Blu's outbound team). Without this
+ * filter outbound agents appear in the inbound APR. Confirmed against the data,
+ * 1–15 Sep 2026: INBOUND holds exactly the six agents in cdr_in_10_4, BLABLIBL
+ * the three outbound agents the business flagged (e.g. MAS62353, MAS61459).
+ */
+const INBOUND_CAMPAIGN = 'INBOUND';
 const DISPO_TABLE = 'data_master_in';
 const CLIENT_ID = 487;
 const NO_AGENT = 'Inbound No Agent';
@@ -211,6 +219,8 @@ export async function getInboundHourly(rawFilters: { date?: string }): Promise<I
 // ── Agent-wise table with APR merge ──────────────────────────────────────────
 
 export interface InboundAgentRow {
+  /** Employee code — the key the APR columns are joined on. */
+  agentId: string;
   agentName: string;
   offered: number;
   handled: number;
@@ -237,9 +247,14 @@ export interface InboundAgentRow {
 export async function getInboundAgents(rawFilters: { from?: string; to?: string }): Promise<InboundAgentRow[]> {
   const { from, to } = parseRange(rawFilters);
 
+  // CDR and APR are joined on the employee code: cdr_in_10_4.AgentId holds the
+  // same value as the APR table's `user` (e.g. MAS60390). They used to be joined
+  // on AgentName, a display name ("Parag Mukherjee") that never equals a code,
+  // so every APR column in this table read zero.
   const [cdrRows, aprRows] = await Promise.all([
     dialerQuery<RowDataPacket>(`
-      SELECT AgentName AS agentName,
+      SELECT AgentId AS agentId,
+        MAX(AgentName) AS agentName,
         COUNT(*) AS offered,
         SUM(CASE WHEN ${HANDLED_EXPR} THEN 1 ELSE 0 END) AS handled,
         SUM(CAST(Call20Sec AS UNSIGNED)) AS calls20,
@@ -249,7 +264,7 @@ export async function getInboundAgents(rawFilters: { from?: string; to?: string 
       FROM ${CDR_TABLE}
       WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
         AND ${HANDLED_EXPR}
-      GROUP BY AgentName ORDER BY handled DESC LIMIT 200
+      GROUP BY AgentId ORDER BY handled DESC LIMIT 200
     `, [from, to]),
     dialerQuery<RowDataPacket>(`
       SELECT user,
@@ -260,9 +275,9 @@ export async function getInboundAgents(rawFilters: { from?: string; to?: string 
         SUM(CASE WHEN UPPER(sub_status) IN ('WB','WC','WASHR') THEN pause_sec ELSE 0 END) AS wbSec,
         COUNT(*) AS aprCalls
       FROM ${APR_TABLE}
-      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+      WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
       GROUP BY user LIMIT 200
-    `, [from, to]),
+    `, [from, to, INBOUND_CAMPAIGN]),
   ]);
 
   // Build APR map keyed by user (uppercase trimmed)
@@ -279,8 +294,8 @@ export async function getInboundAgents(rawFilters: { from?: string; to?: string 
     const holdSec = n(r.holdSec);
     const ahtSec = handled > 0 ? Math.round((handledTalkSec + holdSec + handledAcwSec) / handled) : 0;
 
-    // Try to find matching APR row (agent IDs may differ; match by uppercase trim)
-    const apr = aprMap[agentName.toUpperCase().trim()] ?? null;
+    const agentId = String(r.agentId ?? '');
+    const apr = aprMap[agentId.toUpperCase().trim()] ?? null;
     const waitSec = apr ? n(apr.waitSec) : 0;
     const aprTalkSec = apr ? n(apr.talkSec) : 0;
     const dispoSec = apr ? n(apr.dispoSec) : 0;
@@ -292,6 +307,7 @@ export async function getInboundAgents(rawFilters: { from?: string; to?: string 
     const netLoginSec = waitSec + aprTalkSec + dispoSec + pauseSec;
 
     return {
+      agentId,
       agentName,
       offered, handled, calls20,
       talkSec: Math.round(handledTalkSec),
@@ -343,10 +359,10 @@ export async function getInboundApr(rawFilters: { from?: string; to?: string }):
       COUNT(*) AS aprCalls,
       MIN(event_time) AS loginStart, MAX(event_time) AS logout
     FROM ${APR_TABLE}
-    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ?
+    WHERE DATE(event_time) >= ? AND DATE(event_time) <= ? AND UPPER(campaign_id) = ?
     GROUP BY user ORDER BY talkSec DESC LIMIT 200
   `;
-  const rows = await dialerQuery<RowDataPacket>(sql, [from, to]);
+  const rows = await dialerQuery<RowDataPacket>(sql, [from, to, INBOUND_CAMPAIGN]);
   const names = await resolveEmployeeNames(rows.map(r => String(r.user ?? '')));
   return rows.map(r => {
     const waitSec = n(r.waitSec), talkSec = n(r.talkSec), dispoSec = n(r.dispoSec), pauseSec = n(r.pauseSec);
