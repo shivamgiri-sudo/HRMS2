@@ -114,6 +114,17 @@ export default function MismatchesPanel() {
 
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  // The backend (mismatch-review.routes.ts's shared buildWhere) already filters
+  // adr.branch_id for list/count/summary alike — this page just never offered a
+  // control for it, same gap the Exceptions panel had.
+  const [branchId, setBranchId] = useState("");
+  const [branches, setBranches] = useState<{ id: string; branch_name: string }[]>([]);
+
+  useEffect(() => {
+    hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches")
+      .then((res) => setBranches(res.data ?? []))
+      .catch(() => setBranches([]));
+  }, []);
   // 3b: the search box now hits the API's server-side `search` param (matches employee
   // code or name across the whole result set) instead of filtering only the 50 rows
   // already on screen. Debounced the same way ExceptionsPanel debounces its search box.
@@ -134,7 +145,7 @@ export default function MismatchesPanel() {
 
   // Reset to page 1 whenever a filter changes so a stale page number from a previous,
   // larger result set doesn't silently request an out-of-range page.
-  useEffect(() => { setPage(1); }, [fromDate, toDate, search]);
+  useEffect(() => { setPage(1); }, [fromDate, toDate, search, branchId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,6 +155,7 @@ export default function MismatchesPanel() {
       if (fromDate) params.set("fromDate", fromDate);
       if (toDate)   params.set("toDate", toDate);
       if (search)   params.set("search", search);
+      if (branchId) params.set("branchId", branchId);
       const res = await hrmsApi.get<{ success: boolean; data: MismatchRecord[]; total: number }>(`/api/wfm/mismatches?${params}`);
       if (res.success) {
         setRecords(res.data ?? []);
@@ -163,20 +175,21 @@ export default function MismatchesPanel() {
     } finally {
       setLoading(false);
     }
-  }, [page, fromDate, toDate, search, toast]);
+  }, [page, fromDate, toDate, search, branchId, toast]);
 
   const loadSummary = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (fromDate) params.set("fromDate", fromDate);
       if (toDate)   params.set("toDate", toDate);
+      if (branchId) params.set("branchId", branchId);
       const qs = params.toString();
       const res = await hrmsApi.get<{ success: boolean; data: Summary }>(
         `/api/wfm/mismatches/summary${qs ? `?${qs}` : ""}`,
       );
       if (res.success) setSummary(res.data);
     } catch { /* non-critical: tiles just stay hidden, list below still shows its own error */ }
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, branchId]);
 
   useEffect(() => { load(); loadSummary(); }, [load, loadSummary]);
 
@@ -307,6 +320,18 @@ export default function MismatchesPanel() {
         <Card>
           <CardContent className="p-4">
             <div className="flex flex-wrap gap-4 items-end">
+              <div className="space-y-1">
+                <Label>Branch</Label>
+                <Select value={branchId || "all"} onValueChange={(v) => setBranchId(v === "all" ? "" : v)}>
+                  <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All branches</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1">
                 <Label>From Date</Label>
                 <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="w-40" />
