@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1172,
-  "columnCount": 17431,
+  "columnCount": 17440,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -19731,6 +19731,8 @@
       "sla_within_15min",
       "data_type",
       "tat_minutes",
+      "data_source",
+      "source_reference",
       "created_by",
       "created_at"
     ],
@@ -19746,6 +19748,8 @@
       "within_tat",
       "tat_minutes",
       "process_type",
+      "data_source",
+      "source_reference",
       "created_by",
       "created_at"
     ],
@@ -19762,6 +19766,8 @@
       "gcp_code",
       "company_name",
       "sku_count",
+      "data_source",
+      "source_reference",
       "created_by",
       "created_at"
     ],
@@ -19775,8 +19781,11 @@
       "fte_rate",
       "planning_rule",
       "active",
+      "data_source",
+      "source_reference",
       "created_by",
-      "created_at"
+      "created_at",
+      "updated_at"
     ]
   }
 }

@@ -21,8 +21,11 @@ CREATE TABLE IF NOT EXISTS domestic_billing_approved_hc (
   planning_rule   ENUM('SUNDAY_OFF','ALL_DAYS') NOT NULL DEFAULT 'ALL_DAYS'
                   COMMENT 'SUNDAY_OFF = Sundays excluded from working-day count',
   active          TINYINT      NOT NULL DEFAULT 1,
+  data_source     VARCHAR(50)  NULL,
+  source_reference VARCHAR(36) NULL,
   created_by      VARCHAR(36)  NULL,
   created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY unique_month_process_lob (month, process, lob)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
