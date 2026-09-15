@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
 import {
   BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
@@ -884,6 +884,376 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
         </p>
       )}
     </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── ENHANCED KPI METRIC CARD (replaces MiniKpiChip in the grid) ──────────
+// Responsive width, always-visible mini sparkline, animated target bar,
+// pass/fail tint, numerator/denominator, stale/manual badges.
+// ═══════════════════════════════════════════════════════════════════════════
+function EnhancedMetricCard({ r, accent, staleAfter, period, onOpen }: {
+  r: Reading; accent: string; staleAfter: number; period: ReportPeriod; onOpen: () => void;
+}) {
+  const stale    = r.staleDays !== null && r.staleDays > staleAfter;
+  const status   = targetStatus(r);
+  const fresh    = r.provisional ? freshnessCaption(r) : null;
+  const d        = deltaOf(r);
+  const caption  = targetCaption(r);
+
+  // Tint background based on pass/fail
+  const cardBg   = status === "pass" ? "linear-gradient(145deg,#f0fdf4 0%,#fff 60%)"
+                 : status === "fail" ? "linear-gradient(145deg,#fff1f2 0%,#fff 60%)"
+                 : `linear-gradient(145deg,${accent}0d 0%,#fff 60%)`;
+  const barColor = status === "pass" ? "#18a866" : status === "fail" ? "#e5484d" : accent;
+  const valueColor = status === "pass" ? "#15803d" : status === "fail" ? "#dc2626" : accent;
+
+  // Target progress %
+  let progressPct = 0;
+  if (r.targetValue !== null && r.value !== null && r.direction) {
+    if (r.direction === "higher_is_better") {
+      progressPct = Math.min(100, Math.max(3, (r.value / r.targetValue) * 100));
+    } else {
+      // lower is better: full bar = meeting target, empty = far over
+      const ratio = r.targetValue > 0 ? r.value / r.targetValue : 1;
+      progressPct = Math.min(100, Math.max(3, ratio <= 1 ? 100 : Math.max(3, 100 - (ratio - 1) * 100)));
+    }
+  }
+
+  const hasTarget = r.targetValue !== null && r.direction !== null;
+
+  return (
+    <button
+      type="button" onClick={onOpen}
+      title="Click to drill down into full history, formula, and source"
+      style={{ background: cardBg, border: `1px solid ${status === "pass" ? "#bbf7d0" : status === "fail" ? "#fecdd3" : "#dfe6ee"}`,
+        borderRadius: 14, position: "relative", overflow: "hidden",
+        boxShadow: "0 4px 14px rgba(16,35,57,.07)",
+        cursor: "pointer", textAlign: "left", width: "100%",
+        transition: "box-shadow .18s, transform .18s",
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 24px rgba(16,35,57,.13)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ""; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 14px rgba(16,35,57,.07)"; }}
+      className="focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+    >
+      {/* Left accent bar — thicker, colored by pass/fail */}
+      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
+        background: `linear-gradient(180deg,${barColor},${barColor}88)`, borderRadius: "14px 0 0 14px" }} />
+
+      <div style={{ padding: "10px 12px 8px 14px" }}>
+        {/* Top row: label + status badges */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 4, marginBottom: 6 }}>
+          <p style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".5px", color: "#6d7b8c",
+            fontWeight: 900, lineHeight: 1.25, flex: 1, overflow: "hidden",
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" } as React.CSSProperties}>
+            {r.label}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+            {status === "pass" && <span style={{ fontSize: 8, fontWeight: 900, color: "#15803d", background: "#dcfce7", borderRadius: 4, padding: "1px 4px" }}>PASS</span>}
+            {status === "fail" && <span style={{ fontSize: 8, fontWeight: 900, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 4px" }}>FAIL</span>}
+            {stale && <Clock style={{ width: 9, height: 9, color: "#e89b19" }} title={`Last reading ${r.staleDays}d ago`} />}
+            {r.source === "manual" && <PenLine style={{ width: 9, height: 9, color: "#7c3aed" }} title="Manual entry" />}
+            {fresh && <span style={{ fontSize: 7.5, color: "#2f6fed", fontWeight: 700 }}>{fresh.short}</span>}
+          </div>
+        </div>
+
+        {/* Value + delta row */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginBottom: 2 }}>
+          <span style={{
+            fontSize: r.value === null ? 13 : 22,
+            lineHeight: 1.1, fontWeight: 950, fontVariantNumeric: "tabular-nums",
+            color: r.value === null ? "#94a3b8" : valueColor,
+            fontStyle: r.value === null ? "italic" : undefined,
+          } as React.CSSProperties}>
+            {formatValue(r.value, r.unit)}
+          </span>
+          {d && (
+            <span style={{ fontSize: 10, fontWeight: 800,
+              color: d.good === null ? "#94a3b8" : d.good ? "#16a34a" : "#dc2626",
+              display: "flex", alignItems: "center", gap: 1 }}>
+              {d.delta === 0 ? <Minus style={{ width: 10, height: 10 }} />
+                : d.delta > 0 ? <ArrowUpRight style={{ width: 10, height: 10 }} /> : <ArrowDownRight style={{ width: 10, height: 10 }} />}
+              {d.delta !== 0 && Math.abs(d.delta).toFixed(1)}
+            </span>
+          )}
+        </div>
+
+        {/* Numerator / denominator if available */}
+        {(r.numerator !== null || r.denominator !== null) && (
+          <p style={{ fontSize: 9, color: "#8390a0", fontWeight: 700, marginBottom: 3 }}>
+            {r.numerator !== null && r.denominator !== null
+              ? `${r.numerator.toLocaleString()} of ${r.denominator.toLocaleString()}`
+              : r.numerator !== null ? `${r.numerator.toLocaleString()} events`
+              : `of ${r.denominator?.toLocaleString()}`}
+          </p>
+        )}
+
+        {/* Target caption */}
+        {caption && (
+          <p style={{ fontSize: 8.5, color: status === "fail" ? "#dc2626" : status === "pass" ? "#15803d" : "#8390a0",
+            fontWeight: 700, marginBottom: hasTarget ? 4 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {caption}
+          </p>
+        )}
+
+        {/* Target progress bar */}
+        {hasTarget && (
+          <div style={{ height: 4, background: "#e8edf3", borderRadius: 99, overflow: "hidden", marginBottom: 4 }}>
+            <div style={{ height: "100%", width: `${progressPct}%`, background: barColor,
+              borderRadius: 99, transition: "width .6s cubic-bezier(.4,0,.2,1)" }} />
+          </div>
+        )}
+
+        {/* Mini sparkline — always visible */}
+        {r.trend.length >= 2 && (
+          <div style={{ height: 28, marginTop: 2, marginLeft: -2, marginRight: -2 }}>
+            <Sparkline trend={r.trend} color={barColor} />
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── SECTION OVERVIEW STRIP — one chip per section showing pass/fail ratio ─
+// ═══════════════════════════════════════════════════════════════════════════
+function SectionOverviewStrip({ sections, ungrouped, staleAfterDays, activeSectionKey, onSectionClick }: {
+  sections: Section[];
+  ungrouped: Reading[];
+  staleAfterDays: number;
+  activeSectionKey: string | null;
+  onSectionClick: (key: string) => void;
+}) {
+  const allSections = [
+    ...sections,
+    ...(ungrouped.length ? [{ key: "other", title: "Other", blurb: null, metrics: ungrouped }] : []),
+  ];
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+      {allSections.map((s) => {
+        const sStyle = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
+        const pass  = s.metrics.filter((m) => targetStatus(m) === "pass").length;
+        const fail  = s.metrics.filter((m) => targetStatus(m) === "fail").length;
+        const total = s.metrics.length;
+        const hasTarget = s.metrics.some((m) => m.targetValue !== null);
+        const statusColor = !hasTarget ? sStyle.accent
+          : fail > 0 ? "#e5484d" : "#18a866";
+        const isActive = activeSectionKey === s.key;
+
+        return (
+          <button key={s.key} type="button" onClick={() => onSectionClick(s.key)}
+            style={{
+              display: "flex", alignItems: "center", gap: 7,
+              padding: "7px 12px", borderRadius: 10, cursor: "pointer",
+              background: isActive ? NAVY : "#fff",
+              border: `1.5px solid ${isActive ? NAVY : "#dfe6ee"}`,
+              boxShadow: isActive ? "0 4px 12px rgba(13,20,69,.25)" : "0 2px 6px rgba(16,35,57,.06)",
+              transition: ".18s", minWidth: 100,
+            }}
+            onMouseEnter={(e) => { if (!isActive) { (e.currentTarget as HTMLElement).style.borderColor = NAVY; (e.currentTarget as HTMLElement).style.background = "#f0f4ff"; } }}
+            onMouseLeave={(e) => { if (!isActive) { (e.currentTarget as HTMLElement).style.borderColor = "#dfe6ee"; (e.currentTarget as HTMLElement).style.background = "#fff"; } }}
+            className="focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+          >
+            {/* Section color dot */}
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, flexShrink: 0,
+              boxShadow: `0 0 0 3px ${statusColor}22` }} />
+            <div>
+              <p style={{ fontSize: 10, fontWeight: 900, color: isActive ? "#d0e8f5" : "#102f4b",
+                margin: 0, letterSpacing: .2 }}>{s.title}</p>
+              <p style={{ fontSize: 8.5, color: isActive ? "#a9cbd8" : "#8390a0", margin: 0, fontWeight: 700 }}>
+                {total} metric{total !== 1 ? "s" : ""}
+                {hasTarget ? ` · ${pass}/${pass + fail} pass` : ""}
+              </p>
+            </div>
+            {/* Mini pass/fail bar */}
+            {hasTarget && (pass + fail) > 0 && (
+              <div style={{ width: 28, height: 4, background: "#fee2e2", borderRadius: 99, overflow: "hidden", flexShrink: 0 }}>
+                <div style={{ height: "100%", width: `${(pass / (pass + fail)) * 100}%`,
+                  background: "#18a866", borderRadius: 99 }} />
+              </div>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── ENHANCED SECTION BLOCK — replaces the old map() in the KPI view ──────
+// Features:
+//  • Section summary bar with metric count, pass/fail ratio, and fill bar
+//  • Filter buttons (All / Pass / Fail / No Data / Stale)
+//  • Responsive grid (2→3→4 cols based on viewport)
+//  • Hero card (if a metric is failing target) OR all cards in grid
+//  • EnhancedMetricCard for each metric
+//  • "X metrics not meeting target" badge on header
+// ═══════════════════════════════════════════════════════════════════════════
+type MetricFilter = "all" | "pass" | "fail" | "nodata" | "stale";
+
+function EnhancedSectionBlock({ s, staleAfterDays, period, onOpenDrill, isActive, onRef }: {
+  s: Section & { key: string };
+  staleAfterDays: number;
+  period: ReportPeriod;
+  onOpenDrill: (key: string) => void;
+  isActive: boolean;
+  onRef?: (el: HTMLElement | null) => void;
+}) {
+  const [filter, setFilter] = useState<MetricFilter>("all");
+  const [expanded, setExpanded] = useState(true);
+
+  const sStyle = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
+  const Icon   = sStyle.icon;
+  const pass   = s.metrics.filter((m) => targetStatus(m) === "pass").length;
+  const fail   = s.metrics.filter((m) => targetStatus(m) === "fail").length;
+  const noData = s.metrics.filter((m) => m.value === null).length;
+  const stale  = s.metrics.filter((m) => m.staleDays !== null && m.staleDays > staleAfterDays).length;
+  const total  = s.metrics.length;
+  const hasTarget = s.metrics.some((m) => m.targetValue !== null);
+  const passPct = (pass + fail) > 0 ? (pass / (pass + fail)) * 100 : 0;
+  const overallStatus = !hasTarget ? "neutral" : fail > 0 ? "fail" : "pass";
+  const headerAccent = overallStatus === "fail" ? "#e5484d" : overallStatus === "pass" ? "#18a866" : sStyle.accent;
+
+  const visible = s.metrics.filter((m) => {
+    if (filter === "pass") return targetStatus(m) === "pass";
+    if (filter === "fail") return targetStatus(m) === "fail";
+    if (filter === "nodata") return m.value === null;
+    if (filter === "stale") return m.staleDays !== null && m.staleDays > staleAfterDays;
+    return true;
+  });
+
+  // Hero: the most critical failing metric (for "all" filter only)
+  const hero = filter === "all" ? heroOf(visible) : null;
+  const rest = hero ? visible.filter((m) => m.metricKey !== hero.metricKey) : visible;
+
+  const FILTERS: { key: MetricFilter; label: string; count: number; color: string }[] = [
+    { key: "all",    label: "All",      count: total,  color: NAVY },
+    { key: "pass",   label: "Pass",     count: pass,   color: "#18a866" },
+    { key: "fail",   label: "Fail",     count: fail,   color: "#e5484d" },
+    { key: "nodata", label: "No Data",  count: noData, color: "#94a3b8" },
+    { key: "stale",  label: "Stale",    count: stale,  color: "#e89b19" },
+  ].filter((f) => f.key === "all" || f.count > 0);
+
+  return (
+    <section ref={onRef} style={{
+      background: "#fff", borderRadius: 16,
+      border: `1.5px solid ${isActive ? headerAccent + "60" : "#dfe6ee"}`,
+      boxShadow: isActive ? `0 0 0 3px ${headerAccent}18, 0 12px 30px rgba(16,35,57,.08)` : "0 4px 16px rgba(16,35,57,.06)",
+      overflow: "hidden", transition: "box-shadow .2s, border-color .2s",
+    }}>
+
+      {/* ── Section Header ─────────────────────────────────────────────── */}
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${headerAccent}20`,
+        background: `linear-gradient(135deg, ${headerAccent}0a, transparent 60%)` }}>
+
+        {/* Title row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <span style={{ padding: "5px 6px", borderRadius: 8, background: `${headerAccent}18`, display: "flex", flexShrink: 0 }}>
+            <Icon style={{ width: 14, height: 14, color: headerAccent }} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <h2 style={{ margin: 0, color: "#102f4b", fontSize: 15, fontWeight: 800, letterSpacing: .1 }}>
+                {s.title}
+              </h2>
+              <span style={{ fontSize: 9.5, fontWeight: 850, color: "#50677d",
+                background: "#edf5fc", border: "1px solid #d8e7f3", borderRadius: 999, padding: "3px 8px" }}>
+                {total} metric{total !== 1 ? "s" : ""}
+              </span>
+              {fail > 0 && (
+                <span style={{ fontSize: 9.5, fontWeight: 850, color: "#dc2626",
+                  background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 999, padding: "3px 8px",
+                  display: "flex", alignItems: "center", gap: 3 }}>
+                  <AlertTriangle style={{ width: 9, height: 9 }} />{fail} below target
+                </span>
+              )}
+              {pass > 0 && fail === 0 && hasTarget && (
+                <span style={{ fontSize: 9.5, fontWeight: 850, color: "#15803d",
+                  background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 999, padding: "3px 8px" }}>
+                  All {pass} on track
+                </span>
+              )}
+            </div>
+          </div>
+          {/* Collapse/expand toggle */}
+          <button type="button" onClick={() => setExpanded(v => !v)}
+            style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #dfe6ee",
+              background: "#f8fafc", cursor: "pointer", fontSize: 9, fontWeight: 800, color: "#64748b",
+              display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}
+            className="focus:outline-none focus-visible:ring-2">
+            {expanded ? <Minus style={{ width: 10, height: 10 }} /> : <ArrowUpRight style={{ width: 10, height: 10 }} />}
+            {expanded ? "Collapse" : "Expand"}
+          </button>
+        </div>
+
+        {/* Pass/fail progress bar + counts */}
+        {hasTarget && (pass + fail) > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ flex: 1, height: 6, background: "#fee2e2", borderRadius: 99, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${passPct}%`,
+                background: "linear-gradient(90deg,#18a866,#22c55e)", borderRadius: 99,
+                transition: "width .6s cubic-bezier(.4,0,.2,1)" }} />
+            </div>
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#50677d", whiteSpace: "nowrap" }}>
+              {pass}/{pass + fail} pass
+            </span>
+            {noData > 0 && <span style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700 }}>{noData} no data</span>}
+            {stale > 0 && <span style={{ fontSize: 9, color: "#e89b19", fontWeight: 700 }}>{stale} stale</span>}
+          </div>
+        )}
+
+        {/* Filter pills */}
+        {expanded && FILTERS.length > 1 && (
+          <div style={{ display: "flex", gap: 5, marginTop: 8, flexWrap: "wrap" }}>
+            {FILTERS.map((f) => (
+              <button key={f.key} type="button" onClick={() => setFilter(f.key)}
+                style={{
+                  padding: "3px 10px", borderRadius: 999, cursor: "pointer",
+                  fontSize: 9.5, fontWeight: 850, border: `1px solid ${filter === f.key ? f.color : "#dfe6ee"}`,
+                  background: filter === f.key ? f.color : "#f8fafc",
+                  color: filter === f.key ? "#fff" : "#64748b",
+                  transition: ".15s",
+                }}
+                className="focus:outline-none focus-visible:ring-1">
+                {f.label} <span style={{ opacity: .8 }}>({f.count})</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Metrics grid ───────────────────────────────────────────────── */}
+      {expanded && (
+        <div style={{ padding: "14px 16px" }}>
+          {visible.length === 0 ? (
+            <p style={{ fontSize: 12, color: "#94a3b8", margin: 0, padding: "8px 0" }}>
+              No metrics match this filter.
+            </p>
+          ) : (
+            <div style={hero ? { display: "grid", gap: 12, gridTemplateColumns: "280px 1fr", alignItems: "start" } : { display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
+              {/* Hero card — only shown in "all" filter when there's a critical fail */}
+              {hero && (
+                <HeroKpiCard r={hero} staleAfter={staleAfterDays} period={period}
+                  onOpen={() => onOpenDrill(hero.metricKey)} />
+              )}
+              {/* Rest of metrics — responsive grid */}
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
+                {rest.map((r, i) => (
+                  <EnhancedMetricCard
+                    key={r.metricKey} r={r}
+                    accent={GAS_KPI_ACCENTS[i % GAS_KPI_ACCENTS.length]}
+                    staleAfter={staleAfterDays}
+                    period={period}
+                    onOpen={() => onOpenDrill(r.metricKey)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -4298,6 +4668,9 @@ export default function ProcessOperationsPage() {
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
   const [view, setView] = useState<"kpi" | "live" | "sales">("kpi");
+  // Active section key for overview strip highlighting + scroll-to
+  const [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]);
 
   const { data: listData, isLoading: listLoading, isError: listErrored, refetch: refetchList } = useQuery({
@@ -4628,54 +5001,36 @@ export default function ProcessOperationsPage() {
                   {current && <FraudCallPanel processId={current} period={period} />}
                   {current && <WorkforceCorrelationPanel processId={current} period={period} />}
 
-                  {/* ── Row N: GAS-styled metric sections ──────────────────── */}
+                  {/* ── Section Overview Strip ────────────────────────────── */}
+                  {ops.sections.length > 0 && (
+                    <SectionOverviewStrip
+                      sections={ops.sections}
+                      ungrouped={ops.ungrouped}
+                      staleAfterDays={ops.staleAfterDays}
+                      activeSectionKey={activeSectionKey}
+                      onSectionClick={(key) => {
+                        setActiveSectionKey(prev => prev === key ? null : key);
+                        // Scroll to the section
+                        const el = sectionRefs.current[key];
+                        if (el) { setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
+                      }}
+                    />
+                  )}
+
+                  {/* ── Enhanced metric sections ──────────────────────────── */}
                   {[...ops.sections, ...(ops.ungrouped.length
                     ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]
-                    : [])].map((s, idx) => {
-                    const sStyle = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
-                    const Icon = sStyle.icon;
-                    const hero = heroOf(s.metrics);
-                    const rest = hero ? s.metrics.filter((m) => m.metricKey !== hero.metricKey) : s.metrics;
-                    // GAS-style panel: white bg, blue left bar, hover lift
-                    return (
-                      <section key={s.key} style={{
-                        background: "#fff", border: "1px solid #dfe6ee", borderRadius: 16,
-                        boxShadow: "0 12px 30px rgba(16,35,57,.08)", padding: "15px",
-                        position: "relative", overflow: "hidden",
-                      }}>
-                        {/* Left accent bar */}
-                        <div style={{ position: "absolute", left: 0, top: 0, width: 4, height: 55, background: `linear-gradient(180deg,${sStyle.accent},${sStyle.accent}88)`, borderRadius: "0 0 7px 0" }} />
-                        {/* Section header */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 13, paddingLeft: 10 }}>
-                          <span style={{ padding: 6, borderRadius: 8, background: `${sStyle.accent}1A`, display: "flex" }}>
-                            <Icon style={{ width: 14, height: 14, color: sStyle.accent }} />
-                          </span>
-                          <h2 style={{ margin: 0, color: "#102f4b", fontSize: 16, letterSpacing: .1, display: "flex", alignItems: "center", gap: 8 }}>
-                            {s.title}
-                            <small style={{ color: "#50677d", fontWeight: 800, background: "#edf5fc", border: "1px solid #d8e7f3", borderRadius: 999, padding: "5px 9px", lineHeight: 1.15, fontSize: 10 }}>
-                              {s.metrics.length} metric{s.metrics.length === 1 ? "" : "s"}
-                            </small>
-                          </h2>
-                          {s.blurb && <p style={{ fontSize: 10, color: "#697586", marginLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.blurb}</p>}
-                        </div>
-                        {/* Cards: hero + chips */}
-                        <div style={hero ? { display: "grid", gap: 12, gridTemplateColumns: "260px 1fr", alignItems: "stretch" } : {}}>
-                          {hero && (
-                            <HeroKpiCard r={hero} staleAfter={ops.staleAfterDays} period={period}
-                              onOpen={() => setDrill(hero.metricKey)} />
-                          )}
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignContent: "flex-start" }}>
-                            {rest.map((r, i) => (
-                              <MiniKpiChip key={r.metricKey} r={r}
-                                accent={GAS_KPI_ACCENTS[i % GAS_KPI_ACCENTS.length]}
-                                staleAfter={ops.staleAfterDays}
-                                onOpen={() => setDrill(r.metricKey)} />
-                            ))}
-                          </div>
-                        </div>
-                      </section>
-                    );
-                  })}
+                    : [])].map((s) => (
+                    <EnhancedSectionBlock
+                      key={s.key}
+                      s={s as Section & { key: string }}
+                      staleAfterDays={ops.staleAfterDays}
+                      period={period}
+                      onOpenDrill={setDrill}
+                      isActive={activeSectionKey === s.key}
+                      onRef={(el) => { sectionRefs.current[s.key] = el; }}
+                    />
+                  ))}
                 </div>
               )}
             </div>
