@@ -117,12 +117,12 @@ export const performanceRouteElements = (
           for. PROCESS_MANAGER_DASHBOARD would have been the obvious code but carries
           only 3 grants (accounts_head/super_admin/tq_head) and would have blocked
           process managers from their own report card. */}
-      <Route path="/performance/process-performance" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><ProcessPerformancePage /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-performance" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><ProcessPerformancePage /></Gate></ProtectedRoute>} />
       {/* Client/process SLA-target scorecards from the "Process KPI's" sheet, with a
           4-level TL-pod/agent/raw-row drill-down. Sibling to Process Performance
           above; same viewer set, separate page_catalog code (migration 1676). */}
-      <Route path="/performance/process-kpi-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_KPI_DASHBOARD"><ProcessKpiDashboardPage /></Gate></ProtectedRoute>} />
-      <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-kpi-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_KPI_DASHBOARD"><ProcessKpiDashboardPage /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
       {/* Roles mirror kpi-studio.routes.ts's VIEW_ROLES; the router re-checks server-side. */}
       <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
       <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardBuilderPage /></Gate></ProtectedRoute>} />
