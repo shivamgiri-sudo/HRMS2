@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { logger } from "../logger.js";
@@ -23,7 +24,47 @@ import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.j
 
 const WORKER_NAME = "db-bill-finance-sync";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, "../../scripts/sync-db-bill-snapshot.mjs");
+const SCRIPT_NAME = "sync-db-bill-snapshot.mjs";
+
+/**
+ * Where the sync script can be, in the order it is looked for.
+ *
+ * FOUND 2026-09-15: this was a single `../../scripts` path, which is right from src/workers in
+ * dev (-> backend/scripts) and WRONG from the compiled worker in production, which runs from
+ * backend/dist/src/workers (-> backend/dist/scripts). tsc never emits a .mjs file and deploy.yml
+ * ships only backend/dist and backend/sql, so that file did not exist and every nightly run
+ * exited with MODULE_NOT_FOUND into a log line. The billing mirror stopped at 2026-08-19 18:43
+ * IST while db_bill went on to hold Rs 274.10 lakh of August invoices, and Live P&L showed
+ * August revenue as Rs 0.
+ *
+ *   1. ../../scripts     dev: backend/scripts; prod: backend/dist/scripts, which the build now
+ *                        fills (scripts/copy-runtime-scripts.mjs), so each deploy ships the
+ *                        script version that matches its code.
+ *   2. ../../../scripts  prod fallback: the server's git tree, backend/scripts.
+ */
+export function syncScriptCandidates(dir: string = __dirname): string[] {
+  return [
+    path.resolve(dir, "../../scripts", SCRIPT_NAME),
+    path.resolve(dir, "../../../scripts", SCRIPT_NAME),
+  ];
+}
+
+export function resolveSyncScript(dir: string = __dirname, exists: (p: string) => boolean = fs.existsSync): string | null {
+  return syncScriptCandidates(dir).find((candidate) => exists(candidate)) ?? null;
+}
+
+/**
+ * The child's environment. The script reads backend/.env relative to ITS OWN location, which
+ * the copy in dist/scripts cannot see, so it is handed the app's already-loaded settings instead
+ * — in particular HRMS_DB_HOST, without which it falls back to a hardcoded office-LAN address.
+ * An empty BILL_DB_HOST is dropped so the script's own default applies rather than "".
+ */
+export function syncChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+  if (!out.HRMS_DB_HOST && out.DB_HOST) out.HRMS_DB_HOST = out.DB_HOST;
+  if (out.BILL_DB_HOST === "") delete out.BILL_DB_HOST;
+  return out;
+}
 
 /** Once a day is right: db_bill is updated by people during the day, not continuously. */
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -34,10 +75,18 @@ let intervalTimer: NodeJS.Timeout | null = null;
 let startupTimer: NodeJS.Timeout | null = null;
 
 function runSync(): Promise<void> {
+  const script = resolveSyncScript();
+  if (!script) {
+    logger.error(
+      { worker: WORKER_NAME, looked: syncScriptCandidates() },
+      "[db-bill-sync] FAILED — sync script not found; the P&L is reading a mirror that stopped advancing",
+    );
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [SCRIPT], {
-      cwd: path.resolve(__dirname, "../.."),
-      env: process.env,
+    const child = spawn(process.execPath, [script], {
+      cwd: path.resolve(path.dirname(script), ".."),
+      env: syncChildEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
