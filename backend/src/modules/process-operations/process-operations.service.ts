@@ -1245,7 +1245,10 @@ const CLAP_CASE = `
     ELSE 'Agent'
   END`;
 
-export interface VocQuote { employeeCode: string; employeeName: string; callDate: string; quote: string }
+export interface VocQuote {
+  employeeCode: string; employeeName: string; callDate: string; quote: string;
+  hasTranscript: boolean; hasRecording: boolean;
+}
 export interface ClapVoiceOfCustomer {
   available: boolean;
   reason: string | null;
@@ -1334,7 +1337,9 @@ export async function getProcessVoiceOfCustomer(
 
   const quoteQuery = async (col: string): Promise<VocQuote[]> => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT User AS employee_code, DATE_FORMAT(CallDate, '%Y-%m-%d') AS call_date, \`${col}\` AS quote
+      `SELECT User AS employee_code, DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i:%s') AS call_date, \`${col}\` AS quote,
+              (Transcribe_Text IS NOT NULL AND TRIM(Transcribe_Text) != '') AS has_transcript,
+              (call_recording IS NOT NULL AND TRIM(call_recording) != '') AS has_recording
          FROM db_audit.call_quality_assessment
         WHERE User IN (${inList}) AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
           AND \`${col}\` IS NOT NULL AND TRIM(\`${col}\`) != ''
@@ -1345,6 +1350,7 @@ export async function getProcessVoiceOfCustomer(
       employeeCode: String(r.employee_code),
       employeeName: nameByCode.get(String(r.employee_code)) || String(r.employee_code),
       callDate: String(r.call_date), quote: String(r.quote),
+      hasTranscript: Boolean(r.has_transcript), hasRecording: Boolean(r.has_recording),
     }));
   };
 
@@ -3099,7 +3105,7 @@ export interface CallDetail {
   employeeCode: string; employeeName: string; callDate: string;
   qualityPercentage: number | null;
   scenario: string | null; scenario1: string | null;
-  transcript: string | null; recordingUrl: string | null;
+  transcript: string | null; recordingUrl: string | null; mobileNumber: string | null;
   parameters: Array<{ column: string; label: string; value: boolean | null }>;
 }
 
@@ -3130,7 +3136,7 @@ export async function getCallDetail(
 
   const paramCols = CQ_PARAM_COLS.map((c) => `\`${c}\``).join(", ");
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT quality_percentage, scenario, scenario1, Transcribe_Text, call_recording, ${paramCols}
+    `SELECT quality_percentage, scenario, scenario1, Transcribe_Text, call_recording, MobileNo, ${paramCols}
        FROM db_audit.call_quality_assessment
       WHERE User = ? AND CallDate = ?
       LIMIT 1`,
@@ -3141,7 +3147,7 @@ export async function getCallDetail(
     return {
       available: false, reason: "No audit record found for this call.",
       employeeCode, employeeName: String(emp.name).trim(), callDate,
-      qualityPercentage: null, scenario: null, scenario1: null, transcript: null, recordingUrl: null, parameters: [],
+      qualityPercentage: null, scenario: null, scenario1: null, transcript: null, recordingUrl: null, mobileNumber: null, parameters: [],
     };
   }
 
@@ -3158,6 +3164,7 @@ export async function getCallDetail(
     qualityPercentage: row.quality_percentage === null ? null : Number(row.quality_percentage),
     scenario: row.scenario ?? null, scenario1: row.scenario1 ?? null,
     transcript: row.Transcribe_Text ?? null, recordingUrl: row.call_recording ?? null,
+    mobileNumber: row.MobileNo ?? null,
     parameters,
   };
 }

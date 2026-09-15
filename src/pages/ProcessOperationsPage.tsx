@@ -7,7 +7,7 @@ import { SearchableSelect, type SearchableOption } from "@/components/ui/searcha
 import { useToast } from "@/hooks/use-toast";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Briefcase, CheckCircle2, ChevronRight, Clock,
-  Database, Download, Filter, Headphones, Hourglass, Lightbulb, Loader2, Minus, Package, PenLine, Radio,
+  Database, Download, Filter, Headphones, Hourglass, Lightbulb, Loader2, Minus, Package, PenLine, Phone, Radio,
   ShieldAlert, Sparkles, Target, Truck, Upload, User, UserCheck, UserPlus, Users, Users2, X,
 } from "lucide-react";
 import {
@@ -174,7 +174,10 @@ interface AnalystBreakdown {
   analysts: AnalystScore[];
 }
 
-interface VocQuote { employeeCode: string; employeeName: string; callDate: string; quote: string }
+interface VocQuote {
+  employeeCode: string; employeeName: string; callDate: string; quote: string;
+  hasTranscript: boolean; hasRecording: boolean;
+}
 interface ClapVoiceOfCustomer {
   available: boolean; reason: string | null;
   periodFrom: string | null; periodTo: string | null; totalAuditedCalls: number;
@@ -298,7 +301,7 @@ interface CallDetail {
   employeeCode: string; employeeName: string; callDate: string;
   qualityPercentage: number | null;
   scenario: string | null; scenario1: string | null;
-  transcript: string | null; recordingUrl: string | null;
+  transcript: string | null; recordingUrl: string | null; mobileNumber: string | null;
   parameters: Array<{ column: string; label: string; value: boolean | null }>;
 }
 
@@ -629,6 +632,7 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
   });
   const [category, setCategory] = useState<"agent" | "logistic" | "product">("agent");
   const voc = data?.data;
+  const { openCall, drawer } = useCallDetailDrawer(processId);
 
   if (isLoading || !voc) {
     return (
@@ -719,10 +723,17 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
             {quotesForCategory.positive.length ? (
               <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
                 {quotesForCategory.positive.map((q, i) => (
-                  <div key={i} className="rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-2.5 py-1.5">
+                  <button key={i} type="button"
+                    onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
+                    disabled={!q.hasTranscript}
+                    title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
+                    className="w-full text-left rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-2.5 py-1.5 cursor-pointer disabled:cursor-not-allowed hover:bg-emerald-100/70 dark:hover:bg-emerald-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500">
                     <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
-                    <p className="text-[9.5px] text-slate-400 mt-1">{q.employeeName} ({q.employeeCode}) · {q.callDate}</p>
-                  </div>
+                    <p className="text-[9.5px] text-slate-400 mt-1 flex items-center gap-1">
+                      {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
+                      {q.hasTranscript && <ChevronRight size={10} className="text-slate-300 shrink-0" />}
+                    </p>
+                  </button>
                 ))}
               </div>
             ) : <p className="text-[11px] text-slate-400 italic">No positive quotes recorded for this category this period.</p>}
@@ -732,16 +743,24 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
             {quotesForCategory.negative.length ? (
               <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
                 {quotesForCategory.negative.map((q, i) => (
-                  <div key={i} className="rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-2.5 py-1.5">
+                  <button key={i} type="button"
+                    onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
+                    disabled={!q.hasTranscript}
+                    title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
+                    className="w-full text-left rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-2.5 py-1.5 cursor-pointer disabled:cursor-not-allowed hover:bg-red-100/70 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
                     <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
-                    <p className="text-[9.5px] text-slate-400 mt-1">{q.employeeName} ({q.employeeCode}) · {q.callDate}</p>
-                  </div>
+                    <p className="text-[9.5px] text-slate-400 mt-1 flex items-center gap-1">
+                      {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
+                      {q.hasTranscript && <ChevronRight size={10} className="text-slate-300 shrink-0" />}
+                    </p>
+                  </button>
                 ))}
               </div>
             ) : <p className="text-[11px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
           </div>
         </div>
       </div>
+      {drawer}
     </ChartCard>
   );
 }
@@ -911,6 +930,14 @@ function AgentAuditSummaryPanel({ processId, period }: { processId: string; peri
     () => summary?.rows.slice().sort((a, b) => (a.cqScore ?? 0) - (b.cqScore ?? 0)) ?? [],
     [summary],
   );
+  const { openCall, drawer } = useCallDetailDrawer(processId);
+  // Every column drills into this agent's calls -- unfiltered from Agent/Audits/
+  // CQ Score/Fatal/Band, narrowed to the clicked band from TQ/MQ/BQ. Clicking
+  // the same cell again on the same row closes it.
+  const [expanded, setExpanded] = useState<{ employeeCode: string; band: "TQ" | "MQ" | "BQ" | "ALL" } | null>(null);
+  const toggleExpanded = (employeeCode: string, band: "TQ" | "MQ" | "BQ" | "ALL") =>
+    setExpanded((prev) => (prev?.employeeCode === employeeCode && prev.band === band ? null : { employeeCode, band }));
+  const cellCls = "cursor-pointer hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded";
 
   return (
     <ChartCard title="Agent audit summary"
@@ -947,30 +974,60 @@ function AgentAuditSummaryPanel({ processId, period }: { processId: string; peri
                   </tr>
                 </thead>
                 <tbody>
-                  {sorted.map((r) => (
-                    <tr key={r.employeeCode} className="border-t border-slate-100 dark:border-slate-800">
-                      <td className="py-1 pr-2 font-medium text-slate-700 dark:text-slate-300 truncate max-w-[10rem]">{r.employeeName}</td>
-                      <td className="py-1 pr-2 text-right text-slate-500">{r.auditCount}</td>
-                      <td className="py-1 pr-2 text-right font-semibold text-slate-700 dark:text-slate-300">
-                        {r.cqScore !== null ? `${r.cqScore}%` : "—"}
-                      </td>
-                      <td className="py-1 pr-2 text-right">
-                        {r.fatalCount > 0
-                          ? <span className="text-red-600 font-semibold">{r.fatalCount} ({r.fatalPct}%)</span>
-                          : <span className="text-slate-400">0</span>}
-                      </td>
-                      <td className="py-1 pr-2 text-center"><BandBadge band={r.band} /></td>
-                      <td className="py-1 pr-2 text-right text-emerald-600">{r.tqCount}</td>
-                      <td className="py-1 pr-2 text-right text-amber-600">{r.mqCount}</td>
-                      <td className="py-1 text-right text-red-600">{r.bqCount}</td>
-                    </tr>
-                  ))}
+                  {sorted.map((r) => {
+                    const isExpanded = expanded?.employeeCode === r.employeeCode;
+                    return (
+                      <Fragment key={r.employeeCode}>
+                        <tr className="border-t border-slate-100 dark:border-slate-800">
+                          <td className={`py-1 pr-2 font-medium text-slate-700 dark:text-slate-300 truncate max-w-[10rem] ${cellCls}`}
+                            title="Click to see this agent's audited calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "ALL")}>{r.employeeName}</td>
+                          <td className={`py-1 pr-2 text-right text-slate-500 ${cellCls}`}
+                            title="Click to see this agent's audited calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "ALL")}>{r.auditCount}</td>
+                          <td className={`py-1 pr-2 text-right font-semibold text-slate-700 dark:text-slate-300 ${cellCls}`}
+                            title="Click to see this agent's audited calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "ALL")}>
+                            {r.cqScore !== null ? `${r.cqScore}%` : "—"}
+                          </td>
+                          <td className={`py-1 pr-2 text-right ${cellCls}`}
+                            title="Click to see this agent's audited calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "ALL")}>
+                            {r.fatalCount > 0
+                              ? <span className="text-red-600 font-semibold">{r.fatalCount} ({r.fatalPct}%)</span>
+                              : <span className="text-slate-400">0</span>}
+                          </td>
+                          <td className={`py-1 pr-2 text-center ${cellCls}`}
+                            title="Click to see this agent's audited calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "ALL")}><BandBadge band={r.band} /></td>
+                          <td className={`py-1 pr-2 text-right text-emerald-600 ${cellCls}`}
+                            title="Click to see this agent's TQ (>=80%) calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "TQ")}>{r.tqCount}</td>
+                          <td className={`py-1 pr-2 text-right text-amber-600 ${cellCls}`}
+                            title="Click to see this agent's MQ (60-79%) calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "MQ")}>{r.mqCount}</td>
+                          <td className={`py-1 text-right text-red-600 ${cellCls}`}
+                            title="Click to see this agent's BQ (0-59%) calls"
+                            onClick={() => toggleExpanded(r.employeeCode, "BQ")}>{r.bqCount}</td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-slate-50/60 dark:bg-slate-900/40">
+                            <td colSpan={8} className="px-2 py-2">
+                              <EmployeeRecentCallsRow processId={processId} employeeCode={r.employeeCode} period={period}
+                                onSelectCall={openCall} bandFilter={expanded.band === "ALL" ? undefined : expanded.band} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </>
         )}
       </div>
+      {drawer}
     </ChartCard>
   );
 }
@@ -1766,11 +1823,19 @@ function CallDetailDrawer({ processId, employeeCode, callDate, onClose }: {
               <X size={15} />
             </button>
           </div>
-          {cd?.qualityPercentage !== null && cd?.qualityPercentage !== undefined && (
-            <p className="text-[11px] mt-2">
-              Quality score: <span className="font-bold tabular-nums">{cd.qualityPercentage.toFixed(1)}%</span>
-            </p>
-          )}
+          <div className="flex items-center gap-3 mt-2 flex-wrap">
+            {cd?.qualityPercentage !== null && cd?.qualityPercentage !== undefined && (
+              <p className="text-[11px]">
+                Quality score: <span className="font-bold tabular-nums">{cd.qualityPercentage.toFixed(1)}%</span>
+              </p>
+            )}
+            {cd?.mobileNumber && (
+              <p className="text-[11px] flex items-center gap-1">
+                <Phone size={11} className="text-white/60" />
+                Customer mobile: <span className="font-bold tabular-nums">{cd.mobileNumber}</span>
+              </p>
+            )}
+          </div>
         </div>
 
         {isLoading || !cd ? (
@@ -3064,9 +3129,12 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
  * upload or a different source) gets an honest reason, not an empty list
  * indistinguishable from "audited, zero calls".
  */
-function EmployeeRecentCallsRow({ processId, employeeCode, period, onSelectCall }: {
+function EmployeeRecentCallsRow({ processId, employeeCode, period, onSelectCall, bandFilter }: {
   processId: string; employeeCode: string; period: ReportPeriod;
   onSelectCall: (call: { employeeCode: string; callDate: string }) => void;
+  /** Narrows to one TQ/MQ/BQ band, same thresholds the Agent Audit Summary
+   *  table stack-ranks by (>=80 / 60-79.99 / 0-59.99). Undefined = unfiltered. */
+  bandFilter?: "TQ" | "MQ" | "BQ";
 }) {
   const { data, isLoading } = useQuery({
     queryKey: ["process-operations", "employee-calls", processId, employeeCode, period],
@@ -3074,6 +3142,12 @@ function EmployeeRecentCallsRow({ processId, employeeCode, period, onSelectCall 
       `/api/process-operations/${processId}/employee-calls?employeeCode=${encodeURIComponent(employeeCode)}&period=${period}`),
   });
   const ec = data?.data;
+  const bandOf = (pct: number | null): "TQ" | "MQ" | "BQ" | null =>
+    pct === null ? null : pct >= 80 ? "TQ" : pct >= 60 ? "MQ" : pct > 0 ? "BQ" : null;
+  const filteredCalls = useMemo(
+    () => (bandFilter ? (ec?.calls ?? []).filter((c) => bandOf(c.qualityPercentage) === bandFilter) : ec?.calls ?? []),
+    [ec, bandFilter],
+  );
 
   if (isLoading) {
     return (
@@ -3082,15 +3156,26 @@ function EmployeeRecentCallsRow({ processId, employeeCode, period, onSelectCall 
       </div>
     );
   }
-  if (!ec?.available || !ec.calls.length) {
+  if (!ec?.available) {
     return <p className="text-[9.5px] text-slate-400 italic">{ec?.reason ?? "No audited calls to show."}</p>;
+  }
+  if (!filteredCalls.length) {
+    return (
+      <p className="text-[9.5px] text-slate-400 italic">
+        {bandFilter ? `None of this analyst's most recent audited calls fall in the ${bandFilter} band.` : "No audited calls to show."}
+      </p>
+    );
   }
 
   return (
     <div>
-      <span className="text-[9.5px] text-slate-400 block mb-1">This analyst's own recent audited calls:</span>
+      <span className="text-[9.5px] text-slate-400 block mb-1">
+        {bandFilter
+          ? `This analyst's most recent ${bandFilter} calls (click one for its transcript, recording and customer mobile number):`
+          : "This analyst's own recent audited calls:"}
+      </span>
       <div className="flex flex-wrap gap-1">
-        {ec.calls.slice(0, 10).map((c, i) => (
+        {filteredCalls.slice(0, 10).map((c, i) => (
           <button key={i} type="button"
             onClick={() => c.hasTranscript && onSelectCall({ employeeCode, callDate: c.callDate })}
             disabled={!c.hasTranscript}
