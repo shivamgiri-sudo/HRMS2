@@ -940,73 +940,67 @@ function EnhancedMetricCard({ r, accent, staleAfter, period, onOpen }: {
       <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
         background: `linear-gradient(180deg,${barColor},${barColor}88)`, borderRadius: "14px 0 0 14px" }} />
 
-      <div style={{ padding: "10px 12px 8px 14px" }}>
-        {/* Top row: label + status badges */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 4, marginBottom: 6 }}>
-          <p style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".5px", color: "#6d7b8c",
-            fontWeight: 900, lineHeight: 1.25, flex: 1, overflow: "hidden",
+      <div style={{ padding: "7px 10px 6px 12px" }}>
+        {/* Top row: label + status badge (single line, tight) */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 3, marginBottom: 3 }}>
+          <p style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: ".4px", color: "#6d7b8c",
+            fontWeight: 900, lineHeight: 1.2, flex: 1, overflow: "hidden",
             display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" } as React.CSSProperties}>
             {r.label}
           </p>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-            {status === "pass" && <span style={{ fontSize: 8, fontWeight: 900, color: "#15803d", background: "#dcfce7", borderRadius: 4, padding: "1px 4px" }}>PASS</span>}
-            {status === "fail" && <span style={{ fontSize: 8, fontWeight: 900, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 4px" }}>FAIL</span>}
-            {stale && <Clock style={{ width: 9, height: 9, color: "#e89b19" }} title={`Last reading ${r.staleDays}d ago`} />}
-            {r.source === "manual" && <PenLine style={{ width: 9, height: 9, color: "#7c3aed" }} title="Manual entry" />}
-            {fresh && <span style={{ fontSize: 7.5, color: "#2f6fed", fontWeight: 700 }}>{fresh.short}</span>}
+          <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, paddingTop: 1 }}>
+            {status === "pass" && <span style={{ fontSize: 7.5, fontWeight: 900, color: "#15803d", background: "#dcfce7", borderRadius: 3, padding: "0px 3px" }}>✓</span>}
+            {status === "fail" && <span style={{ fontSize: 7.5, fontWeight: 900, color: "#dc2626", background: "#fee2e2", borderRadius: 3, padding: "0px 3px" }}>!</span>}
+            {stale && <Clock style={{ width: 8, height: 8, color: "#e89b19" }} title={`${r.staleDays}d old`} />}
+            {r.source === "manual" && <PenLine style={{ width: 8, height: 8, color: "#7c3aed" }} title="Manual entry" />}
           </div>
         </div>
 
-        {/* Value + delta row */}
-        <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginBottom: 2 }}>
+        {/* Value + delta + numerator — single compact row */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 1 }}>
           <span style={{
-            fontSize: r.value === null ? 13 : 22,
-            lineHeight: 1.1, fontWeight: 950, fontVariantNumeric: "tabular-nums",
+            fontSize: r.value === null ? 12 : 20,
+            lineHeight: 1, fontWeight: 950, fontVariantNumeric: "tabular-nums",
             color: r.value === null ? "#94a3b8" : valueColor,
             fontStyle: r.value === null ? "italic" : undefined,
           } as React.CSSProperties}>
             {formatValue(r.value, r.unit)}
           </span>
           {d && (
-            <span style={{ fontSize: 10, fontWeight: 800,
+            <span style={{ fontSize: 9, fontWeight: 800,
               color: d.good === null ? "#94a3b8" : d.good ? "#16a34a" : "#dc2626",
               display: "flex", alignItems: "center", gap: 1 }}>
-              {d.delta === 0 ? <Minus style={{ width: 10, height: 10 }} />
-                : d.delta > 0 ? <ArrowUpRight style={{ width: 10, height: 10 }} /> : <ArrowDownRight style={{ width: 10, height: 10 }} />}
+              {d.delta === 0 ? <Minus style={{ width: 9, height: 9 }} />
+                : d.delta > 0 ? <ArrowUpRight style={{ width: 9, height: 9 }} /> : <ArrowDownRight style={{ width: 9, height: 9 }} />}
               {d.delta !== 0 && Math.abs(d.delta).toFixed(1)}
+            </span>
+          )}
+          {(r.numerator !== null && r.denominator !== null) && (
+            <span style={{ fontSize: 8, color: "#8390a0", fontWeight: 600, marginLeft: 1 }}>
+              {r.numerator.toLocaleString()}/{r.denominator.toLocaleString()}
             </span>
           )}
         </div>
 
-        {/* Numerator / denominator if available */}
-        {(r.numerator !== null || r.denominator !== null) && (
-          <p style={{ fontSize: 9, color: "#8390a0", fontWeight: 700, marginBottom: 3 }}>
-            {r.numerator !== null && r.denominator !== null
-              ? `${r.numerator.toLocaleString()} of ${r.denominator.toLocaleString()}`
-              : r.numerator !== null ? `${r.numerator.toLocaleString()} events`
-              : `of ${r.denominator?.toLocaleString()}`}
-          </p>
-        )}
-
-        {/* Target caption */}
+        {/* Target caption — only if there's a configured target */}
         {caption && (
-          <p style={{ fontSize: 8.5, color: status === "fail" ? "#dc2626" : status === "pass" ? "#15803d" : "#8390a0",
-            fontWeight: 700, marginBottom: hasTarget ? 4 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <p style={{ fontSize: 8, color: status === "fail" ? "#dc2626" : status === "pass" ? "#15803d" : "#8390a0",
+            fontWeight: 700, marginBottom: hasTarget ? 3 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {caption}
           </p>
         )}
 
-        {/* Target progress bar */}
+        {/* Target progress bar — compact 3px */}
         {hasTarget && (
-          <div style={{ height: 4, background: "#e8edf3", borderRadius: 99, overflow: "hidden", marginBottom: 4 }}>
+          <div style={{ height: 3, background: "#e8edf3", borderRadius: 99, overflow: "hidden", marginBottom: 3 }}>
             <div style={{ height: "100%", width: `${progressPct}%`, background: barColor,
               borderRadius: 99, transition: "width .6s cubic-bezier(.4,0,.2,1)" }} />
           </div>
         )}
 
-        {/* Mini sparkline — always visible */}
+        {/* Mini sparkline — compact 18px */}
         {r.trend.length >= 2 && (
-          <div style={{ height: 28, marginTop: 2, marginLeft: -2, marginRight: -2 }}>
+          <div style={{ height: 18, marginTop: 2, marginLeft: -2, marginRight: -2 }}>
             <Sparkline trend={r.trend} color={barColor} />
           </div>
         )}
@@ -1104,35 +1098,34 @@ function EnhancedSectionBlock({ s, staleAfterDays, period, onOpenDrill, isActive
   const [expanded, setExpanded] = useState(true);
 
   const sStyle = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
-  const Icon   = sStyle.icon;
-  const pass   = s.metrics.filter((m) => targetStatus(m) === "pass").length;
-  const fail   = s.metrics.filter((m) => targetStatus(m) === "fail").length;
-  const noData = s.metrics.filter((m) => m.value === null).length;
-  const stale  = s.metrics.filter((m) => m.staleDays !== null && m.staleDays > staleAfterDays).length;
-  const total  = s.metrics.length;
-  const hasTarget = s.metrics.some((m) => m.targetValue !== null);
-  const passPct = (pass + fail) > 0 ? (pass / (pass + fail)) * 100 : 0;
+  const Icon         = sStyle.icon;
+  const pass         = s.metrics.filter((m) => targetStatus(m) === "pass").length;
+  const fail         = s.metrics.filter((m) => targetStatus(m) === "fail").length;
+  const noData       = s.metrics.filter((m) => m.value === null).length;
+  const staleCount   = s.metrics.filter((m) => m.staleDays !== null && m.staleDays > staleAfterDays).length;
+  const totalMetrics = s.metrics.length;   // renamed from 'total' to prevent any scope shadowing
+  const hasTarget    = s.metrics.some((m) => m.targetValue !== null);
+  const passPct      = (pass + fail) > 0 ? (pass / (pass + fail)) * 100 : 0;
   const overallStatus = !hasTarget ? "neutral" : fail > 0 ? "fail" : "pass";
-  const headerAccent = overallStatus === "fail" ? "#e5484d" : overallStatus === "pass" ? "#18a866" : sStyle.accent;
+  const headerAccent  = overallStatus === "fail" ? "#e5484d" : overallStatus === "pass" ? "#18a866" : sStyle.accent;
 
   const visible = s.metrics.filter((m) => {
-    if (filter === "pass") return targetStatus(m) === "pass";
-    if (filter === "fail") return targetStatus(m) === "fail";
+    if (filter === "pass")   return targetStatus(m) === "pass";
+    if (filter === "fail")   return targetStatus(m) === "fail";
     if (filter === "nodata") return m.value === null;
-    if (filter === "stale") return m.staleDays !== null && m.staleDays > staleAfterDays;
+    if (filter === "stale")  return m.staleDays !== null && m.staleDays > staleAfterDays;
     return true;
   });
 
-  // Hero: the most critical failing metric (for "all" filter only)
   const hero = filter === "all" ? heroOf(visible) : null;
   const rest = hero ? visible.filter((m) => m.metricKey !== hero.metricKey) : visible;
 
   const FILTERS: { key: MetricFilter; label: string; count: number; color: string }[] = [
-    { key: "all",    label: "All",      count: total,  color: NAVY },
-    { key: "pass",   label: "Pass",     count: pass,   color: "#18a866" },
-    { key: "fail",   label: "Fail",     count: fail,   color: "#e5484d" },
-    { key: "nodata", label: "No Data",  count: noData, color: "#94a3b8" },
-    { key: "stale",  label: "Stale",    count: stale,  color: "#e89b19" },
+    { key: "all",    label: "All",     count: totalMetrics, color: NAVY },
+    { key: "pass",   label: "Pass",    count: pass,         color: "#18a866" },
+    { key: "fail",   label: "Fail",    count: fail,         color: "#e5484d" },
+    { key: "nodata", label: "No data", count: noData,       color: "#94a3b8" },
+    { key: "stale",  label: "Stale",   count: staleCount,   color: "#e89b19" },
   ].filter((f) => f.key === "all" || f.count > 0);
 
   return (
@@ -1143,102 +1136,99 @@ function EnhancedSectionBlock({ s, staleAfterDays, period, onOpenDrill, isActive
       overflow: "hidden", transition: "box-shadow .2s, border-color .2s",
     }}>
 
-      {/* ── Section Header ─────────────────────────────────────────────── */}
-      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${headerAccent}20`,
-        background: `linear-gradient(135deg, ${headerAccent}0a, transparent 60%)` }}>
+      {/* ── Section Header — single compact row ──────────────────────── */}
+      <div style={{ padding: "7px 12px 6px", borderBottom: `1px solid ${headerAccent}18`,
+        background: `linear-gradient(135deg,${headerAccent}08,transparent 55%)` }}>
 
-        {/* Title row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <span style={{ padding: "5px 6px", borderRadius: 8, background: `${headerAccent}18`, display: "flex", flexShrink: 0 }}>
-            <Icon style={{ width: 14, height: 14, color: headerAccent }} />
+        {/* Single row: icon · title · count · status · [progress bar] · filters · collapse */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          {/* Icon */}
+          <span style={{ padding: "3px 4px", borderRadius: 6, background: `${headerAccent}18`, display: "flex", flexShrink: 0 }}>
+            <Icon style={{ width: 12, height: 12, color: headerAccent }} />
           </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <h2 style={{ margin: 0, color: "#102f4b", fontSize: 15, fontWeight: 800, letterSpacing: .1 }}>
-                {s.title}
-              </h2>
-              <span style={{ fontSize: 9.5, fontWeight: 850, color: "#50677d",
-                background: "#edf5fc", border: "1px solid #d8e7f3", borderRadius: 999, padding: "3px 8px" }}>
-                {total} metric{total !== 1 ? "s" : ""}
-              </span>
-              {fail > 0 && (
-                <span style={{ fontSize: 9.5, fontWeight: 850, color: "#dc2626",
-                  background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 999, padding: "3px 8px",
-                  display: "flex", alignItems: "center", gap: 3 }}>
-                  <AlertTriangle style={{ width: 9, height: 9 }} />{fail} below target
-                </span>
-              )}
-              {pass > 0 && fail === 0 && hasTarget && (
-                <span style={{ fontSize: 9.5, fontWeight: 850, color: "#15803d",
-                  background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 999, padding: "3px 8px" }}>
-                  All {pass} on track
-                </span>
-              )}
-            </div>
-          </div>
-          {/* Collapse/expand toggle */}
-          <button type="button" onClick={() => setExpanded(v => !v)}
-            style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #dfe6ee",
-              background: "#f8fafc", cursor: "pointer", fontSize: 9, fontWeight: 800, color: "#64748b",
-              display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}
-            className="focus:outline-none focus-visible:ring-2">
-            {expanded ? <Minus style={{ width: 10, height: 10 }} /> : <ArrowUpRight style={{ width: 10, height: 10 }} />}
-            {expanded ? "Collapse" : "Expand"}
-          </button>
-        </div>
 
-        {/* Pass/fail progress bar + counts */}
-        {hasTarget && (pass + fail) > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ flex: 1, height: 6, background: "#fee2e2", borderRadius: 99, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${passPct}%`,
-                background: "linear-gradient(90deg,#18a866,#22c55e)", borderRadius: 99,
-                transition: "width .6s cubic-bezier(.4,0,.2,1)" }} />
-            </div>
-            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#50677d", whiteSpace: "nowrap" }}>
-              {pass}/{pass + fail} pass
+          {/* Title */}
+          <h2 style={{ margin: 0, color: "#102f4b", fontSize: 13, fontWeight: 800, letterSpacing: .1, whiteSpace: "nowrap" }}>
+            {s.title}
+          </h2>
+
+          {/* Metric count badge */}
+          <span style={{ fontSize: 9, fontWeight: 850, color: "#50677d",
+            background: "#edf5fc", border: "1px solid #d8e7f3", borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" }}>
+            {totalMetrics}
+          </span>
+
+          {/* Status inline badge */}
+          {fail > 0 && (
+            <span style={{ fontSize: 9, fontWeight: 850, color: "#dc2626",
+              background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 999, padding: "2px 7px",
+              display: "flex", alignItems: "center", gap: 2, whiteSpace: "nowrap" }}>
+              <AlertTriangle style={{ width: 8, height: 8 }} />{fail} below
             </span>
-            {noData > 0 && <span style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700 }}>{noData} no data</span>}
-            {stale > 0 && <span style={{ fontSize: 9, color: "#e89b19", fontWeight: 700 }}>{stale} stale</span>}
-          </div>
-        )}
+          )}
+          {pass > 0 && fail === 0 && hasTarget && (
+            <span style={{ fontSize: 9, fontWeight: 850, color: "#15803d",
+              background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" }}>
+              {pass}/{pass + fail} ✓
+            </span>
+          )}
 
-        {/* Filter pills */}
-        {expanded && FILTERS.length > 1 && (
-          <div style={{ display: "flex", gap: 5, marginTop: 8, flexWrap: "wrap" }}>
+          {/* Pass/fail progress bar — inline, compact */}
+          {hasTarget && (pass + fail) > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 5, flex: 1, minWidth: 60 }}>
+              <div style={{ flex: 1, height: 4, background: "#fee2e2", borderRadius: 99, overflow: "hidden", minWidth: 40 }}>
+                <div style={{ height: "100%", width: `${passPct}%`,
+                  background: "linear-gradient(90deg,#18a866,#22c55e)", borderRadius: 99,
+                  transition: "width .6s cubic-bezier(.4,0,.2,1)" }} />
+              </div>
+              {staleCount > 0 && <span style={{ fontSize: 8.5, color: "#e89b19", fontWeight: 700, whiteSpace: "nowrap" }}>{staleCount} stale</span>}
+            </div>
+          )}
+
+          {/* Filter pills — compact, right-aligned */}
+          <div style={{ display: "flex", gap: 3, marginLeft: "auto", flexWrap: "nowrap" }}>
             {FILTERS.map((f) => (
               <button key={f.key} type="button" onClick={() => setFilter(f.key)}
                 style={{
-                  padding: "3px 10px", borderRadius: 999, cursor: "pointer",
-                  fontSize: 9.5, fontWeight: 850, border: `1px solid ${filter === f.key ? f.color : "#dfe6ee"}`,
-                  background: filter === f.key ? f.color : "#f8fafc",
+                  padding: "2px 8px", borderRadius: 999, cursor: "pointer",
+                  fontSize: 9, fontWeight: 850,
+                  border: `1px solid ${filter === f.key ? f.color : "#e2e8f0"}`,
+                  background: filter === f.key ? f.color : "transparent",
                   color: filter === f.key ? "#fff" : "#64748b",
-                  transition: ".15s",
+                  transition: ".15s", whiteSpace: "nowrap",
                 }}
                 className="focus:outline-none focus-visible:ring-1">
-                {f.label} <span style={{ opacity: .8 }}>({f.count})</span>
+                {f.label} ({f.count})
               </button>
             ))}
           </div>
-        )}
+
+          {/* Collapse toggle */}
+          <button type="button" onClick={() => setExpanded(v => !v)}
+            style={{ padding: "2px 6px", borderRadius: 6, border: "1px solid #e2e8f0",
+              background: "transparent", cursor: "pointer", fontSize: 8.5, fontWeight: 700, color: "#94a3b8",
+              display: "flex", alignItems: "center", flexShrink: 0 }}
+            className="focus:outline-none focus-visible:ring-1">
+            {expanded ? <Minus style={{ width: 9, height: 9 }} /> : <ArrowUpRight style={{ width: 9, height: 9 }} />}
+          </button>
+        </div>
       </div>
 
       {/* ── Metrics grid ───────────────────────────────────────────────── */}
       {expanded && (
-        <div style={{ padding: "14px 16px" }}>
+        <div style={{ padding: "10px 12px" }}>
           {visible.length === 0 ? (
-            <p style={{ fontSize: 12, color: "#94a3b8", margin: 0, padding: "8px 0" }}>
+            <p style={{ fontSize: 12, color: "#94a3b8", margin: 0, padding: "4px 0" }}>
               No metrics match this filter.
             </p>
           ) : (
-            <div style={hero ? { display: "grid", gap: 12, gridTemplateColumns: "280px 1fr", alignItems: "start" } : { display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
-              {/* Hero card — only shown in "all" filter when there's a critical fail */}
+            <div style={hero ? { display: "grid", gap: 10, gridTemplateColumns: "240px 1fr", alignItems: "start" } : { display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
               {hero && (
                 <HeroKpiCard r={hero} staleAfter={staleAfterDays} period={period}
                   onOpen={() => onOpenDrill(hero.metricKey)} />
               )}
-              {/* Rest of metrics — responsive grid */}
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
+              {/* Rest — auto-fill grid, min 160px for tighter packing */}
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
                 {rest.map((r, i) => (
                   <EnhancedMetricCard
                     key={r.metricKey} r={r}
@@ -4671,7 +4661,6 @@ export default function ProcessOperationsPage() {
   // Active section key for overview strip highlighting + scroll-to
   const [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
-  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]);
 
   const { data: listData, isLoading: listLoading, isError: listErrored, refetch: refetchList } = useQuery({
     queryKey: ["process-operations", "processes"],
@@ -4724,6 +4713,8 @@ export default function ProcessOperationsPage() {
 
   const current = active ?? branchScopedProcesses[0]?.processId ?? null;
   const currentProcess = processes.find((p) => p.processId === current) ?? null;
+  // Must be after currentProcess is declared (TDZ guard)
+  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]);
 
   const { data: feedData } = useQuery({
     queryKey: ["process-operations", "feeds"],
@@ -4821,7 +4812,7 @@ export default function ProcessOperationsPage() {
             <div style={{ display: "flex", alignItems: "flex-end", gap: 8, position: "relative", zIndex: 1, flexWrap: "wrap", justifyContent: "flex-end" }}>
               {/* Branch filter */}
               {processes.length > 0 && (
-                <div style={{ minWidth: 148 }}>
+                <div style={{ minWidth: 210 }}>
                   <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Branch</label>
                   <SearchableSelect
                     aria-label="Filter by branch"
@@ -4838,7 +4829,7 @@ export default function ProcessOperationsPage() {
               )}
               {/* Process filter */}
               {processes.length > 0 && (
-                <div style={{ minWidth: 200 }}>
+                <div style={{ minWidth: 280 }}>
                   <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Process</label>
                   <SearchableSelect
                     aria-label="Select a process"
