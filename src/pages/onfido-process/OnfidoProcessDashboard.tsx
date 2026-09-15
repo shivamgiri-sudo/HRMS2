@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, Globe, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
@@ -139,18 +139,24 @@ interface AttritionExitRow {
 }
 type AttritionDimension = "am_name" | "tl_name" | "aon_bucket" | "location";
 
-interface EtmOverview { docCount: KpiValue; poaCount: KpiValue }
+interface EtmQueueKpis { selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }
+interface EtmOverview { doc: EtmQueueKpis; poa: EtmQueueKpis }
 interface EtmTrendPoint { bucket: string; doc: number; poa: number }
 type EtmQueue = "doc" | "poa";
-type EtmDimension = "tl_name" | "am_name" | "escalated_by_email";
+type EtmDimension = "tl_name" | "am_name" | "escalated_by_email" | "aon_bucket";
 interface EtmBreakdownRow { label: string; count: number }
+type EtmPivotDimension = "analyst" | "slot" | "client" | "document_type";
 
-interface TaskSkipOverview { count: KpiValue }
+interface TaskSkipOverview { selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }
 interface TaskSkipTrendPoint { bucket: string; count: number }
 interface QualityTrendPoint { bucket: string; taskCount: number; errorRate: number | null }
 interface AttritionTrendPoint { bucket: string; attritionCount: number }
 type TaskSkipDimension = "tl_name" | "am_name" | "unassigned_from_email" | "ims_client_name" | "task_type";
 interface TaskSkipBreakdownRow { label: string; count: number }
+type TaskSkipPivotDimension = "analyst" | "slot" | "client" | "task_type";
+
+interface DayPivotRow { label: string; byDay: Record<string, number>; total: number }
+interface DayPivot { days: string[]; rows: DayPivotRow[]; dayTotals: Record<string, number> }
 
 interface QualityOverview {
   taskCount: KpiValue; overallErrorRate: KpiValue; farRate: KpiValue; frrRate: KpiValue;
@@ -1421,14 +1427,132 @@ function AttritionView({
  * onfido_poa_etm_raw data. Every row in these tables is an escalated task by
  * definition, so "ETM count" is simply COUNT(*) in range.
  */
+/** The reference dashboard's donut palette — reused for every distribution
+ *  chart (ETM AM/TL/AON, Task Skip AM/TL/Task-Type). */
+const DONUT_COLORS = [AC.blue, AC.teal, AC.purple, AC.orange, AC.pink, AC.green, AC.yellow, AC.red, AC.navy, AC.muted];
+
+/** "AM-wise / TL-wise / AON-wise Distribution" donut + ranked-list panel —
+ *  one instance per dimension, laid out three-across like the reference. */
+function DonutBreakdown({
+  title, rows, onSelect, tagLabel = "Donut chart",
+}: { title: string; rows: { label: string; count: number }[]; onSelect?: (label: string) => void; tagLabel?: string }) {
+  const top = rows.slice(0, 8);
+  const total = rows.reduce((sum, r) => sum + r.count, 0);
+  return (
+    <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+      <div className="flex items-center justify-between gap-2">
+        <h3 style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 99, background: "var(--blue)", display: "inline-block", flexShrink: 0 }} />
+          {title}
+        </h3>
+        <span style={{ fontSize: 9.5, color: "var(--muted)", textTransform: "uppercase", fontWeight: 700, whiteSpace: "nowrap" }}>{tagLabel}</span>
+      </div>
+      {top.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data</div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+          <div style={{ position: "relative", width: 128, height: 128, flexShrink: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={top} dataKey="count" nameKey="label" innerRadius={38} outerRadius={60} paddingAngle={1} strokeWidth={1} stroke="#fff" isAnimationActive={false}>
+                  {top.map((r, i) => (
+                    <Cell key={r.label} fill={DONUT_COLORS[i % DONUT_COLORS.length]} cursor={onSelect ? "pointer" : "default"} onClick={() => onSelect?.(r.label)} />
+                  ))}
+                </Pie>
+                <RTooltip content={<DarkTooltip />} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <div style={{ fontSize: 17, fontWeight: 900, color: "var(--text)" }}>{total.toLocaleString("en-IN")}</div>
+              <div style={{ fontSize: 9, color: "var(--muted)", fontWeight: 700 }}>Total</div>
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {top.map((r, i) => (
+              <div
+                key={r.label}
+                onClick={() => onSelect?.(r.label)}
+                className={onSelect ? "oc-row-click" : undefined}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2.5px 0" }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, minWidth: 0 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 99, background: DONUT_COLORS[i % DONUT_COLORS.length], flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</span>
+                </span>
+                <span style={{ fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>
+                  {r.count.toLocaleString("en-IN")} · {total > 0 ? ((r.count / total) * 100).toFixed(1) : "0.0"}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtPivotDay(d: string): string {
+  const dt = new Date(`${d}T00:00:00`);
+  return `${String(dt.getDate()).padStart(2, "0")}-${dt.toLocaleString("en-US", { month: "short" }).toUpperCase()}-${String(dt.getFullYear()).slice(2)}`;
+}
+
+/** "Analyst / Client / Document-or-Task-Type Day-wise Trend" and "Day and
+ *  Slot-wise Trend" panels — a label x day pivot with a totals row/column,
+ *  horizontally scrollable once the date range spans more than a few days. */
+function DayPivotTable({ title, pivot, dimensionLabel }: { title: string; pivot: DayPivot; dimensionLabel: string }) {
+  const grandTotal = Object.values(pivot.dayTotals).reduce((a, b) => a + b, 0);
+  return (
+    <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+      <div className="flex items-center justify-between gap-2">
+        <h3 style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 99, background: "var(--purple)", display: "inline-block" }} />
+          {title}
+        </h3>
+        <span style={{ fontSize: 9.5, color: "var(--muted)", fontWeight: 700 }}>Filtered figures</span>
+      </div>
+      {pivot.days.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+      ) : (
+        <div style={{ overflow: "auto", marginTop: 10, maxHeight: 360 }}>
+          <table className="oc-table" style={{ fontSize: 10.5 }}>
+            <thead>
+              <tr>
+                <th style={{ position: "sticky", left: 0, background: "var(--panel)", zIndex: 1 }}>{dimensionLabel}</th>
+                {pivot.days.map((d) => <th key={d} className="oc-right">{fmtPivotDay(d)}</th>)}
+                <th className="oc-right" style={{ fontWeight: 900 }}>Grand Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pivot.rows.map((r) => (
+                <tr key={r.label}>
+                  <td style={{ position: "sticky", left: 0, background: "var(--panel)" }}>{r.label}</td>
+                  {pivot.days.map((d) => <td key={d} className="oc-right">{r.byDay[d] ? r.byDay[d].toLocaleString("en-IN") : "—"}</td>)}
+                  <td className="oc-right" style={{ fontWeight: 800 }}>{r.total.toLocaleString("en-IN")}</td>
+                </tr>
+              ))}
+              <tr style={{ background: "rgba(148,163,184,0.1)", fontWeight: 800 }}>
+                <td style={{ position: "sticky", left: 0, background: "rgba(148,163,184,0.1)" }}>Day</td>
+                {pivot.days.map((d) => <td key={d} className="oc-right">{(pivot.dayTotals[d] ?? 0).toLocaleString("en-IN")}</td>)}
+                <td className="oc-right">{grandTotal.toLocaleString("en-IN")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EtmView({
   range, tlFilter, amFilter, onOpenRecord,
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [queue, setQueue] = useState<EtmQueue>("doc");
   const [dimension, setDimension] = useState<EtmDimension>("tl_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
-  const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
+  const [drilldown, setDrilldown] = useState<{ label: string; dimension: EtmDimension } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
+  const qKey = [range, tlFilter, amFilter, queue] as const;
+  const dimLabel = (d: EtmDimension) => (d === "escalated_by_email" ? "Escalated By" : d === "aon_bucket" ? "AON" : d === "tl_name" ? "TL" : "AM");
 
   const overviewQuery = useQuery({
     queryKey: ["onfido-process", "etm-overview", range, tlFilter, amFilter],
@@ -1443,22 +1567,73 @@ function EtmView({
     queryFn: () => hrmsApi.get<{ data: EtmBreakdownRow[] }>(`/api/onfido-process/etm/breakdown/${queue}/${dimension}?from=${range.from}&to=${range.to}${qs}`),
   });
 
+  // AM/TL/AON-wise distribution — current range and latest-day variants, three
+  // dimensions each, matching the reference's two donut-trio rows.
+  const amCurrent = useQuery({
+    queryKey: ["onfido-process", "etm-breakdown", ...qKey, "am_name"],
+    queryFn: () => hrmsApi.get<{ data: EtmBreakdownRow[] }>(`/api/onfido-process/etm/breakdown/${queue}/am_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const tlCurrent = useQuery({
+    queryKey: ["onfido-process", "etm-breakdown", ...qKey, "tl_name"],
+    queryFn: () => hrmsApi.get<{ data: EtmBreakdownRow[] }>(`/api/onfido-process/etm/breakdown/${queue}/tl_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const aonCurrent = useQuery({
+    queryKey: ["onfido-process", "etm-breakdown", ...qKey, "aon_bucket"],
+    queryFn: () => hrmsApi.get<{ data: EtmBreakdownRow[] }>(`/api/onfido-process/etm/breakdown/${queue}/aon_bucket?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const amLatest = useQuery({
+    queryKey: ["onfido-process", "etm-latest", ...qKey, "am_name"],
+    queryFn: () => hrmsApi.get<{ data: { date: string | null; rows: EtmBreakdownRow[] } }>(`/api/onfido-process/etm/latest-day/${queue}/am_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const tlLatest = useQuery({
+    queryKey: ["onfido-process", "etm-latest", ...qKey, "tl_name"],
+    queryFn: () => hrmsApi.get<{ data: { date: string | null; rows: EtmBreakdownRow[] } }>(`/api/onfido-process/etm/latest-day/${queue}/tl_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const aonLatest = useQuery({
+    queryKey: ["onfido-process", "etm-latest", ...qKey, "aon_bucket"],
+    queryFn: () => hrmsApi.get<{ data: { date: string | null; rows: EtmBreakdownRow[] } }>(`/api/onfido-process/etm/latest-day/${queue}/aon_bucket?from=${range.from}&to=${range.to}${qs}`),
+  });
+
+  // Analyst / Slot / Client / Document-Type day-wise pivots.
+  const analystPivot = useQuery({
+    queryKey: ["onfido-process", "etm-pivot", ...qKey, "analyst"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/etm/day-pivot/${queue}/analyst?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const slotPivot = useQuery({
+    queryKey: ["onfido-process", "etm-pivot", ...qKey, "slot"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/etm/day-pivot/${queue}/slot?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const clientPivot = useQuery({
+    queryKey: ["onfido-process", "etm-pivot", ...qKey, "client"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/etm/day-pivot/${queue}/client?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const docTypePivot = useQuery({
+    queryKey: ["onfido-process", "etm-pivot", ...qKey, "document_type"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/etm/day-pivot/${queue}/document_type?from=${range.from}&to=${range.to}${qs}`),
+    enabled: queue === "doc",
+  });
+
   const ov = overviewQuery.data?.data;
+  const q = ov ? ov[queue] : undefined;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
+  const queueLabel = queue === "doc" ? "DOC ETM" : "POA ETM";
 
   return (
     <div className="space-y-4">
-      {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
-          <KpiPlain kpi={ov.docCount} kc="var(--blue)" />
-          <KpiPlain kpi={ov.poaCount} kc="var(--teal)" />
+      <PillGroup value={queue} onChange={setQueue} options={[{ key: "doc", label: "DOC ETM" }, { key: "poa", label: "POA ETM" }]} />
+
+      {q && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <KpiPlain kpi={q.selected} kc="var(--blue)" />
+          <KpiPlain kpi={q.latestDay} kc="var(--purple)" />
+          <KpiPlain kpi={q.ytd} kc="var(--teal)" />
         </div>
       )}
 
       <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>ETM Trend</h3>
+          <h3 style={{ marginBottom: 0 }}>{queueLabel} · Month-wise Trend</h3>
           <PillGroup
             value={granularity} onChange={setGranularity}
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
@@ -1487,28 +1662,54 @@ function EtmView({
         </div>
       </div>
 
+      <div>
+        <div className="mb-2" style={{ fontSize: 11, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".03em" }}>
+          {queueLabel} · Current Range Distribution
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+          <DonutBreakdown title={`${queueLabel} · AM-wise Distribution`} rows={amCurrent.data?.data ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "am_name" })} />
+          <DonutBreakdown title={`${queueLabel} · TL-wise Trend`} rows={tlCurrent.data?.data ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "tl_name" })} tagLabel="Top categories" />
+          <DonutBreakdown title={`${queueLabel} · AON-wise Distribution`} rows={aonCurrent.data?.data ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "aon_bucket" })} />
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2" style={{ fontSize: 11, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".03em" }}>
+          {queueLabel} · Latest Day{amLatest.data?.data.date ? ` (${fmtPivotDay(amLatest.data.data.date)})` : ""}
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+          <DonutBreakdown title={`${queueLabel} · Latest Day AM-wise`} rows={amLatest.data?.data.rows ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "am_name" })} />
+          <DonutBreakdown title={`${queueLabel} · Latest Day TL-wise`} rows={tlLatest.data?.data.rows ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "tl_name" })} tagLabel="Top categories" />
+          <DonutBreakdown title={`${queueLabel} · Latest Day AON-wise`} rows={aonLatest.data?.data.rows ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "aon_bucket" })} />
+        </div>
+      </div>
+
+      <DayPivotTable title={`${queueLabel} · Analyst Day-wise Trend`} pivot={analystPivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="Analyst Email" />
+      <DayPivotTable title={`${queueLabel} · Selected Month Day and Slot-wise Trend`} pivot={slotPivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="GMT Slot" />
+      <DayPivotTable title={`${queueLabel} · Client Day-wise Trend`} pivot={clientPivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="IMS Client Name" />
+      {queue === "doc" && (
+        <DayPivotTable title={`${queueLabel} · Document Type Day-wise Trend`} pivot={docTypePivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="Document Type" />
+      )}
+
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Breakdown</h3>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <PillGroup value={queue} onChange={setQueue} options={[{ key: "doc", label: "DOC" }, { key: "poa", label: "POA" }]} />
-            <PillGroup
-              value={dimension}
-              onChange={setDimension}
-              options={[
-                { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
-                { key: "escalated_by_email", label: "Escalated By" },
-              ]}
-            />
-          </div>
+          <PillGroup
+            value={dimension}
+            onChange={setDimension}
+            options={[
+              { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
+              { key: "aon_bucket", label: "AON Wise" }, { key: "escalated_by_email", label: "Escalated By" },
+            ]}
+          />
         </div>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
-            <thead><tr><th>{dimension === "escalated_by_email" ? "Escalated By" : dimension === "tl_name" ? "TL" : "AM"}</th><th className="oc-right">Count</th></tr></thead>
+            <thead><tr><th>{dimLabel(dimension)}</th><th className="oc-right">Count</th></tr></thead>
             <tbody>
               {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={2}>No data</td></tr>}
               {breakdown.map((r) => (
-                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
+                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label, dimension })}>
                   <td>{r.label}</td><td className="oc-right">{r.count}</td>
                 </tr>
               ))}
@@ -1520,9 +1721,9 @@ function EtmView({
       {drilldown && (
         <BreakdownDrilldownSheet
           open={!!drilldown}
-          title={`${queue === "doc" ? "DOC" : "POA"} ETM — ${dimension === "escalated_by_email" ? "Escalated By" : dimension === "tl_name" ? "TL" : "AM"}`}
+          title={`${queueLabel} — ${dimLabel(drilldown.dimension)}: ${drilldown.label}`}
           tableKey={queue === "doc" ? "ONFIDO_DOC_ETM" : "ONFIDO_POA_ETM"}
-          filterColumn={dimension}
+          filterColumn={drilldown.dimension}
           filterValue={drilldown.label}
           range={range}
           onOpenChange={(v) => { if (!v) setDrilldown(null); }}
@@ -1542,8 +1743,10 @@ function TaskSkipView({
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<TaskSkipDimension>("tl_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
-  const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
+  const [drilldown, setDrilldown] = useState<{ label: string; dimension: TaskSkipDimension } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
+  const qKey = [range, tlFilter, amFilter] as const;
+  const dimLabelOf = (d: TaskSkipDimension) => ({ tl_name: "TL", am_name: "AM", unassigned_from_email: "Analyst", ims_client_name: "Client", task_type: "Task Type" })[d];
 
   const overviewQuery = useQuery({
     queryKey: ["onfido-process", "taskskip-overview", range, tlFilter, amFilter],
@@ -1558,22 +1761,67 @@ function TaskSkipView({
     queryFn: () => hrmsApi.get<{ data: TaskSkipBreakdownRow[] }>(`/api/onfido-process/task-skip/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
   });
 
+  // AM/TL/Task-Type-wise distribution — current range and latest-day variants.
+  const amCurrent = useQuery({
+    queryKey: ["onfido-process", "taskskip-breakdown", ...qKey, "am_name"],
+    queryFn: () => hrmsApi.get<{ data: TaskSkipBreakdownRow[] }>(`/api/onfido-process/task-skip/breakdown/am_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const tlCurrent = useQuery({
+    queryKey: ["onfido-process", "taskskip-breakdown", ...qKey, "tl_name"],
+    queryFn: () => hrmsApi.get<{ data: TaskSkipBreakdownRow[] }>(`/api/onfido-process/task-skip/breakdown/tl_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const taskTypeCurrent = useQuery({
+    queryKey: ["onfido-process", "taskskip-breakdown", ...qKey, "task_type"],
+    queryFn: () => hrmsApi.get<{ data: TaskSkipBreakdownRow[] }>(`/api/onfido-process/task-skip/breakdown/task_type?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const amLatest = useQuery({
+    queryKey: ["onfido-process", "taskskip-latest", ...qKey, "am_name"],
+    queryFn: () => hrmsApi.get<{ data: { date: string | null; rows: TaskSkipBreakdownRow[] } }>(`/api/onfido-process/task-skip/latest-day/am_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const tlLatest = useQuery({
+    queryKey: ["onfido-process", "taskskip-latest", ...qKey, "tl_name"],
+    queryFn: () => hrmsApi.get<{ data: { date: string | null; rows: TaskSkipBreakdownRow[] } }>(`/api/onfido-process/task-skip/latest-day/tl_name?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const taskTypeLatest = useQuery({
+    queryKey: ["onfido-process", "taskskip-latest", ...qKey, "task_type"],
+    queryFn: () => hrmsApi.get<{ data: { date: string | null; rows: TaskSkipBreakdownRow[] } }>(`/api/onfido-process/task-skip/latest-day/task_type?from=${range.from}&to=${range.to}${qs}`),
+  });
+
+  // Analyst / Slot / Client / Task-Type day-wise pivots.
+  const analystPivot = useQuery({
+    queryKey: ["onfido-process", "taskskip-pivot", ...qKey, "analyst"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/task-skip/day-pivot/analyst?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const slotPivot = useQuery({
+    queryKey: ["onfido-process", "taskskip-pivot", ...qKey, "slot"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/task-skip/day-pivot/slot?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const clientPivot = useQuery({
+    queryKey: ["onfido-process", "taskskip-pivot", ...qKey, "client"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/task-skip/day-pivot/client?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const taskTypePivot = useQuery({
+    queryKey: ["onfido-process", "taskskip-pivot", ...qKey, "task_type"],
+    queryFn: () => hrmsApi.get<{ data: DayPivot }>(`/api/onfido-process/task-skip/day-pivot/task_type?from=${range.from}&to=${range.to}${qs}`),
+  });
+
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { tl_name: "TL", am_name: "AM", unassigned_from_email: "Analyst", ims_client_name: "Client", task_type: "Task Type" }[dimension];
 
   return (
     <div className="space-y-4">
       {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(1, minmax(0, 260px))" }}>
-          <KpiPlain kpi={ov.count} kc="var(--orange)" />
+        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <KpiPlain kpi={ov.selected} kc="var(--orange)" />
+          <KpiPlain kpi={ov.latestDay} kc="var(--purple)" />
+          <KpiPlain kpi={ov.ytd} kc="var(--teal)" />
         </div>
       )}
 
       <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>Task Skip Trend</h3>
+          <h3 style={{ marginBottom: 0 }}>Task Skip · Trend</h3>
           <PillGroup
             value={granularity} onChange={setGranularity}
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
@@ -1598,6 +1846,33 @@ function TaskSkipView({
         </div>
       </div>
 
+      <div>
+        <div className="mb-2" style={{ fontSize: 11, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".03em" }}>
+          Task Skip · Current Range Distribution
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+          <DonutBreakdown title="Task Skip · AM-wise Distribution" rows={amCurrent.data?.data ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "am_name" })} />
+          <DonutBreakdown title="Task Skip · TL-wise Trend" rows={tlCurrent.data?.data ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "tl_name" })} tagLabel="Top categories" />
+          <DonutBreakdown title="Task Skip · Task-wise Distribution" rows={taskTypeCurrent.data?.data ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "task_type" })} tagLabel="Pie chart" />
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2" style={{ fontSize: 11, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".03em" }}>
+          Task Skip · Latest Day{amLatest.data?.data.date ? ` (${fmtPivotDay(amLatest.data.data.date)})` : ""}
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+          <DonutBreakdown title="Task Skip · Latest Day AM-wise" rows={amLatest.data?.data.rows ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "am_name" })} />
+          <DonutBreakdown title="Task Skip · Latest Day TL-wise" rows={tlLatest.data?.data.rows ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "tl_name" })} tagLabel="Top categories" />
+          <DonutBreakdown title="Task Skip · Latest Day Task-wise" rows={taskTypeLatest.data?.data.rows ?? []} onSelect={(l) => setDrilldown({ label: l, dimension: "task_type" })} />
+        </div>
+      </div>
+
+      <DayPivotTable title="Task Skip · Analyst Day-wise Trend" pivot={analystPivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="Analyst" />
+      <DayPivotTable title="Task Skip · Selected Month Day and Slot-wise Trend" pivot={slotPivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="GMT Slot" />
+      <DayPivotTable title="Task Skip · Client Day-wise Trend" pivot={clientPivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="IMS Client Name" />
+      <DayPivotTable title="Task Skip · Task Type Day-wise Trend" pivot={taskTypePivot.data?.data ?? { days: [], rows: [], dayTotals: {} }} dimensionLabel="Task Type" />
+
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Breakdown</h3>
@@ -1613,11 +1888,11 @@ function TaskSkipView({
         </div>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
-            <thead><tr><th>{dimLabel}</th><th className="oc-right">Count</th></tr></thead>
+            <thead><tr><th>{dimLabelOf(dimension)}</th><th className="oc-right">Count</th></tr></thead>
             <tbody>
               {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={2}>No data</td></tr>}
               {breakdown.map((r) => (
-                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
+                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label, dimension })}>
                   <td>{r.label}</td><td className="oc-right">{r.count}</td>
                 </tr>
               ))}
@@ -1629,9 +1904,9 @@ function TaskSkipView({
       {drilldown && (
         <BreakdownDrilldownSheet
           open={!!drilldown}
-          title={`Task Skip — ${dimLabel}`}
+          title={`Task Skip — ${dimLabelOf(drilldown.dimension)}: ${drilldown.label}`}
           tableKey="ONFIDO_TASK_SKIP"
-          filterColumn={dimension}
+          filterColumn={drilldown.dimension}
           filterValue={drilldown.label}
           range={range}
           onOpenChange={(v) => { if (!v) setDrilldown(null); }}

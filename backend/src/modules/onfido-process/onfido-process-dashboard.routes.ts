@@ -188,12 +188,27 @@ router.get("/etm/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req
   const data = await svc.getEtmTrend(readQueryFilters(req), readGranularity(req));
   res.json({ success: true, data });
 }));
-const ETM_DIMENSIONS = new Set(["tl_name", "am_name", "escalated_by_email"]);
+const ETM_DIMENSIONS = new Set(["tl_name", "am_name", "escalated_by_email", "aon_bucket"]);
 router.get("/etm/breakdown/:queue/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const { queue, dimension } = req.params;
   if (queue !== "doc" && queue !== "poa") return res.status(400).json({ success: false, message: "Unknown queue" });
   if (!ETM_DIMENSIONS.has(dimension)) return res.status(400).json({ success: false, message: "Unknown dimension" });
   const data = await svc.getEtmBreakdown(readQueryFilters(req), queue, dimension as Parameters<typeof svc.getEtmBreakdown>[2]);
+  res.json({ success: true, data });
+}));
+router.get("/etm/latest-day/:queue/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const { queue, dimension } = req.params;
+  if (queue !== "doc" && queue !== "poa") return res.status(400).json({ success: false, message: "Unknown queue" });
+  if (!ETM_DIMENSIONS.has(dimension)) return res.status(400).json({ success: false, message: "Unknown dimension" });
+  const data = await svc.getEtmLatestDayBreakdown(readQueryFilters(req), queue, dimension as Parameters<typeof svc.getEtmLatestDayBreakdown>[2]);
+  res.json({ success: true, data });
+}));
+const ETM_PIVOT_DIMENSIONS = new Set(["analyst", "slot", "client", "document_type"]);
+router.get("/etm/day-pivot/:queue/:by", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const { queue, by } = req.params;
+  if (queue !== "doc" && queue !== "poa") return res.status(400).json({ success: false, message: "Unknown queue" });
+  if (!ETM_PIVOT_DIMENSIONS.has(by)) return res.status(400).json({ success: false, message: "Unknown pivot dimension" });
+  const data = await svc.getEtmDayPivot(readQueryFilters(req), queue, by as Parameters<typeof svc.getEtmDayPivot>[2]);
   res.json({ success: true, data });
 }));
 
@@ -210,6 +225,19 @@ router.get("/task-skip/breakdown/:dimension", requireAuth, requireRole(...VIEWER
   const dim = req.params.dimension;
   if (!TASK_SKIP_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
   const data = await svc.getTaskSkipBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getTaskSkipBreakdown>[1]);
+  res.json({ success: true, data });
+}));
+router.get("/task-skip/latest-day/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const dim = req.params.dimension;
+  if (!TASK_SKIP_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
+  const data = await svc.getTaskSkipLatestDayBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getTaskSkipLatestDayBreakdown>[1]);
+  res.json({ success: true, data });
+}));
+const TASK_SKIP_PIVOT_DIMENSIONS = new Set(["analyst", "slot", "client", "task_type"]);
+router.get("/task-skip/day-pivot/:by", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const by = req.params.by;
+  if (!TASK_SKIP_PIVOT_DIMENSIONS.has(by)) return res.status(400).json({ success: false, message: "Unknown pivot dimension" });
+  const data = await svc.getTaskSkipDayPivot(readQueryFilters(req), by as Parameters<typeof svc.getTaskSkipDayPivot>[1]);
   res.json({ success: true, data });
 }));
 

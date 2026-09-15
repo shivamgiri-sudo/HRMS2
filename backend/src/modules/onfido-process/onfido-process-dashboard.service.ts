@@ -1462,27 +1462,113 @@ export async function listAttritionExits(rawFilters: { from?: string; to?: strin
 // what the ETM export contains) — so "ETM count" is simply COUNT(*) in range,
 // same as the Overview cards' volume KPIs.
 
-export interface EtmOverview {
-  docCount: KpiValue;
-  poaCount: KpiValue;
+// ── Shared day-wise pivot + latest-day/YTD KPI helpers, used by both ETM and
+//    Task Skip below to match the reference dashboard's "Analyst/Client/
+//    Document-or-Task-Type Day-wise Trend" and "Day and Slot-wise Trend"
+//    panels, and its 3-card KPI row (Selected / Latest Day / Jan-to-date). ──
+
+async function countBetween(table: string, dateCol: string, from: string, to: string, clause: string, params: string[]): Promise<number> {
+  const r = await scalar<RowDataPacket & { n: number }>(
+    `SELECT COUNT(*) AS n FROM ${table} WHERE ${dateCol} BETWEEN ? AND ? ${clause}`, [from, to, ...params]
+  );
+  return Number(r.n ?? 0);
 }
+
+async function latestDateOnOrBefore(table: string, dateCol: string, upTo: string, clause: string, params: string[]): Promise<string | null> {
+  // DATE_FORMAT in SQL, not JS-side Date handling: mysql2 returns MAX() on a
+  // DATE column as a JS Date object (no dateStrings on this pool), and
+  // String(date).slice(0,10) mangles it into "Mon Sep 07" instead of an ISO
+  // date — the same trap every other date column in this file avoids by
+  // formatting in SQL.
+  const r = await scalar<RowDataPacket & { d: string | null }>(
+    `SELECT DATE_FORMAT(MAX(${dateCol}), '%Y-%m-%d') AS d FROM ${table} WHERE ${dateCol} <= ? ${clause}`, [upTo, ...params]
+  );
+  return r.d ?? null;
+}
+
+/** Selected-range count / latest-day count / Jan-to-date count — the reference
+ *  dashboard's 3-card KPI row, computed once per queue/table. */
+async function threeCardKpis(
+  table: string, dateCol: string, from: string, to: string, clause: string, params: string[], keyPrefix: string, ytdSuffix: string
+): Promise<{ selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }> {
+  const selected = await countBetween(table, dateCol, from, to, clause, params);
+  const latestDate = await latestDateOnOrBefore(table, dateCol, to, clause, params);
+  const latestCount = latestDate ? await countBetween(table, dateCol, latestDate, latestDate, clause, params) : 0;
+  const yearStart = `${to.slice(0, 4)}-01-01`;
+  const ytdCount = await countBetween(table, dateCol, yearStart, to, clause, params);
+  return {
+    selected: { key: `${keyPrefix}_selected`, label: "Selected Data Count", value: selected, unit: "count", availability: "ok", note: `${from} to ${to}` },
+    latestDay: { key: `${keyPrefix}_latest`, label: "Latest Day Count", value: latestCount, unit: "count", availability: latestDate ? "ok" : "no_data", note: latestDate ?? undefined },
+    ytd: { key: `${keyPrefix}_ytd`, label: `${yearStart.slice(0, 4)} to Till ${ytdSuffix}`, value: ytdCount, unit: "count", availability: "ok", note: `${yearStart} to ${to}` },
+  };
+}
+
+export interface DayPivotRow { label: string; byDay: Record<string, number>; total: number }
+export interface DayPivot { days: string[]; rows: DayPivotRow[]; dayTotals: Record<string, number> }
+
+/** Generic label x day pivot ("Analyst/Client/Document-Type/Slot Day-wise
+ *  Trend" panels). Text labels are ranked by total, descending, and capped at
+ *  `limit`; numeric labels (the GMT `slot` hour, 0-23) are kept in full and
+ *  sorted by value instead, matching the reference's hour-ordered rows. */
+async function dayWisePivot(
+  table: string, dateCol: string, groupCol: string,
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string },
+  opts: { limit?: number; numeric?: boolean } = {}
+): Promise<DayPivot> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(${dateCol}, '%Y-%m-%d') AS day,
+            COALESCE(NULLIF(TRIM(CAST(${groupCol} AS CHAR)), ''), '(unassigned)') AS label,
+            COUNT(*) AS n
+       FROM ${table} WHERE ${dateCol} BETWEEN ? AND ? ${clause} AND ${groupCol} IS NOT NULL
+       GROUP BY day, label`,
+    [f.from, f.to, ...params]
+  );
+
+  const days = new Set<string>();
+  const byLabel = new Map<string, Map<string, number>>();
+  const dayTotals = new Map<string, number>();
+  for (const r of rows) {
+    const day = String(r.day);
+    const label = String(r.label);
+    const n = Number(r.n);
+    days.add(day);
+    if (!byLabel.has(label)) byLabel.set(label, new Map());
+    byLabel.get(label)!.set(day, n);
+    dayTotals.set(day, (dayTotals.get(day) ?? 0) + n);
+  }
+
+  let pivotRows: DayPivotRow[] = [...byLabel.entries()].map(([label, byDayMap]) => {
+    const byDay: Record<string, number> = {};
+    let total = 0;
+    for (const [day, n] of byDayMap) { byDay[day] = n; total += n; }
+    return { label, byDay, total };
+  });
+
+  if (opts.numeric) {
+    pivotRows.sort((a, b) => Number(a.label) - Number(b.label));
+  } else {
+    pivotRows.sort((a, b) => b.total - a.total);
+    if (opts.limit) pivotRows = pivotRows.slice(0, opts.limit);
+  }
+
+  const sortedDays = [...days].sort();
+  const dayTotalsObj: Record<string, number> = {};
+  for (const d of sortedDays) dayTotalsObj[d] = dayTotals.get(d) ?? 0;
+  return { days: sortedDays, rows: pivotRows, dayTotals: dayTotalsObj };
+}
+
+export interface EtmQueueKpis { selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }
+export interface EtmOverview { doc: EtmQueueKpis; poa: EtmQueueKpis }
 
 export async function getEtmOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<EtmOverview> {
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
-  const doc = await scalar<RowDataPacket & { n: number }>(
-    `SELECT COUNT(*) AS n FROM onfido_doc_etm_raw WHERE report_date BETWEEN ? AND ? ${clause}`, [f.from, f.to, ...params]
-  );
-  const poa = await scalar<RowDataPacket & { n: number }>(
-    `SELECT COUNT(*) AS n FROM onfido_poa_etm_raw WHERE report_date BETWEEN ? AND ? ${clause}`, [f.from, f.to, ...params]
-  );
-  const kpi = (key: string, label: string, value: number): KpiValue => ({
-    key, label, value, unit: "count", availability: "ok",
-  });
-  return {
-    docCount: kpi("etm_doc_count", "DOC ETM Count", Number(doc.n ?? 0)),
-    poaCount: kpi("etm_poa_count", "POA ETM Count", Number(poa.n ?? 0)),
-  };
+  const doc = await threeCardKpis("onfido_doc_etm_raw", "report_date", f.from, f.to, clause, params, "etm_doc", "DOC ETM");
+  const poa = await threeCardKpis("onfido_poa_etm_raw", "report_date", f.from, f.to, clause, params, "etm_poa", "POA ETM");
+  return { doc, poa };
 }
 
 export interface EtmTrendPoint { month: string; doc: number; poa: number }
@@ -1512,7 +1598,7 @@ export async function getEtmMonthlyTrend(rawFilters: { from?: string; to?: strin
 }
 
 export type EtmQueue = "doc" | "poa";
-export type EtmDimension = "tl_name" | "am_name" | "escalated_by_email";
+export type EtmDimension = "tl_name" | "am_name" | "escalated_by_email" | "aon_bucket";
 
 export interface EtmBreakdownRow { label: string; count: number }
 
@@ -1532,17 +1618,49 @@ export async function getEtmBreakdown(
   return rows.map((r) => ({ label: r.label, count: Number(r.n) }));
 }
 
+/** Same breakdown, scoped to the single most recent day in range instead of
+ *  the whole window — the reference dashboard's "Latest Day" distribution. */
+export async function getEtmLatestDayBreakdown(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, queue: EtmQueue, dimension: EtmDimension
+): Promise<{ date: string | null; rows: EtmBreakdownRow[] }> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const table = queue === "doc" ? "onfido_doc_etm_raw" : "onfido_poa_etm_raw";
+  const date = await latestDateOnOrBefore(table, "report_date", f.to, clause, params);
+  if (!date) return { date: null, rows: [] };
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label, COUNT(*) AS n
+       FROM ${table} WHERE report_date = ? ${clause}
+       GROUP BY label ORDER BY n DESC LIMIT 30`,
+    [date, ...params]
+  );
+  return { date, rows: rows.map((r) => ({ label: r.label, count: Number(r.n) })) };
+}
+
+export type EtmPivotDimension = "analyst" | "slot" | "client" | "document_type";
+
+/** "Analyst/Client/Document Type Day-wise Trend" + "Day and Slot-wise Trend"
+ *  panels. document_type does not exist on onfido_poa_etm_raw (POA has no
+ *  document-type field in the source export), so that combination returns an
+ *  empty pivot rather than a SQL error. */
+export async function getEtmDayPivot(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, queue: EtmQueue, by: EtmPivotDimension
+): Promise<DayPivot> {
+  if (by === "document_type" && queue === "poa") return { days: [], rows: [], dayTotals: {} };
+  const table = queue === "doc" ? "onfido_doc_etm_raw" : "onfido_poa_etm_raw";
+  const col = by === "analyst" ? "analyst_email" : by === "slot" ? "slot" : by === "client" ? "ims_client_name" : "document_type";
+  return dayWisePivot(table, "report_date", col, rawFilters, { limit: by === "slot" ? undefined : 15, numeric: by === "slot" });
+}
+
 // ── Task Skip — onfido_task_skip_raw ────────────────────────────────────────
 
-export interface TaskSkipOverview { count: KpiValue }
+export interface TaskSkipOverview { selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }
 
 export async function getTaskSkipOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<TaskSkipOverview> {
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
-  const agg = await scalar<RowDataPacket & { n: number }>(
-    `SELECT COUNT(*) AS n FROM onfido_task_skip_raw WHERE skip_date BETWEEN ? AND ? ${clause}`, [f.from, f.to, ...params]
-  );
-  return { count: { key: "taskskip_count", label: "Task Skip Count", value: Number(agg.n ?? 0), unit: "count", availability: "ok" } };
+  return threeCardKpis("onfido_task_skip_raw", "skip_date", f.from, f.to, clause, params, "taskskip", "Task Skip");
 }
 
 export interface TaskSkipTrendPoint { month: string; count: number }
@@ -1576,6 +1694,35 @@ export async function getTaskSkipBreakdown(
     [f.from, f.to, ...params]
   );
   return rows.map((r) => ({ label: r.label, count: Number(r.n) }));
+}
+
+/** Same breakdown, scoped to the single most recent day in range — the
+ *  reference dashboard's "Latest Day" distribution. */
+export async function getTaskSkipLatestDayBreakdown(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: TaskSkipDimension
+): Promise<{ date: string | null; rows: TaskSkipBreakdownRow[] }> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const date = await latestDateOnOrBefore("onfido_task_skip_raw", "skip_date", f.to, clause, params);
+  if (!date) return { date: null, rows: [] };
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label, COUNT(*) AS n
+       FROM onfido_task_skip_raw WHERE skip_date = ? ${clause}
+       GROUP BY label ORDER BY n DESC LIMIT 30`,
+    [date, ...params]
+  );
+  return { date, rows: rows.map((r) => ({ label: r.label, count: Number(r.n) })) };
+}
+
+export type TaskSkipPivotDimension = "analyst" | "slot" | "client" | "task_type";
+
+/** "Analyst/Client/Task Type Day-wise Trend" + "Day and Slot-wise Trend" panels. */
+export async function getTaskSkipDayPivot(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, by: TaskSkipPivotDimension
+): Promise<DayPivot> {
+  const col = by === "analyst" ? "unassigned_from_email" : by === "slot" ? "slot" : by === "client" ? "ims_client_name" : "task_type";
+  return dayWisePivot("onfido_task_skip_raw", "skip_date", col, rawFilters, { limit: by === "slot" ? undefined : 15, numeric: by === "slot" });
 }
 
 // ── Quality Breakdown — onfido_doc_external_audit_raw ───────────────────────
