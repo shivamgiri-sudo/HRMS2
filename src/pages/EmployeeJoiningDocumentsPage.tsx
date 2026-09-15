@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ESIGN_STATE_COLORS, esignStatusColor } from "@/lib/esignState";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 type ChecklistItem = {
   id: string;
@@ -119,6 +120,7 @@ function ErrorBanner({ message, onRetry }: { message: string | null; onRetry?: (
 
 export default function EmployeeJoiningDocumentsPage() {
   const { employeeId = "" } = useParams();
+  const { toast } = useToast();
   const [pack, setPack] = useState<Pack | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -279,7 +281,9 @@ export default function EmployeeJoiningDocumentsPage() {
       setPreviewUrl(URL.createObjectURL(blob));
       setPreviewTitle(title);
     } catch (err: any) {
-      setReviewError(err?.message || "Unable to preview this document.");
+      const msg = err?.message || "Unable to preview this document.";
+      setReviewError(msg);
+      toast({ title: "Preview failed", description: msg, variant: "destructive" });
     }
   };
 
