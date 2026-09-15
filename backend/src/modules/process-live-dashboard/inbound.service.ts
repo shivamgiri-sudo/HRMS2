@@ -22,7 +22,31 @@
 
 import type { RowDataPacket } from 'mysql2';
 import { dialerQuery } from '../../db/dialerDb.js';
+import { db } from '../../db/mysql.js';
 import { n, pct, round, fmtSec, finalMetric, parseRange, type MetricResult } from './dialler-utils.js';
+
+/**
+ * The dialler's agent log identifies agents only by employee code (its `user`
+ * column, e.g. MAS62353); it carries no name. Names live in HRMS, so resolve
+ * them from mas_hrms.employees. Codes with no HRMS record resolve to null.
+ */
+async function resolveEmployeeNames(codes: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(codes.map(c => c.trim().toUpperCase()).filter(Boolean))];
+  const names = new Map<string, string>();
+  if (unique.length === 0) return names;
+  // employee_code is compared bare so its index is used — wrapping it in
+  // UPPER()/TRIM() forces a full scan. Dialler codes are already upper-case;
+  // the JS side normalises both sides for the lookup.
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT employee_code AS code,
+            TRIM(COALESCE(NULLIF(TRIM(full_name), ''), CONCAT_WS(' ', first_name, last_name))) AS name
+       FROM employees
+      WHERE employee_code IN (?)`,
+    [unique],
+  );
+  for (const r of rows) if (r.name) names.set(String(r.code).trim().toUpperCase(), String(r.name));
+  return names;
+}
 
 const CDR_TABLE = 'cdr_in_10_4';
 const APR_TABLE = 'vicidial_agent_log_10_4';
@@ -293,6 +317,8 @@ export async function getInboundAgents(rawFilters: { from?: string; to?: string 
 
 export interface AprAgentRow {
   user: string;
+  /** Employee name from HRMS; null when the code has no HRMS record. */
+  agentName: string | null;
   aprCalls: number;
   netLoginSec: number; netLoginTime: string;
   talkSec: number; talk: string;
@@ -321,12 +347,15 @@ export async function getInboundApr(rawFilters: { from?: string; to?: string }):
     GROUP BY user ORDER BY talkSec DESC LIMIT 200
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to]);
+  const names = await resolveEmployeeNames(rows.map(r => String(r.user ?? '')));
   return rows.map(r => {
     const waitSec = n(r.waitSec), talkSec = n(r.talkSec), dispoSec = n(r.dispoSec), pauseSec = n(r.pauseSec);
     const lbSec = n(r.lbSec), tbSec = n(r.tbSec), wbSec = n(r.wbSec);
     const netLoginSec = waitSec + talkSec + dispoSec + pauseSec;
+    const user = String(r.user ?? '');
     return {
-      user: String(r.user ?? ''),
+      user,
+      agentName: names.get(user.trim().toUpperCase()) ?? null,
       aprCalls: n(r.aprCalls),
       netLoginSec: Math.round(netLoginSec), netLoginTime: fmtSec(netLoginSec),
       talkSec: Math.round(talkSec), talk: fmtSec(talkSec),
@@ -368,11 +397,16 @@ export async function getInboundDisposition(rawFilters: { from?: string; to?: st
   const { from, to } = parseRange(rawFilters);
 
   const [mainRows, subRows] = await Promise.all([
+    // DATE_FORMAT, not DATE(): the dialler pool does not set `dateStrings`, so a
+    // DATE column arrives as a JS Date and stringifies to "Mon Sep 01 2026 ...".
+    // The daily rows are keyed and then sorted by that string, which sorts
+    // alphabetically by weekday name — Fri, Mon, Sat, Sun, Thu... — scrambling
+    // the day-wise disposition charts. An ISO string sorts chronologically.
     dialerQuery<RowDataPacket>(`
-      SELECT DATE(CallDate) AS date, LOWER(TRIM(Category1)) AS scenario, COUNT(*) AS cnt
+      SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, LOWER(TRIM(Category1)) AS scenario, COUNT(*) AS cnt
       FROM ${DISPO_TABLE}
       WHERE ClientId = ? AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
-      GROUP BY DATE(CallDate), LOWER(TRIM(Category1)) ORDER BY date
+      GROUP BY date, LOWER(TRIM(Category1)) ORDER BY date
     `, [CLIENT_ID, from, to]),
     dialerQuery<RowDataPacket>(`
       SELECT LOWER(TRIM(Category1)) AS scenario, TRIM(Category2) AS subDispo, COUNT(*) AS cnt

@@ -16,7 +16,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, Legend,
   Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -26,7 +26,7 @@ import { getAuthToken } from "@/lib/hrmsApi";
 type DiallerProcess =
   | "inbound" | "reginald-cart" | "molecular-email" | "reginald-email"
   | "billing" | "gs1" | "finnable"
-  | "gnc" | "bella-vita" | "neemans" | "viega" | "exicom" | "du-digital"
+  | "gnc" | "bella-vita" | "clovia" | "neemans" | "viega" | "exicom" | "du-digital"
   | null;
 interface Filters { from: string; to: string }
 
@@ -105,6 +105,12 @@ async function fetchLive<T>(path: string, params: Record<string, string>): Promi
 
 function monthStart(): string { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); }
 function todayStr(): string { return new Date().toISOString().slice(0, 10); }
+// Data labels for SL%/AL% trend charts. Labels are drawn above the SL line and
+// below the AL line so they cannot collide even when the two values are equal.
+const PCT_LABEL = (v: unknown) => `${Number(v).toFixed(1)}%`;
+const LABEL_STYLE_BLUE: React.CSSProperties = { fontSize: 9, fontWeight: 800, fill: "#1d4ed8" };
+const LABEL_STYLE_ORANGE: React.CSSProperties = { fontSize: 9, fontWeight: 800, fill: "#c2410c" };
+
 function fmtDay(v: unknown): string { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
 function fmtSecAxis(s: number): string { if (s <= 0) return "0"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); if (h > 0) return `${h}h`; return `${m}m`; }
 function fmtSecShort(s: number): string { if (s <= 0) return "0s"; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = Math.round(s % 60); if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`; if (m > 0) return sec > 0 ? `${m}m ${sec}s` : `${m}m`; return `${sec}s`; }
@@ -525,7 +531,7 @@ function InboundDashboard({ f }: { f: Filters }) {
   const dayQ = useQuery({ queryKey: ["pld", "ib", "daily", f], queryFn: () => fetchLive<IBDayRow[]>("inbound/daily", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
   const slotQ = useQuery({ queryKey: ["pld", "ib", "hourly", hDate], queryFn: () => fetchLive<IBSlotRow[]>("inbound/hourly", { date: hDate }), staleTime: 2 * 60 * 1000, enabled: sub === "hourly" });
   const agentQ = useQuery({ queryKey: ["pld", "ib", "agents", f], queryFn: () => fetchLive<IBAgentRow[]>("inbound/agents", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "agents" });
-  const aprQ = useQuery({ queryKey: ["pld", "ib", "apr", f], queryFn: () => fetchLive<{ user: string; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; utilization: number }[]>("inbound/apr", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "apr" });
+  const aprQ = useQuery({ queryKey: ["pld", "ib", "apr", f], queryFn: () => fetchLive<{ user: string; agentName: string | null; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; utilization: number }[]>("inbound/apr", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "apr" });
   const dispoQ = useQuery({ queryKey: ["pld", "ib", "dispo", f], queryFn: () => fetchLive<IBDispoData>("inbound/disposition", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "disposition" });
   const repeatQ = useQuery({ queryKey: ["pld", "ib", "repeat", f], queryFn: () => fetchLive<IBRepeatData>("inbound/repeat", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "disposition" });
 
@@ -606,7 +612,24 @@ function InboundDashboard({ f }: { f: Filters }) {
         monthQ.isLoading ? <Spinner /> : monthQ.error || !monthQ.data ? <Err msg="Failed to load monthly data" /> : (
           <div>
             <Panel title="SL% & AL% Monthly Trend">
-              <ResponsiveContainer width="100%" height={200}><LineChart data={monthQ.data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="month" tick={{ fontSize: 10 }} /><YAxis domain={[0, 100]} tick={{ fontSize: 10 }} /><Tooltip formatter={(v: unknown) => `${Number(v).toFixed(1)}%`} /><Line type="monotone" dataKey="sl" stroke="#2f6fed" strokeWidth={2} name="SL%" dot={false} /><Line type="monotone" dataKey="al" stroke="#10b981" strokeWidth={2} name="AL%" dot={false} /></LineChart></ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={monthQ.data} margin={{ top: 22, right: 18, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(v: unknown, name: unknown) => [`${Number(v).toFixed(1)}%`, String(name)]} />
+                  <Legend verticalAlign="top" height={24} iconType="plainline" wrapperStyle={{ fontSize: 11, fontWeight: 800 }} />
+                  {/* SL% and AL% sit within a point or two of each other, so a
+                      second colour alone reads as one line — AL% is dashed with
+                      hollow dots to stay separable where they overlap. */}
+                  <Line type="monotone" dataKey="sl" stroke="#2f6fed" strokeWidth={2.5} name="SL%" dot={{ r: 3, fill: "#2f6fed" }}>
+                    <LabelList dataKey="sl" position="top" offset={8} formatter={PCT_LABEL} style={LABEL_STYLE_BLUE} />
+                  </Line>
+                  <Line type="monotone" dataKey="al" stroke="#e07b1a" strokeWidth={2.5} strokeDasharray="6 4" name="AL%" dot={{ r: 3, fill: "#fff", stroke: "#e07b1a", strokeWidth: 2 }}>
+                    <LabelList dataKey="al" position="bottom" offset={8} formatter={PCT_LABEL} style={LABEL_STYLE_ORANGE} />
+                  </Line>
+                </LineChart>
+              </ResponsiveContainer>
             </Panel>
             <div style={{ marginTop: 14 }}>
               <Panel title="Monthly Metric Matrix">
@@ -627,7 +650,21 @@ function InboundDashboard({ f }: { f: Filters }) {
           <div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
               <Panel title="Daily SL% & AL% Trend">
-                <ResponsiveContainer width="100%" height={200}><LineChart data={dayQ.data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis domain={[0, 100]} tick={{ fontSize: 10 }} /><Tooltip /><Line type="monotone" dataKey="sl" stroke="#2f6fed" strokeWidth={2} name="SL%" dot={false} /><Line type="monotone" dataKey="al" stroke="#10b981" strokeWidth={2} name="AL%" dot={false} /></LineChart></ResponsiveContainer>
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={dayQ.data} margin={{ top: 22, right: 14, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                    <Tooltip labelFormatter={fmtD} formatter={(v: unknown, name: unknown) => [`${Number(v).toFixed(1)}%`, String(name)]} />
+                    <Legend verticalAlign="top" height={24} iconType="plainline" wrapperStyle={{ fontSize: 11, fontWeight: 800 }} />
+                    <Line type="monotone" dataKey="sl" stroke="#2f6fed" strokeWidth={2.5} name="SL%" dot={{ r: 2.5, fill: "#2f6fed" }}>
+                      <LabelList dataKey="sl" position="top" offset={7} formatter={PCT_LABEL} style={LABEL_STYLE_BLUE} />
+                    </Line>
+                    <Line type="monotone" dataKey="al" stroke="#e07b1a" strokeWidth={2.5} strokeDasharray="6 4" name="AL%" dot={{ r: 2.5, fill: "#fff", stroke: "#e07b1a", strokeWidth: 2 }}>
+                      <LabelList dataKey="al" position="bottom" offset={7} formatter={PCT_LABEL} style={LABEL_STYLE_ORANGE} />
+                    </Line>
+                  </LineChart>
+                </ResponsiveContainer>
               </Panel>
               <Panel title="Daily Call Volume">
                 <ResponsiveContainer width="100%" height={200}><BarChart data={dayQ.data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="offered" fill="#93c5fd" name="Offered" /><Bar dataKey="handled" fill="#2f6fed" name="Handled" /></BarChart></ResponsiveContainer>
@@ -686,6 +723,7 @@ function InboundDashboard({ f }: { f: Filters }) {
         aprQ.isLoading ? <Spinner /> : aprQ.error || !aprQ.data ? <Err msg="Failed to load APR" /> : (
           <Panel title="Agent Productivity Report (APR)" sub={`${aprQ.data.length} agents`}>
             <DataTable cols={[
+              { h: "Agent Name", k: "agentName" as const, left: true, fmt: (v: unknown) => v ? String(v) : <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Not in HRMS</span> },
               { h: "Agent ID", k: "user" as const, left: true }, { h: "APR Calls", k: "aprCalls" as const }, { h: "Net Login", k: "netLoginTime" as const },
               { h: "Talk", k: "talk" as const }, { h: "Wait", k: "wait" as const }, { h: "Dispo", k: "dispo" as const }, { h: "Pause", k: "pause" as const },
               { h: "LB", k: "lbTime" as const }, { h: "TB", k: "tbTime" as const }, { h: "WB", k: "wbTime" as const },
@@ -714,7 +752,17 @@ function InboundDashboard({ f }: { f: Filters }) {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
                 {sc.slice(0, 4).map(([k, color]) => (
                   <Panel key={k} title={`Day-wise ${k.charAt(0).toUpperCase() + k.slice(1)}`}>
-                    <ResponsiveContainer width="100%" height={160}><BarChart data={dispoQ.data.daily}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 9 }} /><Tooltip /><Bar dataKey={k} fill={color} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={dispoQ.data.daily} margin={{ top: 16, right: 6, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} />
+                        <YAxis tick={{ fontSize: 9 }} />
+                        <Tooltip labelFormatter={fmtD} />
+                        <Bar dataKey={k} fill={color} radius={[3, 3, 0, 0]}>
+                          <LabelList dataKey={k} position="top" style={{ fontSize: 9, fontWeight: 800, fill: "#334155" }} />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
                   </Panel>
                 ))}
               </div>
