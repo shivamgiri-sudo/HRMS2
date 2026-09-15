@@ -17,7 +17,6 @@ const NativeITProvisioningTracker   = lazy(() => import("@/pages/NativeITProvisi
 const NativeManagerHandoverClearance = lazy(() => import("@/pages/NativeManagerHandoverClearance"));
 const NativeHrExitClearance          = lazy(() => import("@/pages/NativeHrExitClearance"));
 const NativePayrollExitClearance     = lazy(() => import("@/pages/NativePayrollExitClearance"));
-const NativeTrainerExitClearance     = lazy(() => import("@/pages/NativeTrainerExitClearance"));
 
 export const complianceRouteElements = (
   <>
@@ -40,13 +39,13 @@ export const complianceRouteElements = (
       <Route path="/provisioning/appointment-letter"     element={<ProtectedRoute><NativeAppointmentLetterQueue /></ProtectedRoute>} />
 
       {/* Exit clearance — dedicated per-role queues, one per exit_clearance_task owner_role
-          that has no existing provisioning-style page (manager/hr/payroll/trainer). Admin
-          and WFM's own clearance tasks are surfaced as a section on their existing
-          /provisioning/admin and /provisioning/wfm-alignment pages instead — see
-          NativeITProvisioningTracker.tsx. */}
+          that has no existing provisioning-style page (manager/hr/payroll). Admin and WFM's
+          own clearance tasks are surfaced as a section on their existing /provisioning/admin
+          and /provisioning/wfm-alignment pages instead — see NativeITProvisioningTracker.tsx.
+          Trainer clearance was removed from the exit process entirely (owner ruling
+          2026-09-15, migration 1774) — its dedicated page/route/nav entry were removed with it. */}
       <Route path="/provisioning/manager-handover"       element={<ProtectedRoute roles={['manager','admin','hr','super_admin']}><Gate pageCode="PROVISIONING_MANAGER_HANDOVER"><NativeManagerHandoverClearance /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/hr-exit"                element={<ProtectedRoute roles={['hr','admin','super_admin']}><Gate pageCode="PROVISIONING_HR_EXIT"><NativeHrExitClearance /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/payroll-exit"           element={<ProtectedRoute roles={['payroll','hr','admin','super_admin']}><Gate pageCode="PROVISIONING_PAYROLL_EXIT"><NativePayrollExitClearance /></Gate></ProtectedRoute>} />
-      <Route path="/provisioning/trainer-exit"           element={<ProtectedRoute roles={['trainer','hr','admin','super_admin']}><Gate pageCode="PROVISIONING_TRAINER_EXIT"><NativeTrainerExitClearance /></Gate></ProtectedRoute>} />
   </>
 );

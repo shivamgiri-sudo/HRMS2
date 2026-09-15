@@ -77,6 +77,12 @@ interface ActorIdentity {
   role: string | null;
 }
 
+/** "super_admin" -> "Super Admin", for the rare caller with no employees row at all. */
+function roleDisplayLabel(role: string | null | undefined): string | null {
+  if (!role) return null;
+  return role.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
 /**
  * Who is acting, resolved once per request.
  *
@@ -94,9 +100,10 @@ async function resolveActor(req: AuthenticatedRequest): Promise<ActorIdentity> {
   return {
     userId,
     employeeId: (rows[0]?.id as string) ?? null,
-    // Falls back to the login email when the caller has no employees row (a pure system/admin
-    // account). Better than NULL on a certificate: it still names who signed.
-    name: (rows[0]?.name as string) ?? req.authUser!.email ?? null,
+    // A signature line naming a raw login email (e.g. a demo/system account with no employees
+    // row) reads wrong on a legal-style certificate and, for a real email address, is a needless
+    // exposure. Falls back to a role label ("Super Admin") instead — never the bare email.
+    name: (rows[0]?.name as string) ?? roleDisplayLabel(req.authUser!.role) ?? "System",
     role: req.authUser!.role ?? null,
   };
 }

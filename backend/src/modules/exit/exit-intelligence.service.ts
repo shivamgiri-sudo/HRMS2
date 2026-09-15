@@ -123,7 +123,8 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
     ["wfm", "Roster deactivation", "Remove future roster assignments and stop WFM scheduling after LWD.", "wfm"],
     ["wfm", "Client ID deactivation", "Deactivate the employee's client system ID/login. Attach the confirmation screenshot or email received from Operations (subject: 'Update regarding analyst status in software'). Attachment is optional.", "wfm"],
     ["payroll", "Payroll hold and F&F readiness", "Check salary hold, advances, notice recovery, leave encashment and F&F readiness.", "payroll"],
-    ["lms", "LMS and certification closure", "Archive LMS status and training/certification records.", "trainer"],
+    // Trainer/LMS closure task removed (owner ruling 2026-09-15): trainer clearance dropped
+    // from the exit process entirely. Existing open rows were waived by migration 1774.
     ["compliance", "Compliance and NDA closure", "Confirm NDA/client confidentiality reminders and DPDP exit notice.", "hr"],
   ];
 

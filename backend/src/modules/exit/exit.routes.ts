@@ -76,7 +76,9 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
 // 'it' added 2026-09-15 alongside migration 1772 — "IT access closure" moved from
 // owner_role='admin' to 'it', which is a real, distinct role (not automatically covered
 // by any of the others below).
-const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "trainer", "it"] as const;
+// Trainer clearance ("LMS and certification closure") was removed from the exit process
+// (owner ruling 2026-09-15) — dropped from this list and from createDefaultClearanceTasks.
+const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "it"] as const;
 type ClearanceOwnerRole = typeof CLEARANCE_OWNER_ROLES[number];
 
 // GET /api/exit/clearance/queue — cross-employee clearance queue for the caller's own
@@ -84,7 +86,7 @@ type ClearanceOwnerRole = typeof CLEARANCE_OWNER_ROLES[number];
 // /:id/clearance below so Express does not try to match "clearance" as an :id.
 exitRouter.get(
   "/clearance/queue",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
   h(async (req, res) => {
     const userId = req.authUser!.id;
     const isPrivileged = await hasRole(userId, "admin", "hr", "super_admin");
@@ -193,11 +195,9 @@ exitRouter.get(
 
 exitRouter.get(
   "/:id/clearance",
-  // "trainer" added — the LMS/certification-closure clearance task's owner_role is
-  // 'trainer', and this list previously omitted it entirely, so a trainer-only account
-  // got 403 even calling this read endpoint directly, before any UI gap. "it" added
-  // 2026-09-15 alongside migration 1772 (IT access closure retargeted admin -> it).
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
+  // "it" added 2026-09-15 alongside migration 1772 (IT access closure retargeted admin ->
+  // it). "trainer" removed same day — trainer clearance dropped from the exit process.
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
   h(async (req, res) => {
     // manager/finance/payroll/wfm previously had no scope check at all here and could list
     // clearance tasks for any exit request in any branch/process just by supplying its :id
@@ -236,9 +236,8 @@ exitRouter.post(
 
 exitRouter.patch(
   "/:id/clearance/:taskId",
-  // "trainer" added — same gap as GET /:id/clearance above. "it" added 2026-09-15
-  // alongside migration 1772.
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
+  // "it" added 2026-09-15 alongside migration 1772. "trainer" removed same day.
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
   h(async (req, res) => {
     // When only attachment_url is sent (no status in body), treat as an attachment-only
     // update — do not change status, remarks, cleared_by or cleared_at. Bug 1+2 fix:
@@ -457,11 +456,11 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exitRouter.get(
   "/:id/full",
-  // "wfm"/"trainer" added — the new per-role clearance pages/sections all open this same
-  // drawer for their row-level drill-down (Drill-Down Mandate), and both roles own real
-  // clearance tasks (wfm: roster/client-ID deactivation; trainer: LMS closure). "it" added
-  // 2026-09-15 alongside migration 1772 (IT access closure retargeted admin -> it).
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
+  // "wfm" added — the new per-role clearance pages/sections all open this same drawer for
+  // their row-level drill-down (Drill-Down Mandate), and it owns real clearance tasks
+  // (roster/client-ID deactivation). "it" added 2026-09-15 alongside migration 1772 (IT
+  // access closure retargeted admin -> it). "trainer" removed same day.
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
 

@@ -51,11 +51,12 @@ describe("work inbox derived approval queues", () => {
   it("routes exit clearance by the table's own ownership, checking every role the caller holds", async () => {
     // owner_role is populated on all 16 pending rows; owner_user_id is NULL on every one but
     // is honoured first so per-person assignment works the moment it starts being set.
-    // IN (CLEARANCE_OWNER_ROLES.length fixed slots — 7, including 'it' since 2026-09-15),
-    // not "= ?", so a caller holding this task's role alongside a higher-ranked one (e.g.
-    // super_admin) still matches — see paddedOwnerRoleParams().
+    // IN (CLEARANCE_OWNER_ROLES.length fixed slots — 6: 'it' added and 'trainer' removed,
+    // both 2026-09-15, net unchanged from the original 6), not "= ?", so a caller holding
+    // this task's role alongside a higher-ranked one (e.g. super_admin) still matches — see
+    // paddedOwnerRoleParams().
     const { code } = await capture("user-1", "hr");
-    expect(code).toContain("(t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?,?))");
+    expect(code).toContain("(t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?))");
   });
 
   it("carries the real due date for exit clearance", async () => {
@@ -85,7 +86,7 @@ describe("work inbox derived approval queues", () => {
     // work_item(userId, role), work_inbox_item(userId), leave(userId, role),
     // exit clearance(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots — allRoles
     // defaults to [role] when the caller (work-inbox.routes.ts) doesn't pass a full role
-    // list, so a single "manager" call site pads to ["manager", "__none__" x6]),
+    // list, so a single "manager" call site pads to ["manager", "__none__" x5]),
     // bgv(role), grn(role, role), budget(role, role). Misalignment scopes the inbox to the
     // wrong person silently rather than raising.
     const { params } = await capture("user-7", "manager");
@@ -93,7 +94,7 @@ describe("work inbox derived approval queues", () => {
       "user-7", "manager",
       "user-7",
       "user-7", "manager",
-      "user-7", "manager", "__none__", "__none__", "__none__", "__none__", "__none__", "__none__",
+      "user-7", "manager", "__none__", "__none__", "__none__", "__none__", "__none__",
       "manager",
       "manager", "manager",
       "manager", "manager",

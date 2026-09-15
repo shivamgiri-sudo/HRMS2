@@ -44,8 +44,9 @@ export const NOC_STATUS_COLORS: Record<string, string> = {
 };
 
 // 'it' added 2026-09-15 — "IT access closure" moved from owner_role='admin' to 'it'
-// (owner ruling; migration 1772 backfilled existing rows).
-export const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "trainer", "it"] as const;
+// (owner ruling; migration 1772 backfilled existing rows). 'trainer' removed same day —
+// trainer clearance dropped from the exit process entirely (migration 1774).
+export const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "it"] as const;
 export type ClearanceOwnerRole = typeof CLEARANCE_OWNER_ROLES[number];
 
 export interface ExitClearanceTaskRow {

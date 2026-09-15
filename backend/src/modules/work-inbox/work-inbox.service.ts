@@ -121,11 +121,12 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
 // task to. Kept in sync with exit-intelligence.service.ts's own task list and
 // exit.routes.ts's CLEARANCE_OWNER_ROLES. 'it' added 2026-09-15 alongside migration 1772
 // (IT access closure retargeted admin -> it) — this array's length also drives the fixed
-// placeholder count below, so it moved from 6 to 7 slots in the same change.
-const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "trainer", "it"] as const;
+// placeholder count below. 'trainer' removed same day (owner ruling — trainer clearance
+// dropped from the exit process entirely), moving this from 7 back to 6 slots.
+const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "it"] as const;
 
 // Fixed-length (CLEARANCE_OWNER_ROLES.length) params for the exit-clearance branch's
-// "owner_role IN (?,?,?,?,?,?,?)" — see that branch's comment for why this stays a fixed
+// "owner_role IN (?,?,?,?,?,?)" — see that branch's comment for why this stays a fixed
 // shape rather than a dynamic IN list. The placeholder count in that literal SQL string
 // must be kept equal to CLEARANCE_OWNER_ROLES.length by hand — there is no way to derive
 // a literal's placeholder count from an array length at the template-string level.
@@ -138,7 +139,7 @@ function paddedOwnerRoleParams(allRoles: readonly string[]): string[] {
 
 // Each task's action_url now points at the page its owner_role actually works from —
 // admin/wfm get the "Exit Clearance Tasks" section on their existing provisioning page;
-// manager/hr/payroll/trainer/it get their own dedicated queue page (it: the existing
+// manager/hr/payroll/it get their own dedicated queue page (it: the existing
 // PROVISIONING_IT page, which gained the same new section as admin/wfm).
 const EXIT_CLEARANCE_ACTION_URL_CASE = `
   CASE t.owner_role
@@ -147,7 +148,6 @@ const EXIT_CLEARANCE_ACTION_URL_CASE = `
     WHEN 'admin'   THEN '/provisioning/admin'
     WHEN 'wfm'     THEN '/provisioning/wfm-alignment'
     WHEN 'payroll' THEN '/provisioning/payroll-exit'
-    WHEN 'trainer' THEN '/provisioning/trainer-exit'
     WHEN 'it'      THEN '/provisioning/it'
     ELSE '/exit/command-center'
   END`;
@@ -197,7 +197,7 @@ const DERIVED_REGISTRY_UNION_SQL = `
         * were invisible.
         *
         * This table routes itself — owner_role is set on all 16 (admin, hr, manager, payroll,
-        * trainer, wfm) — so no fallback is invented. owner_user_id is NULL on every row today
+        * wfm) — so no fallback is invented. owner_user_id is NULL on every row today
         * but is honoured first, so per-person assignment starts working the moment it is used.
         * due_date is a real column here, unlike leave, so these items can genuinely be overdue.
         *
@@ -232,7 +232,7 @@ const DERIVED_REGISTRY_UNION_SQL = `
          FROM exit_clearance_task t
          LEFT JOIN employees e ON e.id = t.employee_id
         WHERE LOWER(COALESCE(t.status, '')) = 'pending'
-          AND (t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?,?))
+          AND (t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?))
        UNION ALL
        /*
         * Background checks stuck needing a human. BGV_PENDING is likewise declared and never

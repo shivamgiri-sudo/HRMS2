@@ -371,6 +371,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-slate-100 px-4 py-8">
       <div className="mx-auto max-w-3xl overflow-hidden rounded-2xl bg-white shadow-xl">
         <header className="bg-[#1e3a63] px-6 py-5 text-center text-white">
+          <img src="/mcn-logo.png" alt="Mas Callnet" className="mx-auto mb-2 h-10 w-auto rounded bg-white/95 px-2 py-1" />
           <h1 className="text-lg font-bold">Mas Callnet India Pvt. Ltd.</h1>
           <p className="mt-1 text-sm text-blue-100">NOC Certificate — Exit Clearance</p>
           <p className="mt-0.5 text-[11px] italic text-blue-200">

@@ -212,12 +212,19 @@ function openCertificate(d: CaseDetail): void {
         ${esc(c.decline_reason)}</div>`
     : "";
 
+  // Absolute origin, not a bare "/mcn-logo.png" — this HTML is written into a blank popup
+  // window via document.write(), which has no base URI of its own to resolve a relative path
+  // against.
+  const logoUrl = `${window.location.origin}/mcn-logo.png`;
+
   const html = `<!doctype html><html><head><meta charset="utf-8">
 <title>NOC Certificate — ${esc(c.employee_code)}</title>
 <style>
   *{box-sizing:border-box}
   body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:28px;font-size:12px}
-  h1{font-size:17px;margin:0;text-align:center}
+  .brand{text-align:center;margin-bottom:2px}
+  .brand img{height:38px;width:auto}
+  h1{font-size:17px;margin:6px 0 0;text-align:center}
   .sub{text-align:center;font-size:12px;margin:3px 0 2px}
   .note{text-align:center;font-size:10px;font-style:italic;color:#555;margin-bottom:18px}
   h2{font-size:11px;text-transform:uppercase;letter-spacing:.06em;background:#eef2f7;
@@ -240,6 +247,7 @@ function openCertificate(d: CaseDetail): void {
   .foot{margin-top:20px;font-size:10px;color:#666;border-top:1px solid #ddd;padding-top:8px}
   @media print{body{padding:12px}@page{margin:12mm}}
 </style></head><body onload="window.print()">
+  <div class="brand"><img src="${logoUrl}" alt="Mas Callnet" onerror="this.style.display='none'"></div>
   <h1>Mas Callnet India Pvt. Ltd.</h1>
   <div class="sub"><strong>NOC CERTIFICATE — EXIT CLEARANCE</strong></div>
   <div class="note">Employee &amp; signatory details captured digitally within HRMS.

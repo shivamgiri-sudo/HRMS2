@@ -159,7 +159,6 @@ export const navGroups: NavGroup[] = [
           { label: "Manager Handover",    href: "/provisioning/manager-handover", icon: ic(Users),     pageCode: "PROVISIONING_MANAGER_HANDOVER", roles: ["manager","admin","hr","super_admin"], description: "Exit handover clearance" },
           { label: "HR Exit Clearance",   href: "/provisioning/hr-exit",         icon: ic(Users2),     pageCode: "PROVISIONING_HR_EXIT", roles: ["hr","admin","super_admin"], description: "Exit interview & compliance" },
           { label: "Payroll Exit Clearance", href: "/provisioning/payroll-exit", icon: ic(Wallet),     pageCode: "PROVISIONING_PAYROLL_EXIT", roles: ["payroll","hr","admin","super_admin"], description: "F&F readiness" },
-          { label: "Trainer Exit Clearance", href: "/provisioning/trainer-exit", icon: ic(GraduationCap), pageCode: "PROVISIONING_TRAINER_EXIT", roles: ["trainer","hr","admin","super_admin"], description: "LMS & certification closure" },
           { label: "Joining Documents",   href: "/ats/joining-documents-tracker", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Joining doc formalities" },
           { label: "Document Verification",href: "/document-verification",   icon: ic(FileCheck),   roles: ["admin","hr"],         description: "Documents" },
           { label: "Statutory Detail Approvals", href: "/statutory-change-approvals", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "PAN/Aadhaar/UAN/ESI change requests" },
