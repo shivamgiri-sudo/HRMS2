@@ -65,11 +65,18 @@ CREATE TABLE IF NOT EXISTS gs1_approval_audit_raw (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO upload_template_master (template_code, template_name, is_active)
+INSERT INTO upload_template_master
+  (upload_type_code, upload_type_name, target_table, required_columns, optional_columns, active_status)
 VALUES
-  ('GS1_EMAIL_DAILY',    'GS1 India — Email LOB (Daily)',   1),
-  ('GS1_DATAKART_DAILY', 'GS1 India — Data Kart LOB (Daily)', 1),
-  ('GS1_APPROVAL_AUDIT', 'GS1 India — Approval Audit',      1)
+  ('GS1_EMAIL_DAILY',    'GS1 India — Email LOB (Daily)',    'gs1_email_daily_actual',
+   JSON_ARRAY('Report Date','Analyst Name','Mail Date','Mail Received','GTIN Processed','Image Count','SLA Within 15min','Data Type','TAT Minutes'),
+   JSON_ARRAY(), 1),
+  ('GS1_DATAKART_DAILY', 'GS1 India — Data Kart LOB (Daily)', 'gs1_datakart_daily_actual',
+   JSON_ARRAY('Report Date','Analyst Name','Task Date','Task Count','GTIN Count','Within TAT','TAT Minutes','Process Type'),
+   JSON_ARRAY(), 1),
+  ('GS1_APPROVAL_AUDIT', 'GS1 India — Approval Audit',       'gs1_approval_audit_raw',
+   JSON_ARRAY('Audit Date','Auditee Name','Auditor Name','Audit Result','Error Category','Error Flag','GCP Code','Company Name','SKU Count'),
+   JSON_ARRAY(), 1)
 ON DUPLICATE KEY UPDATE
-  template_name = VALUES(template_name),
-  is_active     = VALUES(is_active);
+  upload_type_name = VALUES(upload_type_name),
+  active_status    = VALUES(active_status);

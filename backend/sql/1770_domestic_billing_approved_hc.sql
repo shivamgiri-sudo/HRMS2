@@ -48,5 +48,10 @@ VALUES
 -- ------------------------------------------------------------
 -- 3. Register upload template (INSERT IGNORE — safe to replay)
 -- ------------------------------------------------------------
-INSERT IGNORE INTO upload_template_master (template_key, label)
-VALUES ('DOMESTIC_BILLING_APPROVED_HC', 'Domestic Billing — Approved Headcount Config');
+INSERT IGNORE INTO upload_template_master
+  (upload_type_code, upload_type_name, target_table, required_columns, active_status)
+VALUES
+  ('DOMESTIC_BILLING_APPROVED_HC', 'Domestic Billing — Approved Headcount Config',
+   'domestic_billing_approved_hc',
+   JSON_ARRAY('Month','Process','LOB','Approved Headcount','FTE Rate','Planning Rule'),
+   1);
