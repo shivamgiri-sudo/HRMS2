@@ -13,7 +13,7 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 // that can open Process Performance can also open this sibling dashboard.
 const VIEWER_ROLES = [
   "admin", "ceo", "coo", "manager", "process_manager", "operations_manager",
-  "branch_head", "qa", "quality_analyst", "tq_head",
+  "branch_head", "branch_wfm", "qa", "quality_analyst", "tq_head",
 ] as const;
 
 /** Same local-date default as process-performance.routes.ts -- see that file for the IST/toISOString trap this avoids. */
