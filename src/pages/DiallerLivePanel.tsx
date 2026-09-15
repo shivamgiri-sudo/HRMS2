@@ -106,8 +106,26 @@ async function fetchLive<T>(path: string, params: Record<string, string>): Promi
 function monthStart(): string { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); }
 function todayStr(): string { return new Date().toISOString().slice(0, 10); }
 function fmtDay(v: unknown): string { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
-/** Normalises a row's date cell (plain or ISO timestamp) to the YYYY-MM-DD the API expects. */
-function dateParam(v: unknown): string { return String(v ?? "").slice(0, 10); }
+/**
+ * Normalises a row's date cell to the YYYY-MM-DD the API expects.
+ *
+ * The dialler pool (backend/src/db/dialerDb.ts) does not set `dateStrings`, so
+ * `DATE(...)` columns arrive as JS Dates and the services stringify them into
+ * the long "Mon Sep 15 2026 00:00:00 GMT+0530" form. Slicing that gives
+ * "Mon Sep 15", which the hourly endpoint's YYYY-MM-DD guard rejects — and it
+ * then silently falls back to *today*, showing the wrong day's data under the
+ * clicked day's heading. Rebuilding the date from local components (never
+ * toISOString, which shifts the calendar day on a negative-offset host) keeps
+ * both that form and a plain ISO string correct.
+ */
+function dateParam(v: unknown): string {
+  const s = String(v ?? "");
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 // ── Mini UI ───────────────────────────────────────────────────────────────────
 const CARD: React.CSSProperties = { background: "#fff", border: "1px solid #dce4ed", borderRadius: 17, boxShadow: "0 12px 30px rgba(16,35,57,.08)", padding: "14px 16px", position: "relative", overflow: "hidden" };
@@ -165,13 +183,29 @@ function PctBadge({ v }: { v: number }) {
 
 interface Col<T> { h: string; k: keyof T | string; left?: boolean; fmt?: (v: unknown, r: T) => React.ReactNode }
 
-/** Builds the drawer field list for a row straight from its column definitions,
- *  so every column the table can render is also shown in the drill-down. */
+/** "netLoginTime" → "Net Login Time", for row fields the table has no column for. */
+function humaniseKey(k: string): string {
+  return k.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/^./, c => c.toUpperCase());
+}
+
+/**
+ * Builds the drawer field list for a row: first every column the table renders,
+ * then every remaining field the record carries. The API returns far more per
+ * row than a table can show (an inbound day carries ~19 fields against 8
+ * columns), and the drill-down mandate is the whole record, not a restatement
+ * of what is already on screen.
+ */
 function rowToFields<T extends Record<string, unknown>>(cols: Col<T>[], row: T) {
-  return cols.map(c => {
+  const shown = new Set(cols.map(c => String(c.k)));
+  const fields: { label: string; value: React.ReactNode }[] = cols.map(c => {
     const raw = row[c.k as keyof T];
     return { label: c.h, value: c.fmt ? c.fmt(raw, row) : String(raw ?? "") };
   });
+  for (const [k, v] of Object.entries(row)) {
+    if (shown.has(k) || v === null || typeof v === "object") continue;
+    fields.push({ label: humaniseKey(k), value: String(v) });
+  }
+  return fields;
 }
 
 function DataTable<T extends Record<string, unknown>>({ cols, rows, onRowClick, drillTitle }: {
@@ -280,7 +314,11 @@ function HourlyFetchPanel({ date }: { date: string }) {
     queryKey: ["pld", "ib", "hourly", date],
     queryFn: () => fetchLive<IBSlotRow[]>("inbound/hourly", { date }),
     staleTime: 2 * 60 * 1000,
+    // An unparseable row date must not fall through to the endpoint, which
+    // would silently answer for today instead.
+    enabled: date !== "",
   });
+  if (date === "") return <Err msg="This row has no readable date, so its hourly slots cannot be looked up" />;
   if (q.isLoading) return <Spinner />;
   if (q.error || !q.data) return <Err msg="Could not load the hourly breakdown" />;
   if (q.data.length === 0) return <InfoBox html="No slot activity recorded for this date." />;
@@ -345,8 +383,12 @@ function LiveDetailDrawer({ ctx, processName, onClose }: { ctx: LiveDrillContext
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: "50%", border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.14)", color: "#fff", cursor: "pointer", fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", transition: ".15s" }}
           >×</button>
         </div>
+        {/* Tables inside the drawer are not themselves drillable: replacing the
+            drawer's own contents leaves no way back to what was clicked. */}
         <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
-          <LiveDetailContent ctx={ctx} />
+          <DrillDispatch.Provider value={null}>
+            <LiveDetailContent ctx={ctx} />
+          </DrillDispatch.Provider>
         </div>
       </div>
     </>
@@ -923,6 +965,92 @@ type CdrSummary = {
 type CdrDayRow = { date: string; offered: number; answered: number; alPct: number; slPct: number; achtSec: number; aht: string; repeatPct: number; fcrPct: number; loginCount: number };
 type CdrMonthRow = { month: string; offered: number; answered: number; alPct: number; slPct: number; achtSec: number; aht: string };
 
+// ── CDR health scoring helpers ────────────────────────────────────────────────
+
+type CdrHealth = { score: number; status: string; color: string; bg: string; ringColor: string };
+function cdrHealthScore(d: CdrSummary): CdrHealth {
+  const slScore  = Math.min(30, (d.slPct  / 80) * 30);
+  const alScore  = Math.min(25, (d.alPct  / 80) * 25);
+  const repScore = d.repeatPct > 0 ? Math.min(25, (15 / Math.max(d.repeatPct, 1)) * 25) : 25;
+  const fcrScore = d.fcrPct  > 0 ? Math.min(20, (d.fcrPct  / 80) * 20) : 10;
+  const score = Math.round(Math.min(100, slScore + alScore + repScore + fcrScore));
+  if (score >= 90) return { score, status: "Excellent",       color: "#16a34a", bg: "linear-gradient(135deg,#064e3b,#065f46)", ringColor: "#4ade80" };
+  if (score >= 75) return { score, status: "Healthy",         color: "#0284c7", bg: "linear-gradient(135deg,#0c4a6e,#075985)", ringColor: "#38bdf8" };
+  if (score >= 50) return { score, status: "Needs Attention", color: "#d97706", bg: "linear-gradient(135deg,#78350f,#92400e)", ringColor: "#fbbf24" };
+  return              { score, status: "Critical",        color: "#dc2626", bg: "linear-gradient(135deg,#7f1d1d,#991b1b)", ringColor: "#f87171" };
+}
+
+type CdrInsight = { type: "good" | "warn" | "bad"; kpi: string; msg: string };
+function cdrInsights(d: CdrSummary): CdrInsight[] {
+  const out: CdrInsight[] = [];
+  // SL%
+  if (d.slPct >= 85)       out.push({ type: "good", kpi: "SL%",     msg: `Service Level strong at ${d.slPct.toFixed(1)}% — ${(d.slPct - 80).toFixed(1)}pp above 80% target.` });
+  else if (d.slPct >= 70)  out.push({ type: "warn", kpi: "SL%",     msg: `Service Level at ${d.slPct.toFixed(1)}% — ${(80 - d.slPct).toFixed(1)}pp below target. Monitor queue volumes.` });
+  else if (d.slPct > 0)    out.push({ type: "bad",  kpi: "SL%",     msg: `Service Level critical at ${d.slPct.toFixed(1)}% — ${(80 - d.slPct).toFixed(1)}pp gap. Immediate staffing review needed.` });
+  // AL%
+  if (d.alPct >= 85)       out.push({ type: "good", kpi: "AL%",     msg: `Answer Level excellent at ${d.alPct.toFixed(1)}% — callers are being reached promptly.` });
+  else if (d.alPct >= 70)  out.push({ type: "warn", kpi: "AL%",     msg: `Answer Level at ${d.alPct.toFixed(1)}% — some calls going unanswered. Review staffing schedule.` });
+  else if (d.alPct > 0)    out.push({ type: "bad",  kpi: "AL%",     msg: `Answer Level low at ${d.alPct.toFixed(1)}% — significant abandonment. Check IVR routing and staffing gaps.` });
+  // Repeat%
+  if (d.repeatPct > 0) {
+    if (d.repeatPct <= 10)  out.push({ type: "good", kpi: "Repeat%", msg: `Repeat rate healthy at ${d.repeatPct.toFixed(1)}% — most issues being resolved first contact.` });
+    else if (d.repeatPct <= 18) out.push({ type: "warn", kpi: "Repeat%", msg: `Repeat callers at ${d.repeatPct.toFixed(1)}% — 1 in ${Math.round(100 / d.repeatPct)} customers calling back. Review FCR.` });
+    else                    out.push({ type: "bad",  kpi: "Repeat%", msg: `High repeat calling at ${d.repeatPct.toFixed(1)}%. Customers not getting resolution — urgent coaching needed.` });
+  }
+  // FCR%
+  if (d.fcrPct > 0) {
+    if (d.fcrPct >= 80)     out.push({ type: "good", kpi: "FCR%",    msg: `FCR strong at ${d.fcrPct.toFixed(1)}% — majority of issues resolved at first contact.` });
+    else if (d.fcrPct >= 65) out.push({ type: "warn", kpi: "FCR%",   msg: `FCR at ${d.fcrPct.toFixed(1)}% — ${(80 - d.fcrPct).toFixed(1)}pp gap. Focus on knowledge base and agent training.` });
+    else                    out.push({ type: "bad",  kpi: "FCR%",    msg: `FCR below par at ${d.fcrPct.toFixed(1)}%. Significant unresolved interactions — training intervention required.` });
+  }
+  // ACHT
+  if (d.achtSec > 420)      out.push({ type: "warn", kpi: "ACHT",    msg: `AHT elevated at ${d.aht} — review agent efficiency, call routing, and wrap-up procedures.` });
+  else if (d.achtSec > 0 && d.achtSec < 90) out.push({ type: "warn", kpi: "ACHT", msg: `AHT very low at ${d.aht} — verify call quality and that wrap-up is being completed.` });
+  return out.slice(0, 5);
+}
+
+// ── CdrKpiCard — status-aware card ───────────────────────────────────────────
+
+type CdrKpiStatus = "good" | "warn" | "bad" | "neutral";
+const CDR_STATUS: Record<CdrKpiStatus, { border: string; bg: string; badge: string; badgeBg: string; value: string }> = {
+  good:    { border: "#86efac", bg: "#f0fdf4", badge: "On Track",     badgeBg: "#dcfce7", value: "#15803d" },
+  warn:    { border: "#fde68a", bg: "#fffbeb", badge: "Watch",        badgeBg: "#fef9c3", value: "#b45309" },
+  bad:     { border: "#fca5a5", bg: "#fff0f2", badge: "Action Needed", badgeBg: "#fee2e2", value: "#b91c1c" },
+  neutral: { border: "#dce4ed", bg: "#f8fafd", badge: "",             badgeBg: "#eef2f7", value: "#1a3a5c" },
+};
+
+function CdrKpiCard({ label, value, status, target, onClick }: { label: string; value: string; status: CdrKpiStatus; target?: string; onClick?: () => void }) {
+  const s = CDR_STATUS[status];
+  return (
+    <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={onClick ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className={onClick ? "dlp-kpi-clickable" : undefined}
+      style={{ background: s.bg, border: `1.5px solid ${s.border}`, borderRadius: 14, padding: "13px 15px", cursor: onClick ? "pointer" : undefined, userSelect: onClick ? "none" : undefined, position: "relative", overflow: "hidden" }}
+    >
+      {status !== "neutral" && <div style={{ position: "absolute", top: 9, right: 9, fontSize: 9, fontWeight: 900, color: s.value, background: s.badgeBg, border: `1px solid ${s.border}`, borderRadius: 20, padding: "2px 7px", letterSpacing: ".3px" }}>{CDR_STATUS[status].badge}</div>}
+      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, color: "#6b7a90", marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 950, color: s.value, lineHeight: 1.1, marginBottom: 4 }}>{value}</div>
+      {target && <div style={{ fontSize: 9, fontWeight: 700, color: "#8390a0" }}>{target}</div>}
+    </div>
+  );
+}
+
+// ── CdrStatChip — tiny summary chip for the hero band ────────────────────────
+
+function CdrStatChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: "rgba(255,255,255,.15)", border: "1px solid rgba(255,255,255,.22)", borderRadius: 8, padding: "4px 10px", display: "flex", gap: 6, alignItems: "center" }}>
+      <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,.7)", textTransform: "uppercase", letterSpacing: ".3px" }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 900, color: "#fff" }}>{value}</span>
+    </div>
+  );
+}
+
+// ── InboundCdrDashboard ───────────────────────────────────────────────────────
+
 function InboundCdrDashboard({ proc, label, f }: { proc: string; label: string; f: Filters }) {
   const [sub, setSub] = useState<"overview" | "daily" | "monthly">("overview");
   const drill = useDrill();
@@ -930,115 +1058,212 @@ function InboundCdrDashboard({ proc, label, f }: { proc: string; label: string; 
   const dayQ  = useQuery({ queryKey: ["pld", proc, "daily", f],   queryFn: () => fetchLive<CdrDayRow[]>(`${proc}/daily`, { from: f.from, to: f.to }),   staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
   const monQ  = useQuery({ queryKey: ["pld", proc, "monthly", f], queryFn: () => fetchLive<CdrMonthRow[]>(`${proc}/monthly`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
 
+  const cdrTrend: DrillTrend = {
+    title: "Day-wise Trend",
+    queryKey: ["pld", proc, "daily", f],
+    path: `${proc}/daily`,
+    params: { from: f.from, to: f.to },
+    emptyHint: "No CDR data synced for this range.",
+    cols: [
+      { h: "Date", k: "date", left: true, fmt: fmtDay },
+      { h: "Offered", k: "offered" },
+      { h: "Answered", k: "answered" },
+      { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
+      { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
+      { h: "ACHT", k: "aht" },
+      { h: "Repeat%", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
+      { h: "FCR%", k: "fcrPct", fmt: v => <PctBadge v={Number(v)} /> },
+    ],
+  };
+
   return (
     <div>
-      <InfoBox html={`<strong>${label}</strong> — daily CDR KPIs synced from dialler DB via inbound-cdr-sync job.`} />
+      {/* ── Tab strip ── */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
         {(["overview", "daily", "monthly"] as const).map(s => (
           <button key={s} type="button" onClick={() => setSub(s)}
-            style={{ padding: "5px 14px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, background: sub === s ? "#1e4f82" : "#e8eef5", color: sub === s ? "#fff" : "#4a6080", transition: ".15s" }}>
-            {s.charAt(0).toUpperCase() + s.slice(1)}
+            style={{ padding: "5px 18px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 800,
+              background: sub === s ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9",
+              color: sub === s ? "#fff" : "#334155", transition: ".15s", boxShadow: sub === s ? "0 3px 10px rgba(21,63,105,.25)" : "none" }}>
+            {s === "overview" ? "Overview" : s === "daily" ? "Day-wise" : "Monthly"}
           </button>
         ))}
       </div>
 
+      {/* ── OVERVIEW ── */}
       {sub === "overview" && (
         summQ.isLoading ? <Spinner /> : summQ.error ? <Err msg="Could not load summary" /> : summQ.data ? (() => {
           const d = summQ.data;
-          const trend: DrillTrend = {
-            title: "Daily Trend",
-            queryKey: ["pld", proc, "daily", f],
-            path: `${proc}/daily`,
-            params: { from: f.from, to: f.to },
-            emptyHint: "No data synced for this range.",
-            cols: [
-              { h: "Date", k: "date", left: true, fmt: fmtDay },
-              { h: "Offered", k: "offered" },
-              { h: "Answered", k: "answered" },
-              { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
-              { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
-              { h: "ACHT", k: "aht" },
-              { h: "Repeat%", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
-              { h: "FCR%", k: "fcrPct", fmt: v => <PctBadge v={Number(v)} /> },
-            ],
-          };
+          const health = cdrHealthScore(d);
+          const insights = cdrInsights(d);
+
           return (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
-                <KpiCard label="Offered" value={d.totalOffered.toLocaleString()} color={KPIG[0]}
-                  onClick={() => drill({ type: "kpi", label: "Offered", value: d.totalOffered.toLocaleString(), dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="Answered" value={d.totalAnswered.toLocaleString()} color={KPIG[1]}
-                  onClick={() => drill({ type: "kpi", label: "Answered", value: d.totalAnswered.toLocaleString(), dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="AL%" value={`${d.alPct.toFixed(1)}%`} color={d.alPct >= 80 ? KPIG[3] : KPIG[2]}
-                  onClick={() => drill({ type: "kpi", label: "AL%", value: `${d.alPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="SL%" value={`${d.slPct.toFixed(1)}%`} color={d.slPct >= 80 ? KPIG[3] : KPIG[2]}
-                  onClick={() => drill({ type: "kpi", label: "SL%", value: `${d.slPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="ACHT" value={d.aht} color={KPIG[4]}
-                  onClick={() => drill({ type: "kpi", label: "ACHT", value: d.aht, dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="Repeat%" value={`${d.repeatPct.toFixed(1)}%`} color={d.repeatPct > 15 ? KPIG[2] : KPIG[5]}
-                  onClick={() => drill({ type: "kpi", label: "Repeat%", value: `${d.repeatPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="FCR%" value={`${d.fcrPct.toFixed(1)}%`} color={d.fcrPct >= 80 ? KPIG[3] : KPIG[4]}
-                  onClick={() => drill({ type: "kpi", label: "FCR%", value: `${d.fcrPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
-                <KpiCard label="Avg Agents/Day" value={d.avgLoginCount.toFixed(1)} color={KPIG[0]}
-                  onClick={() => drill({ type: "kpi", label: "Avg Agents/Day", value: d.avgLoginCount.toFixed(1), dashboard: proc as DiallerProcess, trend })} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                {[{ label: "Period Covered", value: `${d.dayCount} days` }, { label: "From", value: d.from }, { label: "To", value: d.to }].map((t, i) => (
-                  <div key={i} style={{ background: "#f0f5fc", border: "1px solid #dce4ed", borderRadius: 11, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 900, color: "#8390a0", marginBottom: 4 }}>{t.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: "#1a3a5c" }}>{t.value}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+              {/* ── Hero band ── */}
+              <div style={{ background: health.bg, borderRadius: 18, padding: "18px 22px", display: "flex", alignItems: "center", gap: 20, boxShadow: "0 10px 32px rgba(10,20,40,.20)", flexWrap: "wrap" }}>
+                {/* Health ring */}
+                <HealthRing score={health.score} status={health.status} />
+                {/* Text + chips */}
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <div style={{ fontSize: 20, fontWeight: 900, color: "#fff", marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,.65)", fontWeight: 700, marginBottom: 10 }}>
+                    {d.dayCount} day period · {d.from} → {d.to} · Synced from dialler DB
                   </div>
-                ))}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <CdrStatChip label="Calls Offered" value={d.totalOffered.toLocaleString()} />
+                    <CdrStatChip label="Calls Answered" value={d.totalAnswered.toLocaleString()} />
+                    <CdrStatChip label="Avg Agents" value={d.avgLoginCount.toFixed(1)} />
+                  </div>
+                </div>
               </div>
+
+              {/* ── KPI grid — quality KPIs ── */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 900, color: "#6b7a90", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Quality KPIs — click any card for day-wise trend</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10 }}>
+                  <CdrKpiCard label="Service Level (SL%)" value={`${d.slPct.toFixed(1)}%`}
+                    status={d.slPct >= 80 ? "good" : d.slPct >= 65 ? "warn" : "bad"}
+                    target="Target ≥ 80%"
+                    onClick={() => drill?.({ type: "kpi", label: "Service Level %", value: `${d.slPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                  <CdrKpiCard label="Answer Level (AL%)" value={`${d.alPct.toFixed(1)}%`}
+                    status={d.alPct >= 80 ? "good" : d.alPct >= 65 ? "warn" : "bad"}
+                    target="Target ≥ 80%"
+                    onClick={() => drill?.({ type: "kpi", label: "Answer Level %", value: `${d.alPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                  <CdrKpiCard label="Avg Handle Time" value={d.aht}
+                    status={d.achtSec > 420 ? "warn" : d.achtSec > 600 ? "bad" : d.achtSec > 0 ? "good" : "neutral"}
+                    target="ACHT (talk + wrap)"
+                    onClick={() => drill?.({ type: "kpi", label: "Avg Call Handle Time", value: d.aht, dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                  <CdrKpiCard label="Repeat Call %" value={`${d.repeatPct.toFixed(1)}%`}
+                    status={d.repeatPct <= 10 ? "good" : d.repeatPct <= 18 ? "warn" : "bad"}
+                    target="Target ≤ 15%"
+                    onClick={() => drill?.({ type: "kpi", label: "Repeat Call %", value: `${d.repeatPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                  <CdrKpiCard label="First Contact Res." value={`${d.fcrPct.toFixed(1)}%`}
+                    status={d.fcrPct >= 80 ? "good" : d.fcrPct >= 65 ? "warn" : d.fcrPct > 0 ? "bad" : "neutral"}
+                    target="Target ≥ 80%"
+                    onClick={() => drill?.({ type: "kpi", label: "First Contact Resolution %", value: `${d.fcrPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                </div>
+              </div>
+
+              {/* ── KPI grid — volume KPIs ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                <CdrKpiCard label="Total Calls Offered" value={d.totalOffered.toLocaleString()} status="neutral" target={`${d.dayCount}-day cumulative`}
+                  onClick={() => drill?.({ type: "kpi", label: "Total Calls Offered", value: d.totalOffered.toLocaleString(), dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                <CdrKpiCard label="Total Calls Answered" value={d.totalAnswered.toLocaleString()} status="neutral" target={`${d.dayCount}-day cumulative`}
+                  onClick={() => drill?.({ type: "kpi", label: "Total Calls Answered", value: d.totalAnswered.toLocaleString(), dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+                <CdrKpiCard label="Avg Agents / Day" value={d.avgLoginCount.toFixed(1)} status="neutral" target="Daily login headcount avg"
+                  onClick={() => drill?.({ type: "kpi", label: "Avg Agents Per Day", value: d.avgLoginCount.toFixed(1), dashboard: proc as DiallerProcess, trend: cdrTrend })} />
+              </div>
+
+              {/* ── Actionable Insights ── */}
+              {insights.length > 0 && (
+                <div style={{ background: "#fff", border: "1px solid #dce4ed", borderRadius: 14, padding: "15px 18px", boxShadow: "0 2px 12px rgba(16,35,57,.06)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 7, background: "linear-gradient(135deg,#f59e0b,#ef4444)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ fontSize: 11, color: "#fff", fontWeight: 900 }}>!</span>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 900, color: "#102f4b", textTransform: "uppercase", letterSpacing: ".5px" }}>Actionable Insights</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#8390a0", background: "#f0f4f9", borderRadius: 12, padding: "2px 8px" }}>Auto-generated from data</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {insights.map((ins, i) => {
+                      const ic = ins.type === "good" ? { bg: "#f0fdf4", border: "#86efac", dot: "#16a34a", text: "#065f46", icon: "✓" }
+                               : ins.type === "warn" ? { bg: "#fffbeb", border: "#fde68a", dot: "#d97706", text: "#78350f", icon: "!" }
+                               :                       { bg: "#fff0f2", border: "#fca5a5", dot: "#dc2626", text: "#7f1d1d", icon: "✕" };
+                      return (
+                        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 13px", borderRadius: 10, background: ic.bg, border: `1px solid ${ic.border}` }}>
+                          <div style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "50%", background: ic.dot, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>
+                            <span style={{ fontSize: 10, color: "#fff", fontWeight: 900 }}>{ic.icon}</span>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <span style={{ fontSize: 9, fontWeight: 900, color: ic.dot, textTransform: "uppercase", letterSpacing: ".3px", marginRight: 6 }}>{ins.kpi}</span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: ic.text, lineHeight: 1.5 }}>{ins.msg}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })() : null
       )}
 
+      {/* ── DAY-WISE ── */}
       {sub === "daily" && (
-        dayQ.isLoading ? <Spinner /> : dayQ.error ? <Err msg="Could not load daily data" /> :
-        <DataTable<CdrDayRow> cols={[
-          { h: "Date", k: "date", left: true, fmt: fmtDay },
-          { h: "Offered", k: "offered" },
-          { h: "Answered", k: "answered" },
-          { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
-          { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
-          { h: "ACHT", k: "aht" },
-          { h: "Repeat%", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
-          { h: "FCR%", k: "fcrPct", fmt: v => <PctBadge v={Number(v)} /> },
-          { h: "Agents", k: "loginCount" },
-        ]} rows={dayQ.data ?? []}
-          onRowClick={row => drill({ type: "record", title: `Day: ${row.date}`, fields: [
-            { label: "Date", value: String(row.date) },
-            { label: "Offered", value: String(row.offered) },
-            { label: "Answered", value: String(row.answered) },
-            { label: "AL%", value: `${row.alPct}%` },
-            { label: "SL%", value: `${row.slPct}%` },
-            { label: "ACHT", value: String(row.aht) },
-            { label: "Repeat%", value: `${row.repeatPct}%` },
-            { label: "FCR%", value: `${row.fcrPct}%` },
-            { label: "Agents", value: String(row.loginCount) },
-          ]})} />
+        dayQ.isLoading ? <Spinner /> : dayQ.error ? <Err msg="Could not load daily data" /> : (() => {
+          const rows = dayQ.data ?? [];
+          return (
+            <Panel title={`${label} — Day-wise CDR`} sub={`${rows.length} days`}>
+              <DataTable<CdrDayRow>
+                cols={[
+                  { h: "Date", k: "date", left: true, fmt: fmtDay },
+                  { h: "Offered", k: "offered" },
+                  { h: "Answered", k: "answered" },
+                  { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
+                  { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
+                  { h: "ACHT", k: "aht" },
+                  { h: "Repeat%", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
+                  { h: "FCR%", k: "fcrPct", fmt: v => <PctBadge v={Number(v)} /> },
+                  { h: "Agents", k: "loginCount" },
+                ]}
+                rows={rows}
+                onRowClick={row => {
+                  const dayHealth = cdrHealthScore({ ...row, totalOffered: row.offered, totalAnswered: row.answered, avgLoginCount: row.loginCount, dayCount: 1, clientCode: proc, from: row.date, to: row.date, aht: row.aht });
+                  drill?.({ type: "record", title: `${label} — ${fmtDay(row.date)}`, fields: [
+                    { label: "Date", value: fmtDay(row.date) },
+                    { label: "Day Status", value: <span style={{ fontWeight: 900, color: dayHealth.color }}>{dayHealth.status} ({dayHealth.score}/100)</span> },
+                    { label: "Calls Offered", value: String(row.offered) },
+                    { label: "Calls Answered", value: String(row.answered) },
+                    { label: "Answer Level %", value: <PctBadge v={row.alPct} /> },
+                    { label: "Service Level %", value: <PctBadge v={row.slPct} /> },
+                    { label: "Avg Handle Time", value: row.aht },
+                    { label: "Repeat Call %", value: <PctBadge v={row.repeatPct} /> },
+                    { label: "FCR %", value: <PctBadge v={row.fcrPct} /> },
+                    { label: "Agents Logged In", value: String(row.loginCount) },
+                    { label: "SL vs Target", value: <span style={{ fontWeight: 700, color: row.slPct >= 80 ? "#16a34a" : "#dc2626" }}>{row.slPct >= 80 ? `+${(row.slPct - 80).toFixed(1)}pp above target` : `${(80 - row.slPct).toFixed(1)}pp below target`}</span> },
+                    { label: "AL vs Target", value: <span style={{ fontWeight: 700, color: row.alPct >= 80 ? "#16a34a" : "#dc2626" }}>{row.alPct >= 80 ? `+${(row.alPct - 80).toFixed(1)}pp above target` : `${(80 - row.alPct).toFixed(1)}pp below target`}</span> },
+                  ]});
+                }}
+              />
+            </Panel>
+          );
+        })()
       )}
 
+      {/* ── MONTHLY ── */}
       {sub === "monthly" && (
-        monQ.isLoading ? <Spinner /> : monQ.error ? <Err msg="Could not load monthly data" /> :
-        <DataTable<CdrMonthRow> cols={[
-          { h: "Month", k: "month", left: true },
-          { h: "Offered", k: "offered" },
-          { h: "Answered", k: "answered" },
-          { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
-          { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
-          { h: "ACHT", k: "aht" },
-        ]} rows={monQ.data ?? []}
-          onRowClick={row => drill({ type: "record", title: `Month: ${row.month}`, fields: [
-            { label: "Month", value: String(row.month) },
-            { label: "Offered", value: String(row.offered) },
-            { label: "Answered", value: String(row.answered) },
-            { label: "AL%", value: `${row.alPct}%` },
-            { label: "SL%", value: `${row.slPct}%` },
-            { label: "ACHT", value: String(row.aht) },
-          ]})} />
+        monQ.isLoading ? <Spinner /> : monQ.error ? <Err msg="Could not load monthly data" /> : (() => {
+          const rows = monQ.data ?? [];
+          return (
+            <Panel title={`${label} — Monthly Summary`} sub={`${rows.length} months`}>
+              <DataTable<CdrMonthRow>
+                cols={[
+                  { h: "Month", k: "month", left: true },
+                  { h: "Offered", k: "offered" },
+                  { h: "Answered", k: "answered" },
+                  { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
+                  { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
+                  { h: "ACHT", k: "aht" },
+                ]}
+                rows={rows}
+                onRowClick={row => {
+                  drill?.({ type: "record", title: `${label} — ${row.month}`, fields: [
+                    { label: "Month", value: String(row.month) },
+                    { label: "Calls Offered", value: String(row.offered) },
+                    { label: "Calls Answered", value: String(row.answered) },
+                    { label: "Answer Level %", value: <PctBadge v={row.alPct} /> },
+                    { label: "Service Level %", value: <PctBadge v={row.slPct} /> },
+                    { label: "Avg Handle Time", value: row.aht },
+                    { label: "SL vs Target", value: <span style={{ fontWeight: 700, color: row.slPct >= 80 ? "#16a34a" : "#dc2626" }}>{row.slPct >= 80 ? `+${(row.slPct - 80).toFixed(1)}pp above` : `${(80 - row.slPct).toFixed(1)}pp below target`}</span> },
+                    { label: "AL vs Target", value: <span style={{ fontWeight: 700, color: row.alPct >= 80 ? "#16a34a" : "#dc2626" }}>{row.alPct >= 80 ? `+${(row.alPct - 80).toFixed(1)}pp above` : `${(80 - row.alPct).toFixed(1)}pp below target`}</span> },
+                  ]});
+                }}
+              />
+            </Panel>
+          );
+        })()
       )}
     </div>
   );
