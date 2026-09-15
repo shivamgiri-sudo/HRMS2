@@ -204,7 +204,7 @@ export const reconciliationService = {
 
   async listReconciliation(filters: {
     fromDate: string; toDate: string;
-    employeeId?: string; processId?: string; processName?: string; status?: string;
+    employeeId?: string; processId?: string; processName?: string; status?: string; branchId?: string;
     page: number; limit: number;
   }) {
     const conds: string[] = ["r.roster_date BETWEEN ? AND ?"];
@@ -213,6 +213,7 @@ export const reconciliationService = {
     if (filters.processId)   { conds.push("e.process_id = ?");            params.push(filters.processId); }
     if (filters.processName) { conds.push("ra.process_name = ?");         params.push(filters.processName); }
     if (filters.status)      { conds.push("r.attendance_status = ?");     params.push(filters.status); }
+    if (filters.branchId)    { conds.push("e.branch_id = ?");             params.push(filters.branchId); }
 
     const offset = (filters.page - 1) * filters.limit;
     const where = conds.join(" AND ");
@@ -495,7 +496,7 @@ export const alertService = {
 
   async listAlerts(filters: {
     fromDate?: string; toDate?: string; status?: string;
-    processId?: string; employeeId?: string; page: number; limit: number;
+    processId?: string; employeeId?: string; branchId?: string; page: number; limit: number;
   }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
@@ -504,6 +505,7 @@ export const alertService = {
     if (filters.status)     { conds.push("status = ?");        params.push(filters.status); }
     if (filters.processId)  { conds.push("process_id = ?");    params.push(filters.processId); }
     if (filters.employeeId) { conds.push("employee_id = ?");   params.push(filters.employeeId); }
+    if (filters.branchId)   { conds.push("branch_id = ?");     params.push(filters.branchId); }
     const offset = (filters.page - 1) * filters.limit;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM adherence_alert WHERE ${conds.join(" AND ")}

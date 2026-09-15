@@ -75,6 +75,7 @@ rtaRouter.get(
       processId:   z.string().uuid().optional(),
       processName: z.string().optional(),
       status:      z.string().optional(),
+      branchId:    z.string().uuid().optional(),
       page:        z.coerce.number().int().min(1).default(1),
       limit:       z.coerce.number().int().min(1).max(200).default(50),
     });
@@ -148,6 +149,7 @@ rtaRouter.get(
       status:     z.enum(["open", "acknowledged", "resolved", "suppressed"]).optional(),
       processId:  z.string().uuid().optional(),
       employeeId: z.string().uuid().optional(),
+      branchId:   z.string().uuid().optional(),
       page:       z.coerce.number().int().min(1).default(1),
       limit:      z.coerce.number().int().min(1).max(200).default(50),
     });
@@ -310,12 +312,16 @@ rtaRouter.get("/live-stream", (req, res) => {
 // Returns per-employee RTA state from wfm_roster_assignment.
 // Only returns records with final_roster_status suitable for live tracking.
 rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations_manager"), h(async (req: any, res: any) => {
-  const { processId, date } = req.query;
+  const { processId, branchId, date } = req.query;
   if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
 
   const params: unknown[] = [date];
   let processCond = "";
   if (processId) { processCond = " AND pm.id = ?"; params.push(processId); }
+  // wfm_roster_assignment stores branch_name, not branch_id (same shape the
+  // shrinkage snapshot query already works around) — resolve the id to a name.
+  let branchCond = "";
+  if (branchId) { branchCond = " AND wra.branch_name = (SELECT branch_name FROM branch_master WHERE id = ?)"; params.push(branchId); }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
@@ -350,7 +356,7 @@ rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager"
           'force_approved_by_manager',
           'realigned_by_manager',
           'published_to_rta'
-        )${processCond}
+        )${processCond}${branchCond}
       ORDER BY e.employee_code ASC`,
     params
   );
