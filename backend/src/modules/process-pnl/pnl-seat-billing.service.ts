@@ -49,7 +49,9 @@ export const INVOICE_LOOKBACK_MONTHS = 3;
 /** Months (current IST month included) in which an unbilled cost centre gets an estimate. */
 export const ESTIMATE_WINDOW_MONTHS = 2;
 
-const PERIOD_RE = /^\d{4}-\d{2}$/;
+// Month must be 01-12: a bare \d{2} accepted "2026-13" as a period and as an effective month
+// (found by the sandbox end-to-end run, 2026-09-15).
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const TABLE = "pnl_seat_billing_line";
 const AUDIT_ENTITY = "pnl_seat_billing_line";
 const AUDIT_MODULE = "process_pnl_seat_billing";

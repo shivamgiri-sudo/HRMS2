@@ -133,6 +133,12 @@ describe("getSeatBillingEstimate", () => {
     expect(out.costCentres.find((cc) => cc.costCentreId === "cc-onfido")!.source).toBe("invoice");
   });
 
+  it("rejects impossible months", async () => {
+    mockDb();
+    await expect(getSeatBillingEstimate("2026-13")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(getSeatBillingEstimate("2026-00")).rejects.toMatchObject({ statusCode: 400 });
+  });
+
   it("still estimates from invoices when the configuration table does not exist yet", async () => {
     mockDb({ tableExists: false });
     const out = await getSeatBillingEstimate("2026-09", { asOfDate: "2026-09-15" });
@@ -148,6 +154,8 @@ describe("configuration writes", () => {
     expect(() => validateLineInput({ lineLabel: "X", rateMonthly: 0, seats: 1, effectiveFrom: "2026-09" })).toThrow(/Seat rate/);
     expect(() => validateLineInput({ lineLabel: "X", rateMonthly: 1, seats: 0, effectiveFrom: "2026-09" })).toThrow(/Seats/);
     expect(() => validateLineInput({ lineLabel: "X", rateMonthly: 1, seats: 1, effectiveFrom: "2026-09", effectiveTo: "2026-08" })).toThrow(/before/);
+    expect(() => validateLineInput({ lineLabel: "X", rateMonthly: 1, seats: 1, effectiveFrom: "2026-13" })).toThrow(/Effective from/);
+    expect(() => validateLineInput({ lineLabel: "X", rateMonthly: 1, seats: 1, effectiveFrom: "2026-09", effectiveTo: "2026-00" })).toThrow(/Effective to/);
     expect(validateLineInput({ lineLabel: " Licences ", lineKind: "fixed", monthlyAmount: 11000, effectiveFrom: "2026-09" }))
       .toMatchObject({ lineLabel: "Licences", lineKind: "fixed", monthlyAmount: 11000, seats: 0 });
   });

@@ -1599,18 +1599,37 @@ router.get(
  * P&L Configuration > Seat billing. Every write is branch-checked against the cost centre it
  * touches and audited in audit_action_log. See pnl-seat-billing.service.ts.
  */
+
+/**
+ * finance-access-scope.ts refuses with a plain Error (no statusCode), which errorHandler turns into
+ * a 500 — so a branch head asking for another branch's cost centre saw a server error rather than
+ * "not allowed". Found by the sandbox end-to-end run (2026-09-15). Mapped to 403 for the seat
+ * billing routes only; the helper itself is shared by every finance route and is left unchanged.
+ */
+async function asForbidden<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    const err = error as Error & { statusCode?: number };
+    if (!err.statusCode && /^(Your user account is not mapped|You cannot access|You can only access)/.test(String(err.message))) {
+      err.statusCode = 403;
+    }
+    throw err;
+  }
+}
+
 router.get(
   "/pnl/seat-billing",
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
     const period = String(req.query.period ?? "");
     const user = actor(req);
-    const branchId = await resolveFinanceBranchScope({
+    const branchId = await asForbidden(resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
-    });
+    }));
     const data = await getSeatBillingEstimate(period, branchId ? { branchIds: [branchId] } : {});
     res.json({ success: true, data });
   })
@@ -1621,7 +1640,7 @@ router.get(
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
     const { branchId } = await getOwnCostCentreBranch(String(req.params.id));
-    await assertBranchOf(req, branchId);
+    await asForbidden(assertBranchOf(req, branchId));
     const data = await getSeatBillingCostCentreDetail(String(req.params.id), String(req.query.period ?? ""));
     res.json({ success: true, data });
   })
@@ -1634,7 +1653,7 @@ router.post(
   h(async (req, res) => {
     const body = req.body ?? {};
     const { branchId } = await getOwnCostCentreBranch(String(body.costCentreId ?? ""));
-    await assertBranchOf(req, branchId);
+    await asForbidden(assertBranchOf(req, branchId));
     const data = await createSeatBillingLine(body, actor(req).id);
     res.status(201).json({ success: true, data });
   })
@@ -1647,7 +1666,7 @@ router.patch(
   h(async (req, res) => {
     const { costCentreId } = await getLineCostCentre(String(req.params.id));
     const { branchId } = await getOwnCostCentreBranch(costCentreId);
-    await assertBranchOf(req, branchId);
+    await asForbidden(assertBranchOf(req, branchId));
     // The cost centre of a line is fixed at creation; moving revenue between cost centres is a
     // new line on the other one, so it cannot be smuggled in through an edit.
     const { costCentreId: _ignored, ...patch } = req.body ?? {};
@@ -1663,7 +1682,7 @@ router.post(
   h(async (req, res) => {
     const { costCentreId } = await getLineCostCentre(String(req.params.id));
     const { branchId } = await getOwnCostCentreBranch(costCentreId);
-    await assertBranchOf(req, branchId);
+    await asForbidden(assertBranchOf(req, branchId));
     const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
     const data = await deactivateSeatBillingLine(String(req.params.id), actor(req).id, reason);
     res.json({ success: true, data });
@@ -1677,7 +1696,7 @@ router.post(
   h(async (req, res) => {
     const costCentreId = String(req.body?.costCentreId ?? "");
     const { branchId } = await getOwnCostCentreBranch(costCentreId);
-    await assertBranchOf(req, branchId);
+    await asForbidden(assertBranchOf(req, branchId));
     const data = await importSeatBillingFromInvoice(costCentreId, String(req.body?.period ?? ""), actor(req).id);
     res.status(201).json({ success: true, data });
   })
