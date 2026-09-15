@@ -2031,19 +2031,21 @@ type UploadType =
   | "gnc-sales" | "gnc-apr" | "gnc-allocation"
   | "aw-out" | "aw-billing" | "aw-mandate" | "aw-inbound" | "aw-new-cdr";
 
-const UPLOAD_OPTIONS: { type: UploadType; label: string; brand: string; desc: string; endpoint: string }[] = [
-  { type: "bellavita-sales", label: "Bellavita Sales",     brand: "Bellavita", desc: "Monthly sales (.xlsx)",           endpoint: "/api/sales-upload/upload/bellavita-sales" },
-  { type: "bellavita-apr",   label: "Bellavita APR",       brand: "Bellavita", desc: "Activity performance (.xlsx)",    endpoint: "/api/sales-upload/upload/bellavita-apr" },
-  { type: "bellavita-chat",  label: "Bellavita Chat",      brand: "Bellavita", desc: "Chat interactions (.xlsx)",       endpoint: "/api/sales-upload/upload/bellavita-chat" },
-  { type: "bellavita-cart",  label: "Bellavita Cart",      brand: "Bellavita", desc: "Cart abandonment (.xlsx)",        endpoint: "/api/sales-upload/upload/bellavita-cart" },
-  { type: "gnc-sales",       label: "GNC Sales",           brand: "GNC",       desc: "Monthly sales (.xlsx)",           endpoint: "/api/sales-upload/upload/gnc-sales" },
-  { type: "gnc-apr",         label: "GNC APR",             brand: "GNC",       desc: "Activity performance (.xlsx)",    endpoint: "/api/sales-upload/upload/gnc-apr" },
-  { type: "gnc-allocation",  label: "GNC Allocation",      brand: "GNC",       desc: "Agent allocation (.xlsx)",        endpoint: "/api/sales-upload/upload/gnc-allocation" },
-  { type: "aw-out",          label: "AW Out (APR)",        brand: "AW",        desc: "Outbound daily APR report (.xlsx)", endpoint: "/api/sales-upload/upload-aw/aw-out" },
-  { type: "aw-billing",      label: "AW Billing",          brand: "AW",        desc: "Billing/activity report (.xlsx)",  endpoint: "/api/sales-upload/upload-aw/aw-billing" },
-  { type: "aw-mandate",      label: "AW Mandate",          brand: "AW",        desc: "Headcount mandate (.xlsx)",        endpoint: "/api/sales-upload/upload-aw/aw-mandate" },
-  { type: "aw-inbound",      label: "AW Inbound CDR",      brand: "AW",        desc: "Inbound call records (.xlsx)",     endpoint: "/api/sales-upload/upload-aw/aw-inbound" },
-  { type: "aw-new-cdr",      label: "AW New CDR",          brand: "AW",        desc: "Outbound call records (.xlsx)",    endpoint: "/api/sales-upload/upload-aw/aw-new-cdr" },
+// logTable: the upload_log.table_name the backend files this upload under
+// (logUpload in sales-upload.service.ts) — what Recent Uploads rows carry.
+const UPLOAD_OPTIONS: { type: UploadType; label: string; brand: string; desc: string; endpoint: string; logTable: string }[] = [
+  { type: "bellavita-sales", label: "Bellavita Sales",     brand: "Bellavita", desc: "Monthly sales (.xlsx)",           endpoint: "/api/sales-upload/upload/bellavita-sales", logTable: "bb_sale" },
+  { type: "bellavita-apr",   label: "Bellavita APR",       brand: "Bellavita", desc: "Activity performance (.xlsx)",    endpoint: "/api/sales-upload/upload/bellavita-apr", logTable: "bb_apr" },
+  { type: "bellavita-chat",  label: "Bellavita Chat",      brand: "Bellavita", desc: "Chat interactions (.xlsx)",       endpoint: "/api/sales-upload/upload/bellavita-chat", logTable: "bb_chat" },
+  { type: "bellavita-cart",  label: "Bellavita Cart",      brand: "Bellavita", desc: "Cart abandonment (.xlsx)",        endpoint: "/api/sales-upload/upload/bellavita-cart", logTable: "bb_cart" },
+  { type: "gnc-sales",       label: "GNC Sales",           brand: "GNC",       desc: "Monthly sales (.xlsx)",           endpoint: "/api/sales-upload/upload/gnc-sales", logTable: "gnc_sale" },
+  { type: "gnc-apr",         label: "GNC APR",             brand: "GNC",       desc: "Activity performance (.xlsx)",    endpoint: "/api/sales-upload/upload/gnc-apr", logTable: "gnc_apr" },
+  { type: "gnc-allocation",  label: "GNC Allocation",      brand: "GNC",       desc: "Agent allocation (.xlsx)",        endpoint: "/api/sales-upload/upload/gnc-allocation", logTable: "gnc_allocation" },
+  { type: "aw-out",          label: "AW Out (APR)",        brand: "AW",        desc: "Outbound daily APR report (.xlsx)", endpoint: "/api/sales-upload/upload-aw/aw-out", logTable: "aw_out" },
+  { type: "aw-billing",      label: "AW Billing",          brand: "AW",        desc: "Billing/activity report (.xlsx)",  endpoint: "/api/sales-upload/upload-aw/aw-billing", logTable: "aw_billing" },
+  { type: "aw-mandate",      label: "AW Mandate",          brand: "AW",        desc: "Headcount mandate (.xlsx)",        endpoint: "/api/sales-upload/upload-aw/aw-mandate", logTable: "aw_mandate" },
+  { type: "aw-inbound",      label: "AW Inbound CDR",      brand: "AW",        desc: "Inbound call records (.xlsx)",     endpoint: "/api/sales-upload/upload-aw/aw-inbound", logTable: "aw_inbound" },
+  { type: "aw-new-cdr",      label: "AW New CDR",          brand: "AW",        desc: "Outbound call records (.xlsx)",    endpoint: "/api/sales-upload/upload-aw/aw-new-cdr", logTable: "aw_new_cdr" },
 ];
 
 interface UploadLog { id: number; batch_id: string; upload_type: string; month_label: string; row_count: number; uploaded_by: string; created_at: string; }
@@ -2061,13 +2063,22 @@ export function UploadPanel({ brand }: { brand?: string } = {}) {
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [logs, setLogs] = useState<UploadLog[]>([]);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [openBatch, setOpenBatch] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // DELETE /batch/:id's roles. Offered only for this panel's own upload types:
+  // upload_log also lists other modules' uploads (Housing, Clovia, LP…), whose
+  // tables deleteUploadBatch does not clear — deleting one would drop the log
+  // entry and leave its data behind.
+  const { hasAnyRole } = useWorkforceAccess();
+  const canDelete = hasAnyRole("super_admin", "admin", "operations_manager");
+  const ownTables = useMemo(() => new Set(UPLOAD_OPTIONS.map(o => o.logTable)), []);
 
   const loadLogs = useCallback(async () => {
     try {
       const r = await hrmsApi.get<{ data: UploadLog[] }>("/api/sales-upload/logs?limit=30");
-      const types = new Set<string>(options.map(o => o.type));
-      setLogs((r.data ?? []).filter(l => !brand || types.has(l.upload_type)));
+      // upload_type is the logged table name (bb_sale, aw_out…), not the option's type.
+      const tables = new Set<string>(options.map(o => o.logTable));
+      setLogs((r.data ?? []).filter(l => !brand || tables.has(l.upload_type)));
     } catch { }
   }, [brand, options]);
 
@@ -2146,21 +2157,26 @@ export function UploadPanel({ brand }: { brand?: string } = {}) {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead><tr className="text-slate-400 border-b border-slate-100">
-                  {["Type","Month","Rows","By","Date",""].map(h => <th key={h} className={`py-2 ${h === "Rows" ? "text-right" : "text-left"}`}>{h}</th>)}
+                  {/* "Note" is upload_log.file_name (aliased month_label) — the writer's note, not a month. */}
+                  {["Type","Note","Rows","By","Date",""].map(h => <th key={h} className={`py-2 ${h === "Rows" ? "text-right" : "text-left"}`}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {logs.map(log => (
-                    <tr key={log.id} className="border-b border-slate-50 hover:bg-slate-50">
-                      <td className="py-1.5 font-medium text-slate-700">{log.upload_type}</td>
+                    <tr key={log.id} onClick={() => setOpenBatch(log.batch_id)}
+                      className="cursor-pointer border-b border-slate-50 hover:bg-slate-50" title="Open this upload">
+                      <td className="py-1.5 font-medium text-slate-700">{uploadLabel(log.upload_type)}</td>
                       <td className="py-1.5 text-slate-600">{log.month_label}</td>
                       <td className="py-1.5 text-right text-slate-600 tabular-nums">{log.row_count.toLocaleString()}</td>
-                      <td className="py-1.5 text-slate-500">{log.uploaded_by}</td>
-                      <td className="py-1.5 text-slate-400">{new Date(log.created_at).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}</td>
+                      <td className="py-1.5 text-slate-500">{log.uploaded_by ?? uploaderFromLabel(log.month_label)}</td>
+                      <td className="py-1.5 text-slate-400">{fmtDateTimeIN(log.created_at)}</td>
                       <td className="py-1.5 text-right">
-                        <button onClick={() => handleDelete(log.batch_id)} disabled={deleting === log.batch_id}
-                          className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40">
-                          <Trash2 size={13} />
-                        </button>
+                        {canDelete && ownTables.has(log.upload_type) && (
+                          <button onClick={e => { e.stopPropagation(); void handleDelete(log.batch_id); }} disabled={deleting === log.batch_id}
+                            className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                            aria-label="Delete this upload batch">
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -2169,6 +2185,105 @@ export function UploadPanel({ brand }: { brand?: string } = {}) {
             </div>
           )}
       </div>
+
+      <DrillDrawer open={openBatch !== null} onClose={() => setOpenBatch(null)}
+        title={openBatch ? `Upload batch ${openBatch.slice(0, 8)}` : "Upload batch"}>
+        {openBatch && <UploadBatchDetail batchId={openBatch} />}
+      </DrillDrawer>
+    </div>
+  );
+}
+
+const uploadLabel = (table: string) => UPLOAD_OPTIONS.find(o => o.logTable === table)?.label ?? table;
+/**
+ * Upload writers file the uploader inside file_name ("sales-upload by x@y",
+ * "HRMS2 upload by <user id>") and leave uploaded_by NULL.
+ */
+const uploaderFromLabel = (label: string | null | undefined) =>
+  (label ?? "").replace(/^(sales-upload|hrms2 upload) by\s+/i, "") || "—";
+/** DD/MM/YYYY HH:mm in IST. */
+function fmtDateTimeIN(v: unknown): string {
+  if (v == null || v === "") return "—";
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return String(v);
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d).map(x => [x.type, x.value]));
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}`;
+}
+
+interface UploadBatch {
+  log: Record<string, unknown>;
+  table: string;
+  rowsInTable: number | null;
+  sample: Record<string, unknown>[];
+}
+
+/** Drill-down for one Recent Uploads row: the log entry, rows still held, and a sample. */
+function UploadBatchDetail({ batchId }: { batchId: string }) {
+  const [data, setData] = useState<UploadBatch | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setData(null); setError(null);
+    hrmsApi.get<{ data: UploadBatch }>(`/api/sales-upload/batch/${encodeURIComponent(batchId)}`)
+      .then(r => { if (live) setData(r.data); })
+      .catch((err: any) => { if (live) setError(err?.response?.data?.error ?? err?.message ?? "Could not load this upload"); });
+    return () => { live = false; };
+  }, [batchId]);
+
+  const Section = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <section className="space-y-2">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+      {children}
+    </section>
+  );
+  const None = () => <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None</p>;
+
+  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (!data) return <p className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={14} className="animate-spin" /> Loading upload…</p>;
+
+  const logged = Number(data.log.row_count ?? 0);
+  const fields: [string, string][] = [
+    ["Batch ID", String(data.log.batch_id ?? batchId)],
+    ["Upload type", uploadLabel(data.table)],
+    ["Table", `db_masmis.${data.table}`],
+    ["Rows uploaded", logged.toLocaleString("en-IN")],
+    ["Uploaded by", String(data.log.uploaded_by ?? uploaderFromLabel(String(data.log.file_name ?? "")))],
+    ["Uploaded at", fmtDateTimeIN(data.log.uploaded_at)],
+  ];
+  const cols = data.sample[0]
+    ? Object.keys(data.sample[0]).filter(k => k !== "upload_batch_id").map(k => ({ key: k, label: k }))
+    : [];
+
+  return (
+    <div className="space-y-6">
+      <Section label="Upload">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          {fields.map(([k, v]) => (
+            <div key={k}><dt className="text-xs text-slate-400">{k}</dt><dd className="font-semibold text-slate-800 break-all">{v}</dd></div>
+          ))}
+        </dl>
+      </Section>
+
+      <Section label="Rows held now">
+        {data.rowsInTable === null ? <None /> : (
+          <p className={`rounded-lg px-3 py-2 text-sm ${data.rowsInTable === logged ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
+            {data.rowsInTable.toLocaleString("en-IN")} row{data.rowsInTable === 1 ? "" : "s"} in db_masmis.{data.table}
+            {data.rowsInTable === logged ? " — matches the upload." : ` — the upload logged ${logged.toLocaleString("en-IN")}.`}
+          </p>
+        )}
+      </Section>
+
+      <Section label={`Sample rows${data.sample.length ? ` (first ${data.sample.length})` : ""}`}>
+        {data.sample.length === 0 ? <None /> : <MiniTable cols={cols} rows={data.sample} />}
+      </Section>
+
+      <Section label="Audit trail">
+        {/* upload_log is the only record of an upload; there is no separate audit table. */}
+        <None />
+      </Section>
     </div>
   );
 }

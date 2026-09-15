@@ -192,10 +192,24 @@ salesUploadRouter.post(
   })
 );
 
+// One batch for the Recent Uploads drill-down. Same roles as uploading: the
+// sample rows are the uploaded data itself, customer phone numbers included.
+salesUploadRouter.get(
+  "/batch/:batchId",
+  requireRole("super_admin", "admin", "sales", "operations_manager"),
+  h(async (req, res) => {
+    const batchId = String(req.params.batchId ?? "").trim();
+    if (!batchId) return res.status(400).json({ success: false, error: "batchId is required" });
+    const data = await svc.getUploadBatch(batchId);
+    if (!data) return res.status(404).json({ success: false, error: "No such upload batch" });
+    return res.json({ success: true, data });
+  })
+);
+
 salesUploadRouter.delete(
   "/batch/:batchId",
-  // Tighter than the uploads on purpose: deleteUploadBatch removes rows from seven tables
-  // plus the upload log, and it cannot be undone from the UI.
+  // Tighter than the uploads on purpose: deleteUploadBatch removes rows from every
+  // upload table plus the upload log, and it cannot be undone from the UI.
   requireRole("super_admin", "admin", "operations_manager"),
   h(async (req, res) => {
     const batchId = String(req.params.batchId ?? "").trim();

@@ -92,16 +92,54 @@ export async function getUploadLogs(limit = 50): Promise<Record<string, unknown>
   );
 }
 
+/**
+ * Every db_masmis table a sales upload writes, each tagged per row with
+ * upload_batch_id and logged in upload_log under this name (logUpload's first
+ * argument). The AW and Neemans tables were missing from the delete list, so
+ * deleting one of their batches removed the log entry and left the data behind
+ * (none orphaned yet, checked 2026-09-15). Also an allowlist: table names are
+ * interpolated into SQL.
+ */
+export const BATCH_TABLES = [
+  "bb_sale", "bb_apr", "bb_chat", "bb_cart",
+  "gnc_sale", "gnc_apr", "gnc_allocation",
+  "aw_out", "aw_billing", "aw_mandate", "aw_inbound", "aw_new_cdr",
+  "neemans_sale_raw",
+] as const;
+
 export async function deleteUploadBatch(batchId: string): Promise<void> {
-  // Delete from all tables using the batch_id column
-  const tables = [
-    "db_masmis.bb_sale", "db_masmis.bb_apr", "db_masmis.bb_chat", "db_masmis.bb_cart",
-    "db_masmis.gnc_sale", "db_masmis.gnc_apr", "db_masmis.gnc_allocation",
-  ];
-  for (const tbl of tables) {
-    await queryMasmis(`DELETE FROM ${tbl} WHERE upload_batch_id = ?`, [batchId]);
+  // Batch ids are unique UUIDs, so clearing every table is exact.
+  for (const tbl of BATCH_TABLES) {
+    await queryMasmis(`DELETE FROM db_masmis.${tbl} WHERE upload_batch_id = ?`, [batchId]);
   }
   await queryMasmis(`DELETE FROM db_masmis.upload_log WHERE batch_id = ?`, [batchId]);
+}
+
+/**
+ * One upload batch for its drill-down: the upload_log entry, how many rows the
+ * target table still holds for it (a mismatch with row_count means rows went
+ * missing or were added later), and the first 20 rows as uploaded.
+ */
+export async function getUploadBatch(batchId: string): Promise<{
+  log: Record<string, unknown>;
+  table: string;
+  rowsInTable: number | null;
+  sample: Record<string, unknown>[];
+} | null> {
+  const logs = await queryMasmis(
+    `SELECT id, batch_id, table_name, file_name, row_count, uploaded_by, uploaded_at
+       FROM db_masmis.upload_log WHERE batch_id = ? ORDER BY uploaded_at LIMIT 1`, [batchId]);
+  const log = logs[0];
+  if (!log) return null;
+  const table = String(log.table_name ?? "");
+  if (!(BATCH_TABLES as readonly string[]).includes(table)) return { log, table, rowsInTable: null, sample: [] };
+  const [count] = await queryMasmis(
+    `SELECT COUNT(*) AS n FROM db_masmis.${table} WHERE upload_batch_id = ?`, [batchId]);
+  // LIMIT inlined: queryMasmis uses prepared statements, which cannot bind LIMIT
+  // here (see getUploadLogs).
+  const sample = await queryMasmis(
+    `SELECT * FROM db_masmis.${table} WHERE upload_batch_id = ? LIMIT 20`, [batchId]);
+  return { log, table, rowsInTable: Number(count?.n ?? 0), sample };
 }
 
 // ── Bellavita Sales Upload ────────────────────────────────────────────────────

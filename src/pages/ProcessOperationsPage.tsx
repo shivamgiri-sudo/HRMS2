@@ -37,7 +37,9 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
   const [month, setMonth] = useState(currentMonthStr());
   const mapping = PROCESS_SALES_MAP[processCode];
   const { hasAnyRole } = useWorkforceAccess();
-  const canUpload = hasAnyRole("super_admin", "admin", "process_manager", "operations_manager");
+  // The roles POST /api/sales-upload/upload/* accepts — not the Brand Sales
+  // page's list, which offers the form to process_manager (who then gets 403).
+  const canUpload = hasAnyRole("super_admin", "admin", "sales", "operations_manager");
 
   if (!mapping) {
     return (
@@ -60,14 +62,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       )}
 
       {/* Render the process-specific dashboard */}
-      {mapping.type === "bellavita" && (
-        <div className="space-y-5">
-          <div className="flex gap-2">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400 self-center">View:</span>
-            <BellavitaBvoToggle month={month} />
-          </div>
-        </div>
-      )}
+      {mapping.type === "bellavita" && <BellavitaBvoToggle month={month} />}
       {mapping.type === "neemans"   && <NeemansDashboard month={month} />}
       {mapping.type === "gnc"       && <GncDashboard month={month} />}
       {mapping.type === "aw"        && <AwDashboard month={month} />}
@@ -79,7 +74,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       {mapping.type === "housing"   && <HousingDashboardEmbed subProcess="both" />}
 
       {/* This brand's sales uploads — the Brand Sales Analytics "Upload Data"
-          tab, narrowed to the selected process. Same roles as that tab. */}
+          tab, narrowed to the selected process. */}
       {canUpload && UPLOAD_BRAND[mapping.type] && <UploadPanel brand={UPLOAD_BRAND[mapping.type]} />}
     </div>
   );
@@ -93,14 +88,19 @@ function BellavitaBvoToggle({ month }: { month: string }) {
   const [sub, setSub] = useState<"bellavita" | "bvo">("bellavita");
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit">
-        {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"]] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setSub(k)}
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
-            style={sub === k ? { background: "#1A1A1A", color: "#D4AF37" } : { color: "#64748B" }}>
-            {lbl}
-          </button>
-        ))}
+      {/* Label beside the toggle only — wrapping the whole dashboard in a flex
+          row with the label centred it against the full chart height. */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-bold uppercase tracking-widest text-slate-400">View:</span>
+        <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit">
+          {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"]] as const).map(([k, lbl]) => (
+            <button key={k} onClick={() => setSub(k)}
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={sub === k ? { background: "#1A1A1A", color: "#D4AF37" } : { color: "#64748B" }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
       </div>
       {sub === "bellavita" && <BellavitaDashboard month={month} />}
       {sub === "bvo"       && <BvoDashboard month={month} />}
