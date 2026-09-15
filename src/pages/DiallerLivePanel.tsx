@@ -80,6 +80,7 @@ export function detectDiallerProcess(processName: string): DiallerProcess {
   // Inbound CDR staging processes (pre-synced from dialer_db into inbound_cdr_daily_actual)
   if (n.includes("gnc")) return "gnc";
   if (n.includes("bella") || n.includes("bevzilla") || n.includes("embark")) return "bella-vita";
+  if (n.includes("clovia")) return "clovia";
   if (n.includes("neeman")) return "neemans";
   if (n.includes("viega")) return "viega";
   if (n.includes("exicom")) return "exicom";
@@ -1828,7 +1829,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
     return (
       <div style={{ margin: "16px 0", padding: "16px 20px", background: "linear-gradient(135deg,#fff8e7,#fffaf0)", border: "1px solid #fde68a", borderRadius: 14, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
         <strong>No live dialler data available</strong> for <em>{processName}</em>.
-        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Neemans, Viega, Exicom, DU Digital.</div>
+        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
       </div>
     );
   }
@@ -1847,6 +1848,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
         {proc === "finnable"   && <EmailAprDashboard proc="finnable"        label="Finnable"              campaign="FINNABLE" f={filters} />}
         {proc === "gnc"        && <InboundCdrDashboard proc="gnc"           label="GNC"                   f={filters} />}
         {proc === "bella-vita" && <InboundCdrDashboard proc="bella-vita"    label="Bella-Vita Organic"    f={filters} />}
+        {proc === "clovia"     && <InboundCdrDashboard proc="clovia"        label="Clovia"                f={filters} />}
         {proc === "neemans"    && <InboundCdrDashboard proc="neemans"       label="Neemans Private Limited" f={filters} />}
         {proc === "viega"      && <InboundCdrDashboard proc="viega"         label="Viega"                 f={filters} />}
         {proc === "exicom"     && <InboundCdrDashboard proc="exicom"        label="Exicom"                f={filters} />}

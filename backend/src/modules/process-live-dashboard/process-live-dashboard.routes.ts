@@ -131,6 +131,7 @@ function cdrRoutes(prefix: string, code: CdrClientCode) {
 
 cdrRoutes('gnc',          'GNC');
 cdrRoutes('bella-vita',   'BELLAVITA');
+cdrRoutes('clovia',       'CLOVIA');
 cdrRoutes('neemans',      'NEEMANS');
 cdrRoutes('viega',        'VIEGA');
 cdrRoutes('exicom',       'EXICOM');
