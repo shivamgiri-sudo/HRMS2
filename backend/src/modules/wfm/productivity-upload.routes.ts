@@ -609,4 +609,75 @@ router.post(
   }),
 );
 
+// ─── Admin: save or replace a column mapping for a dialler source ─────────────
+
+const MAPPING_ADMIN_ROLES: string[] = ['super_admin', 'admin', 'wfm'];
+const VALID_TARGETS = new Set<string>([
+  'employee_code', 'report_date', 'login_minutes',
+  'calls_handled', 'aht_seconds', 'bio_minutes', 'lunch_minutes', 'qa_minutes', 'training_minutes',
+]);
+const MANDATORY_TARGETS = ['employee_code', 'report_date', 'login_minutes'];
+
+router.post(
+  '/sources/:sourceId/column-mapping',
+  requireRole(...MAPPING_ADMIN_ROLES),
+  asyncRoute(async (req: any, res: any) => {
+    const { sourceId } = req.params;
+    const { columnMappings } = req.body ?? {};
+
+    if (!columnMappings || typeof columnMappings !== 'object' || Array.isArray(columnMappings)) {
+      return res.status(400).json({ success: false, message: 'columnMappings must be a plain object mapping CSV headers to target fields.' });
+    }
+
+    const entries = Object.entries(columnMappings as Record<string, unknown>);
+    if (entries.length === 0) {
+      return res.status(400).json({ success: false, message: 'columnMappings must have at least one entry.' });
+    }
+
+    for (const [header, target] of entries) {
+      if (typeof header !== 'string' || !header.trim()) {
+        return res.status(400).json({ success: false, message: 'Every CSV column header must be a non-empty string.' });
+      }
+      if (typeof target !== 'string' || !VALID_TARGETS.has(target)) {
+        return res.status(400).json({ success: false, message: `"${target}" is not a recognised target field. Valid fields: ${[...VALID_TARGETS].join(', ')}.` });
+      }
+    }
+
+    const mappedTargets = Object.values(columnMappings as Record<string, string>);
+    for (const required of MANDATORY_TARGETS) {
+      if (!mappedTargets.includes(required)) {
+        return res.status(400).json({ success: false, message: `The mapping must include a column mapped to "${required}".` });
+      }
+    }
+
+    const [sourceRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM dialler_source WHERE id = ? AND active_status = 1`,
+      [sourceId],
+    );
+    if ((sourceRows as RowDataPacket[]).length === 0) {
+      return res.status(404).json({ success: false, message: 'Dialler source not found.' });
+    }
+
+    const [versionRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(mapping_version), 0) + 1 AS next_version FROM dialler_source_column_mapping WHERE dialler_source_id = ?`,
+      [sourceId],
+    );
+    const nextVersion = (versionRows as any)[0].next_version as number;
+
+    await db.execute(
+      `UPDATE dialler_source_column_mapping SET active_status = 0 WHERE dialler_source_id = ? AND active_status = 1`,
+      [sourceId],
+    );
+
+    const newId = crypto.randomUUID();
+    await db.execute(
+      `INSERT INTO dialler_source_column_mapping (id, dialler_source_id, mapping_version, column_mappings, active_status, created_by)
+       VALUES (?, ?, ?, ?, 1, ?)`,
+      [newId, sourceId, nextVersion, JSON.stringify(columnMappings), req.user?.id ?? null],
+    );
+
+    return res.json({ success: true, mappingVersion: nextVersion });
+  }),
+);
+
 export { router as productivityUploadRouter };
