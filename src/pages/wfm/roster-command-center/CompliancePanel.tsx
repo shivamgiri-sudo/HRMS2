@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -494,13 +495,9 @@ function adaptViolation(v: ApiViolation): Violation {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function CompliancePanel() {
-  const [branchFilter, setBranchFilter] = useState(ALL);
+  const { filters } = useRosterConsoleFilters();
+  const branchFilter = filters.branchId || ALL;
   const [ruleFilter, setRuleFilter] = useState(ALL);
-
-  const { data: branchData } = useQuery({
-    queryKey: ["compliance", "branches"],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
-  });
 
   const { data: summaryData, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ["compliance", "summary", branchFilter],
@@ -587,17 +584,6 @@ export default function CompliancePanel() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Select value={branchFilter} onValueChange={setBranchFilter}>
-                <SelectTrigger className="w-44 bg-white/10 border-white/20 text-white">
-                  <SelectValue placeholder="All Branches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All Branches</SelectItem>
-                  {(branchData?.data ?? []).map((b) => (
-                    <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <Button
                 variant="secondary"
                 size="sm"

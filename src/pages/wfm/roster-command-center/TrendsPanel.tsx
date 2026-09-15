@@ -25,14 +25,6 @@ import {
   BarChart,
 } from "recharts";
 import { CalendarClock, Send, TrendingDown, Users } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AXIS_TICK,
@@ -48,80 +40,7 @@ import {
   pct,
   ratio,
 } from "@/components/analytics/analytics-kit";
-
-/* ── Shared types ──────────────────────────────────────────────────────────── */
-
-interface Process { id: string; process_name: string }
-interface Branch { id: string; branch_name: string }
-
-function todayISO(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
-}
-
-/* ── Filter bar ────────────────────────────────────────────────────────────── */
-
-interface Filters {
-  branchId: string;
-  processId: string;
-  from: string;
-  to: string;
-}
-
-function FilterBar({ filters, setFilters }: { filters: Filters; setFilters: (f: Filters) => void }) {
-  const { data: procData } = useQuery({
-    queryKey: ["processes-list"],
-    queryFn: () => hrmsApi.get<{ data: Process[] }>("/api/processes?limit=200"),
-  });
-  const { data: branchData } = useQuery({
-    queryKey: ["wfm-roster-import-branches"],
-    queryFn: () => hrmsApi.get<{ branches: Branch[] }>("/api/wfm/roster-imports/branches"),
-  });
-  const processes = procData?.data ?? [];
-  const branches = branchData?.branches ?? [];
-
-  return (
-    <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-      <div className="min-w-[180px]">
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Branch</label>
-        <Select
-          value={filters.branchId || "__all__"}
-          onValueChange={(v) => setFilters({ ...filters, branchId: v === "__all__" ? "" : v })}
-        >
-          <SelectTrigger className="h-9 bg-white"><SelectValue placeholder="All branches" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All branches (company-wide)</SelectItem>
-            {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="min-w-[200px]">
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Process</label>
-        <Select
-          value={filters.processId || "__all__"}
-          onValueChange={(v) => setFilters({ ...filters, processId: v === "__all__" ? "" : v })}
-        >
-          <SelectTrigger className="h-9 bg-white"><SelectValue placeholder="All processes" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All processes</SelectItem>
-            {processes.map((p) => <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">From</label>
-        <Input type="date" className="h-9 w-[150px] bg-white" value={filters.from}
-          onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
-      </div>
-      <div>
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">To</label>
-        <Input type="date" className="h-9 w-[150px] bg-white" value={filters.to}
-          onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
-      </div>
-    </div>
-  );
-}
+import { useRosterConsoleFilters, type RosterConsoleFilters as Filters } from "./RosterConsoleFilterContext";
 
 /* ── Section switcher ──────────────────────────────────────────────────────── */
 
@@ -548,17 +467,11 @@ function LatenessSection({ filters }: { filters: Filters }) {
 /* ── Root panel ────────────────────────────────────────────────────────────── */
 
 export default function TrendsPanel() {
-  const [filters, setFilters] = useState<Filters>({
-    branchId: "",
-    processId: "",
-    from: todayISO(-13),
-    to: todayISO(),
-  });
+  const { filters } = useRosterConsoleFilters();
   const [section, setSection] = useState<Section>("shrinkage");
 
   return (
     <div className="space-y-4">
-      <FilterBar filters={filters} setFilters={setFilters} />
       <SectionSwitcher active={section} onChange={setSection} />
       {section === "shrinkage" && <ShrinkageTrendSection filters={filters} />}
       {section === "publish" && <PublishSection filters={filters} />}

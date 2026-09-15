@@ -28,10 +28,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import {
   Activity,
   AlertTriangle,
@@ -319,7 +319,8 @@ function AbsenceAlertRow({
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function LiveMonitoringPanel() {
-  const [branchId, setBranchId] = useState(ALL);
+  const { filters } = useRosterConsoleFilters();
+  const branchId = filters.branchId || ALL;
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedManager, setSelectedManager] = useState<ManagerDigest | null>(null);
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -448,17 +449,6 @@ export default function LiveMonitoringPanel() {
               <LivePulse />
               <span className="text-sm font-medium">LIVE</span>
             </div>
-            <Select value={branchId} onValueChange={setBranchId}>
-              <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
-                <SelectValue placeholder="All Branches" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All Branches</SelectItem>
-                {(branchData?.data ?? []).map((b) => (
-                  <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Button
               variant="secondary"
               size="sm"

@@ -18,11 +18,11 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -362,20 +362,11 @@ function RecommendationCard({ rec }: { rec: ShiftRecommendation }) {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function ShiftEffectivenessPanel() {
-  const [branchFilter, setBranchFilter] = useState(ALL);
-  const [processFilter, setProcessFilter] = useState(ALL);
+  const { filters } = useRosterConsoleFilters();
+  const branchFilter = filters.branchId || ALL;
+  const processFilter = filters.processId || ALL;
   // Merge-plan Phase B bug #14
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
-
-  const { data: branchData } = useQuery({
-    queryKey: ["shift-effectiveness", "branches"],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
-  });
-
-  const { data: processData } = useQuery({
-    queryKey: ["shift-effectiveness", "processes"],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; process_name: string }> }>("/api/org/processes"),
-  });
 
   const { data: shiftsData, isLoading: shiftsLoading } = useQuery({
     queryKey: ["shift-effectiveness", "shifts", branchFilter, processFilter],
@@ -441,30 +432,6 @@ export default function ShiftEffectivenessPanel() {
                 <h1 className="text-2xl font-bold">Shift Effectiveness Dashboard</h1>
                 <p className="text-blue-100 text-sm">Analyze shift performance, break compliance, and optimize assignments</p>
               </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Select value={branchFilter} onValueChange={setBranchFilter}>
-                <SelectTrigger className="w-40 bg-white/10 border-white/20 text-white">
-                  <SelectValue placeholder="All Branches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All Branches</SelectItem>
-                  {(branchData?.data ?? []).map((b) => (
-                    <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={processFilter} onValueChange={setProcessFilter}>
-                <SelectTrigger className="w-40 bg-white/10 border-white/20 text-white">
-                  <SelectValue placeholder="All Processes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All Processes</SelectItem>
-                  {(processData?.data ?? []).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
         </div>

@@ -17,11 +17,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import {
   TrendingDown,
   TrendingUp,
@@ -253,23 +253,11 @@ function ScoreRing({ score, size = 80, strokeWidth = 8 }: { score: number; size?
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function AnalyticsPanel() {
-  const [branchId, setBranchId] = useState(ALL);
-  // Merge-plan Phase B bug #4: Quality/Cost endpoints already accept ?processId=
-  // server-side, but the frontend never offered a way to pick one — every call
-  // was branch-only, so process-level correlation/cost data was unreachable.
-  const [processId, setProcessId] = useState(ALL);
+  const { filters } = useRosterConsoleFilters();
+  const branchId = filters.branchId || ALL;
+  const processId = filters.processId || ALL;
   const weekStart = getWeekStart();
   const period = getPreviousMonth();
-
-  const { data: branchData } = useQuery({
-    queryKey: ["roster-analytics", "branches"],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
-  });
-
-  const { data: processData } = useQuery({
-    queryKey: ["roster-analytics", "processes"],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; process_name: string }> }>("/api/processes?limit=200"),
-  });
 
   const { data: shrinkageData, isLoading: shrinkageLoading } = useQuery({
     queryKey: ["roster-analytics", "shrinkage", branchId, weekStart],
@@ -319,31 +307,6 @@ export default function AnalyticsPanel() {
                 <h1 className="text-2xl font-bold">Roster Analytics Intelligence</h1>
                 <p className="text-teal-100 text-sm">Shrinkage patterns, quality correlation, cost impact, and forecasting</p>
               </div>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Select value={branchId} onValueChange={setBranchId}>
-                <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
-                  <SelectValue placeholder="Select Branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All Branches</SelectItem>
-                  {(branchData?.data ?? []).map((b) => (
-                    <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* Merge-plan Phase B bug #4 */}
-              <Select value={processId} onValueChange={setProcessId}>
-                <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
-                  <SelectValue placeholder="Select Process" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All Processes</SelectItem>
-                  {(processData?.data ?? []).map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
           </div>
         </div>
