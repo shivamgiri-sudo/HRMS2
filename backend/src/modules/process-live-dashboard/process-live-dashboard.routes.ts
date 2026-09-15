@@ -51,6 +51,10 @@ import {
   getCdrStagingSummary, getCdrStagingDaily, getCdrStagingMonthly,
   type CdrClientCode,
 } from './cdr-staging.service.js';
+import {
+  getDalmiaOverview, getDalmiaScenarios, getDalmiaLeadSources,
+  getDalmiaRegions, getDalmiaAfterHourDaily, getDalmiaOutboundStatus,
+} from './dalmia.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -142,5 +146,13 @@ const fin = emailH('finnable');
 router.get('/finnable/summary', fin.summary);
 router.get('/finnable/daily',   fin.daily);
 router.get('/finnable/agents',  fin.agents);
+
+// ── Dalmia Cement Analytics (from bulk-uploaded MIS tables) ──────────────────
+router.get('/dalmia/overview',        wrap(req => getDalmiaOverview(req.query as Q)));
+router.get('/dalmia/scenarios',       wrap(req => getDalmiaScenarios(req.query as Q)));
+router.get('/dalmia/lead-sources',    wrap(req => getDalmiaLeadSources(req.query as Q)));
+router.get('/dalmia/regions',         wrap(req => getDalmiaRegions(req.query as Q)));
+router.get('/dalmia/after-hour-daily',wrap(req => getDalmiaAfterHourDaily(req.query as Q)));
+router.get('/dalmia/outbound-status', wrap(req => getDalmiaOutboundStatus(req.query as Q)));
 
 export default router;

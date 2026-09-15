@@ -2,8 +2,9 @@ import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from "rea
 import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
 import {
   BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
-  BvoDashboard, LpDashboard, ProcessDataPanel,
+  BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard,
 } from "./NativeSalesDashboard";
+import { HousingDashboardEmbed } from "./NativeHousingDashboards";
 
 // Process code → sales dashboard type. Derived from live process list 2026-09-15.
 const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
@@ -65,18 +66,8 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       {mapping.type === "lp"        && <LpDashboard />}
       {mapping.type === "clovia"    && <ProcessDataPanel process="Clovia" uploadTypes={["CLOVIA_EMAIL_DAILY","CLOVIA_CHAT_DAILY","CLOVIA_CRM_DISPOSITION","CLOVIA_QUALITY_AUDIT","CLOVIA_RECHURN_CALLS","CLOVIA_TEAM_ALIGNMENT"]} color="#E40B92" />}
       {mapping.type === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
-      {mapping.type === "dalmia"    && <ProcessDataPanel process="Dalmia" uploadTypes={["DALMIA_AFTER_HOUR","DALMIA_DD_RAW","DALMIA_OUTBOUND_RAW"]} color="#B45309" />}
-      {mapping.type === "housing"   && (
-        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-blue-800">Housing Dashboard</p>
-            <p className="text-xs text-blue-600 mt-0.5">Full housing owner / premium sales + CDR analytics available on the dedicated Housing Dashboards page.</p>
-          </div>
-          <a href="/sales/housing-dashboards" className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition whitespace-nowrap">
-            Open Housing <ChevronRight size={14} />
-          </a>
-        </div>
-      )}
+      {mapping.type === "dalmia"    && <DalmiaDashboard />}
+      {mapping.type === "housing"   && <HousingDashboardEmbed subProcess="both" />}
     </div>
   );
 }

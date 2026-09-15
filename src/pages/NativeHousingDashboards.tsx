@@ -338,6 +338,41 @@ function HousingPremiumOverview({ filters, setFilters, tlOptions, refreshKey }: 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 type HousingTab = "owner" | "premium" | "upload";
 
+// Named export for inline use in ProcessOperationsPage (no DashboardLayout wrapper)
+export function HousingDashboardEmbed({ subProcess }: { subProcess: "owner" | "premium" | "both" }) {
+  const [tab, setTab] = useState<"owner" | "premium">(subProcess === "premium" ? "premium" : "owner");
+  const [ownerFilters, setOwnerFilters] = useState<Filters>({});
+  const [premiumFilters, setPremiumFilters] = useState<Filters>({});
+  const [refreshKey] = useState(0);
+
+  const { tlOptions: ownerTls } = useFilterOptions("/api/housing-dashboards/housing-owner");
+  const { tlOptions: premiumTls } = useFilterOptions("/api/housing-dashboards/housing-premium");
+
+  const showBothTabs = subProcess === "both";
+
+  return (
+    <div style={{ fontFamily: "Inter, sans-serif" }}>
+      {showBothTabs && (
+        <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit mb-4">
+          {(["owner", "premium"] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              style={tab === t ? { background: "#1e40af", color: "#fff" } : { color: "#64748b" }}>
+              {t === "owner" ? "Housing Owner" : "Housing Premium"}
+            </button>
+          ))}
+        </div>
+      )}
+      {(tab === "owner" || subProcess === "owner") && (
+        <HousingOwnerOverview filters={ownerFilters} setFilters={setOwnerFilters} tlOptions={ownerTls} refreshKey={refreshKey} />
+      )}
+      {(tab === "premium" || subProcess === "premium") && (
+        <HousingPremiumOverview filters={premiumFilters} setFilters={setPremiumFilters} tlOptions={premiumTls} refreshKey={refreshKey} />
+      )}
+    </div>
+  );
+}
+
 export default function NativeHousingDashboards() {
   const { hasAnyRole } = useWorkforceAccess();
   const canAccess = hasAnyRole("super_admin", "admin", "ceo", "coo", "process_manager", "operations_manager", "branch_head", "hr", "manager");

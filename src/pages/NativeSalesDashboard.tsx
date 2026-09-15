@@ -2253,9 +2253,185 @@ export default function NativeSalesDashboard() {
         {process === "lp"        && <LpDashboard />}
         {process === "clovia"    && <ProcessDataPanel process="Clovia" uploadTypes={["CLOVIA_EMAIL_DAILY","CLOVIA_CHAT_DAILY","CLOVIA_CRM_DISPOSITION","CLOVIA_QUALITY_AUDIT","CLOVIA_RECHURN_CALLS","CLOVIA_TEAM_ALIGNMENT"]} color="#E40B92" />}
         {process === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
-        {process === "dalmia"    && <ProcessDataPanel process="Dalmia" uploadTypes={["DALMIA_AFTER_HOUR","DALMIA_DD_RAW","DALMIA_OUTBOUND_RAW"]} color="#B45309" />}
+        {process === "dalmia"    && <DalmiaDashboard />}
         {process === "upload"    && <UploadPanel />}
       </div>
     </DashboardLayout>
+  );
+}
+
+// ── Dalmia Cement Dashboard ───────────────────────────────────────────────────
+
+interface DalmiaFiltersI { from: string; to: string }
+
+async function fetchDalmia<T>(path: string, f: DalmiaFiltersI): Promise<T> {
+  const token = localStorage.getItem("authToken") || sessionStorage.getItem("authToken") || "";
+  const qs = new URLSearchParams({ from: f.from, to: f.to }).toString();
+  const r = await fetch(`/api/process-live/dalmia/${path}?${qs}`, {
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json() as { ok: boolean; data: T };
+  if (!d.ok) throw new Error("API error");
+  return d.data;
+}
+
+function DalmiaKpiCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color: string }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #dce4ed", borderRadius: 14, padding: "14px 16px", borderTop: `3px solid ${color}` }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#697586", textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 900, color: "#172235", marginTop: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#697586", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function DalmiaBarChart({ data, color }: { data: { name: string; value: number }[]; color: string }) {
+  const max = Math.max(...data.map(d => d.value), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {data.map(d => (
+        <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 120, fontSize: 11, fontWeight: 600, color: "#475569", textAlign: "right", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.name}>{d.name}</div>
+          <div style={{ flex: 1, background: "#f1f5f9", borderRadius: 4, height: 18, position: "relative" }}>
+            <div style={{ width: `${Math.round((d.value / max) * 100)}%`, background: color, borderRadius: 4, height: "100%", transition: "width 0.4s ease" }} />
+          </div>
+          <div style={{ width: 40, fontSize: 11, fontWeight: 800, color: "#172235", textAlign: "right" }}>{d.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function DalmiaDashboard() {
+  const today = new Date().toISOString().slice(0, 10);
+  const monthStart = new Date(); monthStart.setDate(1);
+  const [filters, setFilters] = useState<DalmiaFiltersI>({ from: monthStart.toISOString().slice(0, 10), to: today });
+  const [overview, setOverview] = useState<Record<string, unknown> | null>(null);
+  const [scenarios, setScenarios] = useState<{ name: string; value: number }[]>([]);
+  const [leadSources, setLeadSources] = useState<{ name: string; value: number }[]>([]);
+  const [regions, setRegions] = useState<Array<{ region: string; total: number; converted: number }>>([]);
+  const [afterHour, setAfterHour] = useState<{ date: string; calls: number }[]>([]);
+  const [outboundStatus, setOutboundStatus] = useState<{ name: string; value: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true); setError(null);
+    Promise.all([
+      fetchDalmia<Record<string, unknown>>('overview', filters),
+      fetchDalmia<{ name: string; value: number }[]>('scenarios', filters),
+      fetchDalmia<{ name: string; value: number }[]>('lead-sources', filters),
+      fetchDalmia<Array<{ region: string; total: number; converted: number }>>('regions', filters),
+      fetchDalmia<{ date: string; calls: number }[]>('after-hour-daily', filters),
+      fetchDalmia<{ name: string; value: number }[]>('outbound-status', filters),
+    ]).then(([ov, sc, ls, rg, ah, os]) => {
+      setOverview(ov); setScenarios(sc); setLeadSources(ls);
+      setRegions(rg); setAfterHour(ah); setOutboundStatus(os);
+    }).catch(e => setError(e instanceof Error ? e.message : 'Failed to load')).finally(() => setLoading(false));
+  }, [filters]);
+
+  const panelStyle = { background: "#fff", border: "1px solid #dce4ed", borderRadius: 14, padding: "16px 18px" };
+
+  const dd = overview?.dd as { total: number; ftr: number; closed: number; converted: number; days: number; ftrPct: number; conversionPct: number } | undefined;
+  const outboundOv = overview?.outbound as { total: number; contacted: number; contactPct: number } | undefined;
+  const afterHourOv = overview?.afterHour as { total: number } | undefined;
+
+  return (
+    <div style={{ fontFamily: "Inter, sans-serif" }}>
+      {/* Date range filter */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, background: "#f8fafd", border: "1px solid #dce4ed", borderRadius: 10, padding: "8px 12px" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#697586", textTransform: "uppercase" }}>Period</span>
+        <input type="date" value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))}
+          style={{ border: "1px solid #dce4ed", borderRadius: 8, padding: "4px 8px", fontSize: 12, fontWeight: 700 }} />
+        <span style={{ color: "#697586" }}>–</span>
+        <input type="date" value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))}
+          style={{ border: "1px solid #dce4ed", borderRadius: 8, padding: "4px 8px", fontSize: 12, fontWeight: 700 }} />
+      </div>
+
+      {loading && <div style={{ padding: 40, textAlign: "center", color: "#697586" }}>Loading Dalmia dashboard…</div>}
+      {error && <div style={{ padding: 20, color: "#dc2626", background: "#fff0f0", borderRadius: 10 }}>Error: {error}</div>}
+
+      {!loading && !error && overview && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* KPI strip */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            <DalmiaKpiCard label="DD Calls" value={dd?.total ?? 0} sub={`${dd?.days ?? 0} active days`} color="#B45309" />
+            <DalmiaKpiCard label="FTR%" value={`${dd?.ftrPct ?? 0}%`} sub={`${dd?.ftr ?? 0} first-time resolutions`} color="#16a34a" />
+            <DalmiaKpiCard label="Converted" value={dd?.converted ?? 0} sub={`${dd?.conversionPct ?? 0}% of calls`} color="#2563eb" />
+            <DalmiaKpiCard label="Closed" value={dd?.closed ?? 0} sub="Status = Closed" color="#7c3aed" />
+            <DalmiaKpiCard label="After-Hour" value={afterHourOv?.total ?? 0} sub="Calls after working hours" color="#dc2626" />
+            <DalmiaKpiCard label="Outbound" value={outboundOv?.total ?? 0} sub={`${outboundOv?.contactPct ?? 0}% contacted`} color="#0891b2" />
+          </div>
+
+          {/* Charts row 1 */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div style={panelStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#172235", marginBottom: 12 }}>Call Scenarios</div>
+              {scenarios.length === 0 ? <p style={{ color: "#697586", fontSize: 12 }}>No data</p> : <DalmiaBarChart data={scenarios} color="#B45309" />}
+            </div>
+            <div style={panelStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#172235", marginBottom: 12 }}>Lead Sources</div>
+              {leadSources.length === 0 ? <p style={{ color: "#697586", fontSize: 12 }}>No data</p> : <DalmiaBarChart data={leadSources} color="#2563eb" />}
+            </div>
+          </div>
+
+          {/* After-hour daily trend */}
+          {afterHour.length > 0 && (
+            <div style={panelStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#172235", marginBottom: 12 }}>After-Hour Calls — Daily</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 80 }}>
+                {afterHour.map(d => {
+                  const maxV = Math.max(...afterHour.map(x => x.calls), 1);
+                  const h = Math.round((d.calls / maxV) * 72);
+                  return (
+                    <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }} title={`${d.date}: ${d.calls} calls`}>
+                      <div style={{ width: "100%", height: h, background: "#dc2626", borderRadius: "3px 3px 0 0", minHeight: d.calls > 0 ? 4 : 0 }} />
+                      <div style={{ fontSize: 8, color: "#697586", transform: "rotate(-45deg)", whiteSpace: "nowrap" }}>{d.date.slice(5)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Region breakdown table */}
+          {regions.length > 0 && (
+            <div style={panelStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#172235", marginBottom: 12 }}>Region Breakdown</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "#f8fafd" }}>
+                    {["Region", "Total Calls", "Converted", "Conversion%"].map(h => (
+                      <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: "#697586", fontSize: 10, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {regions.map(r => (
+                    <tr key={r.region} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "6px 10px", fontWeight: 600, color: "#172235" }}>{r.region}</td>
+                      <td style={{ padding: "6px 10px", color: "#475569" }}>{r.total}</td>
+                      <td style={{ padding: "6px 10px", color: "#475569" }}>{r.converted}</td>
+                      <td style={{ padding: "6px 10px", fontWeight: 700, color: r.total > 0 && r.converted / r.total > 0.1 ? "#16a34a" : "#697586" }}>
+                        {r.total > 0 ? `${Math.round(r.converted / r.total * 100)}%` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Outbound status */}
+          {outboundStatus.length > 0 && (
+            <div style={panelStyle}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#172235", marginBottom: 12 }}>Outbound Enquiry Status</div>
+              <DalmiaBarChart data={outboundStatus} color="#0891b2" />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
