@@ -13,7 +13,7 @@
  * Everything renders inside the caller's layout — no DashboardLayout wrapper.
  */
 
-import { useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
@@ -25,6 +25,34 @@ import { getAuthToken } from "@/lib/hrmsApi";
 // ── Types ─────────────────────────────────────────────────────────────────────
 type DiallerProcess = "inbound" | "reginald-cart" | "molecular-email" | "reginald-email" | "billing" | "gs1" | null;
 interface Filters { from: string; to: string }
+
+// ── Drill-down context ────────────────────────────────────────────────────────
+/**
+ * A KPI card drills into the daily trend behind it. The trend is described as a
+ * fetch descriptor rather than pre-loaded rows because most day-wise queries in
+ * this file are lazy (`enabled: sub === "daily"`) — a card clicked from the
+ * Overview tab would otherwise always find an empty array. Query keys mirror the
+ * dashboards' own keys so an already-visited tab resolves from cache instantly.
+ */
+interface DrillTrend {
+  title: string;
+  queryKey: unknown[];
+  path: string;
+  params: Record<string, string>;
+  cols: Col<Record<string, unknown>>[];
+  /** Extracts the row array when the endpoint returns an object wrapper. */
+  pick?: (raw: unknown) => Record<string, unknown>[];
+  emptyHint?: string;
+}
+
+type LiveDrillContext =
+  | { type: "kpi"; label: string; value: string | number; sub?: string; trend?: DrillTrend }
+  | { type: "hourly"; date: string }
+  | { type: "record"; title: string; fields: { label: string; value: React.ReactNode }[] };
+
+type DrillFn = (ctx: LiveDrillContext) => void;
+const DrillDispatch = createContext<DrillFn | null>(null);
+const useDrill = () => useContext(DrillDispatch);
 
 // ── Process detection ─────────────────────────────────────────────────────────
 export function detectDiallerProcess(processName: string): DiallerProcess {
@@ -64,6 +92,9 @@ async function fetchLive<T>(path: string, params: Record<string, string>): Promi
 
 function monthStart(): string { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); }
 function todayStr(): string { return new Date().toISOString().slice(0, 10); }
+function fmtDay(v: unknown): string { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); }
+/** Normalises a row's date cell (plain or ISO timestamp) to the YYYY-MM-DD the API expects. */
+function dateParam(v: unknown): string { return String(v ?? "").slice(0, 10); }
 
 // ── Mini UI ───────────────────────────────────────────────────────────────────
 const CARD: React.CSSProperties = { background: "#fff", border: "1px solid #dce4ed", borderRadius: 17, boxShadow: "0 12px 30px rgba(16,35,57,.08)", padding: "14px 16px", position: "relative", overflow: "hidden" };
@@ -78,9 +109,18 @@ function InfoBox({ html }: { html: string }) {
   return <div style={{ margin: "0 0 14px", padding: "10px 14px", background: "linear-gradient(135deg,#eef7ff,#f4fbff)", border: "1px solid #d6e9f8", borderRadius: 12, color: "#36536f", fontSize: 12, fontWeight: 700 }} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function KpiCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color: string }) {
+interface KpiSpec { label: string; value: string | number; sub?: string; color: string }
+
+function KpiCard({ label, value, sub, color, onClick }: KpiSpec & { onClick?: () => void }) {
   return (
-    <div style={{ position: "relative", minHeight: 96, padding: "12px 14px", borderRadius: 15, color: "#fff", overflow: "hidden", boxShadow: "0 10px 24px rgba(16,35,57,.10)", background: color }}>
+    <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `${label}: ${value} — open detail` : undefined}
+      onClick={onClick}
+      onKeyDown={onClick ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className={onClick ? "dlp-kpi-clickable" : undefined}
+      style={{ position: "relative", minHeight: 96, padding: "12px 14px", borderRadius: 15, color: "#fff", overflow: "hidden", boxShadow: "0 10px 24px rgba(16,35,57,.10)", background: color, cursor: onClick ? "pointer" : undefined, userSelect: onClick ? "none" : undefined }}>
       <div style={{ position: "absolute", width: 74, height: 74, borderRadius: "50%", right: -20, top: -26, background: "rgba(255,255,255,.14)" }} />
       <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, opacity: 0.9 }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 950, marginTop: 5, lineHeight: 1.1 }}>{value}</div>
@@ -111,7 +151,32 @@ function PctBadge({ v }: { v: number }) {
 }
 
 interface Col<T> { h: string; k: keyof T | string; left?: boolean; fmt?: (v: unknown, r: T) => React.ReactNode }
-function DataTable<T extends Record<string, unknown>>({ cols, rows }: { cols: Col<T>[]; rows: T[] }) {
+
+/** Builds the drawer field list for a row straight from its column definitions,
+ *  so every column the table can render is also shown in the drill-down. */
+function rowToFields<T extends Record<string, unknown>>(cols: Col<T>[], row: T) {
+  return cols.map(c => {
+    const raw = row[c.k as keyof T];
+    return { label: c.h, value: c.fmt ? c.fmt(raw, row) : String(raw ?? "") };
+  });
+}
+
+function DataTable<T extends Record<string, unknown>>({ cols, rows, onRowClick, drillTitle }: {
+  cols: Col<T>[]; rows: T[];
+  /** Overrides the default record drill-down for this table. */
+  onRowClick?: (row: T) => void;
+  /** Overrides the drawer heading of the default record drill-down. */
+  drillTitle?: (row: T) => string;
+}) {
+  const drill = useContext(DrillDispatch);
+  const labelCol = cols.find(c => c.left) ?? cols[0];
+  const handleRow = onRowClick ?? (drill
+    ? (row: T) => drill({
+      type: "record",
+      title: drillTitle ? drillTitle(row) : labelCol ? `${labelCol.h}: ${String(row[labelCol.k as keyof T] ?? "—")}` : "Record detail",
+      fields: rowToFields(cols, row),
+    })
+    : undefined);
   return (
     <div style={{ overflowX: "auto", maxHeight: 520, border: "1px solid #dce4ed", borderRadius: 11, background: "#fff" }}>
       <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", fontSize: 12, whiteSpace: "nowrap" }}>
@@ -121,7 +186,13 @@ function DataTable<T extends Record<string, unknown>>({ cols, rows }: { cols: Co
         <tbody>
           {rows.length === 0 ? <tr><td colSpan={cols.length} style={{ padding: 40, textAlign: "center", color: "#697586" }}>No data</td></tr>
             : rows.map((row, i) => (
-              <tr key={i}>{cols.map((c, j) => (
+              <tr
+                key={i}
+                className={handleRow ? "dlp-clickable-row" : undefined}
+                tabIndex={handleRow ? 0 : undefined}
+                onClick={handleRow ? () => handleRow(row) : undefined}
+                onKeyDown={handleRow ? e => { if (e.key === "Enter") { e.preventDefault(); handleRow(row); } } : undefined}
+              >{cols.map((c, j) => (
                 <td key={j} style={{ padding: "8px 8px", borderBottom: "1px solid #e8eef5", textAlign: c.left ? "left" : "right", background: i % 2 === 1 ? "#f8fafc" : "#fff" }}>
                   {c.fmt ? c.fmt(row[c.k as keyof T], row) : String(row[c.k as keyof T] ?? "")}
                 </td>
@@ -143,6 +214,150 @@ function SectionTitle({ title }: { title: string }) {
   );
 }
 
+// ── Drill-down drawer ─────────────────────────────────────────────────────────
+function RecordDetail({ title, fields }: { title: string; fields: { label: string; value: React.ReactNode }[] }) {
+  return (
+    <div>
+      <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".4px", color: "#8390a0", margin: "0 0 10px" }}>{title}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "8px 12px" }}>
+        {fields.map((f, i) => (
+          <div key={i} style={{ background: "#f8fafd", border: "1px solid #e8eef5", borderRadius: 10, padding: "9px 12px", minWidth: 0 }}>
+            <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 900, color: "#8390a0", marginBottom: 3 }}>{f.label}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#102f4b", overflowWrap: "anywhere" }}>
+              {f.value === "" || f.value === null || f.value === undefined ? "—" : f.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Fetches and renders the daily trend behind a KPI card. */
+function DrillTrendPanel({ trend }: { trend: DrillTrend }) {
+  const q = useQuery({
+    queryKey: trend.queryKey,
+    queryFn: () => fetchLive<unknown>(trend.path, trend.params),
+    staleTime: 2 * 60 * 1000,
+  });
+  if (q.isLoading) return <Spinner />;
+  if (q.error || q.data === undefined) return <Err msg="Could not load the trend behind this metric" />;
+  const rows = trend.pick ? trend.pick(q.data) : (q.data as Record<string, unknown>[]);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return <InfoBox html={trend.emptyHint ?? "No day-wise data for the selected range."} />;
+  }
+  return <DataTable cols={trend.cols} rows={rows} />;
+}
+
+const HOURLY_DRILL_COLS: Col<Record<string, unknown>>[] = [
+  { h: "Interval", k: "slot", left: true },
+  { h: "Offered", k: "offered" },
+  { h: "Answered", k: "handled" },
+  { h: "Abandoned", k: "abandoned" },
+  { h: "Ans ≤20s", k: "calls20" },
+  { h: "SL%", k: "sl", fmt: v => <PctBadge v={Number(v)} /> },
+  { h: "AL%", k: "al", fmt: v => <PctBadge v={Number(v)} /> },
+  { h: "AHT Sec", k: "ahtSec" },
+  { h: "Login HC", k: "loginCount" },
+];
+
+/** Hourly breakdown for one day — the drill-down of an Inbound day-wise row. */
+function HourlyFetchPanel({ date }: { date: string }) {
+  const q = useQuery({
+    queryKey: ["pld", "ib", "hourly", date],
+    queryFn: () => fetchLive<IBSlotRow[]>("inbound/hourly", { date }),
+    staleTime: 2 * 60 * 1000,
+  });
+  if (q.isLoading) return <Spinner />;
+  if (q.error || !q.data) return <Err msg="Could not load the hourly breakdown" />;
+  if (q.data.length === 0) return <InfoBox html="No slot activity recorded for this date." />;
+  return <DataTable cols={HOURLY_DRILL_COLS} rows={q.data as unknown as Record<string, unknown>[]} />;
+}
+
+function LiveDetailContent({ ctx }: { ctx: LiveDrillContext }) {
+  if (ctx.type === "hourly") {
+    return (
+      <div>
+        <SectionTitle title="Hourly slot breakdown" />
+        <HourlyFetchPanel date={ctx.date} />
+      </div>
+    );
+  }
+  if (ctx.type === "record") {
+    return <RecordDetail title={ctx.title} fields={ctx.fields} />;
+  }
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 28, fontWeight: 950, color: "#1a3a5c" }}>{ctx.value}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#697586" }}>{ctx.label}</span>
+      </div>
+      {ctx.sub && <div style={{ fontSize: 11, color: "#8390a0", fontWeight: 700, marginTop: 4 }}>{ctx.sub}</div>}
+      {ctx.trend
+        ? <><SectionTitle title={ctx.trend.title} /><DrillTrendPanel trend={ctx.trend} /></>
+        : <InfoBox html="No day-wise breakdown is available for this metric." />}
+    </div>
+  );
+}
+
+function LiveDetailDrawer({ ctx, processName, onClose }: { ctx: LiveDrillContext | null; processName: string; onClose: () => void }) {
+  useEffect(() => {
+    if (!ctx) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ctx, onClose]);
+
+  if (!ctx) return null;
+  const drawerTitle = ctx.type === "kpi" ? ctx.label : ctx.type === "hourly" ? `Hourly — ${fmtDay(ctx.date)}` : ctx.title;
+
+  return (
+    <>
+      <div className="dlp-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,20,40,.38)", zIndex: 1200 }} />
+      <div
+        className="dlp-drawer"
+        role="dialog" aria-modal="true" aria-label={drawerTitle}
+        style={{
+          position: "fixed", top: 0, right: 0, bottom: 0, width: "min(640px, 96vw)", background: "#fff",
+          boxShadow: "-8px 0 48px rgba(10,20,40,.20)", zIndex: 1201, display: "flex", flexDirection: "column",
+        }}
+      >
+        <div style={{ background: "linear-gradient(135deg,#15365e 0%,#1e4f82 100%)", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", color: "rgba(255,255,255,.65)", fontWeight: 900 }}>{processName}</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{drawerTitle}</div>
+          </div>
+          <button
+            type="button" onClick={onClose} title="Close" aria-label="Close detail"
+            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: "50%", border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.14)", color: "#fff", cursor: "pointer", fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", transition: ".15s" }}
+          >×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
+          <LiveDetailContent ctx={ctx} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+const DRILL_STYLES = `
+.dlp-clickable-row { cursor: pointer; }
+.dlp-clickable-row:hover td { background: #eef4fc !important; }
+.dlp-clickable-row:focus-visible td { background: #e3edfb !important; outline: 2px solid #2f6fed; outline-offset: -2px; }
+.dlp-kpi-clickable { transition: transform .15s ease, box-shadow .15s ease; }
+.dlp-kpi-clickable:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(16,35,57,.18); }
+.dlp-kpi-clickable:focus-visible { outline: 3px solid #1a3a5c; outline-offset: 2px; }
+.dlp-backdrop { animation: dlp-fade-in .2s ease; }
+.dlp-drawer { animation: dlp-slide-right .25s cubic-bezier(.22,.68,0,1.2); }
+@keyframes dlp-slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes dlp-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dlp-kpi-clickable { transition: none; }
+  .dlp-kpi-clickable:hover { transform: none; }
+  .dlp-backdrop, .dlp-drawer { animation: none; }
+}
+`;
+
 // ── Date range filter ─────────────────────────────────────────────────────────
 function DateRangeFilter({ f, onChange }: { f: Filters; onChange: (f: Filters) => void }) {
   return (
@@ -163,6 +378,7 @@ function DateRangeFilter({ f, onChange }: { f: Filters; onChange: (f: Filters) =
 type IBSummary = {
   offered: number; handled: number; abandoned: number; abndWithin: number; abndAfter: number;
   calls20: number; sl: number; al: number; ahtSec: number; aht: string;
+  handledTalkSec: number; handledAcwSec: number; holdSec: number; holdCount: number;
   talkTime: string; acwTime: string; callDurationSec: number;
   abandonRate: number; within20Rate: number; dailyAverage: number;
   healthScore: number; healthStatus: string; from: string; to: string; generatedAt: string;
@@ -193,10 +409,59 @@ function HealthRing({ score, status }: { score: number; status: string }) {
   );
 }
 
+/** Day-wise trend behind every Inbound overview KPI card. */
+const ibDailyTrend = (f: Filters): DrillTrend => ({
+  title: "Day-wise trend",
+  queryKey: ["pld", "ib", "daily", f],
+  path: "inbound/daily",
+  params: { from: f.from, to: f.to },
+  emptyHint: "No inbound call activity in the selected range.",
+  cols: [
+    { h: "Date", k: "date", left: true, fmt: fmtDay },
+    { h: "Offered", k: "offered" },
+    { h: "Answered", k: "handled" },
+    { h: "SL%", k: "sl", fmt: v => <PctBadge v={Number(v)} /> },
+    { h: "AL%", k: "al", fmt: v => <PctBadge v={Number(v)} /> },
+    { h: "AHT Sec", k: "ahtSec" },
+    { h: "Talk Time", k: "talkTime" },
+  ],
+});
+
+/** Day-wise disposition split behind the Inbound disposition KPI cards. */
+const ibDispositionTrend = (f: Filters): DrillTrend => ({
+  title: "Day-wise disposition split",
+  queryKey: ["pld", "ib", "dispo", f],
+  path: "inbound/disposition",
+  params: { from: f.from, to: f.to },
+  pick: raw => (raw as IBDispoData).daily,
+  emptyHint: "No dispositions logged in the selected range.",
+  cols: [
+    { h: "Date", k: "date", left: true, fmt: fmtDay },
+    { h: "Complaint", k: "complaint" }, { h: "Query", k: "query" },
+    { h: "Request", k: "request" }, { h: "Sales", k: "sales" }, { h: "Other", k: "other" },
+  ],
+});
+
+/** Day-wise repeat-caller contribution behind the Inbound repeat KPI cards. */
+const ibRepeatTrend = (f: Filters): DrillTrend => ({
+  title: "Day-wise repeat contribution",
+  queryKey: ["pld", "ib", "repeat", f],
+  path: "inbound/repeat",
+  params: { from: f.from, to: f.to },
+  pick: raw => (raw as IBRepeatData).daily as unknown as Record<string, unknown>[],
+  emptyHint: "No repeat-caller activity in the selected range.",
+  cols: [
+    { h: "Date", k: "date", left: true, fmt: fmtDay },
+    { h: "Total", k: "total" }, { h: "Unique", k: "unique" }, { h: "Repeat", k: "repeat" },
+    { h: "Repeat %", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
+  ],
+});
+
 function InboundDashboard({ f }: { f: Filters }) {
   const [sub, setSub] = useState<IBSub>("overview");
   const [hDate, setHDate] = useState(todayStr());
-  const fmtD = (v: unknown) => { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); };
+  const drill = useDrill();
+  const fmtD = fmtDay;
 
   const summQ = useQuery({ queryKey: ["pld", "ib", "summary", f], queryFn: () => fetchLive<IBSummary>("inbound/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
   const monthQ = useQuery({ queryKey: ["pld", "ib", "monthly", f], queryFn: () => fetchLive<IBMonthRow[]>("inbound/monthly", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
@@ -243,7 +508,8 @@ function InboundDashboard({ f }: { f: Filters }) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
                 {kpis.map(([label, value, sub], i) => (
                   <KpiCard key={i} label={label} value={value} sub={sub}
-                    color={i === 7 ? (d.sl >= 80 ? KPIG[1] : KPIG[2]) : i === 8 ? (d.al >= 80 ? KPIG[1] : KPIG[2]) : KPIG[i % KPIG.length]} />
+                    color={i === 7 ? (d.sl >= 80 ? KPIG[1] : KPIG[2]) : i === 8 ? (d.al >= 80 ? KPIG[1] : KPIG[2]) : KPIG[i % KPIG.length]}
+                    onClick={drill ? () => drill({ type: "kpi", label, value, sub, trend: ibDailyTrend(f) }) : undefined} />
                 ))}
               </div>
               {/* Executive brief */}
@@ -310,12 +576,13 @@ function InboundDashboard({ f }: { f: Filters }) {
                 <ResponsiveContainer width="100%" height={200}><BarChart data={dayQ.data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="offered" fill="#93c5fd" name="Offered" /><Bar dataKey="handled" fill="#2f6fed" name="Handled" /></BarChart></ResponsiveContainer>
               </Panel>
             </div>
-            <Panel title="Day-wise Metric Matrix" sub={`${dayQ.data.length} days`}>
+            <Panel title="Day-wise Metric Matrix" sub={`${dayQ.data.length} days — click a day for its hourly slots`}>
               <DataTable<IBDayRow> cols={[
                 { h: "Date", k: "date", left: true, fmt: fmtD }, { h: "Offered", k: "offered" }, { h: "Answered", k: "handled" },
                 { h: "SL%", k: "sl", fmt: v => <PctBadge v={Number(v)} /> }, { h: "AL%", k: "al", fmt: v => <PctBadge v={Number(v)} /> },
                 { h: "AHT Sec", k: "ahtSec" }, { h: "Talk Time", k: "talkTime" }, { h: "Call Dur/Offered", k: "callDurationSec" },
-              ]} rows={dayQ.data} />
+              ]} rows={dayQ.data}
+                onRowClick={drill ? row => drill({ type: "hourly", date: dateParam(row.date) }) : undefined} />
             </Panel>
           </div>
         )
@@ -379,7 +646,13 @@ function InboundDashboard({ f }: { f: Filters }) {
           return (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
-                {sc.map(([k, color]) => <KpiCard key={k} label={k.charAt(0).toUpperCase() + k.slice(1)} value={((t as Record<string, number>)[k] ?? 0).toLocaleString()} sub={t.total > 0 ? `${(((t as Record<string, number>)[k] ?? 0) / t.total * 100).toFixed(1)}% of total` : ""} color={color} />)}
+                {sc.map(([k, color]) => {
+                  const label = k.charAt(0).toUpperCase() + k.slice(1);
+                  const value = ((t as Record<string, number>)[k] ?? 0).toLocaleString();
+                  const subText = t.total > 0 ? `${(((t as Record<string, number>)[k] ?? 0) / t.total * 100).toFixed(1)}% of total` : "";
+                  return <KpiCard key={k} label={label} value={value} sub={subText} color={color}
+                    onClick={drill ? () => drill({ type: "kpi", label, value, sub: subText, trend: ibDispositionTrend(f) }) : undefined} />;
+                })}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
                 {sc.slice(0, 4).map(([k, color]) => (
@@ -403,7 +676,7 @@ function InboundDashboard({ f }: { f: Filters }) {
                 <>
                   <SectionTitle title="Repeat Analysis (Phone-based)" />
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
-                    {[{ label: "Total Handled", value: repeatQ.data.totals.total.toLocaleString(), color: KPIG[0] }, { label: "Unique Callers", value: repeatQ.data.totals.unique.toLocaleString(), color: KPIG[1] }, { label: "Repeat Calls", value: repeatQ.data.totals.repeat.toLocaleString(), color: KPIG[2] }, { label: "Repeat %", value: `${repeatQ.data.totals.repeatPct.toFixed(1)}%`, color: KPIG[6] }].map((k, i) => <KpiCard key={i} {...k} />)}
+                    {([{ label: "Total Handled", value: repeatQ.data.totals.total.toLocaleString(), color: KPIG[0] }, { label: "Unique Callers", value: repeatQ.data.totals.unique.toLocaleString(), color: KPIG[1] }, { label: "Repeat Calls", value: repeatQ.data.totals.repeat.toLocaleString(), color: KPIG[2] }, { label: "Repeat %", value: `${repeatQ.data.totals.repeatPct.toFixed(1)}%`, color: KPIG[6] }] as KpiSpec[]).map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, trend: ibRepeatTrend(f) }) : undefined} />)}
                   </div>
                   <Panel title="Daily Repeat Contribution">
                     <ResponsiveContainer width="100%" height={200}><AreaChart data={repeatQ.data.daily}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 9 }} /><Tooltip /><Area type="monotone" dataKey="total" stroke="#93c5fd" fill="#dbeafe" name="Total" /><Area type="monotone" dataKey="repeat" stroke="#e5484d" fill="#fee2e2" name="Repeat" /></AreaChart></ResponsiveContainer>
@@ -433,9 +706,64 @@ interface CartSalesT {
   daily: { date: string; orders: number; revenue: number; aov: number; prepaid: number; cod: number; prepaidPct: number; codPct: number }[];
 }
 
+/** Day-wise CDR trend behind the Reginald Cart overview KPI cards. */
+const cartDailyTrend = (f: Filters): DrillTrend => ({
+  title: "Day-wise trend",
+  queryKey: ["pld", "cart", "daily", f],
+  path: "reginald-cart/daily",
+  params: { from: f.from, to: f.to },
+  emptyHint: "No dialler activity in the selected range.",
+  cols: [
+    { h: "Date", k: "date", left: true, fmt: fmtDay },
+    { h: "Total CDR", k: "totalDialed" },
+    { h: "Unique Dialled", k: "uniqueDialed" },
+    { h: "Unique Connected", k: "uniqueConnected" },
+    { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> },
+    { h: "Avg Talk", k: "avgTalk" },
+    { h: "AHT", k: "aht" },
+  ],
+});
+
+/** Day-wise sales trend behind the Reginald Cart sales KPI cards. */
+const cartSalesTrend = (f: Filters, fmtRs: (v: number) => string): DrillTrend => ({
+  title: "Day-wise sales",
+  queryKey: ["pld", "cart", "sales", f],
+  path: "reginald-cart/sales",
+  params: { from: f.from, to: f.to },
+  pick: raw => (raw as CartSalesT).daily as unknown as Record<string, unknown>[],
+  emptyHint: "No orders recorded in the selected range.",
+  cols: [
+    { h: "Date", k: "date", left: true, fmt: fmtDay },
+    { h: "Orders", k: "orders" },
+    { h: "Revenue", k: "revenue", fmt: v => fmtRs(Number(v)) },
+    { h: "AOV", k: "aov", fmt: v => fmtRs(Number(v)) },
+    { h: "Prepaid", k: "prepaid" },
+    { h: "COD", k: "cod" },
+  ],
+});
+
+/** Day-wise APR trend behind the email-APR KPI cards (Molecular + Reginald Email). */
+const emailDailyTrend = (proc: "molecular-email" | "reginald-email", f: Filters): DrillTrend => ({
+  title: "Day-wise APR",
+  queryKey: ["pld", proc, "daily", f],
+  path: `${proc}/daily`,
+  params: { from: f.from, to: f.to },
+  emptyHint: "No agent activity logged in the selected range.",
+  cols: [
+    { h: "Date", k: "date", left: true, fmt: fmtDay },
+    { h: "Login Time", k: "loginTime" },
+    { h: "Talk", k: "talk" },
+    { h: "Wait", k: "wait" },
+    { h: "Pause", k: "pause" },
+    { h: "Agents", k: "agentCount" },
+    { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> },
+  ],
+});
+
 function CartDashboard({ f }: { f: Filters }) {
   const [sub, setSub] = useState<CartSub>("sales");
-  const fmtD = (v: unknown) => { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); };
+  const drill = useDrill();
+  const fmtD = fmtDay;
   const summQ = useQuery({ queryKey: ["pld", "cart", "summary", f], queryFn: () => fetchLive<CartSummaryT>("reginald-cart/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
   const dayQ = useQuery({ queryKey: ["pld", "cart", "daily", f], queryFn: () => fetchLive<CartDayT[]>("reginald-cart/daily", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
   const monthQ = useQuery({ queryKey: ["pld", "cart", "monthly", f], queryFn: () => fetchLive<{ month: string; monthLabel: string; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; loginCount: number; avgTalk: string; aht: string; avgWrap: string }[]>("reginald-cart/monthly", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
@@ -458,7 +786,7 @@ function CartDashboard({ f }: { f: Filters }) {
         return (
           <div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
-              {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+              {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: cartDailyTrend(f) }) : undefined} />)}
             </div>
             <Panel title="By Campaign">
               <DataTable cols={[{ h: "Campaign", k: "campaign" as const, left: true }, { h: "Offered", k: "offered" as const }, { h: "Connected", k: "connected" as const }, { h: "Unique Dialled", k: "uniqueDialed" as const }, { h: "Unique Connected", k: "uniqueConnected" as const }, { h: "Connect%", k: "connectPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }, { h: "Avg Talk", k: "avgTalk" as const }]} rows={d.byCampaign} />
@@ -501,7 +829,7 @@ function CartDashboard({ f }: { f: Filters }) {
         return (
           <div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-              {salesKpis.map((k, i) => <KpiCard key={i} {...k} />)}
+              {salesKpis.map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: cartSalesTrend(f, fmtRs) }) : undefined} />)}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
               <Panel title="Daily Orders & Revenue" sub={`${s.daily.length} days`}>
@@ -534,13 +862,13 @@ function CartDashboard({ f }: { f: Filters }) {
             const d = emailAprSummQ.data;
             return (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
-                {[
+                {([
                   { label: "Agents Active", value: d.agentCount, color: KPIG[0] },
                   { label: "Total Login", value: d.totalLoginTime, color: KPIG[4] },
                   { label: "Total Talk", value: d.totalTalk, color: "linear-gradient(135deg,#047857,#10b981)" },
                   { label: "Total Pause", value: d.totalPause, sub: `LB: ${d.totalLbTime} · TB: ${d.totalTbTime}`, color: KPIG[5] },
                   { label: "Avg Utilization", value: `${d.avgUtilization.toFixed(1)}%`, color: d.avgUtilization >= 70 ? "linear-gradient(135deg,#047857,#10b981)" : KPIG[5] },
-                ].map((k, i) => <KpiCard key={i} {...k} />)}
+                ] as KpiSpec[]).map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: emailDailyTrend("reginald-email", f) }) : undefined} />)}
               </div>
             );
           })()}
@@ -573,6 +901,7 @@ type EmailTicketData = {
 
 function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-email" | "reginald-email"; label: string; campaign: string; f: Filters }) {
   const [sub, setSub] = useState<"overview" | "daily" | "agents" | "tickets">("overview");
+  const drill = useDrill();
   const summQ = useQuery({ queryKey: ["pld", proc, "summary", f], queryFn: () => fetchLive<{ totalLoginTime: string; totalTalk: string; totalPause: string; totalLbTime: string; totalTbTime: string; totalWbTime: string; avgUtilization: number; agentCount: number }>(`${proc}/summary`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
   const agentQ = useQuery({ queryKey: ["pld", proc, "agents", f], queryFn: () => fetchLive<EmailAprAgentRow[]>(`${proc}/agents`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "agents" });
   const dailyQ = useQuery({ queryKey: ["pld", proc, "daily", f], queryFn: () => fetchLive<{ date: string; loginTime: string; talk: string; wait: string; dispo: string; pause: string; utilization: number; agentCount: number }[]>(`${proc}/daily`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
@@ -590,7 +919,7 @@ function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-emai
       </div>
       {sub === "overview" && (summQ.isLoading ? <Spinner /> : summQ.error || !summQ.data ? <Err msg="Failed to load summary" /> : (() => {
         const d = summQ.data;
-        return <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10 }}>{[{ label: "Agents Active", value: d.agentCount, color: KPIG[0] }, { label: "Total Login", value: d.totalLoginTime, color: KPIG[4] }, { label: "Total Talk", value: d.totalTalk, color: "linear-gradient(135deg,#047857,#10b981)" }, { label: "Total Pause", value: d.totalPause, sub: `LB: ${d.totalLbTime} · TB: ${d.totalTbTime}`, color: KPIG[5] }, { label: "Avg Utilization", value: `${d.avgUtilization.toFixed(1)}%`, color: d.avgUtilization >= 70 ? "linear-gradient(135deg,#047857,#10b981)" : KPIG[5] }].map((k, i) => <KpiCard key={i} {...k} />)}</div>;
+        return <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10 }}>{([{ label: "Agents Active", value: d.agentCount, color: KPIG[0] }, { label: "Total Login", value: d.totalLoginTime, color: KPIG[4] }, { label: "Total Talk", value: d.totalTalk, color: "linear-gradient(135deg,#047857,#10b981)" }, { label: "Total Pause", value: d.totalPause, sub: `LB: ${d.totalLbTime} · TB: ${d.totalTbTime}`, color: KPIG[5] }, { label: "Avg Utilization", value: `${d.avgUtilization.toFixed(1)}%`, color: d.avgUtilization >= 70 ? "linear-gradient(135deg,#047857,#10b981)" : KPIG[5] }] as KpiSpec[]).map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: emailDailyTrend(proc, f) }) : undefined} />)}</div>;
       })())}
       {sub === "daily" && (dailyQ.isLoading ? <Spinner /> : dailyQ.error || !dailyQ.data ? <Err msg="Failed" /> : (
         <Panel title="Daily APR" sub={`${dailyQ.data.length} days`}>
@@ -610,13 +939,30 @@ function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-emai
           }
           const closurePctColor = (v: number) => v >= 80 ? "#16a34a" : v >= 60 ? "#d97706" : "#dc2626";
           const closurePctBg = (v: number) => v >= 80 ? "#eaf8ef" : v >= 60 ? "#fff8e7" : "#fff0f2";
+          const ticketTrend: DrillTrend = {
+            title: "Day-wise tickets",
+            queryKey: ["pld", proc, "tickets", f],
+            path: `${proc}/tickets`,
+            params: { from: f.from, to: f.to },
+            pick: raw => (raw as EmailTicketData).daily as unknown as Record<string, unknown>[],
+            emptyHint: "No ticket data uploaded for this range.",
+            cols: [
+              { h: "Date", k: "date", left: true, fmt: fmtDay },
+              { h: "Total", k: "totalTickets" },
+              { h: "Closed", k: "emailClosed" },
+              { h: "Open/Pending", k: "openPending" },
+              { h: "Reopen", k: "emailReopen" },
+              { h: "Closure %", k: "closurePct", fmt: v => <PctBadge v={Number(v)} /> },
+            ],
+          };
+          const ticketDrill = (label: string, value: string) => drill ? () => drill({ type: "kpi", label, value, trend: ticketTrend }) : undefined;
           return (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                <KpiCard label="Total Tickets" value={td.totalTickets.toLocaleString()} color={KPIG[0]} />
-                <KpiCard label="Email Closed" value={td.emailClosed.toLocaleString()} color="linear-gradient(135deg,#047857,#10b981)" />
-                <KpiCard label="Open / Pending" value={td.openPending.toLocaleString()} color="linear-gradient(135deg,#be123c,#f43f5e)" />
-                <KpiCard label="Avg Closure %" value={`${td.avgClosurePct.toFixed(1)}%`} color={td.avgClosurePct >= 80 ? "linear-gradient(135deg,#047857,#10b981)" : td.avgClosurePct >= 60 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#be123c,#f43f5e)"} />
+                <KpiCard label="Total Tickets" value={td.totalTickets.toLocaleString()} color={KPIG[0]} onClick={ticketDrill("Total Tickets", td.totalTickets.toLocaleString())} />
+                <KpiCard label="Email Closed" value={td.emailClosed.toLocaleString()} color="linear-gradient(135deg,#047857,#10b981)" onClick={ticketDrill("Email Closed", td.emailClosed.toLocaleString())} />
+                <KpiCard label="Open / Pending" value={td.openPending.toLocaleString()} color="linear-gradient(135deg,#be123c,#f43f5e)" onClick={ticketDrill("Open / Pending", td.openPending.toLocaleString())} />
+                <KpiCard label="Avg Closure %" value={`${td.avgClosurePct.toFixed(1)}%`} color={td.avgClosurePct >= 80 ? "linear-gradient(135deg,#047857,#10b981)" : td.avgClosurePct >= 60 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#be123c,#f43f5e)"} onClick={ticketDrill("Avg Closure %", `${td.avgClosurePct.toFixed(1)}%`)} />
               </div>
               <Panel title="Daily Ticket Breakdown" sub={`${td.daily.length} days`}>
                 <DataTable cols={[
@@ -638,7 +984,7 @@ function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-emai
 }
 
 // ── BILLING DASHBOARD ─────────────────────────────────────────────────────────
-interface BillingRow {
+interface BillingRow extends Record<string, unknown> {
   process: string; lob: string;
   approvedHC: number; targetHrs: number; deliveredHrs: number; deliveredFTE: number;
   billingHrs: number; billingAmount: number; variance: number; utilization: number;
@@ -647,6 +993,7 @@ interface BillingRow {
 
 function BillingDashboard({ f }: { f: Filters }) {
   const [month, setMonth] = useState(f.from.slice(0, 7));
+  const drill = useDrill();
 
   const dashQ = useQuery({
     queryKey: ["pld", "billing", "dashboard", month],
@@ -662,6 +1009,25 @@ function BillingDashboard({ f }: { f: Filters }) {
   const totalBillingAmount = rows.reduce((s, r) => s + r.billingAmount, 0);
   const totalBillingHrs = rows.reduce((s, r) => s + r.billingHrs, 0);
   const overallUtilization = totalApprovedHC > 0 ? (totalDeliveredFTE / totalApprovedHC) * 100 : 0;
+
+  const billingTrend: DrillTrend = {
+    title: "LOB breakdown",
+    queryKey: ["pld", "billing", "dashboard", month],
+    path: "billing/dashboard",
+    params: { month },
+    pick: raw => (raw as { rows: BillingRow[] }).rows as unknown as Record<string, unknown>[],
+    emptyHint: "No approved headcount configured for this month.",
+    cols: [
+      { h: "Process", k: "process", left: true },
+      { h: "LOB", k: "lob", left: true },
+      { h: "Approved HC", k: "approvedHC" },
+      { h: "Delivered FTE", k: "deliveredFTE", fmt: v => Number(v).toFixed(2) },
+      { h: "Billing Hrs", k: "billingHrs", fmt: v => Number(v).toFixed(1) },
+      { h: "Billing Amount", k: "billingAmount", fmt: v => fmtRs(Number(v)) },
+      { h: "Utilization %", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> },
+    ],
+  };
+  const billingDrill = (label: string, value: string, sub: string) => drill ? () => drill({ type: "kpi", label, value, sub, trend: billingTrend }) : undefined;
 
   const varianceColor = (v: number) => v >= 0 ? "#16a34a" : "#dc2626";
   const varianceBg = (v: number) => v >= 0 ? "#eaf8ef" : "#fff0f2";
@@ -700,24 +1066,28 @@ function BillingDashboard({ f }: { f: Filters }) {
               value={totalApprovedHC.toLocaleString()}
               sub="Sum across all LOBs"
               color={KPIG[0]}
+              onClick={billingDrill("Total Approved HC", totalApprovedHC.toLocaleString(), "Sum across all LOBs")}
             />
             <KpiCard
               label="Total Delivered FTE"
               value={totalDeliveredFTE.toFixed(2)}
               sub="FTE across all LOBs"
               color="linear-gradient(135deg,#047857,#10b981)"
+              onClick={billingDrill("Total Delivered FTE", totalDeliveredFTE.toFixed(2), "FTE across all LOBs")}
             />
             <KpiCard
               label="Total Billing Amount"
               value={fmtRs(totalBillingAmount)}
               sub={`Billing Hrs: ${totalBillingHrs.toFixed(1)}`}
               color="linear-gradient(135deg,#6d28d9,#8b5cf6)"
+              onClick={billingDrill("Total Billing Amount", fmtRs(totalBillingAmount), `Billing Hrs: ${totalBillingHrs.toFixed(1)}`)}
             />
             <KpiCard
               label="Overall Utilization"
               value={`${overallUtilization.toFixed(1)}%`}
               sub="Delivered FTE / Approved HC"
               color={overallUtilization >= 80 ? "linear-gradient(135deg,#047857,#10b981)" : overallUtilization >= 60 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#be123c,#f43f5e)"}
+              onClick={billingDrill("Overall Utilization", `${overallUtilization.toFixed(1)}%`, "Delivered FTE / Approved HC")}
             />
           </div>
 
@@ -778,9 +1148,48 @@ type GS1ApprovalT = {
 
 type GS1Sub = "overview" | "email" | "datakart" | "approval";
 
+/** Each GS1 sub-tab drills into the day-wise (or company-wise) breakdown behind its KPIs. */
+const gs1Trends = (f: Filters): Record<GS1Sub, DrillTrend> => {
+  const params = { from: f.from, to: f.to };
+  const dateCol: Col<Record<string, unknown>> = { h: "Date", k: "date", left: true, fmt: fmtDay };
+  return {
+    overview: {
+      title: "Day-wise trend", queryKey: ["pld", "gs1", "overview", f], path: "gs1/overview", params,
+      pick: raw => (raw as GS1OverviewT).daily as unknown as Record<string, unknown>[],
+      emptyHint: "No daily data. Upload via Bulk Upload Hub → <em>GS1_EMAIL_DAILY / GS1_DATAKART_DAILY</em>.",
+      cols: [dateCol, { h: "Email Tasks", k: "emailTasks" }, { h: "Data Kart Tasks", k: "dataKartTasks" }],
+    },
+    email: {
+      title: "Day-wise email", queryKey: ["pld", "gs1", "email", f], path: "gs1/email", params,
+      pick: raw => (raw as GS1EmailT).daily as unknown as Record<string, unknown>[],
+      emptyHint: "No daily data. Upload via Bulk Upload Hub → <em>GS1_EMAIL_DAILY</em>.",
+      cols: [dateCol, { h: "Tasks", k: "tasks" }, { h: "GTIN", k: "gtin" }, { h: "Images", k: "images" }],
+    },
+    datakart: {
+      title: "Day-wise data kart", queryKey: ["pld", "gs1", "datakart", f], path: "gs1/datakart", params,
+      pick: raw => (raw as GS1DataKartT).daily as unknown as Record<string, unknown>[],
+      emptyHint: "No daily data. Upload via Bulk Upload Hub → <em>GS1_DATAKART_DAILY</em>.",
+      cols: [dateCol, { h: "Tasks", k: "tasks" }, { h: "GTIN", k: "gtin" }],
+    },
+    approval: {
+      title: "Company-wise approval", queryKey: ["pld", "gs1", "approval", f], path: "gs1/approval", params,
+      pick: raw => (raw as GS1ApprovalT).byCompany as unknown as Record<string, unknown>[],
+      emptyHint: "No company data. Upload via Bulk Upload Hub → <em>GS1_APPROVAL_AUDIT</em>.",
+      cols: [
+        { h: "Company", k: "company", left: true }, { h: "SKU", k: "sku" },
+        { h: "Audits", k: "audits" }, { h: "Errors", k: "errors" },
+        { h: "Error %", k: "errorPct", fmt: v => <PctBadge v={Number(v)} /> },
+      ],
+    },
+  };
+};
+
 function GS1Dashboard({ f }: { f: Filters }) {
   const [sub, setSub] = useState<GS1Sub>("overview");
-  const fmtD = (v: unknown) => { const d = new Date(String(v ?? "")); return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); };
+  const drill = useDrill();
+  const trends = gs1Trends(f);
+  const kpiDrill = (tab: GS1Sub) => (k: KpiSpec) => drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: trends[tab] }) : undefined;
+  const fmtD = fmtDay;
 
   const overviewQ = useQuery({ queryKey: ["pld", "gs1", "overview", f], queryFn: () => fetchLive<GS1OverviewT>("gs1/overview", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
   const emailQ = useQuery({ queryKey: ["pld", "gs1", "email", f], queryFn: () => fetchLive<GS1EmailT>("gs1/email", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email" });
@@ -817,7 +1226,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
           return (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("overview")(k)} />)}
               </div>
               {d.daily && d.daily.length > 0 ? (
                 <Panel title="Daily Email + Data Kart Trend (Tasks Stacked)">
@@ -853,7 +1262,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
           return (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("email")(k)} />)}
               </div>
               <SectionTitle title="By Analyst" />
               {d.byAnalyst.length === 0 ? (
@@ -900,7 +1309,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
           return (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("datakart")(k)} />)}
               </div>
               <SectionTitle title="By Analyst" />
               {d.byAnalyst.length === 0 ? (
@@ -947,7 +1356,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
           return (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} />)}
+                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("approval")(k)} />)}
               </div>
               <SectionTitle title="By Company" />
               {d.byCompany.length === 0 ? (
@@ -987,6 +1396,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
 // ── Main Export ───────────────────────────────────────────────────────────────
 export function DiallerLivePanel({ processName }: { processName: string }) {
   const [filters, setFilters] = useState<Filters>({ from: monthStart(), to: todayStr() });
+  const [drillCtx, setDrillCtx] = useState<LiveDrillContext | null>(null);
   const proc = detectDiallerProcess(processName);
 
   if (!proc) {
@@ -999,14 +1409,18 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
   }
 
   return (
-    <div>
-      <DateRangeFilter f={filters} onChange={setFilters} />
-      {proc === "inbound" && <InboundDashboard f={filters} />}
-      {proc === "reginald-cart" && <CartDashboard f={filters} />}
-      {proc === "molecular-email" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={filters} />}
-      {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
-      {proc === "billing" && <BillingDashboard f={filters} />}
-      {proc === "gs1" && <GS1Dashboard f={filters} />}
-    </div>
+    <DrillDispatch.Provider value={setDrillCtx}>
+      <div>
+        <style>{DRILL_STYLES}</style>
+        <DateRangeFilter f={filters} onChange={setFilters} />
+        {proc === "inbound" && <InboundDashboard f={filters} />}
+        {proc === "reginald-cart" && <CartDashboard f={filters} />}
+        {proc === "molecular-email" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={filters} />}
+        {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
+        {proc === "billing" && <BillingDashboard f={filters} />}
+        {proc === "gs1" && <GS1Dashboard f={filters} />}
+        <LiveDetailDrawer ctx={drillCtx} processName={processName} onClose={() => setDrillCtx(null)} />
+      </div>
+    </DrillDispatch.Provider>
   );
 }

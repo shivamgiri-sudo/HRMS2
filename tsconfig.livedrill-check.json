@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": ["src/pages/DiallerLivePanel.tsx", "src/pages/ProcessOperationsPage.tsx", "src/vite-env.d.ts"],
+  "compilerOptions": { "noEmit": true }
+}
