@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, LabelList, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, Globe, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
@@ -117,7 +117,21 @@ interface AttritionMonthRow {
   scheduled: number; unplannedLeave: number; actualUl: number;
   ulShrinkageRate: number | null; actualShrinkageRate: number | null;
 }
-interface AttritionBreakdownRow { label: string; attritionCount: number; attritionRate: number | null; ulShrinkageRate: number | null; note?: string }
+interface AttritionBreakdownRow {
+  label: string; rawLabel: string; month: string;
+  openingHc: number; closingHc: number; avgHc: number;
+  attritionCount: number; attritionRate: number | null;
+  scheduled: number; unplannedLeave: number; actualUl: number;
+  ulShrinkageRate: number | null; actualShrinkageRate: number | null;
+  note?: string;
+}
+interface AttritionAonMonthRow { month: string; buckets: Record<string, number | null> }
+interface AttritionReasonMonthly {
+  months: string[];
+  groups: { type: "Voluntary" | "Involuntary" | "Unspecified"; totals: number[]; total: number; reasons: { reason: string; counts: number[]; total: number }[] }[];
+  grandTotals: number[];
+  grandTotal: number;
+}
 interface AttritionExitRow {
   id: string;
   empId: string; empName: string; analystEmail: string; tlName: string; amName: string;
@@ -901,177 +915,483 @@ function lastDayOfMonth(ym: string): string {
   return new Date(y, m, 0).toISOString().slice(0, 10);
 }
 
+// ── Attrition & Shrinkage — laid out and formatted to match the business's own
+//    reference dashboard ("attrition correction file", 2026-09-15). ─────────────
+
+/** The reference dashboard's chart palette, taken from its own COLORS object. */
+const AC = {
+  navy: "#0b4f8a", blue: "#1769aa", teal: "#008c95", green: "#2e7d32", orange: "#e47d22",
+  purple: "#7656a6", pink: "#bd4f7a", yellow: "#b78300", red: "#c0392b",
+  text: "#0b2540", muted: "#486581", axis: "#c9d7e3", groupBg: "#deebf7",
+};
+const AON_ORDER = ["0 to 30", "31 to 60", "61 to 90", "Above 90"];
+const AON_COLORS: Record<string, string> = { "0 to 30": AC.teal, "31 to 60": AC.blue, "61 to 90": AC.orange, "Above 90": AC.purple };
+
+/** Rounds an axis maximum up to 1, 2, 5 or 10 × a power of ten, as the reference does. */
+function niceMax(value: number, minimum: number): number {
+  const v = Math.max(Number(value) || 0, minimum || 1);
+  const power = Math.pow(10, Math.floor(Math.log10(v)));
+  const s = v / power;
+  return (s <= 1 ? 1 : s <= 2 ? 2 : s <= 5 ? 5 : 10) * power;
+}
+/** Whole numbers without decimals, everything else to two places — "26", "15.89". */
+const fx2 = (v: number) => (Math.abs(v - Math.round(v)) < 0.005 ? String(Math.round(v)) : v.toFixed(2));
+const fmtNum = (v: number) => Number(v || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+const fmtPct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${fx2(Number(v))}%`);
+/** "2026-01" → "Jan-26". */
+function monLabel(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return ym;
+  return `${new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" })}-${String(y).slice(2)}`;
+}
+/** The reference's conditional formatting: any rate above zero is flagged red, exactly zero green. */
+const pctStyle = (v: number | null | undefined): React.CSSProperties =>
+  v === null || v === undefined ? { color: AC.muted } : { color: Number(v) > 0 ? "#c0392b" : "#217a39", fontWeight: 900 };
+
+/** Five even intervals from zero, as the reference's axes use (0/10/…/50). */
+const axisTicks = (max: number) => [0, 1, 2, 3, 4, 5].map((i) => Math.round((max * i) / 5 * 100) / 100);
+
+const LABEL_ABOVE = -14;
+const LABEL_MIN_GAP = 19;
+
+/** Zero gets no label, as in the reference: a zero bar or a line on the axis
+ *  needs none, and a row of "0" badges along the baseline buries the real ones. */
+const hasLabel = (v: unknown) => v !== null && v !== undefined && v !== "" && !Number.isNaN(Number(v)) && Number(v) !== 0;
+
+/**
+ * Keeps the data labels of several series apart where they share an x position
+ * — a port of the reference's buildSeparatedYPositions. Every label starts just
+ * above its point; any that would sit closer than LABEL_MIN_GAP px to the one
+ * above it is pushed down. Each series may use its own axis maximum (a combo
+ * chart's bars and lines do). Returns, per series key, a vertical offset for
+ * each data index, applied relative to the point's real rendered position.
+ */
+function separateLabels(
+  data: Record<string, unknown>[], series: { key: string; max: number }[], plotHeight: number,
+): Record<string, number[]> {
+  const out: Record<string, number[]> = Object.fromEntries(series.map((s) => [s.key, data.map(() => LABEL_ABOVE)]));
+  data.forEach((row, i) => {
+    const items = series
+      .filter((s) => hasLabel(row[s.key]))
+      .map((s) => {
+        const py = plotHeight * (1 - Math.min(Number(row[s.key]), s.max) / (s.max || 1));
+        return { key: s.key, py, target: py + LABEL_ABOVE };
+      })
+      .sort((a, b) => a.target - b.target);
+    for (let j = 1; j < items.length; j++) {
+      if (items[j].target - items[j - 1].target < LABEL_MIN_GAP) items[j].target = items[j - 1].target + LABEL_MIN_GAP;
+    }
+    for (const it of items) out[it.key][i] = it.target - it.py;
+  });
+  return out;
+}
+
+/** Rounded badge data label, as the reference draws them. `dy` is either one
+ *  offset for every point or a per-index array from separateLabels(). */
+function pillLabel(color: string, suffix: string, dy: number | number[]) {
+  return (props: { x?: number | string; y?: number | string; width?: number | string; value?: number | string | null; index?: number }) => {
+    const { x, y, width, value, index } = props;
+    if (!hasLabel(value)) return null;
+    const cx = Number(x) + (Number(width) || 0) / 2;
+    const text = `${fx2(Number(value))}${suffix}`;
+    const w = text.length * 5.8 + 12;
+    const offset = Array.isArray(dy) ? (dy[index ?? 0] ?? LABEL_ABOVE) : dy;
+    const cy = Number(y) + offset;
+    return (
+      <g pointerEvents="none">
+        <rect x={cx - w / 2} y={cy - 8} width={w} height={16} rx={5} fill="#fff" stroke={color} strokeWidth={1.2} />
+        <text x={cx} y={cy + 3.5} textAnchor="middle" fontSize={10} fontWeight={800} fill={color}>{text}</text>
+      </g>
+    );
+  };
+}
+
+/** Tooltip for the attrition charts: adds the % suffix to rate series and skips
+ *  points with no value (the shared DarkTooltip would throw on a null). */
+function AttrTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number | null; color: string; dataKey?: string }[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const rows = payload.filter((p) => p.value !== null && p.value !== undefined);
+  if (!rows.length) return null;
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${AC.axis}`, borderRadius: 10, padding: "8px 10px", fontSize: 12, color: AC.text, boxShadow: "0 8px 24px rgba(11,79,138,.12)" }}>
+      <div style={{ color: AC.muted, marginBottom: 4, fontWeight: 700 }}>{label}</div>
+      {rows.map((p) => (
+        <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} />
+          <span style={{ color: AC.muted }}>{p.name}:</span>
+          <strong>{/%$/.test(p.name) ? fmtPct(Number(p.value)) : fmtNum(Number(p.value))}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AttrKpi({ label, value, sub, accent }: { label: string; value: string; sub: string; accent: string }) {
+  return (
+    <div className="oc-card" style={{ padding: "12px 14px", borderRadius: 14, borderBottom: `3px solid ${accent}` }}>
+      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: ".08em", textTransform: "uppercase", color: AC.text }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 900, color: AC.text, marginTop: 4, lineHeight: 1.1 }}>{value}</div>
+      <div style={{ fontSize: 10.5, color: AC.muted, marginTop: 4 }}>{sub}</div>
+    </div>
+  );
+}
+
+function AttrSection({ title, color, right, sub, children }: {
+  title: string; color: string; right?: React.ReactNode; sub?: string; children: React.ReactNode;
+}) {
+  return (
+    <div className="oc-card" style={{ "--hc": color, borderTop: `3px solid ${color}` } as React.CSSProperties}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 style={{ marginBottom: 0 }}>{title}</h3>
+        {right}
+      </div>
+      {sub && <div className="oc-card-sub" style={{ margin: "6px 0 0" }}>{sub}</div>}
+      <div style={{ marginTop: 8 }}>{children}</div>
+    </div>
+  );
+}
+
+function AttrEmpty({ loading, message }: { loading?: boolean; message: string }) {
+  return <div style={{ padding: "28px 0", textAlign: "center", fontSize: 13, color: AC.muted }}>{loading ? "Loading…" : message}</div>;
+}
+
+const LEGEND_STYLE: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: AC.text };
+const AXIS_TICK = { fontSize: 11, fontWeight: 700, fill: AC.text };
+
+/** Bars for attrition count (right axis) with Attrition % and UL Shrinkage %
+ *  lines (left axis) — the reference's month-wise and AM/AON/TL combo charts. */
+function AttrComboChart({ data, barColor, height = 300, rotateLabels = false }: {
+  data: { label: string; count: number; attrPct: number | null; ulPct: number | null }[];
+  barColor: string; height?: number; rotateLabels?: boolean;
+}) {
+  const pctMax = niceMax(Math.max(0, ...data.map((d) => Math.max(d.attrPct ?? 0, d.ulPct ?? 0))), 10);
+  const countMax = niceMax(Math.max(0, ...data.map((d) => d.count)), 5);
+  const bottom = rotateLabels ? 56 : 4;
+  // Plot height ≈ chart height less the top margin, legend row, bottom margin and x-axis band.
+  const offsets = separateLabels(
+    data,
+    [{ key: "count", max: countMax }, { key: "attrPct", max: pctMax }, { key: "ulPct", max: pctMax }],
+    height - 30 - 28 - bottom - 30,
+  );
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 30, right: 8, left: 0, bottom }}>
+        <XAxis
+          dataKey="label" tickLine={false} axisLine={{ stroke: AC.axis }} interval={0}
+          angle={rotateLabels ? -35 : 0} textAnchor={rotateLabels ? "end" : "middle"}
+          tick={rotateLabels ? { ...AXIS_TICK, fontSize: 10 } : AXIS_TICK}
+        />
+        <YAxis yAxisId="pct" domain={[0, pctMax]} ticks={axisTicks(pctMax)} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => `${v}%`} tick={{ ...AXIS_TICK, fontSize: 10 }} />
+        <YAxis yAxisId="count" orientation="right" domain={[0, countMax]} ticks={axisTicks(countMax)} allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={{ ...AXIS_TICK, fontSize: 10, fill: AC.blue }} />
+        <RTooltip content={<AttrTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+        <Legend verticalAlign="top" align="left" height={28} iconType="square" wrapperStyle={LEGEND_STYLE} />
+        <Bar yAxisId="count" dataKey="count" name="Attrition Count" fill={barColor} maxBarSize={44}>
+          <LabelList dataKey="count" content={pillLabel(barColor, "", offsets.count)} />
+        </Bar>
+        <Line yAxisId="pct" type="monotone" dataKey="attrPct" name="Attrition %" stroke={AC.red} strokeWidth={1.9} dot={false} connectNulls>
+          <LabelList dataKey="attrPct" content={pillLabel(AC.red, "%", offsets.attrPct)} />
+        </Line>
+        <Line yAxisId="pct" type="monotone" dataKey="ulPct" name="UL Shrinkage %" stroke={AC.orange} strokeWidth={1.9} dot={false} connectNulls>
+          <LabelList dataKey="ulPct" content={pillLabel(AC.orange, "%", offsets.ulPct)} />
+        </Line>
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Several smooth lines with badge labels — the AON month-wise and the
+ *  Voluntary vs Involuntary charts. */
+function AttrLineChart({ data, series, suffix, minMax, height = 300 }: {
+  data: Record<string, string | number | null>[];
+  series: { key: string; name: string; color: string }[];
+  suffix: string; minMax: number; height?: number;
+}) {
+  const max = niceMax(Math.max(0, ...data.flatMap((d) => series.map((s) => Number(d[s.key] ?? 0)))), minMax);
+  const offsets = separateLabels(data, series.map((s) => ({ key: s.key, max })), height - 30 - 28 - 4 - 30);
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 30, right: 18, left: 0, bottom: 4 }}>
+        {/* Padding keeps the first and last points' labels clear of the axis and the card edge. */}
+        <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: AC.axis }} interval={0} tick={AXIS_TICK} padding={{ left: 36, right: 36 }} />
+        <YAxis domain={[0, max]} ticks={axisTicks(max)} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => `${v}${suffix}`} tick={{ ...AXIS_TICK, fontSize: 10 }} />
+        <RTooltip content={<AttrTooltip />} />
+        <Legend verticalAlign="top" align="left" height={28} iconType="square" wrapperStyle={LEGEND_STYLE} />
+        {series.map((s) => (
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={false} connectNulls>
+            <LabelList dataKey={s.key} content={pillLabel(s.color, suffix, offsets[s.key])} />
+          </Line>
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+interface AttrTableRow {
+  key: string; month: string; label?: string; rawLabel?: string;
+  openingHc: number; closingHc: number; avgHc: number;
+  attritionCount: number; attritionRate: number | null;
+  scheduled: number; unplannedLeave: number; actualUl: number;
+  ulShrinkageRate: number | null; actualShrinkageRate: number | null;
+}
+
+/** The reference's detail table (Month / AM / TL / AON wise), with its
+ *  conditional formatting on the three rate columns. */
+function AttrDetailTable({ rows, labelHeader, loading, onRowClick, maxHeight }: {
+  rows: AttrTableRow[]; labelHeader?: string; loading?: boolean;
+  onRowClick?: (r: AttrTableRow) => void; maxHeight?: number;
+}) {
+  const colSpan = labelHeader ? 12 : 11;
+  return (
+    <div style={{ overflowX: "auto", maxHeight, overflowY: maxHeight ? "auto" : undefined }}>
+      <table className="oc-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            {labelHeader && <th>{labelHeader}</th>}
+            <th className="oc-right">Opening HC</th><th className="oc-right">Closing HC</th><th className="oc-right">Avg HC</th>
+            <th className="oc-right">Attrition</th><th className="oc-right">Attrition %</th><th className="oc-right">Scheduled</th>
+            <th className="oc-right">UL</th><th className="oc-right">Actual UL</th>
+            <th className="oc-right">UL Shrinkage</th><th className="oc-right">Actual Shrinkage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && <tr className="oc-empty-row"><td colSpan={colSpan}>{loading ? "Loading…" : "No data"}</td></tr>}
+          {rows.map((r) => (
+            <tr key={r.key} className={onRowClick ? "oc-row-click" : undefined} onClick={onRowClick ? () => onRowClick(r) : undefined}>
+              <td>{monLabel(r.month)}</td>
+              {labelHeader && <td style={{ fontWeight: 700 }}>{r.label}</td>}
+              <td className="oc-right">{fmtNum(r.openingHc)}</td>
+              <td className="oc-right">{fmtNum(r.closingHc)}</td>
+              <td className="oc-right">{fx2(r.avgHc)}</td>
+              <td className="oc-right">{fmtNum(r.attritionCount)}</td>
+              <td className="oc-right" style={pctStyle(r.attritionRate)}>{fmtPct(r.attritionRate)}</td>
+              <td className="oc-right">{fmtNum(r.scheduled)}</td>
+              <td className="oc-right">{fmtNum(r.unplannedLeave)}</td>
+              <td className="oc-right">{fmtNum(r.actualUl)}</td>
+              <td className="oc-right" style={pctStyle(r.ulShrinkageRate)}>{fmtPct(r.ulShrinkageRate)}</td>
+              <td className="oc-right" style={pctStyle(r.actualShrinkageRate)}>{fmtPct(r.actualShrinkageRate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Month-on-month reason-wise attrition count, grouped Voluntary / Involuntary. */
+function AttrReasonTable({ data, loading }: { data: AttritionReasonMonthly | undefined; loading: boolean }) {
+  if (!data || data.months.length === 0) return <AttrEmpty loading={loading} message="No exits in this range." />;
+  const groupRow: React.CSSProperties = { background: AC.groupBg, color: AC.navy, fontWeight: 900 };
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="oc-table">
+        <thead>
+          <tr>
+            <th>Reason</th>
+            {data.months.map((m) => <th key={m} className="oc-right">{monLabel(m)}</th>)}
+            <th className="oc-right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.groups.map((g) => [
+            <tr key={`${g.type}-total`} style={groupRow}>
+              <td style={{ textTransform: "uppercase", letterSpacing: ".04em" }}>{g.type} Total</td>
+              {g.totals.map((n, i) => <td key={i} className="oc-right">{fmtNum(n)}</td>)}
+              <td className="oc-right">{fmtNum(g.total)}</td>
+            </tr>,
+            ...g.reasons.map((r) => (
+              <tr key={`${g.type}-${r.reason}`}>
+                <td style={{ paddingLeft: 26, fontWeight: 700 }}>{r.reason}</td>
+                {r.counts.map((n, i) => <td key={i} className="oc-right">{fmtNum(n)}</td>)}
+                <td className="oc-right" style={{ fontWeight: 800 }}>{fmtNum(r.total)}</td>
+              </tr>
+            )),
+          ])}
+          <tr style={{ fontWeight: 900, background: AC.groupBg }}>
+            <td style={{ textTransform: "uppercase", letterSpacing: ".04em" }}>Grand Total</td>
+            {data.grandTotals.map((n, i) => <td key={i} className="oc-right">{fmtNum(n)}</td>)}
+            <td className="oc-right">{fmtNum(data.grandTotal)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const breakdownToRows = (rows: AttritionBreakdownRow[]): AttrTableRow[] =>
+  rows.map((r) => ({ ...r, key: `${r.month}-${r.label}` }));
+const breakdownToCombo = (rows: AttritionBreakdownRow[]) =>
+  rows.map((r) => ({ label: r.label, count: r.attritionCount, attrPct: r.attritionRate, ulPct: r.ulShrinkageRate }));
+
 function AttritionView({
   range, tlFilter, amFilter, onOpenRecord,
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
-  const [dimension, setDimension] = useState<AttritionDimension>("tl_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
-  const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
+  const [drilldown, setDrilldown] = useState<{ dimension: AttritionDimension; label: string; rawLabel: string; month: string } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
+  const url = (path: string) => `/api/onfido-process/attrition/${path}?from=${range.from}&to=${range.to}${qs}`;
+  const key = (k: string) => ["onfido-process", `attrition-${k}`, range, tlFilter, amFilter];
 
-  const overviewQuery = useQuery({
-    queryKey: ["onfido-process", "attrition-overview", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: AttritionOverview }>(`/api/onfido-process/attrition/overview?from=${range.from}&to=${range.to}${qs}`),
-  });
+  const overviewQuery = useQuery({ queryKey: key("overview"), queryFn: () => hrmsApi.get<{ data: AttritionOverview }>(url("overview")) });
+  const monthlyQuery = useQuery({ queryKey: key("monthly"), queryFn: () => hrmsApi.get<{ data: AttritionMonthRow[] }>(url("monthly-detail")) });
   const trendQuery = useQuery({
-    queryKey: ["onfido-process", "attrition-trend", range, tlFilter, amFilter, granularity],
-    queryFn: () => hrmsApi.get<{ data: AttritionTrendPoint[] }>(`/api/onfido-process/attrition/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+    queryKey: [...key("trend"), granularity],
+    queryFn: () => hrmsApi.get<{ data: AttritionTrendPoint[] }>(`${url("trend")}&granularity=${granularity}`),
+    enabled: granularity !== "monthly",
   });
-  const monthlyQuery = useQuery({
-    queryKey: ["onfido-process", "attrition-monthly", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: AttritionMonthRow[] }>(`/api/onfido-process/attrition/monthly-detail?from=${range.from}&to=${range.to}${qs}`),
+  const aonMonthlyQuery = useQuery({ queryKey: key("aon-monthly"), queryFn: () => hrmsApi.get<{ data: AttritionAonMonthRow[] }>(url("aon-monthly")) });
+  const reasonQuery = useQuery({ queryKey: key("reason-monthly"), queryFn: () => hrmsApi.get<{ data: AttritionReasonMonthly }>(url("reason-monthly")) });
+  const dimQuery = (dim: AttritionDimension) => ({
+    queryKey: [...key("breakdown"), dim],
+    queryFn: () => hrmsApi.get<{ data: AttritionBreakdownRow[] }>(url(`breakdown/${dim}`)),
   });
-  const breakdownQuery = useQuery({
-    queryKey: ["onfido-process", "attrition-breakdown", range, dimension, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: AttritionBreakdownRow[] }>(`/api/onfido-process/attrition/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
-  });
-  const exitsQuery = useQuery({
-    queryKey: ["onfido-process", "attrition-exits", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: AttritionExitRow[] }>(`/api/onfido-process/attrition/exits?from=${range.from}&to=${range.to}${qs}`),
-  });
+  const amQuery = useQuery(dimQuery("am_name"));
+  const aonQuery = useQuery(dimQuery("aon_bucket"));
+  const tlQuery = useQuery(dimQuery("tl_name"));
+  const locationQuery = useQuery(dimQuery("location"));
+  const exitsQuery = useQuery({ queryKey: key("exits"), queryFn: () => hrmsApi.get<{ data: AttritionExitRow[] }>(url("exits")) });
 
   const ov = overviewQuery.data?.data;
-  const trendPoints = trendQuery.data?.data ?? [];
   const months = monthlyQuery.data?.data ?? [];
-  const breakdown = breakdownQuery.data?.data ?? [];
+  const trendPoints = trendQuery.data?.data ?? [];
+  const aonMonthly = aonMonthlyQuery.data?.data ?? [];
+  const reasons = reasonQuery.data?.data;
+  const am = amQuery.data?.data ?? [];
+  const aon = aonQuery.data?.data ?? [];
+  const tl = tlQuery.data?.data ?? [];
+  const location = locationQuery.data?.data ?? [];
   const exits = exitsQuery.data?.data ?? [];
+
+  const cur = ov?.month ? monLabel(ov.month) : "";
+  const kv = (k: KpiValue | undefined) => k?.value ?? null;
+  const openDrill = (dimension: AttritionDimension) => (r: AttrTableRow) =>
+    setDrilldown({ dimension, label: r.label ?? "", rawLabel: r.rawLabel ?? r.label ?? "", month: r.month });
+
+  const monthCombo = months.map((m) => ({ label: monLabel(m.month), count: m.attritionCount, attrPct: m.attritionRate, ulPct: m.ulShrinkageRate }));
+  const aonSeriesPresent = AON_ORDER.filter((l) => aonMonthly.some((m) => m.buckets[l] !== null && m.buckets[l] !== undefined));
+  const aonLineData = aonMonthly.map((m) => ({ label: monLabel(m.month), ...Object.fromEntries(AON_ORDER.map((l) => [l, m.buckets[l] ?? null])) }));
+  const vol = reasons?.groups.find((g) => g.type === "Voluntary");
+  const inv = reasons?.groups.find((g) => g.type === "Involuntary");
+  const typeLineData = (reasons?.months ?? []).map((m, i) => ({ label: monLabel(m), voluntary: vol?.totals[i] ?? 0, involuntary: inv?.totals[i] ?? 0 }));
+  const dimLabel = (d: AttritionDimension) => (d === "tl_name" ? "TL" : d === "am_name" ? "AM" : d === "aon_bucket" ? "AON" : "Location");
 
   return (
     <div className="space-y-4">
-      {ov && (
-        <div className="kr k5">
-          <KpiPlain kpi={ov.openingHc} kc="var(--blue)" />
-          <KpiPlain kpi={ov.closingHc} kc="var(--blue)" />
-          <KpiPlain kpi={ov.avgHc} kc="var(--blue)" />
-          <KpiPlain kpi={ov.attritionCount} kc="var(--red)" />
-          <KpiPlain kpi={ov.attritionRate} kc="var(--red)" />
-        </div>
-      )}
-      {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-          <KpiPlain kpi={ov.scheduled} kc="var(--purple)" />
-          <KpiPlain kpi={ov.unplannedLeave} kc="var(--orange)" />
-          <KpiPlain kpi={ov.ulShrinkageRate} kc="var(--orange)" />
-          <KpiPlain kpi={ov.actualShrinkageRate} kc="var(--orange)" />
+      {/* 1 · Current-month status */}
+      <div className="kr k6">
+        <AttrKpi label="Attrition Count" value={kv(ov?.attritionCount) === null ? "—" : fmtNum(kv(ov?.attritionCount)!)} sub={`${cur || "Latest month"} · Onfloor`} accent={AC.orange} />
+        <AttrKpi label="Attrition %" value={fmtPct(kv(ov?.attritionRate))} sub="Attrition ÷ ((Opening HC + Closing HC) ÷ 2)" accent={(kv(ov?.attritionRate) ?? 0) > 0 ? AC.red : AC.green} />
+        <AttrKpi label="Opening HC" value={kv(ov?.openingHc) === null ? "—" : fmtNum(kv(ov?.openingHc)!)} sub="First available day HC" accent={AC.blue} />
+        <AttrKpi label="Closing HC" value={kv(ov?.closingHc) === null ? "—" : fmtNum(kv(ov?.closingHc)!)} sub="Last available day HC" accent={AC.teal} />
+        <AttrKpi label="UL Shrinkage" value={fmtPct(kv(ov?.ulShrinkageRate))} sub="UL ÷ Scheduled" accent={AC.purple} />
+        <AttrKpi label="Actual Shrinkage" value={fmtPct(kv(ov?.actualShrinkageRate))} sub="Actual UL ÷ Scheduled" accent={AC.pink} />
+      </div>
+      {ov?.month && (
+        <div style={{ fontSize: 11, color: AC.muted }}>
+          Current month is the latest month with data in the selected range: <strong style={{ color: AC.text }}>{cur}</strong>.
         </div>
       )}
 
-      <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>Attrition Count Trend</h3>
-          <PillGroup
-            value={granularity} onChange={setGranularity}
-            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
-          />
-        </div>
-        <div className="oc-card-sub">Exit count only — Attrition % needs a real calendar month's headcount to mean anything, so the rate itself stays in Month Wise Detail below.</div>
-        {trendPoints.length === 0 ? (
-          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={trendPoints} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="attritionCount" name="Attrition Count" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="attritionCount" position="top" fontSize={10} fill="var(--muted)" />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        )}
+      {/* 2 · Month-wise count, Attrition %, UL Shrinkage % */}
+      <AttrSection
+        title={granularity === "monthly" ? "Month Wise · Attrition Count · Attrition % · UL Shrinkage %" : `${granularity === "daily" ? "Day" : "Week"} Wise · Attrition Count`}
+        color={AC.orange}
+        right={<PillGroup value={granularity} onChange={setGranularity} options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />}
+        sub={granularity === "monthly" ? undefined : "Daily and weekly show the exit count only — an attrition % needs a whole month's opening and closing headcount."}
+      >
+        {granularity === "monthly"
+          ? (monthCombo.length === 0 ? <AttrEmpty loading={monthlyQuery.isLoading} message="No month-wise data in this range." /> : <AttrComboChart data={monthCombo} barColor={AC.blue} height={320} />)
+          : (trendPoints.length === 0
+            ? <AttrEmpty loading={trendQuery.isLoading} message="No exits in this range." />
+            : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={trendPoints} margin={{ top: 30, right: 8, left: 0, bottom: 4 }}>
+                  <XAxis dataKey="bucket" tickLine={false} axisLine={{ stroke: AC.axis }} tick={{ ...AXIS_TICK, fontSize: 10 }} />
+                  <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} domain={[0, niceMax(Math.max(0, ...trendPoints.map((p) => p.attritionCount)), 5)]} tick={{ ...AXIS_TICK, fontSize: 10 }} />
+                  <RTooltip content={<AttrTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+                  <Bar dataKey="attritionCount" name="Attrition Count" fill={AC.blue} maxBarSize={40}>
+                    <LabelList dataKey="attritionCount" content={pillLabel(AC.blue, "", -12)} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ))}
+      </AttrSection>
+
+      {/* 3 · AON month-wise Attrition % */}
+      <AttrSection title="AON Month Wise · Attrition %" color={AC.yellow}>
+        {aonLineData.length === 0
+          ? <AttrEmpty loading={aonMonthlyQuery.isLoading} message="No AON data in this range." />
+          : <AttrLineChart data={aonLineData} suffix="%" minMax={10} series={aonSeriesPresent.map((l) => ({ key: l, name: l, color: AON_COLORS[l] }))} />}
+      </AttrSection>
+
+      {/* 4 · Month-on-month Voluntary vs Involuntary */}
+      <AttrSection title="Month-on-Month · Voluntary vs Involuntary Attrition" color={AC.green}>
+        {typeLineData.length === 0
+          ? <AttrEmpty loading={reasonQuery.isLoading} message="No exits in this range." />
+          : <AttrLineChart data={typeLineData} suffix="" minMax={10} series={[{ key: "voluntary", name: "Voluntary", color: AC.green }, { key: "involuntary", name: "Involuntary", color: AC.red }]} />}
+      </AttrSection>
+
+      {/* 5 · Month-on-month reason-wise count */}
+      <AttrSection title="Month-on-Month · Reason-wise Attrition Count" color={AC.teal}>
+        <AttrReasonTable data={reasons} loading={reasonQuery.isLoading} />
+      </AttrSection>
+
+      {/* 6 · AM and AON current month */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttrSection title={`AM Wise · ${cur} Attrition Count · Attrition % · UL Shrinkage %`} color={AC.teal}>
+          {am.length === 0 ? <AttrEmpty loading={amQuery.isLoading} message="No AM data." /> : <AttrComboChart data={breakdownToCombo(am)} barColor={AC.teal} />}
+        </AttrSection>
+        <AttrSection title={`AON Wise · ${cur} Attrition Count · Attrition % · UL Shrinkage %`} color={AC.yellow}>
+          {aon.length === 0 ? <AttrEmpty loading={aonQuery.isLoading} message="No AON data." /> : <AttrComboChart data={breakdownToCombo(aon)} barColor={AC.yellow} />}
+        </AttrSection>
       </div>
 
-      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-        <h3>Month Wise Detail</h3>
-        <div style={{ overflowX: "auto" }}>
-          <table className="oc-table">
-            <thead>
-              <tr>
-                <th>Month</th><th className="oc-right">Opening HC</th><th className="oc-right">Closing HC</th>
-                <th className="oc-right">Avg HC</th><th className="oc-right">Attrition</th><th className="oc-right">Attrition %</th>
-                <th className="oc-right">Scheduled</th><th className="oc-right">UL</th>
-                <th className="oc-right">UL Shrinkage %</th><th className="oc-right">Actual Shrinkage %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {months.length === 0 && <tr className="oc-empty-row"><td colSpan={10}>No data</td></tr>}
-              {months.map((m) => (
-                <tr key={m.month}>
-                  <td>{m.month}</td>
-                  <td className="oc-right">{m.openingHc}</td>
-                  <td className="oc-right">{m.closingHc}</td>
-                  <td className="oc-right">{m.avgHc}</td>
-                  <td className="oc-right">{m.attritionCount}</td>
-                  <td className="oc-right">{m.attritionRate !== null ? `${m.attritionRate}%` : "—"}</td>
-                  <td className="oc-right">{m.scheduled}</td>
-                  <td className="oc-right">{m.unplannedLeave}</td>
-                  <td className="oc-right">{m.ulShrinkageRate !== null ? `${m.ulShrinkageRate}%` : "—"}</td>
-                  <td className="oc-right">{m.actualShrinkageRate !== null ? `${m.actualShrinkageRate}%` : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* 7 · TL current month */}
+      <AttrSection title={`TL Wise · ${cur} Attrition Count · Attrition % · UL Shrinkage %`} color={AC.green}>
+        {tl.length === 0 ? <AttrEmpty loading={tlQuery.isLoading} message="No TL data." /> : <AttrComboChart data={breakdownToCombo(tl)} barColor={AC.green} height={380} rotateLabels />}
+      </AttrSection>
 
-      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>Breakdown</h3>
-          <PillGroup
-            value={dimension}
-            onChange={setDimension}
-            options={[
-              { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
-              { key: "aon_bucket", label: "AON Wise" }, { key: "location", label: "Location Wise" },
-            ]}
-          />
-        </div>
-        <div className="oc-card-sub">
-          {ov?.month ? `Scoped to ${ov.month} — the same month the KPI tiles above show.` : ""}
-          {breakdown.some((r) => r.note) && " — * rate withheld: hover the cell (avg HC smaller than exits, likely a transient bucket like Training/Support)."}
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table className="oc-table">
-            <thead><tr><th>{dimension === "tl_name" ? "TL" : dimension === "am_name" ? "AM" : dimension === "aon_bucket" ? "AON" : "Location"}</th><th className="oc-right">Attrition Count</th><th className="oc-right">Attrition %</th><th className="oc-right">UL Shrinkage %</th></tr></thead>
-            <tbody>
-              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
-              {breakdown.map((r) => (
-                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
-                  <td>{r.label}</td>
-                  <td className="oc-right">{r.attritionCount}</td>
-                  <td className="oc-right" title={r.note}>{r.attritionRate !== null ? `${r.attritionRate}%` : "— *"}</td>
-                  <td className="oc-right">{r.ulShrinkageRate !== null ? `${r.ulShrinkageRate}%` : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* 8 · Month-wise detail */}
+      <AttrSection title="Month Wise Detail" color={AC.navy}>
+        <AttrDetailTable rows={months.map((m) => ({ ...m, key: m.month }))} loading={monthlyQuery.isLoading} />
+      </AttrSection>
 
-      {drilldown && ov?.month && (
+      {/* 9–11 · AM, TL, AON current-month detail — rows open the records behind them */}
+      <AttrSection title={`AM Wise · ${cur} Attrition & Shrinkage`} color={AC.teal}>
+        <AttrDetailTable rows={breakdownToRows(am)} labelHeader="AM" loading={amQuery.isLoading} onRowClick={openDrill("am_name")} />
+      </AttrSection>
+      <AttrSection title={`TL Wise · ${cur} Attrition & Shrinkage`} color={AC.green}>
+        <AttrDetailTable rows={breakdownToRows(tl)} labelHeader="TL" loading={tlQuery.isLoading} onRowClick={openDrill("tl_name")} maxHeight={560} />
+      </AttrSection>
+      <AttrSection title={`AON Wise · ${cur} Attrition & Shrinkage`} color={AC.yellow}>
+        <AttrDetailTable rows={breakdownToRows(aon)} labelHeader="AON" loading={aonQuery.isLoading} onRowClick={openDrill("aon_bucket")} />
+      </AttrSection>
+      <AttrSection title={`Location Wise · ${cur} Attrition & Shrinkage`} color={AC.purple}>
+        <AttrDetailTable rows={breakdownToRows(location)} labelHeader="Location" loading={locationQuery.isLoading} onRowClick={openDrill("location")} />
+      </AttrSection>
+
+      {drilldown && (
         <BreakdownDrilldownSheet
           open={!!drilldown}
-          title={`Attrition — ${dimension === "tl_name" ? "TL" : dimension === "am_name" ? "AM" : dimension === "aon_bucket" ? "AON" : "Location"}`}
+          title={`Attrition — ${dimLabel(drilldown.dimension)}: ${drilldown.label}`}
           tableKey="ONFIDO_AGENT_DAILY"
-          filterColumn={dimension}
-          filterValue={drilldown.label}
-          range={{ from: `${ov.month}-01`, to: lastDayOfMonth(ov.month) }}
+          filterColumn={drilldown.dimension}
+          filterValue={drilldown.rawLabel}
+          range={{ from: `${drilldown.month}-01`, to: lastDayOfMonth(drilldown.month) }}
           onOpenChange={(v) => { if (!v) setDrilldown(null); }}
           onOpenRecord={onOpenRecord}
         />
       )}
 
-      <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
-        <h3>Exits in Range</h3>
+      <AttrSection title="Exits in Range" color={AC.red}>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
             <thead><tr><th>Date</th><th>Emp</th><th>Analyst Email</th><th>TL</th><th>AM</th><th>Reason</th><th>Type</th></tr></thead>
             <tbody>
-              {exits.length === 0 && <tr className="oc-empty-row"><td colSpan={7}>No exits in this range</td></tr>}
+              {exits.length === 0 && <tr className="oc-empty-row"><td colSpan={7}>{exitsQuery.isLoading ? "Loading…" : "No exits in this range"}</td></tr>}
               {exits.slice(0, 100).map((e) => (
                 <tr
-                  key={e.empId + e.exitDate}
+                  key={e.id}
                   className="oc-row-click"
                   onClick={async () => {
                     const res = await hrmsApi.get<{ data: RawRecord }>(`/api/onfido-process/records/ONFIDO_AGENT_DAILY/${e.id}`);
@@ -1090,8 +1410,8 @@ function AttritionView({
             </tbody>
           </table>
         </div>
-        {exits.length > 100 && <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>Showing first 100 of {exits.length}</div>}
-      </div>
+        {exits.length > 100 && <div style={{ marginTop: 10, fontSize: 11, color: AC.muted }}>Showing first 100 of {exits.length}</div>}
+      </AttrSection>
     </div>
   );
 }

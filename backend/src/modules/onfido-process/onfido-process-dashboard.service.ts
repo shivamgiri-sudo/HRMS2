@@ -1205,6 +1205,10 @@ export type AttritionDimension = "am_name" | "tl_name" | "aon_bucket" | "locatio
 
 export interface AttritionBreakdownRow {
   label: string;
+  /** The value as stored in the source column — what a record-level drill-down
+   *  must filter on. Differs from `label` only for AON, whose buckets are shown
+   *  under normalised names ("Above than 90" is displayed as "Above 90"). */
+  rawLabel: string;
   month: string;
   openingHc: number;
   closingHc: number;
@@ -1276,7 +1280,7 @@ export async function getAttritionBreakdown(
       const attrition = Number(r.attrition ?? 0);
       const scheduled = Number(r.scheduled ?? 0);
       return {
-        label, month: targetMonth, openingHc, closingHc, avgHc,
+        label, rawLabel: raw, month: targetMonth, openingHc, closingHc, avgHc,
         attritionCount: attrition,
         attritionRate: rate2(attrition, avgHc),
         scheduled, unplannedLeave: Number(r.ul ?? 0), actualUl: Number(r.actualUl ?? 0),
