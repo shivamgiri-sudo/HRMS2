@@ -124,6 +124,9 @@ describe("application shell routing contracts", () => {
       // "deliberately not in the menu" from "someone forgot to add it" — which is the whole
       // point of this test, and the sixteen added below had accumulated unlisted.
       "/",
+      // Standalone copy of the live dialler dashboard (631a3e14). The same dashboard is embedded
+      // in Process Operations, which IS in the menu; this route is reachable by URL only.
+      "/process-live",
       "/admin/report-audit",
       "/advanced-reports",
       "/ats/branch-head-approval",

@@ -361,6 +361,13 @@ const KNOWN_MISSING: Record<string, string> = {
  * "nobody serves this" with "nobody calls this" teaches people to stop reading its output.
  */
 const NOT_A_REQUEST: Record<string, string> = {
+  "/api/process-live/:x":
+    "the fetchLive(path) helper in ProcessLivePage.tsx and DiallerLivePanel.tsx builds " +
+    "`/api/process-live/${path}`, where path is always TWO segments ('inbound/summary', " +
+    "`${proc}/daily`, 'reginald-cart/apr', ...), so the literal one-segment shape is never " +
+    "requested. Every value was checked 2026-09-15 against process-live-dashboard.routes.ts: the " +
+    "static routes plus cdrRoutes(prefix) for gnc/bella-vita/clovia/neemans/viega/exicom/du-digital, " +
+    "which register `/${prefix}/summary|daily|monthly` in a loop the static scan cannot expand.",
   "/api/housing-dashboards/housing-owner":
     "the `base` argument NativeHousingDashboards.tsx passes into useFilterOptions(base), which " +
     "fetches `${base}/filter-options` -- a real, mounted route (housing-dashboards.routes.ts). " +
