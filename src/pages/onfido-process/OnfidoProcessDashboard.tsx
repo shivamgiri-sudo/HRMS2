@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
@@ -3063,7 +3063,12 @@ function defaultRange() {
   return { from: isoLocal(start), to: isoLocal(today) };
 }
 
-export default function OnfidoProcessDashboard() {
+/**
+ * `embedded` renders without the app shell, for use inside Process Operations
+ * (its only entry point — /onfido-process/dashboard redirects there).
+ */
+export default function OnfidoProcessDashboard({ embedded = false }: { embedded?: boolean }) {
+  const Shell = embedded ? Fragment : DashboardLayout;
   const [view, setView] = useState<ViewKey>("overview");
   const [range, setRange] = useState(defaultRange());
   const [tlFilter, setTlFilter] = useState<string>("");
@@ -3134,7 +3139,7 @@ export default function OnfidoProcessDashboard() {
   }
 
   return (
-    <DashboardLayout>
+    <Shell>
       <div className="onfido-central-theme">
         <div className="space-y-5">
           {/* Header */}
@@ -3368,6 +3373,6 @@ export default function OnfidoProcessDashboard() {
           onOpenRecord={(record, table) => openRecord(record, table)}
         />
       </div>
-    </DashboardLayout>
+    </Shell>
   );
 }

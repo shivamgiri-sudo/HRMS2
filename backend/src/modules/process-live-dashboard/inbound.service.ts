@@ -34,7 +34,7 @@ const APR_TABLE = 'vicidial_agent_log_10_4';
  * 1–15 Sep 2026: INBOUND holds exactly the six agents in cdr_in_10_4, BLABLIBL
  * the three outbound agents the business flagged (e.g. MAS62353, MAS61459).
  */
-const INBOUND_CAMPAIGN = 'BLABLIBL';
+const INBOUND_CAMPAIGN = 'INBOUND';
 const DISPO_TABLE = 'data_master_in';
 const CLIENT_ID = 487;
 const NO_AGENT = 'Inbound No Agent';

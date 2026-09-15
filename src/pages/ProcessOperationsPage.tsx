@@ -1,5 +1,11 @@
-import { Fragment, useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { Fragment, lazy, Suspense, useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
+
+// Onfido's dashboard lives only here (its old /onfido-process/dashboard URL
+// redirects in). Lazy: it is large and only one process ever opens it.
+const OnfidoProcessDashboard = lazy(() => import("./onfido-process/OnfidoProcessDashboard"));
+const isOnfidoProcess = (name: string | null | undefined) => (name ?? "").toLowerCase().includes("onfido");
 import {
   BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
   BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard,
@@ -4694,12 +4700,19 @@ function NeverReportedBanner({ groups, currentProcessId, currentProcessName }: {
 
 export default function ProcessOperationsPage() {
   const qc = useQueryClient();
+  // Deep links: ?process=<id, code or name fragment>&view=kpi|live|sales.
+  // The old standalone dashboard URLs redirect here with these set.
+  const [searchParams] = useSearchParams();
+  const processParam = searchParams.get("process");
   const [active, setActive] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [drill, setDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
-  const [view, setView] = useState<"kpi" | "live" | "sales">("kpi");
+  const [view, setView] = useState<"kpi" | "live" | "sales">(() => {
+    const v = searchParams.get("view");
+    return v === "live" || v === "sales" ? v : "kpi";
+  });
   // Active section key for overview strip highlighting + scroll-to
   const [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -4709,6 +4722,17 @@ export default function ProcessOperationsPage() {
     queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessRow[]>>("/api/process-operations/processes"),
   });
   const processes = listData?.data ?? [];
+
+  // Apply ?process= once, when the list arrives and nothing is picked yet.
+  // A value matching no process in the user's access is ignored.
+  useEffect(() => {
+    if (!processParam || active || processes.length === 0) return;
+    const q = processParam.toLowerCase();
+    const hit = processes.find((p) => p.processId === processParam)
+      ?? processes.find((p) => (p.processCode ?? "").toLowerCase() === q)
+      ?? processes.find((p) => p.processName.toLowerCase().includes(q));
+    if (hit) setActive(hit.processId);
+  }, [processParam, processes, active]);
 
   // Real branches only -- built from the processes actually in view, not
   // imagined, per this codebase's own rule that dropdown options come from
@@ -4919,7 +4943,7 @@ export default function ProcessOperationsPage() {
                 )}
                 <button type="button" onClick={() => setView("live")}
                   style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "live" ? "#10b8d4" : "transparent", color: view === "live" ? "#fff" : "#d0e8f5", boxShadow: view === "live" ? "0 3px 8px rgba(0,0,0,.20)" : "none" }}>
-                  Live Dashboard
+                  {isOnfidoProcess(currentProcess?.processName) ? "Onfido Dashboard" : "Live Dashboard"}
                 </button>
               </div>
               {/* Live pill */}
@@ -4961,6 +4985,15 @@ export default function ProcessOperationsPage() {
               processCode={currentProcess.processCode ?? ""}
               processName={currentProcess.processName}
             />
+          ) : view === "live" && isOnfidoProcess(currentProcess?.processName) ? (
+            /* ── Onfido: its own dashboard (upload-fed, not dialler) ───────── */
+            <Suspense fallback={
+              <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
+                <Loader2 className="h-4 w-4 animate-spin" />Loading Onfido dashboard…
+              </div>
+            }>
+              <OnfidoProcessDashboard embedded />
+            </Suspense>
           ) : view === "live" ? (
             /* ── Live Dashboard (Dialler) view ─────────────────────────────── */
             <div>

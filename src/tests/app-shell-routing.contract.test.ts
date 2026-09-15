@@ -198,6 +198,12 @@ describe("application shell routing contracts", () => {
       // calls at all, so every toggle a user set there was discarded. The sidebar entry was
       // removed and this URL now redirects to /communication/preferences, which saves.
       "/notification-preferences",
+      // Redirect-only since 2026-09-15: process dashboards live only inside Process
+      // Operations. /onfido-process/dashboard -> Onfido selected there (the sidebar's
+      // "Onfido Process" entry links to that deep link); /process-live was an older
+      // standalone copy of the Live Dashboard view.
+      "/onfido-process/dashboard",
+      "/process-live",
       "/onboard",
       "/onboard-full",
       "/onboard-full-legacy",

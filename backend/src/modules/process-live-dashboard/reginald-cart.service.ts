@@ -3,7 +3,7 @@
  *
  * Source tables  : cdr_ob_25 (CDR), vicidial_agent_log_10_25 (APR)
  *                  mas_hrms.reginald_abandoned_cart_sales_raw (Sales — uploaded via REGINALD_ABANDONED_CART_SALES)
- * Campaigns      : ABANDON, KERALA, TAMIL, TELUGU, RTO, NDRMO, NDRRM, NPSRM, RTOMO
+ * Campaigns      : ABANDON, KANNADA, KERALA, TAMIL, TELUGU
  * Handled logic  : talk_sec > 0 (connected = talk happened)
  *
  * All data points match GAS Day-wise / Analyst-wise / Yearly dashboard:
@@ -31,7 +31,14 @@ import type { RowDataPacket as MasRow } from 'mysql2';
 const CDR_TABLE = 'cdr_ob_25';
 const APR_TABLE = 'vicidial_agent_log_10_25';
 
-export const CART_CAMPAIGNS = ['ABANDON', 'KERALA', 'TAMIL', 'TELUGU', 'RTO', 'NDRMO', 'NDRRM', 'NPSRM', 'RTOMO'];
+/**
+ * The Cart ABC team's campaigns only. cdr_ob_25 also carries Reginald's RTO,
+ * NDRMO, NDRRM, NPSRM and RTOMO campaigns, worked by a different set of agents
+ * (1–9 Sep 2026: no overlap with the cart team); including them adds ~53% to
+ * cart call volume. KANNADA is quiet in September but ran every month Jan–Aug
+ * 2026, so it stays for the Monthly view.
+ */
+export const CART_CAMPAIGNS = ['ABANDON', 'KANNADA', 'KERALA', 'TAMIL', 'TELUGU'];
 const CAMP_IN = CART_CAMPAIGNS.map(() => '?').join(',');
 
 // ── Summary (overall KPIs) ────────────────────────────────────────────────────
