@@ -27,6 +27,7 @@ const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
 const NativeOpsCommandCenter         = lazy(() => import("@/pages/NativeOpsCommandCenter"));
 const NativeInboundDashboard         = lazy(() => import("@/pages/NativeInboundDashboard"));
+const ProcessLivePage                = lazy(() => import("@/pages/process-live/ProcessLivePage"));
 const NativeSalesDashboard           = lazy(() => import("@/pages/NativeSalesDashboard"));
 const NativeHousingDashboards        = lazy(() => import("@/pages/NativeHousingDashboards"));
 const NativeTATMatrix                = lazy(() => import("@/pages/NativeTATMatrix"));
@@ -135,6 +136,7 @@ export const performanceRouteElements = (
       <Route path="/ops/command-center"  element={<ProtectedRoute roles={['super_admin','admin','ceo','operations_manager','process_manager','branch_head','coo','manager','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOpsCommandCenter /></Gate></ProtectedRoute>} />
       <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><NativeCallMasterDashboard /></Gate></ProtectedRoute>} />
       <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/process-live" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><ProcessLivePage /></ProtectedRoute>} />
       <Route path="/call-master/inbound/:projectKey" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
       <Route path="/sales/brand-analytics" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager']}><Gate pageCode="SALES_BRAND_ANALYTICS"><NativeSalesDashboard /></Gate></ProtectedRoute>} />
       <Route path="/sales/housing-dashboards" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','process_manager','operations_manager','branch_head','hr','manager']}><NativeHousingDashboards /></ProtectedRoute>} />

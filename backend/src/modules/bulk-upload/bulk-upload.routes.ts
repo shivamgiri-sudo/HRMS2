@@ -314,16 +314,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_onfido_agent_daily_batch",
   // Bella Vita daily target plan - the one dataset no system emits. Sales,
   // cart leads, cancellations/RTO, call detail and inbound SLA are all NOT
-  // here: db_masmis and dialer_db already hold them. See bella-report-configs.ts.
-  "import_bella_target_plan_batch",
-  // Floor compliance audit - a Google Form export; see compliance-audit-bulk.service.ts.
-  "import_compliance_audit_batch",
   // Process-grain manual KPI feed - fills the gap left by db_masmis sales/allocation
   // tables that stopped being uploaded; see process-manual-kpi-bulk.service.ts.
   "import_process_manual_kpi_batch",
   // Per-process delivery actuals into process_delivery_actual, which the P&L already
-  // reads but nothing has ever written. See process-delivery-bulk.service.ts.
-  "import_process_delivery_batch",
   // Molecular Email / Reginald Men Email daily ticket actuals — the underlying
   // ticketing DB (molecular_db_email) does not exist anywhere in this project's
   // infrastructure. See email-ticket-daily-bulk.service.ts.
@@ -334,12 +328,8 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_lp_apr_daily_batch",
   // Clovia Email Dashboard, daily per agent — columns read verbatim from a
   // real sample ("Clovia Email Tracker Sept'26.xlsb"); no DB backing exists
-  // anywhere. See clovia-email-daily-bulk.service.ts.
-  "import_clovia_email_daily_batch",
   // Clovia Chat Performance, daily (Botlytics chat dump) — columns read
   // verbatim from a real sample; no DB backing exists anywhere. See
-  // clovia-chat-daily-bulk.service.ts.
-  "import_clovia_chat_daily_batch",
   // Clovia CRM Disposition, per ticket — columns read verbatim from a real
   // sample; no DB backing exists anywhere. See
   // clovia-crm-disposition-bulk.service.ts.
@@ -351,18 +341,12 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_housing_premium_sale_raw_batch",
   // Housing Owner's "Sale Raw" -- per its SOP, sale data pasted "up to the
   // Discount % column" into a Google Sheet with no DB backing anywhere. See
-  // housing-owner-sale-raw-bulk.service.ts.
-  "import_housing_owner_sale_raw_batch",
   // LP BPO Leads (M) export, Regional/Non Regional dashboards -- columns read
   // verbatim from real samples; no DB backing exists anywhere. See
   // lp-leads-bulk.service.ts.
   "import_lp_leads_regional_batch",
   "import_lp_leads_non_regional_batch",
   // DU Digital's Agents Time details export, Korea/Thailand dashboards --
-  // columns read verbatim from real samples; no DB backing exists anywhere.
-  // See du-apr-daily-bulk.service.ts.
-  "import_du_apr_korea_batch",
-  "import_du_apr_thailand_batch",
   // LP's Mascallnet NRGN Call History export, Regional/Non Regional
   // dashboards -- columns read verbatim from real samples; no DB backing
   // exists anywhere. See lp-cdr-cr-report-bulk.service.ts. (The sibling
@@ -372,10 +356,6 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_lp_cr_report_regional_batch",
   "import_lp_cr_report_non_regional_batch",
   // DU Digital's Agent ID -> MAS employee code directory, Korea/Thailand
-  // dashboards -- found while auditing the same workbooks used for DU APR;
-  // no DB backing exists anywhere. See du-team-mapping-bulk.service.ts.
-  "import_du_team_mapping_korea_batch",
-  "import_du_team_mapping_thailand_batch",
   // Housing Premium's per-agent monthly sales Target & Achievement --
   // found while auditing the same workbook used for Sale Raw; no DB
   // backing exists anywhere. See housing-premium-agent-target-bulk.service.ts.
@@ -430,23 +410,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // bb-sale-masmis-bulk.service.ts.
   "import_bb_sale_masmis_batch",
   "import_bb_apr_masmis_batch",
-  "import_bvo_repeat_cdr_masmis_batch",
-  "import_bvo_repeat_allocation_masmis_batch",
   "import_bb_cart_masmis_batch",
   "import_bb_chat_masmis_batch",
-  "import_bvo_order_export_masmis_batch",
-  "import_neemans_sale_raw_masmis_batch",
-  "import_neemans_allocation_masmis_batch",
-  "import_neemans_cart_masmis_batch",
-  "import_neemans_apr_masmis_batch",
-  "import_gnc_allocation_masmis_batch",
-  // Bella Repeat alignment — separate service, not covered by the generic bella-raw handler
-  "import_bella_repeat_alignment_batch",
   // Bla Bli Blu Overall Sales (curated workbook sheet, distinct from the Shopify direct export)
   "import_bla_bli_blu_overall_sales_batch",
-  // Remaining Clovia uploads — quality audit, re-churn calls, team alignment
-  "import_clovia_quality_audit_batch",
-  "import_clovia_rechurn_calls_batch",
   "import_clovia_team_alignment_batch",
   // Dalmia uploads — after-hour contacts, DialDesk DD raw, outbound CDR
   "import_dalmia_after_hour_batch",
@@ -869,14 +836,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_process_delivery_batch") {
-    const { importProcessDeliveryBatch } = await import(
-      "../bulk-upload/process-delivery-bulk.service.js"
-    );
-    const data = await importProcessDeliveryBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_email_ticket_daily_batch") {
     const { importEmailTicketDailyBatch } = await import(
       "../bulk-upload/email-ticket-daily-bulk.service.js"
@@ -890,22 +849,6 @@ async function dispatchImport(
       "../bulk-upload/lp-apr-daily-bulk.service.js"
     );
     const data = await importLpAprDailyBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_email_daily_batch") {
-    const { importCloviaEmailDailyBatch } = await import(
-      "../bulk-upload/clovia-email-daily-bulk.service.js"
-    );
-    const data = await importCloviaEmailDailyBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_chat_daily_batch") {
-    const { importCloviaChatDailyBatch } = await import(
-      "../bulk-upload/clovia-chat-daily-bulk.service.js"
-    );
-    const data = await importCloviaChatDailyBatch(id, userId);
     return { success: true, data };
   }
 
@@ -933,14 +876,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_housing_owner_sale_raw_batch") {
-    const { importHousingOwnerSaleRawBatch } = await import(
-      "../bulk-upload/housing-owner-sale-raw-bulk.service.js"
-    );
-    const data = await importHousingOwnerSaleRawBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_lp_leads_regional_batch") {
     const { importLpLeadsRegionalBatch } = await import(
       "../bulk-upload/lp-leads-bulk.service.js"
@@ -954,22 +889,6 @@ async function dispatchImport(
       "../bulk-upload/lp-leads-bulk.service.js"
     );
     const data = await importLpLeadsNonRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_du_apr_korea_batch") {
-    const { importDuAprKoreaBatch } = await import(
-      "../bulk-upload/du-apr-daily-bulk.service.js"
-    );
-    const data = await importDuAprKoreaBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_du_apr_thailand_batch") {
-    const { importDuAprThailandBatch } = await import(
-      "../bulk-upload/du-apr-daily-bulk.service.js"
-    );
-    const data = await importDuAprThailandBatch(id, userId);
     return { success: true, data };
   }
 
@@ -997,22 +916,6 @@ async function dispatchImport(
       "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
     );
     const data = await importLpCrReportNonRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_du_team_mapping_korea_batch") {
-    const { importDuTeamMappingKoreaBatch } = await import(
-      "../bulk-upload/du-team-mapping-bulk.service.js"
-    );
-    const data = await importDuTeamMappingKoreaBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_du_team_mapping_thailand_batch") {
-    const { importDuTeamMappingThailandBatch } = await import(
-      "../bulk-upload/du-team-mapping-bulk.service.js"
-    );
-    const data = await importDuTeamMappingThailandBatch(id, userId);
     return { success: true, data };
   }
 
@@ -1112,22 +1015,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_bvo_repeat_cdr_masmis_batch") {
-    const { importBvoRepeatCdrMasmisBatch } = await import(
-      "../bulk-upload/bvo-repeat-cdr-masmis-bulk.service.js"
-    );
-    const data = await importBvoRepeatCdrMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bvo_repeat_allocation_masmis_batch") {
-    const { importBvoRepeatAllocationMasmisBatch } = await import(
-      "../bulk-upload/bvo-repeat-allocation-masmis-bulk.service.js"
-    );
-    const data = await importBvoRepeatAllocationMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_bb_cart_masmis_batch") {
     const { importBbCartMasmisBatch } = await import(
       "../bulk-upload/bb-cart-masmis-bulk.service.js"
@@ -1144,62 +1031,6 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_bvo_order_export_masmis_batch") {
-    const { importBvoOrderExportMasmisBatch } = await import(
-      "../bulk-upload/bvo-order-export-masmis-bulk.service.js"
-    );
-    const data = await importBvoOrderExportMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_neemans_sale_raw_masmis_batch") {
-    const { importNeemansSaleRawMasmisBatch } = await import(
-      "../bulk-upload/neemans-sale-raw-masmis-bulk.service.js"
-    );
-    const data = await importNeemansSaleRawMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_neemans_allocation_masmis_batch") {
-    const { importNeemansAllocationMasmisBatch } = await import(
-      "../bulk-upload/neemans-allocation-masmis-bulk.service.js"
-    );
-    const data = await importNeemansAllocationMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_neemans_cart_masmis_batch") {
-    const { importNeemansCartMasmisBatch } = await import(
-      "../bulk-upload/neemans-cart-masmis-bulk.service.js"
-    );
-    const data = await importNeemansCartMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_neemans_apr_masmis_batch") {
-    const { importNeemansAprMasmisBatch } = await import(
-      "../bulk-upload/neemans-apr-masmis-bulk.service.js"
-    );
-    const data = await importNeemansAprMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_gnc_allocation_masmis_batch") {
-    const { importGncAllocationMasmisBatch } = await import(
-      "../bulk-upload/gnc-allocation-masmis-bulk.service.js"
-    );
-    const data = await importGncAllocationMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_compliance_audit_batch") {
-    const { importComplianceAuditBatch } = await import(
-      "../bulk-upload/compliance-audit-bulk.service.js"
-    );
-    const data = await importComplianceAuditBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_process_manual_kpi_batch") {
     const { importProcessManualKpiBatch } = await import(
       "../bulk-upload/process-manual-kpi-bulk.service.js"
@@ -1208,35 +1039,11 @@ async function dispatchImport(
     return { success: true, data };
   }
 
-  if (rpc_name === "import_bella_repeat_alignment_batch") {
-    const { importBellaRepeatAlignmentBatch } = await import(
-      "../bulk-upload/bella-repeat-alignment-bulk.service.js"
-    );
-    const data = await importBellaRepeatAlignmentBatch(id, userId);
-    return { success: true, data };
-  }
-
   if (rpc_name === "import_bla_bli_blu_overall_sales_batch") {
     const { importBlaBliBluOverallSalesBatch } = await import(
       "../bulk-upload/bla-bli-blu-overall-sales-bulk.service.js"
     );
     const data = await importBlaBliBluOverallSalesBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_quality_audit_batch") {
-    const { importCloviaQualityAuditBatch } = await import(
-      "../bulk-upload/clovia-quality-audit-bulk.service.js"
-    );
-    const data = await importCloviaQualityAuditBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_rechurn_calls_batch") {
-    const { importCloviaRechurnCallsBatch } = await import(
-      "../bulk-upload/clovia-rechurn-calls-bulk.service.js"
-    );
-    const data = await importCloviaRechurnCallsBatch(id, userId);
     return { success: true, data };
   }
 

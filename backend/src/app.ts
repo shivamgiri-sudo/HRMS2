@@ -865,6 +865,9 @@ app.use("/api/roster-analytics", rosterAnalyticsRouter);
 import { rosterAuditRouter } from "./modules/wfm/roster-audit.routes.js";
 app.use("/api/roster-audit", rosterAuditRouter);
 
+import processLiveDashboardRouter from "./modules/process-live-dashboard/process-live-dashboard.routes.js";
+app.use("/api/process-live", processLiveDashboardRouter);
+
 // social-feed and mcnmeet crons used to start HERE, at module scope, so they ran
 // on any import of app.ts — including tests and scripts — in the API process
 // only, registered in no worker registry and stoppable only by a deploy. mcnmeet

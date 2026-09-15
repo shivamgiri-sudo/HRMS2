@@ -1,4 +1,5 @@
 import { Fragment, useState, useMemo, useEffect, useCallback } from "react";
+import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -63,6 +64,12 @@ const C_RED_TEXT = "#DC2626";
 const TOOLTIP_STYLE = { background: "#FFFFFF", border: "1px solid #334155", borderRadius: 8, fontSize: 12 } as const;
 const AXIS_TICK = { fill: "#64748B", fontSize: 11 } as const;
 const GRID = { strokeDasharray: "3 3", stroke: "#E2E8F0" } as const;
+
+// ── GAS (Google Apps Script) design system — premium dashboard chrome ──────
+const GAS_TOPBAR = "radial-gradient(circle at 88% 12%,rgba(79,209,255,.18),transparent 24%),linear-gradient(118deg,#071b35 0%,#124d82 48%,#0f7890 100%)";
+const GAS_BRIEF = "radial-gradient(circle at 92% 18%,rgba(40,202,193,.20),transparent 28%),linear-gradient(132deg,#0a2848 0%,#124c72 61%,#176f81 100%)";
+const GAS_ACCENT = "linear-gradient(90deg,#2f6fed,#10b8d4,#18a866,#e89b19,#7c5ce5)";
+const GAS_KPI_ACCENTS = ["#2f6fed","#10b8d4","#18a866","#e89b19","#e5484d","#7c5ce5"] as const;
 
 interface ProcessRow {
   processId: string; processName: string; processCode: string | null; metrics: number;
@@ -434,6 +441,164 @@ function ChartCard({ title, subtitle, children }: {
   );
 }
 
+// ── GAS premium visual components ─────────────────────────────────────────
+
+/** Conic-gradient score ring (matches GAS .score-ring) */
+function GasScoreRing({ pct, color = "#45d49a" }: { pct: number; color?: string }) {
+  const safeColor = pct >= 80 ? "#45d49a" : pct >= 55 ? "#e89b19" : "#e5484d";
+  const ringColor = color === "#45d49a" ? safeColor : color;
+  return (
+    <div style={{
+      width: 82, height: 82, borderRadius: "50%", flexShrink: 0,
+      background: `conic-gradient(${ringColor} ${pct}%,rgba(255,255,255,.13) 0)`,
+      boxShadow: "0 10px 22px rgba(3,20,36,.20)", display: "grid", placeItems: "center", position: "relative",
+    }}>
+      <div style={{ width: 61, height: 61, borderRadius: "50%", background: "#0e3454", position: "absolute" }} />
+      <div style={{ position: "relative", textAlign: "center", lineHeight: 1 }}>
+        <strong style={{ fontSize: 22, color: "#fff", display: "block" }}>{Math.round(pct)}%</strong>
+        <small style={{ color: "#9fc8da", fontSize: 7.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: .5 }}>SCORE</small>
+      </div>
+    </div>
+  );
+}
+
+/** GAS-style KPI card with left accent bar + corner orb */
+function GasKpiCard({ label, value, foot, accent, onClick }: {
+  label: string; value: string; foot?: string; accent: string; onClick?: () => void;
+}) {
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      style={{
+        background: `linear-gradient(145deg,#fff 58%,${accent}14 100%)`,
+        border: "1px solid #dfe6ee", borderRadius: 14,
+        padding: "9px 11px 8px", minHeight: 84,
+        position: "relative", overflow: "hidden",
+        boxShadow: "0 6px 16px rgba(16,35,57,.065)",
+        cursor: onClick ? "pointer" : "default", textAlign: "left", width: "100%",
+        transition: "box-shadow .18s,transform .18s",
+      }}
+      onMouseEnter={onClick ? (e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 22px rgba(16,35,57,.11)"; } : undefined}
+      onMouseLeave={onClick ? (e) => { (e.currentTarget as HTMLElement).style.transform = ""; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 16px rgba(16,35,57,.065)"; } : undefined}
+    >
+      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: accent, borderRadius: "14px 0 0 14px" }} />
+      <div style={{ position: "absolute", width: 58, height: 58, borderRadius: "50%", right: -24, top: -25, background: `${accent}14` }} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingLeft: 7 }}>
+        <p style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: ".45px", color: "#6d7b8c", fontWeight: 900, minHeight: 20, lineHeight: 1.2 }}>{label}</p>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: accent, boxShadow: `0 0 0 4px ${accent}1a`, flexShrink: 0 }} />
+      </div>
+      <p style={{ fontSize: 21, lineHeight: 1.1, fontWeight: 950, color: "#1b2d42", marginTop: 4, paddingLeft: 7 }}>{value}</p>
+      {foot && <p style={{ marginTop: 4, fontSize: 8, color: "#8390a0", fontWeight: 700, paddingLeft: 7 }}>{foot}</p>}
+    </Tag>
+  );
+}
+
+/** Mini signal chip inside the dark executive brief card */
+function GasSignal({ name, value, note }: { name: string; value: string; note?: string }) {
+  return (
+    <div style={{ padding: "7px 8px", border: "1px solid rgba(255,255,255,.12)", borderRadius: 9, background: "rgba(255,255,255,.075)" }}>
+      <div style={{ fontSize: 8.5, color: "#a9cbd8", textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 850 }}>{name}</div>
+      <div style={{ marginTop: 3, fontSize: 15, color: "#fff", fontWeight: 900 }}>{value}</div>
+      {note && <div style={{ marginTop: 2, color: "#a9cbd8", fontSize: 8, fontWeight: 650 }}>{note}</div>}
+    </div>
+  );
+}
+
+/** A single priority action item (high/medium/positive) in the GAS action board */
+function GasActionItem({ index, severity, title, body }: {
+  index: number; severity: "critical" | "warning" | "positive"; title: string; body: string;
+}) {
+  const cls = severity === "critical"
+    ? { idx: { background: "#ffeaeb", color: "#b82c31" }, chip: { background: "#ffeaeb", color: "#b82c31" }, label: "CRITICAL" }
+    : severity === "positive"
+    ? { idx: { background: "#e7f7ef", color: "#177747" }, chip: { background: "#e7f7ef", color: "#177747" }, label: "POSITIVE" }
+    : { idx: { background: "#fff1d7", color: "#936000" }, chip: { background: "#fff1d7", color: "#936000" }, label: "REVIEW" };
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "26px 1fr auto", gap: 8, alignItems: "center",
+      padding: "8px 9px", border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, minHeight: 42,
+      background: "rgba(255,255,255,.09)",
+    }}>
+      <div style={{ width: 25, height: 25, borderRadius: 8, display: "grid", placeItems: "center", fontSize: 10, fontWeight: 950, ...cls.idx }}>{index}</div>
+      <div>
+        <strong style={{ display: "block", color: "#fff", fontSize: 11.5, lineHeight: 1.25 }}>{title}</strong>
+        <p style={{ margin: "3px 0 0", color: "#d1e5ee", fontSize: 10, lineHeight: 1.38, fontWeight: 650 }}>{body}</p>
+      </div>
+      <span style={{ padding: "4px 6px", borderRadius: 999, fontSize: 7.5, fontWeight: 950, textTransform: "uppercase", whiteSpace: "nowrap", ...cls.chip }}>{cls.label}</span>
+    </div>
+  );
+}
+
+/** Executive Brief card (dark navy with score ring + health status + signal grid) */
+function GasExecutiveBrief({ processName, headcount, metrics, metricsWithData, staleCount, failCount, passCount, periodLabel }: {
+  processName: string; headcount: number; metrics: number; metricsWithData: number;
+  staleCount: number; failCount: number; passCount: number; periodLabel: string;
+}) {
+  const totalTargeted = failCount + passCount;
+  const scorePct = totalTargeted > 0 ? Math.round((passCount / totalTargeted) * 100) : (metricsWithData > 0 ? Math.round((metricsWithData / metrics) * 100) : 0);
+  const health = scorePct >= 80 ? { label: "HEALTHY", bg: "rgba(69,212,154,.16)", color: "#7ff0bb", border: "rgba(95,226,169,.22)" }
+    : scorePct >= 55 ? { label: "WATCH", bg: "rgba(232,155,25,.16)", color: "#ffd283", border: "rgba(255,203,106,.24)" }
+    : { label: "CRITICAL", bg: "rgba(229,72,77,.18)", color: "#ffb4b7", border: "rgba(255,153,157,.24)" };
+  const narrative = totalTargeted > 0
+    ? `${passCount} of ${totalTargeted} targeted metrics are on track. ${failCount > 0 ? `${failCount} metric${failCount === 1 ? "" : "s"} missing target.` : "All targeted metrics passing."}`
+    : `${metricsWithData} of ${metrics} metrics have data for this period. ${staleCount > 0 ? `${staleCount} metric${staleCount === 1 ? "" : "s"} may be stale.` : ""}`;
+  return (
+    <div style={{ padding: "16px 18px", borderRadius: 16, border: "1px solid #1b5770", color: "#fff", position: "relative", overflow: "hidden", background: GAS_BRIEF }}>
+      <div aria-hidden style={{ position: "absolute", width: 220, height: 220, borderRadius: "50%", right: -80, bottom: -125, border: "35px solid rgba(255,255,255,.035)", pointerEvents: "none" }} />
+      <div style={{ position: "relative" }}>
+        <div style={{ marginBottom: 5, color: "#91dce8", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 1.25 }}>Process Performance</div>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.2, color: "#fff" }}>{processName}</h3>
+          <span style={{ padding: "5px 9px", borderRadius: 999, background: "rgba(255,255,255,.10)", border: "1px solid rgba(255,255,255,.14)", fontSize: 9, fontWeight: 800, color: "#d7eef5", whiteSpace: "nowrap" }}>{periodLabel}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "12px 0" }}>
+          <GasScoreRing pct={scorePct} />
+          <div>
+            <span style={{ display: "inline-flex", padding: "5px 8px", borderRadius: 999, background: health.bg, color: health.color, border: `1px solid ${health.border}`, fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: .5 }}>
+              {health.label}
+            </span>
+            <p style={{ margin: "7px 0 0", color: "#d2e5ee", lineHeight: 1.45, fontSize: 11.5, fontWeight: 600, maxWidth: 500 }}>{narrative}</p>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7 }}>
+          <GasSignal name="Headcount" value={String(headcount)} note="active" />
+          <GasSignal name="Metrics" value={String(metrics)} note="tracked" />
+          <GasSignal name="With data" value={String(metricsWithData)} note={`${metrics > 0 ? Math.round(metricsWithData / metrics * 100) : 0}% coverage`} />
+          <GasSignal name="Stale" value={String(staleCount)} note={staleCount === 0 ? "feeds current" : "feeds quiet"} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Action Board (dark navy, priority action list from insights + feed issues) */
+function GasActionBoard({ items }: { items: Array<{ severity: "critical" | "warning" | "positive"; title: string; body: string }> }) {
+  return (
+    <div style={{ padding: "16px 18px", borderRadius: 16, border: "1px solid #1b5770", color: "#fff", background: GAS_BRIEF, display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <h3 style={{ margin: 0, color: "#fff", fontSize: 18 }}>Action Board</h3>
+        <span style={{ padding: "4px 7px", borderRadius: 999, background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.14)", fontSize: 8, fontWeight: 900, textTransform: "uppercase", letterSpacing: .5, color: "#d5ecf6" }}>
+          {items.length} item{items.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 9px", border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, background: "rgba(255,255,255,.09)" }}>
+          <div style={{ width: 25, height: 25, borderRadius: 8, display: "grid", placeItems: "center", fontSize: 14, background: "#e7f7ef", color: "#177747" }}>✓</div>
+          <div><strong style={{ color: "#fff", fontSize: 11.5 }}>All clear</strong><p style={{ margin: "2px 0 0", color: "#d1e5ee", fontSize: 10 }}>No critical issues or target misses found.</p></div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 7, alignContent: "start" }}>
+          {items.slice(0, 5).map((item, i) => (
+            <GasActionItem key={i} index={i + 1} severity={item.severity} title={item.title} body={item.body} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Sparkline({ trend, color, big }: { trend: Reading["trend"]; color: string; big?: boolean }) {
   // Only points carrying a number: a gap must read as a gap. connectNulls would
   // draw a straight line through a day nobody measured.
@@ -558,53 +723,65 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
 }
 
 /**
- * A section metric that isn't the one thing currently wrong: a small,
- * dense, flowing chip rather than a full tile — the same click-through and
- * the same status colour, just sized for "everything else is fine, here's
- * the number" instead of competing for the same visual weight as the one
- * metric that actually needs a look.
+ * GAS-style KPI card for a section metric — left accent bar, corner orb,
+ * colored value (pass/fail/accent), delta indicator. Clicking opens the
+ * drilldown drawer just as the original chip did.
  */
 function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
   r: Reading; accent: string; staleAfter: number; onOpen: () => void;
 }) {
   const stale = r.staleDays !== null && r.staleDays > staleAfter;
   const status = targetStatus(r);
-  const color = status === "fail" ? C_RED : status === "pass" ? C_GREEN : accent;
+  const valueColor = status === "fail" ? "#e5484d" : status === "pass" ? "#18a866" : accent;
   const d = deltaOf(r);
+  const fresh = r.provisional ? freshnessCaption(r) : null;
   return (
     <button type="button" onClick={onOpen} title="Open the full working behind this number"
-      className="shrink-0 text-left rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 min-w-[122px] max-w-[168px] cursor-pointer transition-all duration-200 hover:shadow-sm hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
-      <div className="flex items-center gap-1 min-h-[1.4em]">
-        <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide leading-tight truncate">
+      style={{
+        background: `linear-gradient(145deg,#fff 58%,${accent}14 100%)`,
+        border: "1px solid #dfe6ee", borderRadius: 14,
+        padding: "9px 11px 8px", minHeight: 84, width: 152,
+        position: "relative", overflow: "hidden",
+        boxShadow: "0 6px 16px rgba(16,35,57,.065)",
+        cursor: "pointer", textAlign: "left", flexShrink: 0,
+        transition: "box-shadow .18s,transform .18s",
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 22px rgba(16,35,57,.11)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ""; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 16px rgba(16,35,57,.065)"; }}
+      className="focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+    >
+      {/* Left accent bar */}
+      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: accent, borderRadius: "14px 0 0 14px" }} />
+      {/* Corner orb */}
+      <div style={{ position: "absolute", width: 58, height: 58, borderRadius: "50%", right: -24, top: -25, background: `${accent}14` }} />
+      {/* Header row: label + dot */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, paddingLeft: 7 }}>
+        <p style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: ".45px", color: "#6d7b8c", fontWeight: 900, lineHeight: 1.2, minHeight: 20, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "normal", wordBreak: "break-word" }}>
           {r.label}
         </p>
-        <div className="ml-auto flex shrink-0 gap-0.5">
-          {r.source === "manual" && <PenLine className="h-2 w-2 text-purple-500" aria-label="Typed in by hand" />}
-          {r.provisional && (
-            <span title={freshnessCaption(r)?.full ?? "Today is still in progress — this will move as the day fills in"}
-              className="text-[9px] font-bold text-blue-600 whitespace-nowrap">
-              {freshnessCaption(r)?.short ?? "today"}
-            </span>
-          )}
-          {stale && <Clock className="h-2 w-2 text-amber-600" aria-label={`Last reading ${r.staleDays} days ago`} />}
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: accent, boxShadow: `0 0 0 4px ${accent}1a` }} />
+          {r.source === "manual" && <PenLine className="h-2 w-2 text-purple-500" />}
+          {stale && <Clock style={{ width: 8, height: 8, color: "#e89b19" }} />}
         </div>
       </div>
-      <div className="flex items-baseline gap-1 mt-0.5">
-        <span className={`text-sm font-bold tabular-nums ${r.value === null ? "text-slate-400 text-xs font-normal italic" : ""}`}
-          style={r.value === null ? undefined : { color }}>
+      {/* Value row */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 4, paddingLeft: 7 }}>
+        <span style={{ fontSize: 21, lineHeight: 1.1, fontWeight: 950, color: r.value === null ? "#94a3b8" : valueColor, fontStyle: r.value === null ? "italic" : undefined, fontSize: r.value === null ? 12 : 21 } as React.CSSProperties}>
           {formatValue(r.value, r.unit)}
         </span>
         {d && (
-          <span className={`text-[9px] font-bold ${d.good === null ? "text-slate-400" : d.good ? "text-emerald-600" : "text-red-600"}`}>
+          <span style={{ fontSize: 9, fontWeight: 900, color: d.good === null ? "#94a3b8" : d.good ? "#18a866" : "#e5484d" }}>
             {d.delta === 0 ? "flat" : (d.delta > 0 ? "↑" : "↓") + Math.abs(d.delta).toFixed(1)}
           </span>
         )}
+        {fresh && <span style={{ fontSize: 8, color: "#2f6fed", fontWeight: 700 }}>{fresh.short}</span>}
       </div>
-      {/* The colour alone says pass/fail; this says against what -- dropped
-          silently here once already, restored because a red chip with no
-          target is a verdict with no evidence. */}
+      {/* Target caption */}
       {targetCaption(r) && (
-        <p className="text-[9.5px] text-slate-400 mt-0.5 truncate">{targetCaption(r)}</p>
+        <p style={{ marginTop: 4, fontSize: 8, color: "#8390a0", fontWeight: 700, paddingLeft: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {targetCaption(r)}
+        </p>
       )}
     </button>
   );
@@ -3415,7 +3592,7 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                 </div>
               ) : <p className="text-xs text-slate-400 italic">None</p>}
               <p className="text-[10px] text-slate-400 mt-1.5">
-                A “no data” row means the source was read and the calculation had nothing to say —
+                A "no data" row means the source was read and the calculation had nothing to say —
                 not that the value was zero.
               </p>
             </section>
@@ -4020,6 +4197,7 @@ export default function ProcessOperationsPage() {
   const [drill, setDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const [view, setView] = useState<"kpi" | "live">("kpi");
 
   const { data: listData, isLoading: listLoading, isError: listErrored, refetch: refetchList } = useQuery({
     queryKey: ["process-operations", "processes"],
@@ -4102,105 +4280,75 @@ export default function ProcessOperationsPage() {
     risk ? <RiskBars key="r" metrics={risk.metrics} /> : null,
   ].filter(Boolean);
 
+  // ── Derived data for the GAS executive brief (reuse allMetrics) ───────────
+  const allMetricsForBrief = allMetrics;
+  const passCount = useMemo(() => allMetrics.filter((m) => targetStatus(m) === "pass").length, [allMetrics]);
+  const failCount = useMemo(() => allMetrics.filter((m) => targetStatus(m) === "fail").length, [allMetrics]);
+  const metricsWithData = useMemo(() => allMetrics.filter((m) => m.value !== null).length, [allMetrics]);
+
+  // ── Action board items built from insights + feed health ──────────────────
+  const { data: healthForBoard } = useQuery({
+    queryKey: ["process-operations", "business-health", current],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessBusinessHealth>>(
+      `/api/process-operations/${current}/business-health`),
+    enabled: Boolean(current),
+    staleTime: 60_000,
+  });
+  const actionItems = useMemo(() => {
+    const items: Array<{ severity: "critical" | "warning" | "positive"; title: string; body: string }> = [];
+    if (ops) {
+      const insights = deriveInsights(ops, healthForBoard?.data);
+      insights.slice(0, 4).forEach((ins) => {
+        items.push({ severity: ins.severity === "critical" ? "critical" : "warning", title: ins.what, body: ins.why });
+      });
+    }
+    if (feedHealth) {
+      const dead = feedHealth.feeds.filter((f) => f.state === "stopped").length;
+      if (dead > 0) items.push({ severity: "warning", title: `${dead} metric feed${dead === 1 ? "" : "s"} stopped`, body: `No data received for over ${feedHealth.stoppedAfterDays} days — tiles may show stale values.` });
+    }
+    if (items.length === 0 && ops) {
+      items.push({ severity: "positive", title: "All systems operating", body: "No target misses or feed issues detected for this process." });
+    }
+    return items;
+  }, [ops, feedHealth, healthForBoard]);
+
+  const periodLabel = ops
+    ? (ops.period === "trend" ? `${ops.windowDays}d trend` : formatPeriodRange(ops.periodFrom, ops.periodTo) ?? ops.period)
+    : PERIODS.find((p) => p.key === period)?.label ?? period;
+
   return (
     <DashboardLayout>
-      <div className="p-4 md:p-6 space-y-4 bg-slate-50/70 dark:bg-transparent min-h-full">
-        <header className="rounded-2xl text-white px-5 py-4 shadow-md relative overflow-hidden" style={{ background: NAVY }}>
-          <div aria-hidden className="absolute inset-0 opacity-25"
-            style={{ background: "radial-gradient(circle at 20% 15%, #6366F1, transparent 55%)" }} />
-          <div className="relative flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="text-lg md:text-xl font-bold flex items-center gap-2">
-                <Activity className="h-5 w-5" />Process Operations
-              </h1>
-              <p className="text-[12px] text-indigo-200 mt-1 max-w-3xl">
-                Every metric a process is measured on, from whichever system supplies it.
-                Click any tile for the formula, the source and every reading behind it.
-              </p>
-              {ops && (
-                <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2.5 text-[12px] text-white/90">
-                  <span className="inline-flex items-center gap-1.5 font-semibold">
-                    <Users className="h-3.5 w-3.5" />{ops.headcount} active
-                  </span>
-                  <span className="tabular-nums">
-                    {allMetrics.length} metrics
-                    {ops.period === "trend"
-                      ? ` · ${ops.windowDays} day trend`
-                      : formatPeriodRange(ops.periodFrom, ops.periodTo)
-                        ? ` · ${formatPeriodRange(ops.periodFrom, ops.periodTo)}`
-                        : ""}
-                  </span>
-                  {noDataCount > 0 && <span className="tabular-nums">{noDataCount} no data</span>}
-                  {staleCount > 0 && (
-                    <span className="inline-flex items-center gap-1.5 tabular-nums text-amber-300">
-                      <Clock className="h-3.5 w-3.5" />{staleCount} stale
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
+      {/* Full-page background matching GAS radial gradient */}
+      <div style={{ minHeight: "100vh", background: "radial-gradient(circle at 5% 2%,rgba(47,111,237,.09),transparent 24%),radial-gradient(circle at 96% 3%,rgba(15,159,143,.07),transparent 25%),linear-gradient(180deg,#f1f5fa 0,#f7f9fc 310px,#f4f7fa 100%)" }}>
 
-            <div className="flex flex-col items-end gap-2 shrink-0">
-              {/* Period selector: latest-reading trend, or a real calendar aggregate
-                  (SUM/SUM across the range) compared against the same range one
-                  period back — Today vs yesterday, WTD vs last week, MTD vs last
-                  month. Not a rolling window; a real calendar boundary. */}
-              <div role="tablist" aria-label="Reporting period" className="inline-flex rounded-lg bg-white/10 p-0.5">
-                {PERIODS.map((p) => (
-                  <button key={p.key} type="button" role="tab" aria-selected={period === p.key}
-                    title={p.caption} onClick={() => setPeriod(p.key)}
-                    className={`cursor-pointer rounded-md px-2.5 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
-                      period === p.key ? "bg-white text-slate-900 shadow-sm" : "text-indigo-200 hover:text-white"}`}>
-                    {p.label}
-                  </button>
-                ))}
+        {/* ── Sticky shell: accent line + topbar ─────────────────────────── */}
+        <div style={{ position: "sticky", top: 0, zIndex: 100, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
+          {/* Rainbow accent line */}
+          <div style={{ height: 4, background: GAS_ACCENT }} />
+
+          {/* Topbar */}
+          <div style={{ minHeight: 72, padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, color: "#fff", background: GAS_TOPBAR, position: "relative", overflow: "hidden" }}>
+            <div aria-hidden style={{ position: "absolute", width: 260, height: 260, borderRadius: "50%", right: -80, top: -170, background: "linear-gradient(135deg,rgba(255,255,255,.13),rgba(255,255,255,0))", pointerEvents: "none" }} />
+
+            {/* Brand */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative", zIndex: 1, minWidth: 0 }}>
+              <div>
+                <div style={{ color: "#8dd9eb", fontSize: 9, fontWeight: 900, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 3 }}>MAS PeopleOS</div>
+                <h1 style={{ margin: 0, fontSize: 20, letterSpacing: .25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 3px 12px rgba(0,0,0,.24)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <Activity size={18} />Process Operations
+                </h1>
+                <p style={{ margin: "3px 0 0", color: "#c9dceb", fontWeight: 650, fontSize: 11 }}>
+                  Every metric a process is measured on — click any tile to drill in
+                </p>
               </div>
-              <button type="button" onClick={() => setManualEntryOpen(true)}
-                title="Type in today's number for a metric no automated feed reaches"
-                className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-white/20 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1">
-                <PenLine size={12} />Add a reading
-              </button>
             </div>
-          </div>
-        </header>
 
-        {listLoading ? (
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" />Loading processes…
-          </div>
-        ) : listErrored ? (
-          // Distinct from "zero processes" on purpose. A failed request and a
-          // genuinely empty result look identical to a reader unless the page
-          // says which one happened -- the same distinction this page draws
-          // everywhere else between "no data" and a fabricated zero.
-          <div className="rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-900 p-6 text-sm text-red-700 dark:text-red-400 shadow-sm flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              Could not reach the server. This is not "no processes" -- the request itself failed.
-            </span>
-            <button type="button" onClick={() => refetchList()}
-              className="shrink-0 rounded-lg bg-red-600 text-white text-xs font-semibold px-3 py-1.5 hover:bg-red-700 transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-800 focus-visible:ring-offset-1">
-              Retry
-            </button>
-          </div>
-        ) : processes.length === 0 ? (
-          <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">
-            No process in your access is currently reporting a metric.
-          </div>
-        ) : (
-          <>
-            {feedHealth && <StoppedFeeds health={feedHealth} />}
-            {feedHealth && (
-              <NeverReportedBanner groups={feedHealth.neverReported}
-                currentProcessId={current} currentProcessName={currentProcess?.processName ?? null} />
-            )}
-
-            <div className="rounded-2xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-800 shadow-sm p-3.5">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1 block">
-                    Branch
-                  </label>
+            {/* Right: filters + period + live pill */}
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, position: "relative", zIndex: 1, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {/* Branch filter */}
+              {processes.length > 0 && (
+                <div style={{ minWidth: 148 }}>
+                  <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Branch</label>
                   <SearchableSelect
                     aria-label="Filter by branch"
                     options={[{ value: "all", label: "All branches", hint: `${processes.length}` }, ...branchOptions.map((b) => ({
@@ -4213,151 +4361,232 @@ export default function ProcessOperationsPage() {
                     searchPlaceholder="Search branches…"
                   />
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1 block">
-                    Process
-                  </label>
+              )}
+              {/* Process filter */}
+              {processes.length > 0 && (
+                <div style={{ minWidth: 200 }}>
+                  <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Process</label>
                   <SearchableSelect
                     aria-label="Select a process"
                     options={processOptions}
                     value={current ?? ""}
                     onChange={(id) => setActive(id)}
-                    placeholder={branchScopedProcesses.length ? "Search processes by name or code…" : "No process in this branch"}
+                    placeholder={branchScopedProcesses.length ? "Search processes…" : "No process in this branch"}
                     searchPlaceholder="Type a process name or code…"
                     emptyText="No process matches that search."
                     disabled={!branchScopedProcesses.length}
                   />
                 </div>
+              )}
+              {/* Period tabs */}
+              <div>
+                <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Period</label>
+                <div role="tablist" aria-label="Reporting period" style={{ display: "inline-flex", borderRadius: 10, background: "rgba(255,255,255,.10)", padding: 3 }}>
+                  {PERIODS.map((p) => (
+                    <button key={p.key} type="button" role="tab" aria-selected={period === p.key}
+                      title={p.caption} onClick={() => setPeriod(p.key)}
+                      style={{
+                        cursor: "pointer", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 900,
+                        border: 0, transition: "background .15s,color .15s",
+                        background: period === p.key ? "#fff" : "transparent",
+                        color: period === p.key ? "#183b59" : "#d0e8f5",
+                        boxShadow: period === p.key ? "0 3px 8px rgba(0,0,0,.15)" : "none",
+                      }}
+                      className="focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1">
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+              {/* View toggle: KPI Metrics / Live Dashboard */}
+              <div style={{ display: "inline-flex", borderRadius: 10, background: "rgba(255,255,255,.10)", padding: 3, alignSelf: "flex-end" }}>
+                <button type="button" onClick={() => setView("kpi")}
+                  style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "kpi" ? "#fff" : "transparent", color: view === "kpi" ? "#183b59" : "#d0e8f5", boxShadow: view === "kpi" ? "0 3px 8px rgba(0,0,0,.15)" : "none" }}>
+                  KPI Metrics
+                </button>
+                <button type="button" onClick={() => setView("live")}
+                  style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "live" ? "#10b8d4" : "transparent", color: view === "live" ? "#fff" : "#d0e8f5", boxShadow: view === "live" ? "0 3px 8px rgba(0,0,0,.20)" : "none" }}>
+                  Live Dashboard
+                </button>
+              </div>
+              {/* Live pill */}
+              <div style={{ height: 34, padding: "0 12px", border: "1px solid rgba(255,255,255,.19)", borderRadius: 999, background: "rgba(255,255,255,.09)", display: "flex", alignItems: "center", gap: 8, color: "#e9f8f4", fontWeight: 850, fontSize: 11, whiteSpace: "nowrap", alignSelf: "flex-end" }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#45e59b", boxShadow: "0 0 0 5px rgba(69,229,155,.13)", animation: "pulse 2.2s ease-in-out infinite" }} />
+                LIVE
+              </div>
+              {/* Add reading button */}
+              <button type="button" onClick={() => setManualEntryOpen(true)}
+                title="Type in today's number for a metric no automated feed reaches"
+                style={{ height: 34, padding: "0 12px", border: "1px solid rgba(255,255,255,.24)", borderRadius: 10, background: "linear-gradient(135deg,rgba(255,255,255,.18),rgba(255,255,255,.08))", color: "#fff", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 10, fontWeight: 950, whiteSpace: "nowrap", letterSpacing: .25, boxShadow: "0 5px 14px rgba(0,0,0,.16)", transition: ".18s", alignSelf: "flex-end" }}
+                className="focus:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                <PenLine size={13} />Add reading
+              </button>
+            </div>
+          </div>
+        </div>
 
-              {currentProcess && (
-                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[12px] text-slate-500 dark:text-slate-400">
-                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
-                    {currentProcess.processName}
-                    {currentProcess.processCode && (
-                      <span className="font-mono text-[10px] font-normal text-slate-400 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">
-                        {currentProcess.processCode}
-                      </span>
-                    )}
-                  </span>
-                  <span>{currentProcess.branchName ?? "Unassigned branch"}</span>
-                  <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{currentProcess.headcount} active</span>
-                  <span className="tabular-nums">{currentProcess.metrics} metrics tracked</span>
-                  {branchScopedProcesses.length > 1 && (
-                    <span className="text-slate-400">{branchScopedProcesses.length} processes in this branch</span>
+        {/* ── Main content ─────────────────────────────────────────────────── */}
+        <main style={{ maxWidth: 1880, margin: "auto", padding: "18px 20px 38px" }}>
+
+          {/* Loading / error / empty states */}
+          {listLoading ? (
+            <div className="flex items-center gap-2 text-sm text-slate-500 py-8">
+              <Loader2 className="h-4 w-4 animate-spin" />Loading processes…
+            </div>
+          ) : listErrored ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-900 p-6 text-sm text-red-700 dark:text-red-400 shadow-sm flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />Could not reach the server. This is not "no processes" — the request itself failed.</span>
+              <button type="button" onClick={() => refetchList()} className="shrink-0 rounded-lg bg-red-600 text-white text-xs font-semibold px-3 py-1.5 hover:bg-red-700 transition cursor-pointer focus:outline-none">Retry</button>
+            </div>
+          ) : processes.length === 0 ? (
+            <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">No process in your access is currently reporting a metric.</div>
+          ) : !current ? (
+            <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">Select a process above to view its metrics.</div>
+          ) : view === "live" ? (
+            /* ── Live Dashboard (Dialler) view ─────────────────────────────── */
+            <div>
+              <DiallerLivePanel processName={currentProcess?.processName ?? ""} />
+            </div>
+          ) : (
+            <div className="space-y-4">
+
+              {/* ── Row 1: Executive Brief + Action Board ─────────────────── */}
+              {ops && currentProcess && (
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(320px,.9fr)", gap: 14, alignItems: "stretch" }}>
+                  <GasExecutiveBrief
+                    processName={currentProcess.processName}
+                    headcount={ops.headcount}
+                    metrics={allMetricsForBrief.length}
+                    metricsWithData={metricsWithData}
+                    staleCount={staleCount}
+                    failCount={failCount}
+                    passCount={passCount}
+                    periodLabel={periodLabel ?? period}
+                  />
+                  <GasActionBoard items={actionItems} />
+                </div>
+              )}
+
+              {/* ── Row 2: Feed health banners ────────────────────────────── */}
+              {feedHealth && <StoppedFeeds health={feedHealth} />}
+              {feedHealth && (
+                <NeverReportedBanner groups={feedHealth.neverReported}
+                  currentProcessId={current} currentProcessName={currentProcess?.processName ?? null} />
+              )}
+
+              {/* ── Row 3: Ops loading state ──────────────────────────────── */}
+              {opsLoading || !ops ? (
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />Loading metrics…
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {ops.headcount === 0 && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 p-3 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>This process has no active employees — a headcount-based metric below counts over nobody.</span>
+                    </div>
                   )}
+
+                  {/* Pareto chart + insights (existing panels preserved) */}
+                  {current && ops && <ProcessCardInsightsPanel processId={current} ops={ops} />}
+
+                  {/* Business health */}
+                  {current && <BusinessHealthPanel processId={current} />}
+
+                  {/* Conversion funnel + quality charts */}
+                  {charts.length > 0 && (
+                    <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
+                  )}
+
+                  {/* Quality & analysis panels */}
+                  {current && <VoiceOfCustomerPanel processId={current} period={period} />}
+                  {current && <FatalCallsPanel processId={current} period={period} />}
+                  {current && <AgentAuditSummaryPanel processId={current} period={period} />}
+                  {current && <ScenarioDistributionPanel processId={current} period={period} />}
+                  {current && <ScoreComponentsPanel processId={current} period={period} />}
+                  {current && <AchtCategorizationPanel processId={current} period={period} />}
+                  {current && <CriticalSignalsPanel processId={current} period={period} />}
+                  {current && <DailyQualityTrendPanel processId={current} />}
+                  {current && <CustomerRiskCardsPanel processId={current} period={period} />}
+                  {current && <FatalAnalysisPanel processId={current} period={period} />}
+                  {current && <DayWiseScenarioAuditPanel processId={current} period={period} />}
+                  {current && <RepeatAnalysisPanel processId={current} period={period} />}
+                  {current && <FraudCallPanel processId={current} period={period} />}
+                  {current && <WorkforceCorrelationPanel processId={current} period={period} />}
+
+                  {/* ── Row N: GAS-styled metric sections ──────────────────── */}
+                  {[...ops.sections, ...(ops.ungrouped.length
+                    ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]
+                    : [])].map((s, idx) => {
+                    const sStyle = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
+                    const Icon = sStyle.icon;
+                    const hero = heroOf(s.metrics);
+                    const rest = hero ? s.metrics.filter((m) => m.metricKey !== hero.metricKey) : s.metrics;
+                    // GAS-style panel: white bg, blue left bar, hover lift
+                    return (
+                      <section key={s.key} style={{
+                        background: "#fff", border: "1px solid #dfe6ee", borderRadius: 16,
+                        boxShadow: "0 12px 30px rgba(16,35,57,.08)", padding: "15px",
+                        position: "relative", overflow: "hidden",
+                      }}>
+                        {/* Left accent bar */}
+                        <div style={{ position: "absolute", left: 0, top: 0, width: 4, height: 55, background: `linear-gradient(180deg,${sStyle.accent},${sStyle.accent}88)`, borderRadius: "0 0 7px 0" }} />
+                        {/* Section header */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 13, paddingLeft: 10 }}>
+                          <span style={{ padding: 6, borderRadius: 8, background: `${sStyle.accent}1A`, display: "flex" }}>
+                            <Icon style={{ width: 14, height: 14, color: sStyle.accent }} />
+                          </span>
+                          <h2 style={{ margin: 0, color: "#102f4b", fontSize: 16, letterSpacing: .1, display: "flex", alignItems: "center", gap: 8 }}>
+                            {s.title}
+                            <small style={{ color: "#50677d", fontWeight: 800, background: "#edf5fc", border: "1px solid #d8e7f3", borderRadius: 999, padding: "5px 9px", lineHeight: 1.15, fontSize: 10 }}>
+                              {s.metrics.length} metric{s.metrics.length === 1 ? "" : "s"}
+                            </small>
+                          </h2>
+                          {s.blurb && <p style={{ fontSize: 10, color: "#697586", marginLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.blurb}</p>}
+                        </div>
+                        {/* Cards: hero + chips */}
+                        <div style={hero ? { display: "grid", gap: 12, gridTemplateColumns: "260px 1fr", alignItems: "stretch" } : {}}>
+                          {hero && (
+                            <HeroKpiCard r={hero} staleAfter={ops.staleAfterDays} period={period}
+                              onOpen={() => setDrill(hero.metricKey)} />
+                          )}
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignContent: "flex-start" }}>
+                            {rest.map((r, i) => (
+                              <MiniKpiChip key={r.metricKey} r={r}
+                                accent={GAS_KPI_ACCENTS[i % GAS_KPI_ACCENTS.length]}
+                                staleAfter={ops.staleAfterDays}
+                                onOpen={() => setDrill(r.metricKey)} />
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    );
+                  })}
                 </div>
               )}
             </div>
+          )}
 
-            {opsLoading || !ops ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Loader2 className="h-4 w-4 animate-spin" />Loading metrics…
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {ops.headcount === 0 && (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 p-3 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                    <span>
-                      This process has no active employees, so a headcount-based number below is
-                      counting over nobody — a zero means “no people”, not “no problems”.
-                    </span>
-                  </div>
-                )}
+          {current && (
+            <DrilldownDrawer processId={current} metricKey={drill} period={period} onClose={() => setDrill(null)} />
+          )}
+          <ManualEntryDrawer
+            open={manualEntryOpen}
+            processId={current}
+            processName={ops?.processName ?? processes.find((p) => p.processId === current)?.processName ?? null}
+            onClose={() => setManualEntryOpen(false)}
+            onSaved={() => {
+              qc.invalidateQueries({ queryKey: ["process-operations", "detail", current] });
+              qc.invalidateQueries({ queryKey: ["process-operations", "processes"] });
+              qc.invalidateQueries({ queryKey: ["process-operations", "drilldown"] });
+              qc.invalidateQueries({ queryKey: ["process-operations", "raw-rows"] });
+            }}
+          />
 
-                {/* Process Performance Card reading order: an insights strip
-                    first (what actually needs a look, derived from this
-                    page's own real target checks), then headcount &
-                    operations (the staffing/dialler reality this period),
-                    then quality, then hygiene last -- see the SECTIONS
-                    comment in process-operations.service.ts. */}
-                {current && ops && <ProcessCardInsightsPanel processId={current} ops={ops} />}
-                {current && <BusinessHealthPanel processId={current} />}
-
-                {charts.length > 0 && (
-                  <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
-                )}
-
-                {current && <VoiceOfCustomerPanel processId={current} period={period} />}
-                {current && <FatalCallsPanel processId={current} period={period} />}
-                {current && <AgentAuditSummaryPanel processId={current} period={period} />}
-                {current && <ScenarioDistributionPanel processId={current} period={period} />}
-                {current && <ScoreComponentsPanel processId={current} period={period} />}
-                {current && <AchtCategorizationPanel processId={current} period={period} />}
-                {current && <CriticalSignalsPanel processId={current} period={period} />}
-                {current && <DailyQualityTrendPanel processId={current} />}
-                {current && <CustomerRiskCardsPanel processId={current} period={period} />}
-                {current && <FatalAnalysisPanel processId={current} period={period} />}
-                {current && <DayWiseScenarioAuditPanel processId={current} period={period} />}
-                {current && <RepeatAnalysisPanel processId={current} period={period} />}
-                {current && <FraudCallPanel processId={current} period={period} />}
-                {current && <WorkforceCorrelationPanel processId={current} period={period} />}
-
-                {[...ops.sections, ...(ops.ungrouped.length
-                  ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]
-                  : [])].map((s, idx) => {
-                  const style = SECTION_STYLE[s.key] ?? SECTION_STYLE.other;
-                  const Icon = style.icon;
-                  // One hero when the section actually has something failing its
-                  // target, everything else as a flowing strip -- not a uniform
-                  // grid of equally-weighted tiles regardless of whether a metric
-                  // is fine or in trouble. Alternating band tint (not per-tile
-                  // borders) is what separates one section from the next.
-                  const hero = heroOf(s.metrics);
-                  const rest = hero ? s.metrics.filter((m) => m.metricKey !== hero.metricKey) : s.metrics;
-                  return (
-                    <section key={s.key}
-                      className={`rounded-2xl p-3.5 md:p-4 -mx-1 ${idx % 2 === 1 ? "bg-white/70 dark:bg-slate-900/40" : ""}`}>
-                      <div className="flex items-center gap-2 px-0.5 mb-3">
-                        <span className="p-1 rounded-lg" style={{ background: `${style.accent}1A` }}>
-                          <Icon className="h-3.5 w-3.5" style={{ color: style.accent }} />
-                        </span>
-                        <h2 className="text-[13px] font-bold text-slate-800 dark:text-slate-200">{s.title}</h2>
-                        <span className="text-[10px] text-slate-400 tabular-nums">{s.metrics.length}</span>
-                        {s.blurb && (
-                          <p className="text-[10px] text-slate-400 truncate hidden md:block ml-2">{s.blurb}</p>
-                        )}
-                      </div>
-                      <div className={hero ? "grid gap-3 lg:grid-cols-[260px_1fr] items-stretch" : ""}>
-                        {hero && (
-                          <HeroKpiCard r={hero} staleAfter={ops.staleAfterDays} period={period}
-                            onOpen={() => setDrill(hero.metricKey)} />
-                        )}
-                        <div className="flex flex-wrap content-start gap-2">
-                          {rest.map((r) => (
-                            <MiniKpiChip key={r.metricKey} r={r} accent={style.accent} staleAfter={ops.staleAfterDays}
-                              onOpen={() => setDrill(r.metricKey)} />
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {current && (
-          <DrilldownDrawer processId={current} metricKey={drill} period={period} onClose={() => setDrill(null)} />
-        )}
-        <ManualEntryDrawer
-          open={manualEntryOpen}
-          processId={current}
-          processName={ops?.processName ?? processes.find((p) => p.processId === current)?.processName ?? null}
-          onClose={() => setManualEntryOpen(false)}
-          onSaved={() => {
-            qc.invalidateQueries({ queryKey: ["process-operations", "detail", current] });
-            qc.invalidateQueries({ queryKey: ["process-operations", "processes"] });
-            // A saved reading can belong to a metric whose drill-down is already
-            // open (or gets reopened next) -- without this its cached readings/
-            // trend chart would keep showing the pre-save figure until an
-            // unrelated cache eviction happened to clear it.
-            qc.invalidateQueries({ queryKey: ["process-operations", "drilldown"] });
-            qc.invalidateQueries({ queryKey: ["process-operations", "raw-rows"] });
-          }}
-        />
+          {/* Pulse animation for live dot */}
+          <style>{`@keyframes pulse{50%{box-shadow:0 0 0 8px rgba(69,229,155,0)}}`}</style>
+        </main>
       </div>
     </DashboardLayout>
   );
