@@ -152,7 +152,7 @@ export async function importDomesticBillingApprovedHcBatch(
     // --- Skip rule: Approved Headcount <= 0 when Active = 0 ---
     if (active === 0 && approvedHc <= 0) {
       await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'imported', updated_at = NOW() WHERE id = ?`,
+        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`,
         [row.id],
       );
       skippedRows++;
@@ -185,7 +185,7 @@ export async function importDomesticBillingApprovedHcBatch(
         ] as never[],
       );
       await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'imported', updated_at = NOW() WHERE id = ?`,
+        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`,
         [row.id],
       );
       importedRows++;
