@@ -62,9 +62,11 @@ export async function getGs1Overview(filters: Filters): Promise<Gs1Overview> {
   const dataKartTasks = n(dkRows[0]?.dataKartTasks);
   const dataKartGtin = n(dkRows[0]?.dataKartGtin);
 
-  // Approval / audit totals
+  // Approval / audit totals. SKU is the uploaded sku_count, not the row count —
+  // one audited row can carry many SKUs, so COUNT(*) made "Approval SKU" a
+  // duplicate of the audit count.
   const [auditRows] = await db.query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS approvalSku,
+    `SELECT COALESCE(SUM(sku_count),0) AS approvalSku,
             COUNT(*) AS auditCount,
             COALESCE(SUM(error_flag),0) AS auditErrors
      FROM gs1_approval_audit_raw
@@ -76,14 +78,17 @@ export async function getGs1Overview(filters: Filters): Promise<Gs1Overview> {
   const auditErrors = n(auditRows[0]?.auditErrors);
   const auditErrorRate = round(pct(auditErrors, auditCount));
 
-  // Daily series — merge email + datakart + approval by date
+  // Daily series — merge email + datakart + approval by date.
+  // Group by the same DATE_FORMAT expression the SELECT projects (via its alias):
+  // grouping by DATE(x) while selecting DATE_FORMAT(x,...) is rejected under
+  // ONLY_FULL_GROUP_BY, which MySQL 8 enables by default.
   const [emailDaily] = await db.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(mail_date,'%Y-%m-%d') AS date,
             COALESCE(SUM(mail_received),0) AS emailTasks
      FROM gs1_email_daily_actual
      WHERE mail_date BETWEEN ? AND ?
-     GROUP BY DATE(mail_date)
-     ORDER BY DATE(mail_date)`,
+     GROUP BY date
+     ORDER BY date`,
     [from, to],
   );
   const [dkDaily] = await db.query<RowDataPacket[]>(
@@ -91,17 +96,17 @@ export async function getGs1Overview(filters: Filters): Promise<Gs1Overview> {
             COALESCE(SUM(task_count),0) AS dataKartTasks
      FROM gs1_datakart_daily_actual
      WHERE task_date BETWEEN ? AND ?
-     GROUP BY DATE(task_date)
-     ORDER BY DATE(task_date)`,
+     GROUP BY date
+     ORDER BY date`,
     [from, to],
   );
   const [apprDaily] = await db.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(audit_date,'%Y-%m-%d') AS date,
-            COUNT(*) AS approvalSku
+            COALESCE(SUM(sku_count),0) AS approvalSku
      FROM gs1_approval_audit_raw
      WHERE audit_date BETWEEN ? AND ?
-     GROUP BY DATE(audit_date)
-     ORDER BY DATE(audit_date)`,
+     GROUP BY date
+     ORDER BY date`,
     [from, to],
   );
 
@@ -178,8 +183,8 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
             COALESCE(SUM(image_count),0)              AS images
      FROM gs1_email_daily_actual
      WHERE mail_date BETWEEN ? AND ?
-     GROUP BY DATE(mail_date)
-     ORDER BY DATE(mail_date)`,
+     GROUP BY date
+     ORDER BY date`,
     [from, to],
   );
 
@@ -238,7 +243,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
   const [totals] = await db.query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(task_count),0)                     AS tasks,
             COALESCE(SUM(gtin_count),0)                     AS gtin,
-            COALESCE(AVG(within_tat_pct), 0)                AS withinTatPct,
+            COALESCE(AVG(within_tat)*100, 0)                AS withinTatPct,
             CASE WHEN COALESCE(SUM(task_count),0) > 0
                  THEN COALESCE(SUM(gtin_count),0) / SUM(task_count)
                  ELSE 0 END                                 AS avgGtinPerTask
@@ -251,7 +256,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
     `SELECT analyst_name                                        AS analyst,
             COALESCE(SUM(task_count),0)                       AS tasks,
             COALESCE(SUM(gtin_count),0)                       AS gtin,
-            COALESCE(AVG(within_tat_pct), 0)                  AS withinTatPct,
+            COALESCE(AVG(within_tat)*100, 0)                  AS withinTatPct,
             CASE WHEN COALESCE(SUM(task_count),0) > 0
                  THEN COALESCE(SUM(gtin_count),0) / SUM(task_count)
                  ELSE 0 END                                   AS avgGtin
@@ -266,11 +271,11 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
     `SELECT DATE_FORMAT(task_date,'%Y-%m-%d')                 AS date,
             COALESCE(SUM(task_count),0)                       AS tasks,
             COALESCE(SUM(gtin_count),0)                       AS gtin,
-            COALESCE(AVG(within_tat_pct), 0)                  AS withinTatPct
+            COALESCE(AVG(within_tat)*100, 0)                  AS withinTatPct
      FROM gs1_datakart_daily_actual
      WHERE task_date BETWEEN ? AND ?
-     GROUP BY DATE(task_date)
-     ORDER BY DATE(task_date)`,
+     GROUP BY date
+     ORDER BY date`,
     [from, to],
   );
 
@@ -336,7 +341,7 @@ export async function getGs1Approval(filters: Filters): Promise<Gs1Approval> {
   const { from, to } = parseRange(filters);
 
   const [totals] = await db.query<RowDataPacket[]>(
-    `SELECT COUNT(*)                               AS totalSku,
+    `SELECT COALESCE(SUM(sku_count),0)             AS totalSku,
             COUNT(*)                               AS auditCount,
             COALESCE(SUM(error_flag),0)            AS auditErrors,
             COUNT(DISTINCT gcp_code)               AS uniqueGcp
@@ -352,7 +357,7 @@ export async function getGs1Approval(filters: Filters): Promise<Gs1Approval> {
 
   const [byCompanyRows] = await db.query<RowDataPacket[]>(
     `SELECT company_name                               AS company,
-            COUNT(*)                                   AS sku,
+            COALESCE(SUM(sku_count),0)                 AS sku,
             COUNT(*)                                   AS audits,
             COALESCE(SUM(error_flag),0)                AS errors
      FROM gs1_approval_audit_raw
@@ -375,13 +380,13 @@ export async function getGs1Approval(filters: Filters): Promise<Gs1Approval> {
 
   const [dailyRows] = await db.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(audit_date,'%Y-%m-%d')         AS date,
-            COUNT(*)                                   AS sku,
+            COALESCE(SUM(sku_count),0)                 AS sku,
             COUNT(*)                                   AS audits,
             COALESCE(SUM(error_flag),0)                AS errors
      FROM gs1_approval_audit_raw
      WHERE audit_date BETWEEN ? AND ?
-     GROUP BY DATE(audit_date)
-     ORDER BY DATE(audit_date)`,
+     GROUP BY date
+     ORDER BY date`,
     [from, to],
   );
 
