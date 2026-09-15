@@ -45,6 +45,7 @@ import {
   importSeatBillingFromInvoice,
   updateSeatBillingLine,
 } from "./pnl-seat-billing.service.js";
+import { getPnlTrendSeries } from "./pnl-trend-series.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
@@ -1699,6 +1700,42 @@ router.post(
     await asForbidden(assertBranchOf(req, branchId));
     const data = await importSeatBillingFromInvoice(costCentreId, String(req.body?.period ?? ""), actor(req).id);
     res.status(201).json({ success: true, data });
+  })
+);
+
+/**
+ * P&L trend — revenue, salary, IDC and OP% by day / week / month for the company, a branch or a
+ * cost centre, built on the Live P&L so it always agrees with it. See pnl-trend-series.service.ts.
+ * A branch-scoped user is held to their own branch whatever scope they ask for.
+ */
+router.get(
+  "/pnl/trend-series",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const scopeType = String(req.query.scope ?? "company");
+    const scopeId = req.query.scopeId ? String(req.query.scopeId) : null;
+    const branchScope = await asForbidden(resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: scopeType === "branch" && scopeId ? scopeId : undefined,
+    }));
+    let costCentreBranchId: string | null = null;
+    if (scopeType === "cost_centre" && scopeId) {
+      costCentreBranchId = (await getOwnCostCentreBranch(scopeId)).branchId;
+      await asForbidden(assertBranchOf(req, costCentreBranchId));
+    }
+    const data = await getPnlTrendSeries({
+      grain: String(req.query.grain ?? "month"),
+      scopeType,
+      scopeId,
+      anchor: String(req.query.anchor ?? ""),
+      count: req.query.count ? Number(req.query.count) : undefined,
+      branchScope: branchScope ?? null,
+      costCentreBranchId,
+    });
+    res.json({ success: true, data });
   })
 );
 
