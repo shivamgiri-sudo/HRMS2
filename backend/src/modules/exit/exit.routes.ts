@@ -7,6 +7,8 @@ import { ffService } from "./ff.service.js";
 import { computeFfPreview } from "./ff-compute.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { narrowDashboardScope, resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
@@ -70,9 +72,132 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
   return exitController.createExitRequest(req, res);
 }));
 
+// Every valid owner_role value createDefaultClearanceTasks() can assign a task to.
+// 'it' added 2026-09-15 alongside migration 1772 — "IT access closure" moved from
+// owner_role='admin' to 'it', which is a real, distinct role (not automatically covered
+// by any of the others below).
+const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "trainer", "it"] as const;
+type ClearanceOwnerRole = typeof CLEARANCE_OWNER_ROLES[number];
+
+// GET /api/exit/clearance/queue — cross-employee clearance queue for the caller's own
+// role(s) (or, for admin/hr/super_admin, any role via ?owner_role=). Registered BEFORE
+// /:id/clearance below so Express does not try to match "clearance" as an :id.
+exitRouter.get(
+  "/clearance/queue",
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    const isPrivileged = await hasRole(userId, "admin", "hr", "super_admin");
+
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+      [userId],
+    );
+    const callerRoles = roleRows.map((r) => String(r.role_key));
+
+    let ownerRoles: ClearanceOwnerRole[];
+    const requestedOwnerRole = typeof req.query.owner_role === "string" ? req.query.owner_role : undefined;
+    if (isPrivileged) {
+      // Admin/hr/super_admin may look at any single queue, or — with none supplied —
+      // every queue at once, matching their existing unrestricted canViewEmployee bypass.
+      ownerRoles = requestedOwnerRole && (CLEARANCE_OWNER_ROLES as readonly string[]).includes(requestedOwnerRole)
+        ? [requestedOwnerRole as ClearanceOwnerRole]
+        : [...CLEARANCE_OWNER_ROLES];
+    } else {
+      // Non-privileged callers are forced to their own held role(s) — an owner_role param
+      // cannot be used to look at another role's queue. An empty intersection (a role
+      // combination that owns none of the 9 areas) returns an empty page, not a 403: the
+      // requireRole gate above already vouches for platform-level access to this endpoint.
+      ownerRoles = CLEARANCE_OWNER_ROLES.filter((r) => callerRoles.includes(r));
+    }
+    if (ownerRoles.length === 0) {
+      return res.json({ success: true, data: [], pagination: { page: 1, limit: 50, total: 0 } });
+    }
+
+    const statusParam = typeof req.query.status === "string" && req.query.status.trim()
+      ? req.query.status.split(",").map((s) => s.trim()).filter(Boolean)
+      : ["pending", "in_progress", "blocked"];
+    const allowedStatuses = new Set(["pending", "in_progress", "cleared", "blocked", "waived"]);
+    const statuses = statusParam.filter((s) => allowedStatuses.has(s));
+    if (statuses.length === 0) statuses.push("pending", "in_progress", "blocked");
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const offset = (page - 1) * limit;
+
+    const conds: string[] = [
+      `t.owner_role IN (${ownerRoles.map(() => "?").join(",")})`,
+      `t.status IN (${statuses.map(() => "?").join(",")})`,
+    ];
+    const params: unknown[] = [...ownerRoles, ...statuses];
+
+    if (typeof req.query.clearance_area === "string" && req.query.clearance_area.trim()) {
+      conds.push("t.clearance_area = ?");
+      params.push(req.query.clearance_area.trim());
+    }
+
+    if (!isPrivileged) {
+      // Branch/process row-scope, same helper the IT-provisioning queue already uses —
+      // avoids an N+1 canViewEmployee call per row on what is now a cross-employee list.
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+      const scoped = await narrowDashboardScope(baseScope, "", "");
+      if (scoped.branchIds.length) {
+        conds.push(`e.branch_id IN (${scoped.branchIds.map(() => "?").join(",")})`);
+        params.push(...scoped.branchIds);
+      }
+    }
+
+    const where = conds.join(" AND ");
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM exit_clearance_task t
+         JOIN exit_request er ON er.id = t.exit_request_id
+         JOIN employees e ON e.id = t.employee_id
+        WHERE ${where}`,
+      params,
+    );
+    const total = Number(countRows[0]?.total ?? 0);
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.id, t.exit_request_id, t.employee_id, t.clearance_area, t.task_title,
+              t.task_description, t.owner_role, t.due_date, t.status, t.remarks,
+              t.attachment_url, t.cleared_by, t.cleared_at, t.created_at, t.updated_at,
+              e.full_name AS employee_name, e.employee_code,
+              b.branch_name, p.process_name,
+              er.status AS exit_status, er.last_working_day_confirmed, er.last_working_day_proposed,
+              nc.status AS noc_case_status
+         FROM exit_clearance_task t
+         JOIN exit_request er ON er.id = t.exit_request_id
+         JOIN employees e ON e.id = t.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+         LEFT JOIN (
+           SELECT exit_request_id, status,
+                  ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at DESC) AS rn
+             FROM noc_case
+         ) nc ON nc.exit_request_id = er.id AND nc.rn = 1
+        WHERE ${where}
+        ORDER BY FIELD(t.status,'blocked','pending','in_progress','cleared','waived'), t.due_date
+        LIMIT ${limit} OFFSET ${offset}`,
+      // LIMIT/OFFSET interpolated, not bound: this mysql2 version rejects a bound "LIMIT ?"
+      // with "Incorrect arguments to mysqld_stmt_execute" (same class of bug already hit in
+      // roster-audit and getTeamWorkItems above). Safe here — both are clamped integers
+      // (Math.min/Math.max above), never request-controlled strings.
+      params,
+    );
+
+    return res.json({ success: true, data: rows, pagination: { page, limit, total } });
+  })
+);
+
 exitRouter.get(
   "/:id/clearance",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm"),
+  // "trainer" added — the LMS/certification-closure clearance task's owner_role is
+  // 'trainer', and this list previously omitted it entirely, so a trainer-only account
+  // got 403 even calling this read endpoint directly, before any UI gap. "it" added
+  // 2026-09-15 alongside migration 1772 (IT access closure retargeted admin -> it).
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
   h(async (req, res) => {
     // manager/finance/payroll/wfm previously had no scope check at all here and could list
     // clearance tasks for any exit request in any branch/process just by supplying its :id
@@ -111,7 +236,9 @@ exitRouter.post(
 
 exitRouter.patch(
   "/:id/clearance/:taskId",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm"),
+  // "trainer" added — same gap as GET /:id/clearance above. "it" added 2026-09-15
+  // alongside migration 1772.
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
   h(async (req, res) => {
     // When only attachment_url is sent (no status in body), treat as an attachment-only
     // update — do not change status, remarks, cleared_by or cleared_at. Bug 1+2 fix:
@@ -330,7 +457,11 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exitRouter.get(
   "/:id/full",
-  requireRole("admin", "hr", "manager", "finance", "payroll"),
+  // "wfm"/"trainer" added — the new per-role clearance pages/sections all open this same
+  // drawer for their row-level drill-down (Drill-Down Mandate), and both roles own real
+  // clearance tasks (wfm: roster/client-ID deactivation; trainer: LMS closure). "it" added
+  // 2026-09-15 alongside migration 1772 (IT access closure retargeted admin -> it).
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "trainer", "it"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
 
@@ -396,14 +527,24 @@ exitRouter.get(
       [id]
     );
 
-    // Clearance tasks
+    // Clearance tasks. "id" and "owner_role" were previously omitted from this SELECT —
+    // the drawer rendered each task read-only with no way to identify which row a
+    // Clear/Waive action should PATCH, which is exactly why that action never existed here.
     const [clearanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT clearance_area, task_title, status, due_date, remarks, attachment_url, cleared_at
+      `SELECT id, clearance_area, owner_role, task_title, status, due_date, remarks, attachment_url, cleared_at
          FROM exit_clearance_task
         WHERE exit_request_id = ?
         ORDER BY clearance_area, created_at`,
       [id]
     );
+
+    // NOC case status — read-only display, latest case for this exit (see A6: a plain
+    // LEFT JOIN would fan out on the one live exit with more than one noc_case row).
+    const [nocRows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM noc_case WHERE exit_request_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
+    const noc_case_status = (nocRows[0] as RowDataPacket | undefined)?.status ?? null;
 
     // Notice days served / remaining (only meaningful in accepted/notice_serving)
     let notice_days_served: number | null = null;
@@ -427,6 +568,7 @@ exitRouter.get(
         notice_days_remaining,
         timeline: logRows,
         clearance_tasks: clearanceRows,
+        noc_case_status,
       },
     });
   })

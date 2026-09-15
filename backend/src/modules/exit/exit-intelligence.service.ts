@@ -115,7 +115,11 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
     ["manager", "Manager handover clearance", "Confirm KT, pending work handover, client dependency and system access handover.", "manager"],
     ["hr", "HR resignation and exit interview", "Confirm resignation acceptance, exit reason category and exit interview completion.", "hr"],
     ["assets", "Asset recovery clearance", "Recover laptop/desktop, headset, ID card, access card, SIM, and any company property.", "admin"],
-    ["it", "IT access closure", "Disable email, VPN, client tools and internal application access after last working day.", "admin"],
+    // owner_role retargeted 'admin' -> 'it' (owner ruling 2026-09-15): this is IT's own
+    // work (disabling email/VPN/app access), not admin's, and it was never reachable by a
+    // pure IT-only account — only 'admin' role held this task. Migration 1772 backfills the
+    // 8 currently-open rows created before this change; cleared/waived rows are left as-is.
+    ["it", "IT access closure", "Disable email, VPN, client tools and internal application access after last working day.", "it"],
     ["wfm", "Roster deactivation", "Remove future roster assignments and stop WFM scheduling after LWD.", "wfm"],
     ["wfm", "Client ID deactivation", "Deactivate the employee's client system ID/login. Attach the confirmation screenshot or email received from Operations (subject: 'Update regarding analyst status in software'). Attachment is optional.", "wfm"],
     ["payroll", "Payroll hold and F&F readiness", "Check salary hold, advances, notice recovery, leave encashment and F&F readiness.", "payroll"],
@@ -165,7 +169,10 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
             hs.regrettable_exit,
             hs.risk_label,
             COALESCE(clearance.total_tasks, 0) AS clearance_total,
-            COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared
+            COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared,
+            nc.status AS noc_case_status,
+            ff.status AS ff_status,
+            ff.is_ff_provisional
        FROM exit_request er
        JOIN employees e ON e.id = er.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -177,6 +184,14 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
                 SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks
            FROM exit_clearance_task GROUP BY exit_request_id
        ) clearance ON clearance.exit_request_id = er.id
+       LEFT JOIN (
+         SELECT exit_request_id, status,
+                ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at DESC) AS rn
+           FROM noc_case
+       ) nc ON nc.exit_request_id = er.id AND nc.rn = 1
+       -- No latest-row wrapper needed here (unlike noc_case above): live-verified 2026-09-15,
+       -- zero exit requests carry more than one full_final_calculation row.
+       LEFT JOIN full_final_calculation ff ON ff.exit_request_id = er.id
       ${scopeWhere}
       ORDER BY
         FIELD(er.status,'submitted','manager_review','hr_review','admin_review','accepted','notice_serving') DESC,

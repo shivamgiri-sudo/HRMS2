@@ -117,6 +117,41 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
  * that turns out to be out-of-branch surfaces as a 403 on the actual decision, not a false
  * grant.
  */
+// Every valid owner_role value createDefaultClearanceTasks() can assign an exit clearance
+// task to. Kept in sync with exit-intelligence.service.ts's own task list and
+// exit.routes.ts's CLEARANCE_OWNER_ROLES. 'it' added 2026-09-15 alongside migration 1772
+// (IT access closure retargeted admin -> it) — this array's length also drives the fixed
+// placeholder count below, so it moved from 6 to 7 slots in the same change.
+const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "trainer", "it"] as const;
+
+// Fixed-length (CLEARANCE_OWNER_ROLES.length) params for the exit-clearance branch's
+// "owner_role IN (?,?,?,?,?,?,?)" — see that branch's comment for why this stays a fixed
+// shape rather than a dynamic IN list. The placeholder count in that literal SQL string
+// must be kept equal to CLEARANCE_OWNER_ROLES.length by hand — there is no way to derive
+// a literal's placeholder count from an array length at the template-string level.
+function paddedOwnerRoleParams(allRoles: readonly string[]): string[] {
+  const matched = CLEARANCE_OWNER_ROLES.filter((r) => allRoles.includes(r));
+  const padded: string[] = [...matched];
+  while (padded.length < CLEARANCE_OWNER_ROLES.length) padded.push("__none__");
+  return padded;
+}
+
+// Each task's action_url now points at the page its owner_role actually works from —
+// admin/wfm get the "Exit Clearance Tasks" section on their existing provisioning page;
+// manager/hr/payroll/trainer/it get their own dedicated queue page (it: the existing
+// PROVISIONING_IT page, which gained the same new section as admin/wfm).
+const EXIT_CLEARANCE_ACTION_URL_CASE = `
+  CASE t.owner_role
+    WHEN 'manager' THEN '/provisioning/manager-handover'
+    WHEN 'hr'      THEN '/provisioning/hr-exit'
+    WHEN 'admin'   THEN '/provisioning/admin'
+    WHEN 'wfm'     THEN '/provisioning/wfm-alignment'
+    WHEN 'payroll' THEN '/provisioning/payroll-exit'
+    WHEN 'trainer' THEN '/provisioning/trainer-exit'
+    WHEN 'it'      THEN '/provisioning/it'
+    ELSE '/exit/command-center'
+  END`;
+
 const DERIVED_REGISTRY_UNION_SQL = `
        /*
         * Pending leave, derived from the source table rather than from a producer row.
@@ -165,6 +200,19 @@ const DERIVED_REGISTRY_UNION_SQL = `
         * trainer, wfm) — so no fallback is invented. owner_user_id is NULL on every row today
         * but is honoured first, so per-person assignment starts working the moment it is used.
         * due_date is a real column here, unlike leave, so these items can genuinely be overdue.
+        *
+        * owner_role IN (CLEARANCE_OWNER_ROLES.length fixed slots), not
+        * owner_role = <primaryRole>. A caller who holds this task's role alongside a
+        * higher-ranked one (e.g. an admin who is also hr, or any super_admin/admin account
+        * at all) previously saw ZERO exit-clearance items here: getMyPending()/
+        * getDerivedRegistryItems() passed only resolvePrimaryRole()'s single pick, which is
+        * never one of the real owner_role values for such an account. Verified live
+        * 2026-09-15: a super_admin+admin+hr account showed 0 of 4 owned tasks. Padded to a
+        * fixed CLEARANCE_OWNER_ROLES.length slots with a '__none__' sentinel so this stays a
+        * static, cacheable prepared statement regardless of how many roles the caller holds
+        * — paddedOwnerRoleParams() above does the padding. action_url is now role-specific
+        * (EXIT_CLEARANCE_ACTION_URL_CASE) rather than the single generic '/exit/clearance'
+        * every task pointed at before, regardless of who actually owns it.
         */
        SELECT CONCAT('exitclr:', t.id) AS id,
               'FF_CLEARANCE_PENDING' AS item_type,
@@ -178,13 +226,13 @@ const DERIVED_REGISTRY_UNION_SQL = `
               'pending' AS status,
               t.due_date AS due_at,
               t.created_at,
-              '/exit/clearance' AS action_url,
+              ${EXIT_CLEARANCE_ACTION_URL_CASE} AS action_url,
               e.full_name AS assigned_employee_name,
               'exit_clearance_task' AS source_table
          FROM exit_clearance_task t
          LEFT JOIN employees e ON e.id = t.employee_id
         WHERE LOWER(COALESCE(t.status, '')) = 'pending'
-          AND (t.owner_user_id = ? OR t.owner_role = ?)
+          AND (t.owner_user_id = ? OR t.owner_role IN (?,?,?,?,?,?,?))
        UNION ALL
        /*
         * Background checks stuck needing a human. BGV_PENDING is likewise declared and never
@@ -274,9 +322,10 @@ const DERIVED_REGISTRY_UNION_SQL = `
              OR (fb.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin'))
               )`;
 
-export async function getMyWorkItems(userId: string, role: string, limit = 50, offset = 0) {
+export async function getMyWorkItems(userId: string, role: string, allRoles: readonly string[] = [role], limit = 50, offset = 0) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
   const safeOffset = Math.max(0, Number(offset) || 0);
+  const ownerRoleParams = paddedOwnerRoleParams(allRoles);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM (
        SELECT wi.id,
@@ -329,7 +378,10 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    [userId, role, userId, userId, role, userId, role, role, role, role, role, role]
+    // work_item(userId, role) -> work_inbox_item(userId) -> leave(userId, role) ->
+    // exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
+    // grn(role, role) -> budget(role, role)
+    [userId, role, userId, userId, role, userId, ...ownerRoleParams, role, role, role, role, role]
   );
   return rows;
 }
@@ -338,8 +390,9 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
  * The same five derived queues, standalone — for getMyPending() (modules/inbox/inbox.service.ts),
  * the endpoint the Work Inbox page actually reads. See DERIVED_REGISTRY_UNION_SQL's comment.
  */
-export async function getDerivedRegistryItems(userId: string, role: string, limit = 200) {
+export async function getDerivedRegistryItems(userId: string, role: string, allRoles: readonly string[] = [role], limit = 200) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
+  const ownerRoleParams = paddedOwnerRoleParams(allRoles);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM (
        ${DERIVED_REGISTRY_UNION_SQL}
@@ -349,7 +402,9 @@ export async function getDerivedRegistryItems(userId: string, role: string, limi
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit}`,
-    [userId, role, userId, role, role, role, role, role, role]
+    // leave(userId, role) -> exit(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots) -> bgv(role) ->
+    // grn(role, role) -> budget(role, role)
+    [userId, role, userId, ...ownerRoleParams, role, role, role, role, role]
   );
   return rows;
 }

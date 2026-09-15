@@ -664,11 +664,26 @@ export const exitService = {
       if (decision) void notifyResignationDecision(id, decision);
     });
 
-    if (["accepted", "notice_serving", "exited"].includes(nextStatus)) {
-      await createDefaultClearanceTasks(id, (existing as any).employee_id).catch((err: unknown) => {
-        logger.error({ err, exitRequestId: id }, '[exit] Clearance task creation failed');
-        return null;
-      });
+    // Clearance tasks now key off the confirmed Last Working Day rather than the review-stage
+    // transition itself (owner ruling 2026-09-15): a manager accepting a resignation used to
+    // create all 9 tasks weeks before anyone needed to act on them. The daily sweep in
+    // exit-clearance-lwd-trigger.service.ts covers "LWD arrives while nobody touches this
+    // record" (mirrors noc-lwd-trigger.service.ts's own daily catch-up). This covers the other
+    // half: a confirmedLwdInput on THIS call that is already today-or-earlier (a backdated
+    // entry) must not sit unactioned until tomorrow's 8am sweep. Only fires when this call
+    // actually confirmed an LWD — an ordinary status transition with no LWD in the body does
+    // nothing here, same as before this change.
+    if (confirmedLwdInput) {
+      const [dueRows] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
+        [id]
+      );
+      if (dueRows[0]) {
+        await createDefaultClearanceTasks(id, employeeIdForExit).catch((err: unknown) => {
+          logger.error({ err, exitRequestId: id }, '[exit] Clearance task creation failed');
+          return null;
+        });
+      }
     }
 
     if (nextStatus === "exited") {

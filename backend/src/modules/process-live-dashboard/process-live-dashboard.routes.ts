@@ -47,6 +47,10 @@ import {
 import { getEmailTickets } from './email-ticket.service.js';
 import { getBillingDashboard } from './domestic-billing.service.js';
 import { getGs1Overview, getGs1Email, getGs1DataKart, getGs1Approval } from './gs1.service.js';
+import {
+  getCdrStagingSummary, getCdrStagingDaily, getCdrStagingMonthly,
+  type CdrClientCode,
+} from './cdr-staging.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -114,5 +118,28 @@ router.get('/gs1/approval',  wrap(req => getGs1Approval(req.query as Q)));
 
 // ── Domestic Billing Dashboard ────────────────────────────────────────────────
 router.get('/billing/dashboard', wrap(req => getBillingDashboard(req.query as Q)));
+
+// ── CDR Staging Dashboards (inbound_cdr_daily_actual) ─────────────────────────
+// GNC, Bella-Vita, Neemans, Viega, Exicom, DU Digital — data pre-synced from dialer_db
+// by inbound-cdr-sync.service. Clovia is also available but has additional data
+// sources (email/chat tables) so it gets its own service in future.
+function cdrRoutes(prefix: string, code: CdrClientCode) {
+  router.get(`/${prefix}/summary`, wrap(req => getCdrStagingSummary(code, req.query as Q)));
+  router.get(`/${prefix}/daily`,   wrap(req => getCdrStagingDaily(code, req.query as Q)));
+  router.get(`/${prefix}/monthly`, wrap(req => getCdrStagingMonthly(code, req.query as Q)));
+}
+
+cdrRoutes('gnc',          'GNC');
+cdrRoutes('bella-vita',   'BELLAVITA');
+cdrRoutes('neemans',      'NEEMANS');
+cdrRoutes('viega',        'VIEGA');
+cdrRoutes('exicom',       'EXICOM');
+cdrRoutes('du-digital',   'DU_BANGLADESH');
+
+// ── Finnable APR (vicidial_agent_log_10_25, campaign_id = 'FINNABLE') ────────
+const fin = emailH('finnable');
+router.get('/finnable/summary', fin.summary);
+router.get('/finnable/daily',   fin.daily);
+router.get('/finnable/agents',  fin.agents);
 
 export default router;

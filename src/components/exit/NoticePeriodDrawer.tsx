@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import {
   AlertTriangle, Briefcase, Building2, Calendar, CheckCircle2,
-  Clock, Loader2, MessageSquare, Paperclip, Shield, User, X,
+  Clock, Loader2, MessageSquare, Paperclip, Shield, ShieldCheck, User, X,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useToast } from "@/hooks/use-toast";
+import { CLEARANCE_STATUS_COLORS, NOC_STATUS_COLORS, NOC_STATUS_LABELS } from "@/lib/exitClearance";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +22,9 @@ type TimelineEntry = {
 };
 
 type ClearanceTask = {
+  id: string;
   clearance_area: string;
+  owner_role: string;
   task_title: string;
   status: string;
   due_date?: string;
@@ -57,6 +62,7 @@ type ExitFullDetail = {
   date_of_joining?: string;
   timeline: TimelineEntry[];
   clearance_tasks: ClearanceTask[];
+  noc_case_status?: string | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -85,34 +91,53 @@ const STAGE_COLORS: Record<string, string> = {
   hr_revoke: "bg-rose-100 text-rose-700",
 };
 
-const CLEARANCE_STATUS_COLORS: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-700",
-  in_progress: "bg-blue-100 text-blue-700",
-  cleared: "bg-emerald-100 text-emerald-700",
-  blocked: "bg-red-100 text-red-700",
-  waived: "bg-slate-100 text-slate-600",
-};
-
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export function NoticePeriodDrawer({
   exitId,
   onClose,
+  onTaskUpdated,
 }: {
   exitId: string;
   onClose: () => void;
+  /** Called after a clearance task is cleared/waived, so an embedding queue/list can refresh its own count. */
+  onTaskUpdated?: () => void;
 }) {
   const [detail, setDetail] = useState<ExitFullDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
-  useEffect(() => {
+  const loadDetail = useCallback(() => {
     setLoading(true);
-    hrmsApi
+    return hrmsApi
       .get<{ success: boolean; data: ExitFullDetail }>(`/api/exit/${exitId}/full`)
       .then((res) => setDetail(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [exitId]);
+
+  useEffect(() => {
+    loadDetail();
+  }, [loadDetail]);
+
+  const clearanceMutation = useMutation({
+    mutationFn: ({ taskId, status, remarks }: { taskId: string; status: "cleared" | "waived"; remarks: string }) =>
+      hrmsApi.patch(`/api/exit/${exitId}/clearance/${taskId}`, { status, remarks }),
+    onSuccess: (_data, variables) => {
+      toast({ title: variables.status === "cleared" ? "Task cleared" : "Task waived" });
+      loadDetail();
+      onTaskUpdated?.();
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not update task", description: err?.message ?? "Please try again.", variant: "destructive" });
+    },
+  });
+
+  const handleClearanceAction = (taskId: string, status: "cleared" | "waived") => {
+    const remarks = window.prompt(status === "cleared" ? "Remarks for clearing this task:" : "Reason for waiving this task:");
+    if (remarks === null) return; // cancelled
+    clearanceMutation.mutate({ taskId, status, remarks });
+  };
 
   const managerFeedback = detail?.timeline.filter(
     (t) => t.stage === "manager_review" && t.discussion_remarks
@@ -404,16 +429,26 @@ export function NoticePeriodDrawer({
               {/* Clearance Tasks */}
               {detail.clearance_tasks.length > 0 && (
                 <section>
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       <Shield className="h-4 w-4 text-slate-400" />
                       <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Clearance Tasks</h3>
                     </div>
-                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                      clearedCount === totalClearance ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                    }`}>
-                      {clearedCount}/{totalClearance} cleared
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {detail.noc_case_status && (
+                        <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                          NOC_STATUS_COLORS[detail.noc_case_status] ?? "bg-slate-100 text-slate-600"
+                        }`}>
+                          <ShieldCheck className="h-3 w-3" />
+                          NOC: {NOC_STATUS_LABELS[detail.noc_case_status] ?? detail.noc_case_status}
+                        </span>
+                      )}
+                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                        clearedCount === totalClearance ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                      }`}>
+                        {clearedCount}/{totalClearance} cleared
+                      </span>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     {detail.clearance_tasks.map((task, i) => (
@@ -444,9 +479,29 @@ export function NoticePeriodDrawer({
                             </a>
                           )}
                         </div>
-                        {task.due_date && (
-                          <span className="shrink-0 text-xs text-slate-400">{fmtDate(task.due_date)}</span>
-                        )}
+                        <div className="flex shrink-0 flex-col items-end gap-1.5">
+                          {task.due_date && (
+                            <span className="text-xs text-slate-400">{fmtDate(task.due_date)}</span>
+                          )}
+                          {["pending", "in_progress", "blocked"].includes(task.status) && (
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => handleClearanceAction(task.id, "cleared")}
+                                disabled={clearanceMutation.isPending}
+                                className="cursor-pointer rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Clear
+                              </button>
+                              <button
+                                onClick={() => handleClearanceAction(task.id, "waived")}
+                                disabled={clearanceMutation.isPending}
+                                className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Waive
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

@@ -581,9 +581,12 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   // their real source table by getDerivedRegistryItems (work-inbox.service.ts) — see that
   // function's comment. primaryRole mirrors how work-inbox.routes.ts resolves it
   // (getUserRoleContext), computed here from the roles already fetched above instead of a
-  // second query.
+  // second query. `roles` (this caller's FULL role list) is passed alongside it — the
+  // exit-clearance branch alone checks membership across all of them (see that branch's own
+  // comment for why primaryRole undercounts a multi-role account); leave/BGV/GRN/Budget keep
+  // matching on primaryRole only, unchanged.
   const primaryRole = resolvePrimaryRole(roles);
-  const derivedRows = await getDerivedRegistryItems(userId, primaryRole).catch(() => []);
+  const derivedRows = await getDerivedRegistryItems(userId, primaryRole, roles).catch(() => []);
 
   const now = Date.now();
   const items: PendingTask[] = [

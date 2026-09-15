@@ -30,11 +30,14 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
-  ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
+  ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, ChevronDown, Loader2,
   AlertCircle, TrendingDown, Paperclip, ExternalLink, FileSignature,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { ExitClearanceQueue } from "@/components/exit/ExitClearanceQueue";
+import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
+import type { ClearanceOwnerRole } from "@/lib/exitClearance";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1032,6 +1035,17 @@ export default function NativeITProvisioningTracker() {
   const isITQueue   = preset?.taskCode === "IT_EMAIL_DOMAIN_ASSET";
   const isAdminQueue = preset?.taskCode === "ADMIN_BIOMETRIC_ID_CARD";
 
+  // Exit clearance section (separate system from the it_provisioning_request table this
+  // whole page otherwise reads/writes — see exitClearance.ts). Only rendered on the 3
+  // role-scoped provisioning queues, never on /it-provisioning or the appointment-letter
+  // queue, which have no single owning role to scope the section to.
+  const exitClearanceRole: ClearanceOwnerRole | undefined =
+    preset?.role === "admin" || preset?.role === "wfm" || preset?.role === "it"
+      ? (preset.role as ClearanceOwnerRole)
+      : undefined;
+  const [exitClearanceOpen, setExitClearanceOpen] = useState(false);
+  const [exitDrawerId, setExitDrawerId] = useState<string | null>(null);
+
   const currentTaskCode = actionDialog.request?.task_code ?? "";
   const isITTask    = currentTaskCode === "IT_EMAIL_DOMAIN_ASSET";
   const isAdminTask = currentTaskCode === "ADMIN_BIOMETRIC_ID_CARD";
@@ -1476,6 +1490,36 @@ export default function NativeITProvisioningTracker() {
           )}
         </CardContent>
       </Card>
+
+      {/* Exit Clearance Tasks — a separate system (exit_clearance_task) from the
+          it_provisioning_request table above. Kept as its own collapsed-by-default card
+          rather than merged into the table above, since the two have different status
+          vocabularies and lifecycles. */}
+      {exitClearanceRole && (
+        <Card className="rounded-2xl border border-white/60 bg-white/95 shadow-sm backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => setExitClearanceOpen((v) => !v)}
+            className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-2xl px-6 py-4 text-left transition-colors hover:bg-slate-50"
+          >
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-slate-500" aria-hidden="true" />
+              <span className="text-base font-semibold text-slate-900">Exit Clearance Tasks</span>
+              <span className="text-sm font-normal text-muted-foreground">— resignation checklist items owned by this role</span>
+            </div>
+            <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${exitClearanceOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+          </button>
+          {exitClearanceOpen && (
+            <CardContent className="pt-0">
+              <ExitClearanceQueue ownerRole={exitClearanceRole} embedded onRowClick={setExitDrawerId} />
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {exitDrawerId && (
+        <NoticePeriodDrawer exitId={exitDrawerId} onClose={() => setExitDrawerId(null)} />
+      )}
 
       {/* Action / Waive / Confirm Dialog */}
       <Dialog open={actionDialog.open} onOpenChange={(open) => {

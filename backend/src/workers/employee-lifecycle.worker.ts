@@ -1,7 +1,7 @@
 /**
  * Employee Lifecycle Worker
  *
- * Runs four scheduled jobs:
+ * Runs five scheduled jobs:
  * 1. Daily activation at 12:01 AM - activates employees whose joining date has arrived
  * 2. Hourly provisioning retry - retries failed provisioning task dispatch
  * 3. Daily AWOL detection at 2:00 AM - flags active employees who have stopped showing
@@ -17,17 +17,30 @@
  *    and this worker is already registered on both sides of the parity contract. The
  *    notification function it calls had existed with zero call sites, so the clearance
  *    signal was computed by nothing and seen by no one.
+ * 5. Daily NOC LWD trigger at 8:00 AM - auto-opens a NOC clearance case for every
+ *    employee whose confirmed last working day has arrived, sends them their form invite,
+ *    and creates a Work Inbox item for the branch HR. Skips revoked/cancelled/withdrawn
+ *    exit requests so a resignation reversal never accidentally triggers a clearance chain.
+ *    See noc-lwd-trigger.service.ts for the full scenario matrix.
+ * 6. Daily exit-clearance LWD trigger at 8:30 AM - creates the 9 exit_clearance_task rows
+ *    for every employee whose confirmed last working day has arrived (staggered 30 minutes
+ *    after the NOC trigger above so the two don't contend for the pool on the same tick).
+ *    See exit-clearance-lwd-trigger.service.ts.
  */
 
 import { runDailyActivationJob } from '../modules/employees/employee-activation.service.js';
 import { runProvisioningRetryJob } from '../jobs/provisioning-retry.job.js';
 import { runAwolDetectionScan } from '../modules/employees/awol-detection.service.js';
 import { runLastWorkingDayScan } from '../modules/exit/exit-lwd-scan.service.js';
+import { runNocLwdTrigger } from '../modules/exit/noc-lwd-trigger.service.js';
+import { runExitClearanceLwdTrigger } from '../modules/exit/exit-clearance-lwd-trigger.service.js';
 
 let _activationTimer: ReturnType<typeof setTimeout> | null = null;
 let _retryTimer: ReturnType<typeof setInterval> | null = null;
 let _awolTimer: ReturnType<typeof setTimeout> | null = null;
 let _lwdTimer: ReturnType<typeof setTimeout> | null = null;
+let _nocTriggerTimer: ReturnType<typeof setTimeout> | null = null;
+let _clearanceLwdTriggerTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Calculate milliseconds until next 12:01 AM
@@ -53,6 +66,26 @@ function msUntilNextLwdScanRun(): number {
   const now = new Date();
   const next = new Date();
   next.setHours(3, 0, 0, 0); // 3:00 AM
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
+function msUntilNextNocTriggerRun(): number {
+  const now = new Date();
+  const next = new Date();
+  next.setHours(8, 0, 0, 0); // 8:00 AM — start of business day
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
+function msUntilNextClearanceLwdTriggerRun(): number {
+  const now = new Date();
+  const next = new Date();
+  next.setHours(8, 30, 0, 0); // 8:30 AM — staggered 30m after the NOC trigger
   if (next <= now) {
     next.setDate(next.getDate() + 1);
   }
@@ -114,6 +147,38 @@ async function runLwdScan(): Promise<void> {
   _lwdTimer = setTimeout(runLwdScan, 24 * 60 * 60 * 1000);
 }
 
+async function runNocTrigger(): Promise<void> {
+  try {
+    const r = await runNocLwdTrigger();
+    if (r.scanned > 0) {
+      console.log(
+        `[employee-lifecycle] NOC LWD trigger: scanned=${r.scanned}` +
+        ` created=${r.created} alreadyExisted=${r.alreadyExisted} failed=${r.failed}`
+      );
+    }
+  } catch (err) {
+    console.error('[employee-lifecycle] NOC LWD trigger failed:', err);
+  }
+  // Schedule next run (24h)
+  _nocTriggerTimer = setTimeout(runNocTrigger, 24 * 60 * 60 * 1000);
+}
+
+async function runClearanceLwdTrigger(): Promise<void> {
+  try {
+    const r = await runExitClearanceLwdTrigger();
+    if (r.scanned > 0) {
+      console.log(
+        `[employee-lifecycle] Exit-clearance LWD trigger: scanned=${r.scanned}` +
+        ` created=${r.created} alreadyExisted=${r.alreadyExisted} failed=${r.failed}`
+      );
+    }
+  } catch (err) {
+    console.error('[employee-lifecycle] Exit-clearance LWD trigger failed:', err);
+  }
+  // Schedule next run (24h)
+  _clearanceLwdTriggerTimer = setTimeout(runClearanceLwdTrigger, 24 * 60 * 60 * 1000);
+}
+
 async function runRetry(): Promise<void> {
   try {
     const report = await runProvisioningRetryJob();
@@ -129,7 +194,7 @@ async function runRetry(): Promise<void> {
 }
 
 export function startEmployeeLifecycleWorker(): void {
-  if (_activationTimer || _retryTimer || _awolTimer || _lwdTimer) return;
+  if (_activationTimer || _retryTimer || _awolTimer || _lwdTimer || _nocTriggerTimer || _clearanceLwdTriggerTimer) return;
 
   // Daily activation at 12:01 AM
   const msUntilFirstRun = msUntilNextActivationRun();
@@ -159,6 +224,22 @@ export function startEmployeeLifecycleWorker(): void {
     `(next 3:00 AM)`
   );
   _lwdTimer = setTimeout(runLwdScan, msUntilLwdRun);
+
+  // Daily NOC LWD trigger at 8:00 AM
+  const msUntilNocRun = msUntilNextNocTriggerRun();
+  console.log(
+    `[employee-lifecycle] NOC LWD trigger scheduled in ${Math.round(msUntilNocRun / 60000)}m ` +
+    `(next 8:00 AM)`
+  );
+  _nocTriggerTimer = setTimeout(runNocTrigger, msUntilNocRun);
+
+  // Daily exit-clearance LWD trigger at 8:30 AM
+  const msUntilClearanceLwdRun = msUntilNextClearanceLwdTriggerRun();
+  console.log(
+    `[employee-lifecycle] Exit-clearance LWD trigger scheduled in ${Math.round(msUntilClearanceLwdRun / 60000)}m ` +
+    `(next 8:30 AM)`
+  );
+  _clearanceLwdTriggerTimer = setTimeout(runClearanceLwdTrigger, msUntilClearanceLwdRun);
 }
 
 export function stopEmployeeLifecycleWorker(): void {
@@ -166,4 +247,6 @@ export function stopEmployeeLifecycleWorker(): void {
   if (_retryTimer) { clearInterval(_retryTimer); _retryTimer = null; }
   if (_awolTimer) { clearTimeout(_awolTimer); _awolTimer = null; }
   if (_lwdTimer) { clearTimeout(_lwdTimer); _lwdTimer = null; }
+  if (_nocTriggerTimer) { clearTimeout(_nocTriggerTimer); _nocTriggerTimer = null; }
+  if (_clearanceLwdTriggerTimer) { clearTimeout(_clearanceLwdTriggerTimer); _clearanceLwdTriggerTimer = null; }
 }

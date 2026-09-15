@@ -3,6 +3,7 @@
  *
  * Molecular Email : campaign_id = 'MOEMAIL'
  * Reginald Email  : campaign_id = 'EMAIL'
+ * Finnable        : campaign_id = 'FINNABLE'
  *
  * Source table: vicidial_agent_log_10_25
  *
@@ -22,11 +23,12 @@ import { n, pct, fmtSec, round, parseRange } from './dialler-utils.js';
 
 const APR_TABLE = 'vicidial_agent_log_10_25';
 
-export type EmailProcess = 'molecular' | 'reginald-email';
+export type EmailProcess = 'molecular' | 'reginald-email' | 'finnable';
 
 const CAMPAIGN_MAP: Record<EmailProcess, string> = {
   molecular: 'MOEMAIL',
   'reginald-email': 'EMAIL',
+  finnable: 'FINNABLE',
 };
 
 // ── Summary ───────────────────────────────────────────────────────────────────

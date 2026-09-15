@@ -527,16 +527,51 @@ function freshnessCaption(r: Reading): { short: string; full: string } | null {
 }
 
 /** A chart panel with the reference dashboards' navy header. */
-function ChartCard({ title, subtitle, children }: {
-  title: string; subtitle?: string; children: React.ReactNode;
+/**
+ * Panel shell for every analysis card on the KPI Metrics tab.
+ *
+ * The default "live" variant mirrors the Live Dashboard's Panel (white card,
+ * left accent bar, gradient dot, dark title) so both tabs read as one system.
+ * `variant="classic"` keeps the older filled-navy header — used only where a
+ * panel's own design depends on it.
+ */
+function ChartCard({ title, subtitle, children, variant = "live" }: {
+  title: string; subtitle?: string; children: React.ReactNode; variant?: "live" | "classic";
 }) {
-  return (
-    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
-      <div className="px-5 py-3" style={{ background: NAVY }}>
-        <h3 className="text-sm font-bold text-white">{title}</h3>
-        {subtitle && <p className="text-[10px] text-indigo-200 mt-0.5">{subtitle}</p>}
+  if (variant === "classic") {
+    return (
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="px-5 py-3" style={{ background: NAVY }}>
+          <h3 className="text-sm font-bold text-white">{title}</h3>
+          {subtitle && <p className="text-[10px] text-indigo-200 mt-0.5">{subtitle}</p>}
+        </div>
+        <div className="px-2 pt-3 pb-4">{children}</div>
       </div>
-      <div className="px-2 pt-3 pb-4">{children}</div>
+    );
+  }
+  return (
+    <div className="relative bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden" style={{ boxShadow: "0 12px 30px rgba(16,35,57,.08)" }}>
+      <div aria-hidden className="absolute left-0 top-0" style={{ width: 4, height: 55, background: "linear-gradient(180deg,#2f6fed,#10b8d4)", borderRadius: "0 0 7px 0" }} />
+      <div className="px-5 py-3 pl-6">
+        <div className="flex items-center gap-2">
+          <span aria-hidden className="shrink-0" style={{ width: 9, height: 9, borderRadius: "50%", background: "linear-gradient(135deg,#2f6fed,#10b8d4)", boxShadow: "0 0 0 4px rgba(47,111,237,.08)" }} />
+          <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{title}</h3>
+        </div>
+        {subtitle && <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 ml-[17px]">{subtitle}</p>}
+      </div>
+      <div className="px-2 pt-1 pb-4">{children}</div>
+    </div>
+  );
+}
+
+/** KPI tile matching the Live Dashboard's KpiCard, so both tabs read as one system. */
+function LiveKpiCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color: string }) {
+  return (
+    <div style={{ position: "relative", minHeight: 88, padding: "11px 14px", borderRadius: 15, color: "#fff", overflow: "hidden", boxShadow: "0 10px 24px rgba(16,35,57,.10)", background: color }}>
+      <div aria-hidden style={{ position: "absolute", width: 64, height: 64, borderRadius: "50%", right: -16, top: -22, background: "rgba(255,255,255,.13)" }} />
+      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, opacity: 0.88 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 950, marginTop: 4, lineHeight: 1.1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 9, marginTop: 5, opacity: 0.82, fontWeight: 700 }}>{sub}</div>}
     </div>
   );
 }
@@ -1273,7 +1308,7 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
 
   if (isLoading || !voc) {
     return (
-      <ChartCard title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
+      <ChartCard variant="classic" title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
         <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading what customers actually said…
         </div>
@@ -1282,7 +1317,7 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
   }
   if (!voc.available || !voc.clapBreakdown.length) {
     return (
-      <ChartCard title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
+      <ChartCard variant="classic" title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
         <p className="text-xs text-slate-400 italic px-3 py-4">
           {voc.reason ?? "Not available for this process."}
         </p>
@@ -1292,7 +1327,7 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
 
   const quotesForCategory = voc.quotes[category];
   return (
-    <ChartCard title="Voice of the Customer"
+    <ChartCard variant="classic" title="Voice of the Customer"
       subtitle={`${voc.totalAuditedCalls.toLocaleString("en-IN")} audited call${voc.totalAuditedCalls === 1 ? "" : "s"} — what's actually behind them, not just a score`}>
       <div className="px-3">
         {/* CLAP breakdown -- real root cause, not agent quality alone. Segments
@@ -1852,7 +1887,7 @@ function DailyQualityTrendPanel({ processId }: { processId: string }) {
   };
 
   return (
-    <ChartCard title="Last 7 days vs target" subtitle={trend ? `Daily quality score against Target ${trend.targetPct}%` : undefined}>
+    <ChartCard variant="classic" title="Last 7 days vs target" subtitle={trend ? `Daily quality score against Target ${trend.targetPct}%` : undefined}>
       <div className="px-3 pb-1">
         {isLoading || !trend ? (
           <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
@@ -4926,6 +4961,19 @@ export default function ProcessOperationsPage() {
             </div>
           ) : (
             <div className="space-y-4">
+
+              {/* ── Row 0: KPI strip (mirrors the Live Dashboard card row) ─── */}
+              {ops && currentProcess && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
+                  <LiveKpiCard label="Headcount" value={ops.headcount} sub="active employees" color="linear-gradient(135deg,#1e3a5f,#2f6fed)" />
+                  <LiveKpiCard label="Total Metrics" value={allMetricsForBrief.length} sub="tracked this period" color="linear-gradient(135deg,#0369a1,#06b6d4)" />
+                  <LiveKpiCard label="Passing" value={passCount} sub="on target" color="linear-gradient(135deg,#047857,#10b981)" />
+                  <LiveKpiCard label="Failing" value={failCount} sub="below target"
+                    color={failCount > 0 ? "linear-gradient(135deg,#be123c,#f43f5e)" : "linear-gradient(135deg,#047857,#10b981)"} />
+                  <LiveKpiCard label="Stale" value={staleCount} sub={staleCount > 0 ? "feeds quiet" : "feeds current"}
+                    color={staleCount > 0 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#0369a1,#06b6d4)"} />
+                </div>
+              )}
 
               {/* ── Row 1: Executive Brief + Action Board ─────────────────── */}
               {ops && currentProcess && (

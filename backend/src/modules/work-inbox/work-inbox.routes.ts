@@ -63,13 +63,13 @@ router.patch("/:id/priority", requireRole("admin", "hr"), h(async (req: Authenti
 }));
 
 router.get("/my", h(async (req: ResolvedRequest, res: any) => {
-  const items = await svc.getMyWorkItems(req.authUser!.id, req.resolvedRole);
+  const items = await svc.getMyWorkItems(req.authUser!.id, req.resolvedRole, req.roleCtx?.roleKeys ?? [req.resolvedRole]);
   return res.json({ success: true, data: items });
 }));
 
 // GET /api/work-inbox/my-actions — same as /my but with different endpoint for dashboard compatibility
 router.get("/my-actions", h(async (req: ResolvedRequest, res: any) => {
-  const items = await svc.getMyWorkItems(req.authUser!.id, req.resolvedRole);
+  const items = await svc.getMyWorkItems(req.authUser!.id, req.resolvedRole, req.roleCtx?.roleKeys ?? [req.resolvedRole]);
   return res.json({ success: true, data: items });
 }));
 

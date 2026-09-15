@@ -23,7 +23,11 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { getAuthToken } from "@/lib/hrmsApi";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type DiallerProcess = "inbound" | "reginald-cart" | "molecular-email" | "reginald-email" | "billing" | "gs1" | null;
+type DiallerProcess =
+  | "inbound" | "reginald-cart" | "molecular-email" | "reginald-email"
+  | "billing" | "gs1" | "finnable"
+  | "gnc" | "bella-vita" | "neemans" | "viega" | "exicom" | "du-digital"
+  | null;
 interface Filters { from: string; to: string }
 
 // ── Drill-down context ────────────────────────────────────────────────────────
@@ -46,7 +50,7 @@ interface DrillTrend {
 }
 
 type LiveDrillContext =
-  | { type: "kpi"; label: string; value: string | number; sub?: string; trend?: DrillTrend }
+  | { type: "kpi"; label: string; value: string | number; sub?: string; dashboard?: DiallerProcess; trend?: DrillTrend }
   | { type: "hourly"; date: string }
   | { type: "record"; title: string; fields: { label: string; value: React.ReactNode }[] };
 
@@ -67,10 +71,19 @@ export function detectDiallerProcess(processName: string): DiallerProcess {
   if (n.includes("molecular")) return "molecular-email";
   // Reginald (alone or with cart/abandon/abc/men) → cart dashboard which now includes email APR
   if (n.includes("reginald")) return "reginald-cart";
-  // Domestic Billing / Finnable (must come after all outbound checks to avoid false-positives)
-  if (n.includes("billing") || n.includes("finnable")) return "billing";
+  // Finnable — APR dashboard (vicidial_agent_log_10_25, campaign FINNABLE)
+  if (n.includes("finnable")) return "finnable";
+  // Domestic Billing
+  if (n.includes("billing")) return "billing";
   // GS1 India
   if (n.includes("gs1")) return "gs1";
+  // Inbound CDR staging processes (pre-synced from dialer_db into inbound_cdr_daily_actual)
+  if (n.includes("gnc")) return "gnc";
+  if (n.includes("bella") || n.includes("bevzilla") || n.includes("embark")) return "bella-vita";
+  if (n.includes("neeman")) return "neemans";
+  if (n.includes("viega")) return "viega";
+  if (n.includes("exicom")) return "exicom";
+  if (n.includes("du digital") || n.includes("du_digital")) return "du-digital";
   return null;
 }
 
@@ -743,7 +756,7 @@ const cartSalesTrend = (f: Filters, fmtRs: (v: number) => string): DrillTrend =>
 });
 
 /** Day-wise APR trend behind the email-APR KPI cards (Molecular + Reginald Email). */
-const emailDailyTrend = (proc: "molecular-email" | "reginald-email", f: Filters): DrillTrend => ({
+const emailDailyTrend = (proc: "molecular-email" | "reginald-email" | "finnable", f: Filters): DrillTrend => ({
   title: "Day-wise APR",
   queryKey: ["pld", proc, "daily", f],
   path: `${proc}/daily`,
@@ -899,7 +912,141 @@ type EmailTicketData = {
   hasData: boolean;
 };
 
-function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-email" | "reginald-email"; label: string; campaign: string; f: Filters }) {
+// ── CDR Staging Dashboard (GNC / Bella-Vita / Neemans / Viega / Exicom / DU Digital) ──
+
+type CdrSummary = {
+  clientCode: string; from: string; to: string;
+  totalOffered: number; totalAnswered: number;
+  alPct: number; slPct: number; achtSec: number; aht: string;
+  repeatPct: number; fcrPct: number; avgLoginCount: number; dayCount: number;
+};
+type CdrDayRow = { date: string; offered: number; answered: number; alPct: number; slPct: number; achtSec: number; aht: string; repeatPct: number; fcrPct: number; loginCount: number };
+type CdrMonthRow = { month: string; offered: number; answered: number; alPct: number; slPct: number; achtSec: number; aht: string };
+
+function InboundCdrDashboard({ proc, label, f }: { proc: string; label: string; f: Filters }) {
+  const [sub, setSub] = useState<"overview" | "daily" | "monthly">("overview");
+  const drill = useDrill();
+  const summQ = useQuery({ queryKey: ["pld", proc, "summary", f], queryFn: () => fetchLive<CdrSummary>(`${proc}/summary`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
+  const dayQ  = useQuery({ queryKey: ["pld", proc, "daily", f],   queryFn: () => fetchLive<CdrDayRow[]>(`${proc}/daily`, { from: f.from, to: f.to }),   staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
+  const monQ  = useQuery({ queryKey: ["pld", proc, "monthly", f], queryFn: () => fetchLive<CdrMonthRow[]>(`${proc}/monthly`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
+
+  return (
+    <div>
+      <InfoBox html={`<strong>${label}</strong> — daily CDR KPIs synced from dialler DB via inbound-cdr-sync job.`} />
+      <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+        {(["overview", "daily", "monthly"] as const).map(s => (
+          <button key={s} type="button" onClick={() => setSub(s)}
+            style={{ padding: "5px 14px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, background: sub === s ? "#1e4f82" : "#e8eef5", color: sub === s ? "#fff" : "#4a6080", transition: ".15s" }}>
+            {s.charAt(0).toUpperCase() + s.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {sub === "overview" && (
+        summQ.isLoading ? <Spinner /> : summQ.error ? <Err msg="Could not load summary" /> : summQ.data ? (() => {
+          const d = summQ.data;
+          const trend: DrillTrend = {
+            title: "Daily Trend",
+            queryKey: ["pld", proc, "daily", f],
+            path: `${proc}/daily`,
+            params: { from: f.from, to: f.to },
+            emptyHint: "No data synced for this range.",
+            cols: [
+              { h: "Date", k: "date", left: true, fmt: fmtDay },
+              { h: "Offered", k: "offered" },
+              { h: "Answered", k: "answered" },
+              { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
+              { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
+              { h: "ACHT", k: "aht" },
+              { h: "Repeat%", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
+              { h: "FCR%", k: "fcrPct", fmt: v => <PctBadge v={Number(v)} /> },
+            ],
+          };
+          return (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
+                <KpiCard label="Offered" value={d.totalOffered.toLocaleString()} color={KPIG[0]}
+                  onClick={() => drill({ type: "kpi", label: "Offered", value: d.totalOffered.toLocaleString(), dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="Answered" value={d.totalAnswered.toLocaleString()} color={KPIG[1]}
+                  onClick={() => drill({ type: "kpi", label: "Answered", value: d.totalAnswered.toLocaleString(), dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="AL%" value={`${d.alPct.toFixed(1)}%`} color={d.alPct >= 80 ? KPIG[3] : KPIG[2]}
+                  onClick={() => drill({ type: "kpi", label: "AL%", value: `${d.alPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="SL%" value={`${d.slPct.toFixed(1)}%`} color={d.slPct >= 80 ? KPIG[3] : KPIG[2]}
+                  onClick={() => drill({ type: "kpi", label: "SL%", value: `${d.slPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="ACHT" value={d.aht} color={KPIG[4]}
+                  onClick={() => drill({ type: "kpi", label: "ACHT", value: d.aht, dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="Repeat%" value={`${d.repeatPct.toFixed(1)}%`} color={d.repeatPct > 15 ? KPIG[2] : KPIG[5]}
+                  onClick={() => drill({ type: "kpi", label: "Repeat%", value: `${d.repeatPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="FCR%" value={`${d.fcrPct.toFixed(1)}%`} color={d.fcrPct >= 80 ? KPIG[3] : KPIG[4]}
+                  onClick={() => drill({ type: "kpi", label: "FCR%", value: `${d.fcrPct.toFixed(1)}%`, dashboard: proc as DiallerProcess, trend })} />
+                <KpiCard label="Avg Agents/Day" value={d.avgLoginCount.toFixed(1)} color={KPIG[0]}
+                  onClick={() => drill({ type: "kpi", label: "Avg Agents/Day", value: d.avgLoginCount.toFixed(1), dashboard: proc as DiallerProcess, trend })} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                {[{ label: "Period Covered", value: `${d.dayCount} days` }, { label: "From", value: d.from }, { label: "To", value: d.to }].map((t, i) => (
+                  <div key={i} style={{ background: "#f0f5fc", border: "1px solid #dce4ed", borderRadius: 11, padding: "10px 14px" }}>
+                    <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".4px", fontWeight: 900, color: "#8390a0", marginBottom: 4 }}>{t.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#1a3a5c" }}>{t.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })() : null
+      )}
+
+      {sub === "daily" && (
+        dayQ.isLoading ? <Spinner /> : dayQ.error ? <Err msg="Could not load daily data" /> :
+        <DataTable<CdrDayRow> cols={[
+          { h: "Date", k: "date", left: true, fmt: fmtDay },
+          { h: "Offered", k: "offered" },
+          { h: "Answered", k: "answered" },
+          { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
+          { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
+          { h: "ACHT", k: "aht" },
+          { h: "Repeat%", k: "repeatPct", fmt: v => <PctBadge v={Number(v)} /> },
+          { h: "FCR%", k: "fcrPct", fmt: v => <PctBadge v={Number(v)} /> },
+          { h: "Agents", k: "loginCount" },
+        ]} rows={dayQ.data ?? []}
+          onRowClick={row => drill({ type: "record", title: `Day: ${row.date}`, fields: [
+            { label: "Date", value: String(row.date) },
+            { label: "Offered", value: String(row.offered) },
+            { label: "Answered", value: String(row.answered) },
+            { label: "AL%", value: `${row.alPct}%` },
+            { label: "SL%", value: `${row.slPct}%` },
+            { label: "ACHT", value: String(row.aht) },
+            { label: "Repeat%", value: `${row.repeatPct}%` },
+            { label: "FCR%", value: `${row.fcrPct}%` },
+            { label: "Agents", value: String(row.loginCount) },
+          ]})} />
+      )}
+
+      {sub === "monthly" && (
+        monQ.isLoading ? <Spinner /> : monQ.error ? <Err msg="Could not load monthly data" /> :
+        <DataTable<CdrMonthRow> cols={[
+          { h: "Month", k: "month", left: true },
+          { h: "Offered", k: "offered" },
+          { h: "Answered", k: "answered" },
+          { h: "AL%", k: "alPct", fmt: v => <PctBadge v={Number(v)} /> },
+          { h: "SL%", k: "slPct", fmt: v => <PctBadge v={Number(v)} /> },
+          { h: "ACHT", k: "aht" },
+        ]} rows={monQ.data ?? []}
+          onRowClick={row => drill({ type: "record", title: `Month: ${row.month}`, fields: [
+            { label: "Month", value: String(row.month) },
+            { label: "Offered", value: String(row.offered) },
+            { label: "Answered", value: String(row.answered) },
+            { label: "AL%", value: `${row.alPct}%` },
+            { label: "SL%", value: `${row.slPct}%` },
+            { label: "ACHT", value: String(row.aht) },
+          ]})} />
+      )}
+    </div>
+  );
+}
+
+// ── Email APR Dashboard (Molecular / Reginald Email / Finnable) ───────────────
+
+function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-email" | "reginald-email" | "finnable"; label: string; campaign: string; f: Filters }) {
   const [sub, setSub] = useState<"overview" | "daily" | "agents" | "tickets">("overview");
   const drill = useDrill();
   const summQ = useQuery({ queryKey: ["pld", proc, "summary", f], queryFn: () => fetchLive<{ totalLoginTime: string; totalTalk: string; totalPause: string; totalLbTime: string; totalTbTime: string; totalWbTime: string; avgUtilization: number; agentCount: number }>(`${proc}/summary`, { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
@@ -1403,7 +1550,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
     return (
       <div style={{ margin: "16px 0", padding: "16px 20px", background: "linear-gradient(135deg,#fff8e7,#fffaf0)", border: "1px solid #fde68a", borderRadius: 14, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
         <strong>No live dialler data available</strong> for <em>{processName}</em>.
-        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email (APR), Reginald Email (APR), Domestic Billing / Finnable, GS1 India.</div>
+        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Neemans, Viega, Exicom, DU Digital.</div>
       </div>
     );
   }
@@ -1419,6 +1566,13 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
         {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
         {proc === "billing" && <BillingDashboard f={filters} />}
         {proc === "gs1" && <GS1Dashboard f={filters} />}
+        {proc === "finnable"   && <EmailAprDashboard proc="finnable"        label="Finnable"              campaign="FINNABLE" f={filters} />}
+        {proc === "gnc"        && <InboundCdrDashboard proc="gnc"           label="GNC"                   f={filters} />}
+        {proc === "bella-vita" && <InboundCdrDashboard proc="bella-vita"    label="Bella-Vita Organic"    f={filters} />}
+        {proc === "neemans"    && <InboundCdrDashboard proc="neemans"       label="Neemans Private Limited" f={filters} />}
+        {proc === "viega"      && <InboundCdrDashboard proc="viega"         label="Viega"                 f={filters} />}
+        {proc === "exicom"     && <InboundCdrDashboard proc="exicom"        label="Exicom"                f={filters} />}
+        {proc === "du-digital" && <InboundCdrDashboard proc="du-digital"    label="DU Digital"            f={filters} />}
         <LiveDetailDrawer ctx={drillCtx} processName={processName} onClose={() => setDrillCtx(null)} />
       </div>
     </DrillDispatch.Provider>
