@@ -723,7 +723,7 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
 
   // Revenue with nobody posted to it. The margin is not performance, it is an attribution error,
   // and it understates whichever branch is really carrying those people by the same amount.
-  for (const b of branches.filter((x) => x.revenue > 0 && x.peopleCost <= 0)) {
+  for (const b of branches.filter((x) => x.revenue > 0 && x.peopleCost <= 0 && x.flag !== PAYROLL_PENDING_FLAG)) {
     found.push({
       id: `no-payroll-${b.branchName}`,
       severity: "critical",
@@ -864,6 +864,16 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
  * the open billing window (current + previous IST month). Never under a process filter, because
  * cost centres carry no process. Cached briefly: the overview and its trend ask for the same month.
  */
+/**
+ * An estimated month whose payroll has not run: the estimate is there but the cost line is not, so
+ * a margin would read ~80% (Live P&L shows NA for the same month). Only when an estimate is in
+ * play — an invoiced branch with no payroll is still the attribution finding it always was.
+ */
+const PAYROLL_PENDING_FLAG = "payroll not run yet";
+function payrollPending(peopleCost: number, estimated: number): boolean {
+  return estimated > 0 && peopleCost <= 0;
+}
+
 const estimateCache = new Map<string, { at: number; value: Promise<Map<string, number>> }>();
 function estimateByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   if (s.processIds.length || !isEstimateWindow(period, getCurrentDateIST())) return Promise.resolve(new Map());
@@ -915,7 +925,7 @@ async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoin
       const operatingProfit = revenue - people - sum(spend);
       return {
         period, revenue, operatingProfit,
-        marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
+        marginPct: revenue > 0 && !payrollPending(people, sum(est)) ? (operatingProfit / revenue) * 100 : null,
       };
     }),
   );
@@ -1263,9 +1273,11 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
       indirectCost: idc,
       budget: ids.reduce((t, i) => t + (budget.get(i) ?? 0), 0),
       operatingProfit: op,
-      marginPct: rev > 0 && !isCostCentre && !isClosed ? (op / rev) * 100 : null,
+      marginPct: rev > 0 && !isCostCentre && !isClosed && !payrollPending(pay.cost, est) ? (op / rev) * 100 : null,
       revenuePerHead: pay.staff > 0 ? rev / pay.staff : null,
-      flag: rev > 0 && pay.cost <= 0 ? "no payroll attributed" : null,
+      flag: payrollPending(pay.cost, est)
+        ? PAYROLL_PENDING_FLAG
+        : rev > 0 && pay.cost <= 0 ? "no payroll attributed" : null,
       isCostCentre,
       isClosed,
       revenueEstimated: est,
@@ -1306,13 +1318,16 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   const revenueEstimated = allRows.reduce((acc, b) => acc + (b.revenueEstimated ?? 0), 0);
   const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
   const unbranched = people.get("")?.staff ?? 0;
+  const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated)
+    ? (operatingProfit / totals.revenue) * 100
+    : null;
 
   return {
     period,
     ...totals,
     revenueEstimated,
     operatingProfit,
-    marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null,
+    marginPct: headlineMargin,
     revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
     branches,
     closedBranchesHidden,
@@ -1336,7 +1351,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     }),
     trend: trend.map((point) =>
       point.period === period
-        ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null }
+        ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: headlineMargin }
         : point,
     ),
     options: {

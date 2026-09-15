@@ -18,6 +18,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute, tableExists } = vi.hoisted(() => ({ execute: vi.fn(), tableExists: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists, queryRows: vi.fn() }));
+// The seat-rate estimate is read from the Live P&L; only months inside the open billing window ask.
+const { getPnlReconciliation } = vi.hoisted(() => ({ getPnlReconciliation: vi.fn() }));
+vi.mock("../pnl-reconciliation.service.js", () => ({ getPnlReconciliation }));
 
 interface Fixture {
   branches: { id: string; branch_name: string; active_status: number }[];
@@ -533,5 +536,93 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
       .find((q) => q.includes("billing_invoice_particular_snapshot") && q.includes("GROUP BY"))!;
     expect(revenue).toContain("LOWER(");
     expect(revenue, "spaces and full stops must be stripped before matching").toContain("REPLACE(");
+  });
+});
+
+describe("seat-rate estimate — same revenue as the Live P&L tab", () => {
+  // Always inside the estimate window (current + previous IST month), whatever day the suite runs.
+  const openMonth = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
+  const recRows = (rows: { branchId: string; costCentreId: string; revenueEstimated: number }[]) =>
+    getPnlReconciliation.mockResolvedValue({ rows });
+
+  beforeEach(() => getPnlReconciliation.mockReset());
+
+  it("adds the Live P&L estimate to revenue and the margin, and reports how much of it is estimate", async () => {
+    mockDb({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(80) }],
+      people: [{ branch_id: "n", staff: 300, cost: L(70) }],
+      spend: [{ branch_id: "n", amount: L(10) }],
+    });
+    recRows([
+      { branchId: "n", costCentreId: "cc1", revenueEstimated: L(20) },
+      { branchId: "n", costCentreId: "cc2", revenueEstimated: 0 },
+    ]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview(openMonth);
+    expect(out.revenue).toBeCloseTo(L(100), 0);
+    expect(out.revenueEstimated).toBeCloseTo(L(20), 0);
+    expect(out.branches[0].revenueEstimated).toBeCloseTo(L(20), 0);
+    expect(out.marginPct).toBeCloseTo(20, 5);
+  });
+
+  it("shows no margin (and raises no attribution alarm) while the month's payroll has not run", async () => {
+    mockDb({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      spend: [{ branch_id: "n", amount: L(10) }],
+    });
+    recRows([{ branchId: "n", costCentreId: "cc1", revenueEstimated: L(140) }]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview(openMonth);
+    expect(out.revenue).toBeCloseTo(L(140), 0);
+    expect(out.marginPct, "an ~93% margin with no people cost is not a result").toBeNull();
+    expect(out.branches[0].marginPct).toBeNull();
+    expect(out.branches[0].flag).toBe("payroll not run yet");
+    expect(out.opportunities.some((o) => o.id.startsWith("no-payroll"))).toBe(false);
+    expect(out.trend.find((t) => t.period === openMonth)?.marginPct ?? null).toBeNull();
+  });
+
+  it("an invoiced branch with no payroll is still the attribution finding", async () => {
+    mockDb({
+      branches: [{ id: "d", branch_name: "NOIDA-DIALDESK", active_status: 1 }],
+      revenue: [{ branch_id: "d", amount: L(25) }],
+    });
+    recRows([]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview(openMonth);
+    expect(out.branches[0].flag).toBe("no payroll attributed");
+    expect(out.opportunities.some((o) => o.id.startsWith("no-payroll"))).toBe(true);
+  });
+
+  it("honours a cost-centre filter and adds nothing under a process filter", async () => {
+    mockDb({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      people: [{ branch_id: "n", staff: 10, cost: L(5) }],
+    });
+    recRows([
+      { branchId: "n", costCentreId: "cc1", revenueEstimated: L(20) },
+      { branchId: "n", costCentreId: "cc2", revenueEstimated: L(7) },
+    ]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const cc = await getCeoOverview(openMonth, { costCentreIds: ["cc2"] });
+    expect(cc.revenueEstimated).toBeCloseTo(L(7), 0);
+    const proc = await getCeoOverview(openMonth, { processIds: ["p1"] });
+    expect(proc.revenueEstimated).toBe(0);
+  });
+
+  it("never asks for an estimate on a closed month, and survives the Live P&L failing", async () => {
+    mockDb({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(50) }],
+      people: [{ branch_id: "n", staff: 10, cost: L(30) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-01");
+    expect(getPnlReconciliation).not.toHaveBeenCalled();
+    // A Live P&L answer the estimate cannot read (rows missing) must cost the estimate, not the page.
+    getPnlReconciliation.mockResolvedValue({ rows: null });
+    const out = await getCeoOverview(openMonth);
+    expect(out.revenue).toBeCloseTo(L(50), 0);
+    expect(out.revenueEstimated).toBe(0);
   });
 });

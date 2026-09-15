@@ -223,7 +223,11 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
           <div className={`mt-1 text-[26px] font-semibold leading-tight tabular-nums ${marginTone(marginPct, false)}`}>
             {marginPct === null ? "—" : `${marginPct.toFixed(1)}%`}
           </div>
-          <div className="mt-1 text-xs text-slate-500">{lakh(operatingProfit)} operating profit</div>
+          <div className="mt-1 text-xs text-slate-500">
+            {marginPct === null && estimated > 0.5 && peopleCost <= 0
+              ? "not yet measurable — payroll for this month has not run"
+              : `${lakh(operatingProfit)} operating profit`}
+          </div>
           <div className="mt-2 flex h-7 items-end gap-1" aria-hidden="true">
             {data.trend.map((t) => (
               <span
@@ -260,7 +264,9 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
             <span className="text-2xl text-slate-500">%</span>
           </div>
           <div className="mt-2 text-[13px] text-slate-600 dark:text-slate-400">
-            {lakh(operatingProfit)} on {lakh(revenue)}
+            {marginPct === null && estimated > 0.5 && peopleCost <= 0
+              ? `Payroll for ${period} has not run, so there is no people cost to set against ${lakh(revenue)} yet.`
+              : `${lakh(operatingProfit)} on ${lakh(revenue)}`}
           </div>
           <div className="mt-3 flex flex-wrap gap-1.5">
             <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-300">
