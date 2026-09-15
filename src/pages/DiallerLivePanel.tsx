@@ -1502,18 +1502,21 @@ type GS1OverviewT = {
   approvalSku: number; auditErrors: number;
   daily: { date: string; emailTasks: number; dataKartTasks: number }[];
 };
+// Field names below are the ones gs1.service.ts actually returns. They were
+// previously invented (tasksAssigned/dataReceived/errorRatePct/slaPct/…), which
+// made three of the four GS1 sub-tabs throw on first render.
 type GS1EmailT = {
-  tasksAssigned: number; gtinProcessed: number; imagesUploaded: number; slaWithin15Pct: number;
-  byAnalyst: { analyst: string; tasks: number; gtin: number; images: number; slaPct: number }[];
+  tasks: number; gtin: number; images: number; sla15Pct: number;
+  byAnalyst: { analyst: string; tasks: number; gtin: number; images: number; sla15Pct: number }[];
   daily: { date: string; tasks: number; gtin: number; images: number }[];
 };
 type GS1DataKartT = {
-  dataReceived: number; gtinCount: number; withinTatPct: number; avgGtinPerTask: number;
-  byAnalyst: { analyst: string; tasks: number; gtin: number; withinTatPct: number; avgGtinPerTask: number }[];
-  daily: { date: string; tasks: number; gtin: number }[];
+  tasks: number; gtin: number; withinTatPct: number; avgGtinPerTask: number;
+  byAnalyst: { analyst: string; tasks: number; gtin: number; withinTatPct: number; avgGtin: number }[];
+  daily: { date: string; tasks: number; gtin: number; withinTatPct: number }[];
 };
 type GS1ApprovalT = {
-  totalSku: number; auditCount: number; auditErrors: number; errorRatePct: number; uniqueGcp: number;
+  totalSku: number; auditCount: number; auditErrors: number; errorRate: number; uniqueGcp: number;
   byCompany: { company: string; sku: number; audits: number; errors: number; errorPct: number }[];
   byAnalyst: { analyst: string; audits: number; errors: number; errorPct: number }[];
 };
@@ -1626,10 +1629,10 @@ function GS1Dashboard({ f }: { f: Filters }) {
         emailQ.isLoading ? <Spinner /> : emailQ.error || !emailQ.data ? <Err msg="Failed to load GS1 email data" /> : (() => {
           const d = emailQ.data;
           const kpis = [
-            { label: "Tasks Assigned", value: d.tasksAssigned.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
-            { label: "GTIN Processed", value: d.gtinProcessed.toLocaleString(), sub: "Total GTIN done", color: KPIG[0] },
-            { label: "Images Uploaded", value: d.imagesUploaded.toLocaleString(), sub: "Product images", color: KPIG[9] },
-            { label: "SLA ≤15min %", value: `${d.slaWithin15Pct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.slaWithin15Pct >= 80 ? KPIG[1] : KPIG[2] },
+            { label: "Tasks Assigned", value: d.tasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
+            { label: "GTIN Processed", value: d.gtin.toLocaleString(), sub: "Total GTIN done", color: KPIG[0] },
+            { label: "Images Uploaded", value: d.images.toLocaleString(), sub: "Product images", color: KPIG[9] },
+            { label: "SLA ≤15min %", value: `${d.sla15Pct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.sla15Pct >= 80 ? KPIG[1] : KPIG[2] },
           ];
           return (
             <div>
@@ -1646,7 +1649,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
                     { h: "Tasks", k: "tasks" as const },
                     { h: "GTIN", k: "gtin" as const },
                     { h: "Images", k: "images" as const },
-                    { h: "SLA %", k: "slaPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
+                    { h: "SLA %", k: "sla15Pct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
                   ]} rows={d.byAnalyst} />
                 </Panel>
               )}
@@ -1673,8 +1676,8 @@ function GS1Dashboard({ f }: { f: Filters }) {
         dataKartQ.isLoading ? <Spinner /> : dataKartQ.error || !dataKartQ.data ? <Err msg="Failed to load GS1 Data Kart data" /> : (() => {
           const d = dataKartQ.data;
           const kpis = [
-            { label: "Data Received", value: d.dataReceived.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
-            { label: "GTIN Count", value: d.gtinCount.toLocaleString(), sub: "Total GTIN processed", color: KPIG[0] },
+            { label: "Data Received", value: d.tasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
+            { label: "GTIN Count", value: d.gtin.toLocaleString(), sub: "Total GTIN processed", color: KPIG[0] },
             { label: "Within TAT %", value: `${d.withinTatPct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.withinTatPct >= 80 ? KPIG[1] : KPIG[2] },
             { label: "Avg GTIN/Task", value: d.avgGtinPerTask.toFixed(1), sub: "GTIN per task", color: KPIG[9] },
           ];
@@ -1693,7 +1696,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
                     { h: "Tasks", k: "tasks" as const },
                     { h: "GTIN", k: "gtin" as const },
                     { h: "Within TAT %", k: "withinTatPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
-                    { h: "Avg GTIN/Task", k: "avgGtinPerTask" as const, fmt: (v: unknown) => Number(v).toFixed(1) },
+                    { h: "Avg GTIN/Task", k: "avgGtin" as const, fmt: (v: unknown) => Number(v).toFixed(1) },
                   ]} rows={d.byAnalyst} />
                 </Panel>
               )}
@@ -1722,7 +1725,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
             { label: "Total SKU", value: d.totalSku.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
             { label: "Audit Count", value: d.auditCount.toLocaleString(), sub: "Total audits done", color: KPIG[0] },
             { label: "Audit Errors", value: d.auditErrors.toLocaleString(), sub: "Errors found", color: d.auditErrors > 0 ? KPIG[2] : KPIG[1] },
-            { label: "Error Rate %", value: `${d.errorRatePct.toFixed(1)}%`, sub: "Target < 5%", color: d.errorRatePct < 5 ? KPIG[1] : KPIG[2] },
+            { label: "Error Rate %", value: `${d.errorRate.toFixed(1)}%`, sub: "Target < 5%", color: d.errorRate < 5 ? KPIG[1] : KPIG[2] },
             { label: "Unique GCP", value: d.uniqueGcp.toLocaleString(), sub: "Distinct companies", color: KPIG[9] },
           ];
           return (
