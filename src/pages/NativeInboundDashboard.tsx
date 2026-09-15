@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from "recharts";
 import {
   Phone, Clock, CheckCircle, AlertTriangle, ChevronRight,
@@ -25,6 +25,10 @@ interface ProjectSummary {
   avg_handle: number;
   sl_pct: number;
   fcr_pct?: number;
+  // Backend already returns these — mandate config + dialer login count
+  login_count?: number;
+  mandate?: number;
+  required?: number;
 }
 interface ConsolidatedPoint { date: string; offered: number; answered: number; sl_pct: number }
 interface ProjectTrend { date: string; offered: number; answered: number; sl_num: number }
@@ -64,6 +68,7 @@ function SLBadge({ pct }: { pct: number }) {
 // ── Project Card ───────────────────────────────────────────────────────────────
 function ProjectCard({ p, onClick }: { p: ProjectSummary; onClick: () => void }) {
   const color = PROJECT_COLORS[p.name] ?? "bg-slate-500";
+  const deficit = p.required != null && p.login_count != null ? p.required - p.login_count : null;
   return (
     <button
       onClick={onClick}
@@ -71,7 +76,14 @@ function ProjectCard({ p, onClick }: { p: ProjectSummary; onClick: () => void })
     >
       <div className="flex items-center justify-between mb-3">
         <div className={`rounded-xl px-3 py-1 text-xs font-bold text-white ${color}`}>{p.name}</div>
-        <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-500 transition-colors" />
+        <div className="flex items-center gap-2">
+          {deficit != null && (
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${deficit <= 0 ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
+              {deficit <= 0 ? `+${Math.abs(deficit)} buffer` : `${deficit} short`}
+            </span>
+          )}
+          <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-500 transition-colors" />
+        </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <div>
@@ -87,7 +99,26 @@ function ProjectCard({ p, onClick }: { p: ProjectSummary; onClick: () => void })
           <p className="text-xs text-slate-500">Abandon</p>
         </div>
       </div>
-      <div className="mt-3 flex items-center justify-between border-t border-slate-50 pt-2">
+      {/* Login vs Mandate row */}
+      {p.login_count != null && p.mandate != null && (
+        <div className="mt-2 grid grid-cols-3 gap-2 border-t border-slate-50 pt-2">
+          <div>
+            <p className="text-sm font-bold text-slate-700">{p.login_count}</p>
+            <p className="text-[10px] text-slate-400">Login</p>
+          </div>
+          <div>
+            <p className="text-sm font-bold text-slate-700">{p.mandate}</p>
+            <p className="text-[10px] text-slate-400">Mandate</p>
+          </div>
+          <div>
+            <p className={`text-sm font-bold ${deficit != null && deficit <= 0 ? "text-emerald-600" : "text-red-500"}`}>
+              {p.required != null ? p.required : "—"}
+            </p>
+            <p className="text-[10px] text-slate-400">Required</p>
+          </div>
+        </div>
+      )}
+      <div className="mt-2 flex items-center justify-between border-t border-slate-50 pt-2">
         <div className="flex items-center gap-1.5">
           <Clock className="h-3 w-3 text-slate-400" />
           <span className="text-xs text-slate-500">AvgWait {p.avg_wait}s</span>
@@ -135,11 +166,19 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
   if (loading) return <Spinner />;
 
   const totals = projects.reduce(
-    (acc, p) => ({ total: acc.total + p.total, answered: acc.answered + p.answered, abandoned: acc.abandoned + p.abandoned }),
-    { total: 0, answered: 0, abandoned: 0 }
+    (acc, p) => ({
+      total: acc.total + p.total,
+      answered: acc.answered + p.answered,
+      abandoned: acc.abandoned + p.abandoned,
+      login: acc.login + (p.login_count ?? 0),
+      mandate: acc.mandate + (p.mandate ?? 0),
+      required: acc.required + (p.required ?? 0),
+    }),
+    { total: 0, answered: 0, abandoned: 0, login: 0, mandate: 0, required: 0 }
   );
   const overallAns = totals.total ? ((totals.answered / totals.total) * 100).toFixed(1) : "—";
   const overallAbandon = totals.total ? ((totals.abandoned / totals.total) * 100).toFixed(1) : "—";
+  const overallDeficit = totals.required > 0 ? totals.required - totals.login : null;
 
   return (
     <div className="space-y-5">
@@ -150,11 +189,17 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
         </div>
       )}
       {/* Summary strip */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: "Total Calls", value: totals.total.toLocaleString(), icon: Phone, color: "text-blue-600 bg-blue-50" },
-          { label: "Answer Rate", value: `${overallAns}%`, icon: CheckCircle, color: "text-emerald-600 bg-emerald-50" },
-          { label: "Abandon Rate", value: `${overallAbandon}%`, icon: AlertTriangle, color: "text-red-500 bg-red-50" },
+          { label: "Total Calls",  value: totals.total.toLocaleString(),  icon: Phone,         color: "text-blue-600 bg-blue-50" },
+          { label: "Answer Rate",  value: `${overallAns}%`,               icon: CheckCircle,   color: "text-emerald-600 bg-emerald-50" },
+          { label: "Abandon Rate", value: `${overallAbandon}%`,           icon: AlertTriangle, color: "text-red-500 bg-red-50" },
+          { label: "Login Count",  value: totals.login > 0 ? totals.login.toString() : "—",   icon: RotateCcw, color: "text-slate-600 bg-slate-50" },
+          { label: "Mandate",      value: totals.mandate > 0 ? totals.mandate.toString() : "—", icon: BarChart2, color: "text-slate-600 bg-slate-50" },
+          { label: overallDeficit != null && overallDeficit > 0 ? "Deficit" : "Buffer",
+            value: overallDeficit != null ? `${Math.abs(overallDeficit)}` : "—",
+            icon: AlertTriangle,
+            color: overallDeficit != null && overallDeficit > 0 ? "text-red-500 bg-red-50" : "text-emerald-600 bg-emerald-50" },
         ].map((s, i) => (
           <div key={i} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
             <div className={`mb-2 inline-flex rounded-xl p-2 ${s.color}`}>
@@ -166,18 +211,23 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
         ))}
       </div>
 
-      {/* Consolidated trend */}
+      {/* Consolidated trend — with SL% reference line at 80% */}
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <p className="mb-3 text-sm font-semibold text-slate-700">Consolidated Inbound Trend</p>
-        <ResponsiveContainer width="100%" height={200}>
+        <p className="mb-3 text-sm font-semibold text-slate-700">
+          Consolidated Inbound Trend
+          <span className="ml-2 text-xs text-slate-400 font-normal">SL% reference line = 80%</span>
+        </p>
+        <ResponsiveContainer width="100%" height={220}>
           <LineChart data={trend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis dataKey="date" tick={{ fontSize: 9 }} />
             <YAxis tick={{ fontSize: 10 }} />
             <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <ReferenceLine y={80} yAxisId={0} stroke="#3B82F6" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: "SL 80%", fill: "#3B82F6", fontSize: 10 }} />
             <Line type="monotone" dataKey="offered" name="Offered" stroke="#94A3B8" strokeWidth={1.5} dot={false} />
             <Line type="monotone" dataKey="answered" name="Answered" stroke="#10B981" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="sl_pct" name="SL %" stroke="#3B82F6" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="sl_pct" name="SL %" stroke="#3B82F6" strokeWidth={2.5} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>

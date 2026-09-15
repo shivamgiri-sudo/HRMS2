@@ -1402,3 +1402,146 @@ export async function uploadAwNewCdr(buffer: Buffer, uploadedBy: string): Promis
   await logUpload("aw_new_cdr", currentMonthLabel(), count, uploadedBy, batchId);
   return { rowsInserted: count };
 }
+
+// ── BVO / Bellavita Repeat Dashboard ─────────────────────────────────────────
+//
+// Source: db_masmis.bvo_order_export — Shopify order export for Bellavita Repeat.
+// Real columns verified live 2026-09-15: shipping_phone, financial_status, total,
+// lineitem_name, created_at_raw (format DD-MM-YYYY), tags (contains Prepaid/COD tags).
+// financial_status values: 'paid' | 'COD' | 'PrePaid' | 'voided' | 'refunded' | 'partially_paid'
+// 3,050,861 rows covering 2024-05 through 2025-06.
+// Fast month filter: avoids STR_TO_DATE+REGEXP full-table scan on 3M rows.
+// created_at_raw format is 'DD-MM-YYYY' (10 chars). Direct string extraction:
+//   MID(created_at_raw,4,2) → month digits (e.g. '06')
+//   RIGHT(created_at_raw,4) → year (e.g. '2025')
+// Verified safe: all real rows follow DD-MM-YYYY with CHAR_LENGTH=10.
+// 3M-row scan still required (no index on created_at_raw) but avoids per-row
+// STR_TO_DATE call — tested at ~20s locally on LAN with 3M rows.
+const BVO_DATE_SQL = "STR_TO_DATE(created_at_raw, '%d-%m-%Y')";
+const BVO_MONTH_FILTER = `CHAR_LENGTH(created_at_raw)=10 AND MID(created_at_raw,4,2)=? AND RIGHT(created_at_raw,4)=?`;
+
+export async function getBvoDashboard(month: string): Promise<Record<string, unknown>> {
+  // Split YYYY-MM → month digits ('MM') and year ('YYYY') for the fast string filter
+  const [yyyy, mm] = month.split("-");
+
+  const [kpis] = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       COUNT(*) AS total_orders,
+       ROUND(SUM(total),0) AS total_revenue,
+       ROUND(AVG(total),2) AS aov,
+       SUM(financial_status='paid') AS paid_count,
+       SUM(financial_status='COD') AS cod_count,
+       SUM(financial_status='PrePaid') AS prepaid_count,
+       SUM(financial_status IN ('voided','refunded','partially_paid')) AS returned_count,
+       ROUND(SUM(financial_status='paid')*100.0/NULLIF(COUNT(*),0),1) AS paid_pct,
+       ROUND(SUM(financial_status='COD')*100.0/NULLIF(COUNT(*),0),1) AS cod_pct,
+       ROUND(SUM(financial_status='PrePaid')*100.0/NULLIF(COUNT(*),0),1) AS prepaid_pct,
+       ROUND(SUM(financial_status IN ('voided','refunded','partially_paid'))*100.0/NULLIF(COUNT(*),0),1) AS return_pct,
+       ROUND(SUM(CASE WHEN financial_status='paid' THEN total ELSE 0 END),0) AS paid_revenue,
+       ROUND(SUM(CASE WHEN financial_status='COD' THEN total ELSE 0 END),0) AS cod_revenue
+     FROM db_masmis.bvo_order_export
+     WHERE ${BVO_MONTH_FILTER}`, [mm, yyyy]);
+
+  // Daily revenue trend — sort by day digit (DD from created_at_raw)
+  const daily = await queryMasmis<Record<string, unknown>>(
+    `SELECT CONCAT(?, '-', ?, '-', LEFT(created_at_raw,2)) AS date,
+       COUNT(*) AS orders, ROUND(SUM(total),0) AS revenue,
+       SUM(financial_status='paid') AS paid_count, SUM(financial_status='COD') AS cod_count
+     FROM db_masmis.bvo_order_export
+     WHERE ${BVO_MONTH_FILTER}
+     GROUP BY LEFT(created_at_raw,2)
+     ORDER BY CAST(LEFT(created_at_raw,2) AS UNSIGNED)`, [yyyy, mm, mm, yyyy]);
+
+  // Top 10 products by order count
+  const products = await queryMasmis<Record<string, unknown>>(
+    `SELECT lineitem_name AS product, COUNT(*) AS orders, ROUND(SUM(total),0) AS revenue
+     FROM db_masmis.bvo_order_export
+     WHERE ${BVO_MONTH_FILTER} AND lineitem_name IS NOT NULL AND lineitem_name != ''
+     GROUP BY lineitem_name ORDER BY orders DESC LIMIT 10`, [mm, yyyy]);
+
+  // Payment mode breakdown
+  const paymentMix = await queryMasmis<Record<string, unknown>>(
+    `SELECT financial_status AS status, COUNT(*) AS cnt, ROUND(SUM(total),0) AS revenue
+     FROM db_masmis.bvo_order_export
+     WHERE ${BVO_MONTH_FILTER}
+     GROUP BY financial_status ORDER BY cnt DESC`, [mm, yyyy]);
+
+  // Available months for the picker — use fast string extraction (no REGEXP/STR_TO_DATE).
+  // CONCAT(RIGHT,MID) reconstructs 'YYYY-MM' for display without per-row function calls.
+  const months = await queryMasmis<{ month_key: string }>(
+    `SELECT CONCAT(RIGHT(created_at_raw,4),'-',MID(created_at_raw,4,2)) AS month_key
+     FROM db_masmis.bvo_order_export
+     WHERE CHAR_LENGTH(created_at_raw)=10
+     GROUP BY RIGHT(created_at_raw,4), MID(created_at_raw,4,2)
+     ORDER BY RIGHT(created_at_raw,4) DESC, MID(created_at_raw,4,2) DESC
+     LIMIT 24`);
+
+  return { kpis: kpis ?? {}, daily, products, paymentMix, months: months.map(r => r.month_key) };
+}
+
+// ── LP (LuckPay / Lending Partner) Dashboard ──────────────────────────────────
+//
+// Source tables: db_masmis.CR_lp_regional (896 rows), CR_lp_non_regional (955 rows),
+// CR_lp_feedback (2,210 rows). All verified live 2026-09-15. Coverage: Aug 2026.
+// Agent field: CR_lp_regional → agent_name; CR_lp_feedback → AgentName.
+// Date field: allocated_on (DATETIME) in regional/non-regional; AllocatedOn in feedback.
+export async function getLpDashboard(): Promise<Record<string, unknown>> {
+  // Aggregate by campaign type
+  const summary = await queryMasmis<Record<string, unknown>>(
+    `SELECT 'Regional' AS campaign, COUNT(*) AS leads,
+       COUNT(DISTINCT agent_name) AS agents,
+       COUNT(DISTINCT disposition) AS dispositions,
+       MIN(allocated_on) AS earliest, MAX(allocated_on) AS latest
+     FROM db_masmis.CR_lp_regional
+     UNION ALL
+     SELECT 'Non-Regional', COUNT(*), COUNT(DISTINCT agent_name), COUNT(DISTINCT disposition),
+       MIN(allocated_on), MAX(allocated_on)
+     FROM db_masmis.CR_lp_non_regional
+     UNION ALL
+     SELECT 'Feedback', COUNT(*), COUNT(DISTINCT AgentName), COUNT(DISTINCT Disposition),
+       MIN(AllocatedOn), MAX(AllocatedOn)
+     FROM db_masmis.CR_lp_feedback`);
+
+  // Agent breakdown (regional + non-regional combined)
+  const agents = await queryMasmis<Record<string, unknown>>(
+    `SELECT agent_name, 'Regional' AS campaign, COUNT(*) AS leads,
+       COUNT(DISTINCT disposition) AS dispositions
+     FROM db_masmis.CR_lp_regional
+     WHERE agent_name IS NOT NULL AND agent_name != ''
+     GROUP BY agent_name
+     UNION ALL
+     SELECT agent_name, 'Non-Regional', COUNT(*), COUNT(DISTINCT disposition)
+     FROM db_masmis.CR_lp_non_regional
+     WHERE agent_name IS NOT NULL AND agent_name != ''
+     GROUP BY agent_name
+     ORDER BY leads DESC LIMIT 30`);
+
+  // Disposition breakdown (regional)
+  const dispositions = await queryMasmis<Record<string, unknown>>(
+    `SELECT disposition, 'Regional' AS campaign, COUNT(*) AS cnt
+     FROM db_masmis.CR_lp_regional
+     WHERE disposition IS NOT NULL AND disposition != ''
+     GROUP BY disposition
+     UNION ALL
+     SELECT disposition, 'Non-Regional', COUNT(*)
+     FROM db_masmis.CR_lp_non_regional
+     WHERE disposition IS NOT NULL AND disposition != ''
+     GROUP BY disposition
+     ORDER BY cnt DESC LIMIT 20`);
+
+  // Monthly trend (based on allocated_on)
+  const trend = await queryMasmis<Record<string, unknown>>(
+    `SELECT DATE_FORMAT(allocated_on,'%Y-%m') AS month_key,
+       'Regional' AS campaign, COUNT(*) AS leads
+     FROM db_masmis.CR_lp_regional
+     WHERE allocated_on IS NOT NULL
+     GROUP BY DATE_FORMAT(allocated_on,'%Y-%m')
+     UNION ALL
+     SELECT DATE_FORMAT(allocated_on,'%Y-%m'), 'Non-Regional', COUNT(*)
+     FROM db_masmis.CR_lp_non_regional
+     WHERE allocated_on IS NOT NULL
+     GROUP BY DATE_FORMAT(allocated_on,'%Y-%m')
+     ORDER BY month_key DESC`);
+
+  return { summary, agents, dispositions, trend };
+}

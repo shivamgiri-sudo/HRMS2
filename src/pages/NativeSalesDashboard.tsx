@@ -1602,6 +1602,430 @@ function AwDashboard({ month }: { month: string }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ── BVO / BELLAVITA REPEAT DASHBOARD ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Source: db_masmis.bvo_order_export (3M rows, Shopify export).
+// Date format: DD-MM-YYYY. financial_status: paid/COD/PrePaid/voided/refunded.
+// Coverage: 2024-05 through 2025-06 (historical). Verified live 2026-09-15.
+
+interface BvoKpis {
+  total_orders: number; total_revenue: number; aov: number;
+  paid_count: number; cod_count: number; prepaid_count: number; returned_count: number;
+  paid_pct: number; cod_pct: number; prepaid_pct: number; return_pct: number;
+  paid_revenue: number; cod_revenue: number;
+}
+interface BvoDaily { date: string; orders: number; revenue: number; paid_count: number; cod_count: number; }
+interface BvoProduct { product: string; orders: number; revenue: number; }
+interface BvoPayment { status: string; cnt: number; revenue: number; }
+
+function BvoDashboard({ month }: { month: string }) {
+  const [kpis, setKpis]       = useState<BvoKpis | null>(null);
+  const [daily, setDaily]     = useState<BvoDaily[]>([]);
+  const [products, setProducts] = useState<BvoProduct[]>([]);
+  const [payments, setPayments] = useState<BvoPayment[]>([]);
+  const [availMonths, setAvailMonths] = useState<string[]>([]);
+  const [selMonth, setSelMonth] = useState(month);
+  const [loading, setLoading] = useState(true);
+  const [expandChart, setExpandChart] = useState<string | null>(null);
+  const [drillProduct, setDrillProduct] = useState<BvoProduct | null>(null);
+
+  const fetchBvo = useCallback((m: string) => {
+    setLoading(true);
+    void hrmsApi.get<{ data: { kpis: BvoKpis; daily: BvoDaily[]; products: BvoProduct[]; paymentMix: BvoPayment[]; months: string[] }; _unavailable?: boolean }>(
+      `/api/sales-upload/bvo-dashboard?month=${m}`
+    )
+      .then(r => {
+        if ((r as any)._unavailable) return;
+        setKpis(r.data?.kpis ?? null);
+        setDaily(r.data?.daily ?? []);
+        setProducts(r.data?.products ?? []);
+        setPayments(r.data?.paymentMix ?? []);
+        setAvailMonths(r.data?.months ?? []);
+        if (!selMonth && r.data?.months?.[0]) setSelMonth(r.data.months[0]);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchBvo(selMonth); }, [selMonth]);
+
+  const PAY_COLORS: Record<string, string> = {
+    paid: G, COD: C_ORG, PrePaid: C_CYAN, voided: "#94A3B8", refunded: C_RED, partially_paid: C_AMB,
+  };
+
+  if (loading) return <Spinner />;
+
+  if (!kpis && !daily.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+        <BarChart2 size={36} className="text-slate-300" />
+        <p className="text-sm text-slate-500">No BVO data for {selMonth}.</p>
+        {availMonths.length > 0 && (
+          <p className="text-xs text-slate-400">Available: {availMonths.slice(0, 6).join(", ")}</p>
+        )}
+      </div>
+    );
+  }
+
+  const k = kpis!;
+  return (
+    <div className="space-y-5">
+      {/* Month picker (BVO has different date range from Bellavita/Neemans) */}
+      {availMonths.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Calendar size={13} className="text-slate-400" />
+          <select value={selMonth} onChange={e => setSelMonth(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700">
+            {availMonths.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      )}
+
+      {/* KPI strip */}
+      <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Revenue Overview</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+        <GasKpi label="Total Orders"  value={fmtN(k.total_orders)}    accent={C_BLUE} />
+        <GasKpi label="Total Revenue" value={fmtRs(k.total_revenue)}  accent={G}     foot={fmtRsFull(k.total_revenue)} />
+        <GasKpi label="AOV"           value={fmtRsFull(k.aov)}        accent={C_PURP} />
+        <GasKpi label="Paid %"        value={fmtPct(k.paid_pct)}      accent={G}     foot={`${fmtN(k.paid_count)} orders`} />
+        <GasKpi label="COD %"         value={fmtPct(k.cod_pct)}       accent={C_ORG} foot={`${fmtN(k.cod_count)} orders`} />
+        <GasKpi label="Return %"      value={fmtPct(k.return_pct)}    accent={C_RED} foot={`${fmtN(k.returned_count)} voided/refunded`} />
+      </div>
+
+      {/* Revenue trend chart */}
+      {daily.length > 0 && (
+        <ChartCard title="Daily Revenue Trend" subtitle={selMonth} onExpand={() => setExpandChart("rev")}>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={daily} margin={{ top: 20, right: 10, bottom: 0, left: -20 }}>
+              <CartesianGrid {...GRID_PROPS} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} />
+              <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
+              <Bar dataKey="revenue" name="Revenue" fill={G} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
+
+      {/* Payment mode breakdown */}
+      {payments.length > 0 && (
+        <ChartCard title="Payment Mode Breakdown" subtitle="Count + Revenue by status">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={payments} margin={{ top: 20, right: 10, bottom: 0, left: -20 }}>
+              <CartesianGrid {...GRID_PROPS} />
+              <XAxis dataKey="status" tick={AXIS_TICK} />
+              <YAxis tick={AXIS_TICK} tickFormatter={fmtN} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Bar dataKey="cnt" name="Orders">
+                {payments.map((p, i) => (
+                  <Cell key={i} fill={PAY_COLORS[p.status] ?? "#94A3B8"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
+
+      {/* Products table */}
+      {products.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="px-5 py-3" style={{ background: NAVY }}>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-white">Top Products by Orders</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50">
+                {["Product","Orders","Revenue","Avg Order"].map(h => (
+                  <th key={h} className={`py-2.5 px-3 font-semibold text-slate-500 uppercase tracking-wide ${h === "Product" ? "text-left" : "text-right"}`}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {products.map((p, i) => (
+                  <tr key={p.product} className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${i % 2 ? "bg-slate-50/40" : ""}`}
+                    onClick={() => setDrillProduct(p)}>
+                    <td className="py-2.5 px-3 font-medium text-slate-700 flex items-center gap-1">
+                      {String(p.product).slice(0, 60)}{p.product?.length > 60 ? "…" : ""}
+                      <ChevronRight size={11} className="text-slate-300 shrink-0" />
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{fmtN(p.orders)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums font-medium">{fmtRs(p.revenue)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{p.orders > 0 ? fmtRsFull(p.revenue / p.orders) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Expand modal */}
+      {expandChart === "rev" && (
+        <ChartModal title="Daily Revenue — Full Month" onClose={() => setExpandChart(null)}>
+          <ResponsiveContainer width="100%" height={420}>
+            <BarChart data={daily} margin={{ top: 20, right: 20, bottom: 50, left: -10 }}>
+              <CartesianGrid {...GRID_PROPS} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} />
+              <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
+              <Bar dataKey="revenue" fill={G} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartModal>
+      )}
+
+      {/* Product drill-down */}
+      <DrillDrawer open={!!drillProduct} onClose={() => setDrillProduct(null)} title={`Product: ${drillProduct?.product ? String(drillProduct.product).slice(0, 40) : ""}`}>
+        {drillProduct && (
+          <div className="grid grid-cols-2 gap-3">
+            <GasKpi label="Orders"      value={fmtN(drillProduct.orders)}   accent={C_BLUE} />
+            <GasKpi label="Revenue"     value={fmtRs(drillProduct.revenue)} accent={G} />
+            <GasKpi label="Avg Order"   value={drillProduct.orders > 0 ? fmtRsFull(drillProduct.revenue / drillProduct.orders) : "—"} accent={C_PURP} />
+            <GasKpi label="Share"       value={k.total_orders > 0 ? `${((drillProduct.orders / k.total_orders) * 100).toFixed(1)}%` : "—"} accent={C_AMB} />
+          </div>
+        )}
+      </DrillDrawer>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── LP (LUCKPAY / LENDING PARTNER) DASHBOARD ─────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Source: db_masmis.CR_lp_regional (896 rows), CR_lp_non_regional (955), CR_lp_feedback (2,210).
+// Coverage: Aug 2026. Data is lead allocations with agent and disposition.
+
+interface LpSummaryRow { campaign: string; leads: number; agents: number; dispositions: number; earliest: string | null; latest: string | null; }
+interface LpAgentRow   { agent_name: string; campaign: string; leads: number; dispositions: number; }
+interface LpDispRow    { disposition: string; campaign: string; cnt: number; }
+
+function LpDashboard() {
+  const [summary, setSummary]       = useState<LpSummaryRow[]>([]);
+  const [agents, setAgents]         = useState<LpAgentRow[]>([]);
+  const [dispositions, setDispos]   = useState<LpDispRow[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [drillAgent, setDrillAgent] = useState<LpAgentRow | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    void hrmsApi.get<{ data: { summary: LpSummaryRow[]; agents: LpAgentRow[]; dispositions: LpDispRow[] }; _unavailable?: boolean }>(
+      "/api/sales-upload/lp-dashboard"
+    )
+      .then(r => {
+        if ((r as any)._unavailable) return;
+        setSummary(r.data?.summary ?? []);
+        setAgents(r.data?.agents ?? []);
+        setDispos(r.data?.dispositions ?? []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <Spinner />;
+  if (!summary.length && !agents.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <BarChart2 size={36} className="text-slate-300" />
+        <p className="text-sm text-slate-500">No LP data yet. Upload LP leads via the Upload Data tab.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Summary by campaign type */}
+      {summary.length > 0 && (
+        <>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Campaign Summary</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {summary.map(s => (
+              <div key={s.campaign} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{s.campaign}</span>
+                  <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{s.leads} leads</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div><p className="text-lg font-bold text-slate-800">{fmtN(s.leads)}</p><p className="text-xs text-slate-500">Leads</p></div>
+                  <div><p className="text-lg font-bold text-slate-800">{fmtN(s.agents)}</p><p className="text-xs text-slate-500">Agents</p></div>
+                  <div><p className="text-lg font-bold text-slate-800">{fmtN(s.dispositions)}</p><p className="text-xs text-slate-500">Dispositions</p></div>
+                </div>
+                {s.earliest && <p className="mt-3 text-[10px] text-slate-400">Coverage: {String(s.earliest).slice(0, 10)} → {String(s.latest ?? "").slice(0, 10)}</p>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Agent table */}
+      {agents.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="px-5 py-3" style={{ background: NAVY }}>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-white">{agents.length} Agents</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50">
+                {["Agent","Campaign","Leads Allocated","Dispositions"].map(h => (
+                  <th key={h} className={`py-2.5 px-3 font-semibold text-slate-500 uppercase tracking-wide ${h === "Agent" ? "text-left" : "text-right"}`}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {agents.map((a, i) => (
+                  <tr key={`${a.agent_name}-${a.campaign}`}
+                    className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${i % 2 ? "bg-slate-50/40" : ""}`}
+                    onClick={() => setDrillAgent(a)}>
+                    <td className="py-2.5 px-3 font-medium text-slate-700 whitespace-nowrap flex items-center gap-1">
+                      {a.agent_name}<ChevronRight size={11} className="text-slate-300" />
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 text-purple-700">{a.campaign}</span>
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular-nums font-semibold">{fmtN(a.leads)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{fmtN(a.dispositions)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Disposition breakdown */}
+      {dispositions.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="px-5 py-3" style={{ background: "#4E342E" }}>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-white">Disposition Breakdown</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50">
+                {["Disposition","Campaign","Count"].map(h => (
+                  <th key={h} className={`py-2.5 px-3 font-semibold text-slate-500 uppercase tracking-wide ${h === "Count" ? "text-right" : "text-left"}`}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {dispositions.map((d, i) => (
+                  <tr key={`${d.disposition}-${d.campaign}`} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50/40" : ""}`}>
+                    <td className="py-2.5 px-3 font-mono text-slate-700">{d.disposition}</td>
+                    <td className="py-2.5 px-3 text-slate-500">{d.campaign}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{fmtN(d.cnt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <DrillDrawer open={!!drillAgent} onClose={() => setDrillAgent(null)} title={`Agent: ${drillAgent?.agent_name ?? ""}`}>
+        {drillAgent && (
+          <div className="grid grid-cols-2 gap-3">
+            <GasKpi label="Campaign"       value={drillAgent.campaign}       accent={C_PURP} />
+            <GasKpi label="Leads"          value={fmtN(drillAgent.leads)}    accent={C_BLUE} />
+            <GasKpi label="Dispositions"   value={fmtN(drillAgent.dispositions)} accent={C_AMB} />
+            <GasKpi label="Leads/Disp."    value={drillAgent.dispositions > 0 ? (drillAgent.leads / drillAgent.dispositions).toFixed(1) : "—"} accent={G} />
+          </div>
+        )}
+      </DrillDrawer>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── PROCESS DATA PANEL (Clovia / DU Digital / Dalmia) ────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// These processes upload data via BulkUploadHub into mas_hrms — their raw data
+// isn't in db_masmis so no transaction-level sales dashboard is available.
+// Shows upload status, recent batches, and links to ProcessOperations for KPIs.
+
+function ProcessDataPanel({ process: processName, uploadTypes, color }: {
+  process: string; uploadTypes: string[]; color: string;
+}) {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    void hrmsApi.get<{ data: any[] }>(`/api/sales-upload/logs?limit=50`)
+      .then(r => {
+        const all = r.data ?? [];
+        const filtered = all.filter((l: any) => {
+          const t = String(l.upload_type ?? "").toUpperCase();
+          return uploadTypes.some(u => t.includes(u.replace(/_MASMIS|_BATCH/g, "").slice(0, 10)));
+        });
+        setLogs(filtered);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [processName]);
+
+  return (
+    <div className="space-y-5">
+      {/* Info banner */}
+      <div className="rounded-2xl p-5 text-white" style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}>
+        <h2 className="text-lg font-bold">{processName}</h2>
+        <p className="text-sm opacity-80 mt-1">
+          Data for this process is uploaded via BulkUploadHub and consumed by Process Operations.
+          Transaction-level sales dashboard is not applicable for this process type.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {uploadTypes.map(t => (
+            <span key={t} className="text-[10px] font-semibold bg-white/20 px-2 py-1 rounded">{t}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* Link to Process Operations */}
+      <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-blue-800">View KPIs in Process Operations</p>
+          <p className="text-xs text-blue-600 mt-0.5">All KPI metrics, quality scores, and workforce data are visible there.</p>
+        </div>
+        <a href="/process-operations" className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition whitespace-nowrap">
+          Open <ChevronRight size={14} />
+        </a>
+      </div>
+
+      {/* Upload history */}
+      <div className="rounded-2xl border border-slate-100 bg-white overflow-hidden shadow-sm">
+        <div className="px-5 py-3" style={{ background: NAVY }}>
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-white">
+            Recent Uploads — {processName}
+            <span className="ml-2 text-indigo-200 font-normal normal-case">via BulkUploadHub</span>
+          </h3>
+        </div>
+        {loading ? <Spinner /> : logs.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">No upload batches found for {processName}. Upload data via <a href="/admin/bulk-upload" className="text-blue-600 underline">BulkUploadHub</a>.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50">
+                {["Type","Month","Rows","By","Date"].map(h => (
+                  <th key={h} className={`py-2.5 px-3 font-semibold text-slate-500 uppercase tracking-wide ${h === "Rows" ? "text-right" : "text-left"}`}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {logs.map((l, i) => (
+                  <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50/40" : ""}`}>
+                    <td className="py-2 px-3 font-medium text-slate-700">{l.upload_type}</td>
+                    <td className="py-2 px-3 text-slate-600">{l.month_label || "—"}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{fmtN(l.row_count)}</td>
+                    <td className="py-2 px-3 text-slate-500">{l.uploaded_by}</td>
+                    <td className="py-2 px-3 text-slate-400">{new Date(l.created_at).toLocaleDateString("en-IN")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type UploadType =
   | "bellavita-sales" | "bellavita-apr" | "bellavita-chat" | "bellavita-cart"
   | "gnc-sales" | "gnc-apr" | "gnc-allocation"
@@ -1746,7 +2170,7 @@ function UploadPanel() {
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-type SalesProcess = "bellavita" | "gnc" | "neemans" | "aw" | "upload";
+type SalesProcess = "bellavita" | "gnc" | "neemans" | "aw" | "bvo" | "lp" | "clovia" | "du" | "dalmia" | "upload";
 
 export default function NativeSalesDashboard() {
   const { hasAnyRole } = useWorkforceAccess();
@@ -1773,7 +2197,12 @@ export default function NativeSalesDashboard() {
     { id: "bellavita", label: "Bellavita",  color: "#D4AF37", emoji: "🌸" },
     { id: "gnc",       label: "GNC",        color: "#CE112D", emoji: "🛒" },
     { id: "neemans",   label: "Neemans",    color: "#6B8E4E", emoji: "👟" },
-    { id: "aw",        label: "AW",          color: "#0EA5E9", emoji: "₹" },
+    { id: "aw",      label: "AW",          color: "#0EA5E9", emoji: "₹" },
+    { id: "bvo",     label: "BVO / Repeat", color: "#DB2777", emoji: "🔁" },
+    { id: "lp",      label: "LP",          color: "#7C3AED", emoji: "📋" },
+    { id: "clovia",  label: "Clovia",      color: "#E40B92", emoji: "👗" },
+    { id: "du",      label: "DU Digital",  color: "#003D6B", emoji: "📱" },
+    { id: "dalmia",  label: "Dalmia",      color: "#B45309", emoji: "🏗" },
     ...(canUpload ? [{ id: "upload" as const, label: "Upload Data", color: "#6366F1", emoji: "⬆" }] : []),
   ];
 
@@ -1820,6 +2249,11 @@ export default function NativeSalesDashboard() {
         {process === "gnc"       && <GncDashboard month={month} />}
         {process === "neemans"   && <NeemansDashboard month={month} />}
         {process === "aw"        && <AwDashboard month={month} />}
+        {process === "bvo"       && <BvoDashboard month={month} />}
+        {process === "lp"        && <LpDashboard />}
+        {process === "clovia"    && <ProcessDataPanel process="Clovia" uploadTypes={["CLOVIA_EMAIL_DAILY","CLOVIA_CHAT_DAILY","CLOVIA_CRM_DISPOSITION","CLOVIA_QUALITY_AUDIT","CLOVIA_RECHURN_CALLS","CLOVIA_TEAM_ALIGNMENT"]} color="#E40B92" />}
+        {process === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
+        {process === "dalmia"    && <ProcessDataPanel process="Dalmia" uploadTypes={["DALMIA_AFTER_HOUR","DALMIA_DD_RAW","DALMIA_OUTBOUND_RAW"]} color="#B45309" />}
         {process === "upload"    && <UploadPanel />}
       </div>
     </DashboardLayout>

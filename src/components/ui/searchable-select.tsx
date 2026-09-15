@@ -128,8 +128,8 @@ export function SearchableSelect({
       onKeyDown={handleTriggerKeyDown}
       // 44px on touch, compact on desktop.
       className={cn(
-        "h-11 w-full justify-between font-normal md:h-10",
-        !selected && "text-muted-foreground",
+        "h-11 w-full justify-between font-normal md:h-10 bg-white text-slate-900 border-slate-200 hover:bg-slate-50 hover:text-slate-900",
+        !selected && "text-slate-400",
         className
       )}
     >

@@ -284,3 +284,30 @@ salesUploadRouter.post(
     return res.json({ success: true, rowsInserted: result.rowsInserted, data: result });
   })
 );
+
+// ── BVO / Bellavita Repeat Dashboard ─────────────────────────────────────────
+
+salesUploadRouter.get("/bvo-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || (() => {
+    const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  try {
+    return res.json({ success: true, data: await svc.getBvoDashboard(month) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[bvo-dashboard] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, daily: [], products: [], paymentMix: [], months: [] } });
+  }
+}));
+
+// ── LP Dashboard ──────────────────────────────────────────────────────────────
+
+salesUploadRouter.get("/lp-dashboard", h(async (req, res) => {
+  try {
+    return res.json({ success: true, data: await svc.getLpDashboard() });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[lp-dashboard] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: { summary: [], agents: [], dispositions: [], trend: [] } });
+  }
+}));
