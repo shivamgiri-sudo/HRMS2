@@ -2114,7 +2114,7 @@ export async function generateChecklistDraft(
       })
     : persisted) as RowDataPacket[];
   const fieldMaps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
-  const replacements = Object.fromEntries([
+  const replacements: Record<string, string> = Object.fromEntries([
     ...values.map((value) => [String(value.field_key), String(value.value_text ?? "")]),
     ...fieldMaps
       .filter((map) => safeTrim(map.placeholder_token))
@@ -2123,6 +2123,26 @@ export async function generateChecklistDraft(
         return [String(map.placeholder_token).replace(/^\{\{|\}\}$/g, ""), String(fieldValue?.value_text ?? "")];
       }),
   ]);
+
+  // For structured-PDF documents (hasStructuredPdf), the renderer substitutes
+  // every {{token}} from replacements. If a default field (e.g. relation_prefix)
+  // was never seeded into document_template_field_map — which happens for
+  // long-standing checklists created before that field was added — it would
+  // not be in `values` and would render as blank underscores. Re-derive any
+  // missing defaults directly from sourceContext here so the PDF is always
+  // complete regardless of DB field-map coverage.
+  if (hasStructuredPdf(checklist.document_code)) {
+    const sourceCtx = await buildSourceContext(checklist.employee_id, checklist.candidate_id);
+    const defaultFields = fieldsForDocument(checklist.document_code);
+    for (const field of defaultFields) {
+      if (replacements[field.field_key] != null && replacements[field.field_key] !== "") continue;
+      const derived = deriveFieldValue(
+        { source_path: field.source_path ?? null, field_type: field.field_type ?? "text", masking_rule: null, checked_when: null } as import("mysql2").RowDataPacket,
+        sourceCtx,
+      );
+      if (derived.value_text) replacements[field.field_key] = String(derived.value_text);
+    }
+  }
   let outputFileName = `${checklist.document_code.toLowerCase()}-draft.pdf`;
   let content: Buffer;
 

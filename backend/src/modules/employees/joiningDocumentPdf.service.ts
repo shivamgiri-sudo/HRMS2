@@ -76,19 +76,23 @@ type Doc = PDFKit.PDFDocument;
 
 function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead) {
   const top = 34;
+  // Reserve the left 100pt for the logo so the right-aligned company name and
+  // address lines never overlap it regardless of the logo's actual aspect ratio.
+  const logoMaxW = 100;
+  const textX = PAGE.margin + logoMaxW + 10; // 166pt from page edge
+  const textW = doc.page.width - PAGE.margin - textX; // ~373pt remaining
   const logo = logoPath();
   if (logo) {
-    try { doc.image(logo, PAGE.margin, top, { height: 26 }); } catch { /* fall through to text */ }
+    try { doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] }); } catch { /* fall through to text */ }
   }
-  const width = doc.page.width - PAGE.margin * 2;
   doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
-    .text(COMPANY_NAME, PAGE.margin, top, { width, align: "right" });
+    .text(COMPANY_NAME, textX, top, { width: textW, align: "right" });
 
   // The branch that issued this document. Collapsed to at most two lines so a
   // long postal address cannot push into the body text.
   const addressText = letterheadAddressText(letterhead);
   doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
-    .text(addressText, PAGE.margin, top + 12, { width, align: "right", height: 20, ellipsis: true });
+    .text(addressText, textX, top + 12, { width: textW, align: "right", height: 20, ellipsis: true });
 
   const ruleY = top + 32;
   doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
