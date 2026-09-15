@@ -555,6 +555,23 @@ function ChartCard({ title, subtitle, children, variant = "live" }: {
   );
 }
 
+/** Panel wrapper that mirrors DiallerLivePanel's Panel aesthetic inside ProcessOperationsPage. */
+function LivePanel({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #dce4ed", borderRadius: 17, boxShadow: "0 12px 30px rgba(16,35,57,.08)", padding: "14px 16px", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", left: 0, top: 0, width: 4, height: 55, background: "linear-gradient(180deg,#2f6fed,#10b8d4)", borderRadius: "0 0 7px 0" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingLeft: 7 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 9, height: 9, borderRadius: "50%", background: "linear-gradient(135deg,#2f6fed,#10b8d4)", boxShadow: "0 0 0 4px rgba(47,111,237,.08)" }} />
+          <h3 style={{ margin: 0, color: "#102f4b", fontSize: 14, fontWeight: 800 }}>{title}</h3>
+        </div>
+        {sub && <span style={{ fontSize: 10, fontWeight: 800, color: "#0369a1", background: "#e7f6fb", border: "1px solid #c8edf5", borderRadius: 999, padding: "3px 8px" }}>{sub}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 /** KPI tile matching the Live Dashboard's KpiCard, so both tabs read as one system. */
 function LiveKpiCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color: string }) {
   return (
@@ -5003,32 +5020,34 @@ export default function ProcessOperationsPage() {
                     </div>
                   )}
 
-                  {/* Pareto chart + insights (existing panels preserved) */}
-                  {current && ops && <ProcessCardInsightsPanel processId={current} ops={ops} />}
+                  {/* Pareto chart + insights */}
+                  {current && ops && <LivePanel title="Performance Distribution"><ProcessCardInsightsPanel processId={current} ops={ops} /></LivePanel>}
 
                   {/* Business health */}
-                  {current && <BusinessHealthPanel processId={current} />}
+                  {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} /></LivePanel>}
 
                   {/* Conversion funnel + quality charts */}
                   {charts.length > 0 && (
-                    <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
+                    <LivePanel title="Trend Charts" sub={`${charts.length}`}>
+                      <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
+                    </LivePanel>
                   )}
 
-                  {/* Quality & analysis panels */}
+                  {/* Quality & analysis panels — VoiceOfCustomer and DailyQualityTrend are NOT wrapped (plan constraint) */}
                   {current && <VoiceOfCustomerPanel processId={current} period={period} />}
-                  {current && <FatalCallsPanel processId={current} period={period} />}
-                  {current && <AgentAuditSummaryPanel processId={current} period={period} />}
-                  {current && <ScenarioDistributionPanel processId={current} period={period} />}
-                  {current && <ScoreComponentsPanel processId={current} period={period} />}
-                  {current && <AchtCategorizationPanel processId={current} period={period} />}
-                  {current && <CriticalSignalsPanel processId={current} period={period} />}
+                  {current && <LivePanel title="Fatal Calls Analysis"><FatalCallsPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Agent Audit Summary"><AgentAuditSummaryPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Scenario Distribution"><ScenarioDistributionPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Score Components"><ScoreComponentsPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="ACHT Categorization"><AchtCategorizationPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Critical Signals"><CriticalSignalsPanel processId={current} period={period} /></LivePanel>}
                   {current && <DailyQualityTrendPanel processId={current} />}
-                  {current && <CustomerRiskCardsPanel processId={current} period={period} />}
-                  {current && <FatalAnalysisPanel processId={current} period={period} />}
-                  {current && <DayWiseScenarioAuditPanel processId={current} period={period} />}
-                  {current && <RepeatAnalysisPanel processId={current} period={period} />}
-                  {current && <FraudCallPanel processId={current} period={period} />}
-                  {current && <WorkforceCorrelationPanel processId={current} period={period} />}
+                  {current && <LivePanel title="Customer Risk"><CustomerRiskCardsPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Fatal Analysis"><FatalAnalysisPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Day-wise Scenario Audit"><DayWiseScenarioAuditPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Repeat Analysis"><RepeatAnalysisPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Fraud Call Detection"><FraudCallPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Workforce Correlation"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
 
                   {/* ── Section Overview Strip ────────────────────────────── */}
                   {ops.sections.length > 0 && (
