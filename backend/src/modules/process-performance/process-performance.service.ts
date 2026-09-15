@@ -155,7 +155,7 @@ async function employeeScope(userId: string, allowedRoles: string[]) {
 // passes one and is refused by another.
 const VIEWER_ROLES = [
   "super_admin", "admin", "ceo", "coo", "manager", "process_manager",
-  "operations_manager", "branch_head", "qa", "quality_analyst", "tq_head",
+  "operations_manager", "branch_head", "branch_wfm", "wfm", "qa", "quality_analyst", "tq_head",
 ];
 
 /** 'YYYY-MM-DD' -> 'YYYY-MM', the grain `pnl_running_salary_snapshot.period_code` uses. */
