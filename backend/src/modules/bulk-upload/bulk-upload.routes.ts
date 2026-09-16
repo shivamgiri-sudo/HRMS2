@@ -685,4 +685,21 @@ router.get("/batches/:id/import-status", requireRole("admin", "hr", "super_admin
 }));
 
 
+// DELETE /batches/:id — remove a batch log entry (does not undo already-imported rows)
+router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const [rows] = await db.query<RowDataPacket[]>(
+    "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",
+    [id]
+  );
+  const batch = rows[0];
+  if (!batch) return res.status(404).json({ success: false, error: "Upload batch not found" });
+  if (batch.batch_status === "importing") {
+    return res.status(409).json({ success: false, error: "Cannot delete a batch that is currently importing" });
+  }
+  await db.query("DELETE FROM upload_batch_row WHERE batch_id = ?", [id]);
+  await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
+  return res.json({ success: true });
+}));
+
 export { router as bulkUploadRouter };
