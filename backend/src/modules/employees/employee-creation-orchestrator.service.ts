@@ -1695,12 +1695,28 @@ async function createRelatedEmployeeRecords(
   // whereas candidate_bank_verification stores only last4 and a hash. Still gated on a
   // genuinely verified penny drop, per the owner's rule that an account is only carried
   // once verification is positive.
+  // bank_name/branch_name: same class of gap as address/education/experience above -- the
+  // INSERT below never carried them at all, despite the real values sitting in
+  // candidate_onboarding_bank_detail the whole time. Verified live 2026-09-16 on
+  // MAS63547/63548/63553: employee_bank_detail had a real account_number + ifsc_code but
+  // bank_name/bank_branch both NULL, while candidate_onboarding_bank_detail held "Indian
+  // Overseas Bank Limited"/"Laxmi Nagar" etc. for the same candidate.
+  //
+  // Joined by candidate_id, not candidate_bank_verification.bank_detail_id -- that FK is
+  // NULL on every 'verified' row in production (only populated on a separate
+  // 'manual_review' path), so it can never resolve the row that actually matters here.
   const [pennyDropRows] = await conn.execute<RowDataPacket[]>(
     `SELECT c.bank_account_no AS account_no,
             COALESCE(NULLIF(v.ifsc_code, ''), c.bank_ifsc) AS ifsc_code,
-            COALESCE(NULLIF(v.input_account_holder_name, ''), c.full_name) AS account_holder_name
+            COALESCE(NULLIF(v.input_account_holder_name, ''), c.full_name) AS account_holder_name,
+            cbd.bank_name, cbd.branch_name
        FROM candidate_bank_verification v
        JOIN ats_candidate c ON c.id = v.candidate_id
+       LEFT JOIN (
+         SELECT candidate_id, bank_name, branch_name,
+                ROW_NUMBER() OVER (PARTITION BY candidate_id ORDER BY created_at DESC) AS rn
+           FROM candidate_onboarding_bank_detail
+       ) cbd ON cbd.candidate_id = v.candidate_id AND cbd.rn = 1
       WHERE v.candidate_id = ?
         AND v.verification_status = 'verified'
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
@@ -1719,8 +1735,9 @@ async function createRelatedEmployeeRecords(
       await conn.execute(
         `INSERT INTO employee_bank_detail
            (id, employee_id, is_primary, account_seq, account_holder_name,
-            account_number, account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
-         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
+            account_number, account_number_enc, account_number_blind_index, ifsc_code,
+            bank_name, bank_branch, account_type, verified, active_status)
+         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
         [
           randomUUID(), employeeId,
           verifiedAccount.account_holder_name ?? null,
@@ -1728,6 +1745,8 @@ async function createRelatedEmployeeRecords(
           encryptField(accountNoStr),
           computeAccountBlindIndex(accountNoStr),
           verifiedAccount.ifsc_code ?? null,
+          verifiedAccount.bank_name ?? null,
+          verifiedAccount.branch_name ?? null,
         ]
       );
     }
