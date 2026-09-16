@@ -421,7 +421,7 @@ export async function createEmployeeFromCandidate(
       // 'Active', and the nightly activation job only selects 'preboarding',
       // so a future-dated joiner left on the default is never activated.
       `INSERT INTO employees
-         (id, employee_code, first_name, last_name, email, official_email, mobile,
+         (id, employee_code, biometric_code, first_name, last_name, email, official_email, mobile,
           personal_email, personal_phone, alternate_mobile,
           gender, date_of_birth, father_name, marital_status, blood_group,
           address1, permanent_address1,
@@ -443,9 +443,15 @@ export async function createEmployeeFromCandidate(
           -- 1073_employee_profile_parity.sql intended when it added these two columns.
           annual_income, count_of_dependents,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
-        employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
+        // biometric_code -- owner decision 2026-09-16: no separate biometric enrollment ID is
+        // in use, so this is always the employee code itself. (Actual biometric-device
+        // matching, where it exists, goes through employee_biometric_enrollment.cosec_user_id
+        // first -- see cosec-sync.service.ts -- with this column as a secondary fallback
+        // before employee_code; setting it here just fills a field that already fell through
+        // to employee_code at match time.)
+        employeeId, employeeCode, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
         candRow?.mobile ?? null,
         candRow?.personal_email ?? null,
