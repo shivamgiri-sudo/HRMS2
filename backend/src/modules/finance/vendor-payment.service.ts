@@ -205,7 +205,7 @@ export const vendorPaymentService = {
     // migration-sentinel created_by — never raised live through this app. They carry no vendor,
     // invoice or process, so they clutter this grid with unreadable blank rows. Kept in the
     // database for audit; just excluded from the working view. Owner ruling 2026-09-16.
-    const conditions: string[] = ["1=1", "vpt.grn_number NOT LIKE 'IDC/%'"];
+    const conditions: string[] = ["1=1", "(vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')"];
     const params: unknown[] = [];
 
     if (filters.financialYear) {
@@ -823,7 +823,7 @@ export const vendorPaymentService = {
         WHERE ${branchClause}
           AND vpt.payment_status NOT IN ('Paid','Closed')
           AND vpt.due_date IS NOT NULL
-          AND vpt.grn_number NOT LIKE 'IDC/%'
+          AND (vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')
         ORDER BY days_overdue DESC, vpt.due_date`,
       branchParams
     );
@@ -871,7 +871,7 @@ export const vendorPaymentService = {
          LEFT JOIN grn_request gr ON gr.id = vpt.grn_request_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
         WHERE vpt.vendor_id = ? AND ${branchClause}${periodClause}
-          AND vpt.grn_number NOT LIKE 'IDC/%'
+          AND (vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')
         ORDER BY gr.bill_date DESC, gr.grn_number`,
       extraParams
     );

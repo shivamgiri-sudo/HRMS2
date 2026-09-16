@@ -1560,7 +1560,10 @@ export const grnService = {
       !(filters.grnNumber && filters.grnNumber.toUpperCase().includes("IDC"))
       && !(filters.search && filters.search.toUpperCase().includes("IDC"))
     ) {
-      conditions.push("g.grn_number NOT LIKE 'IDC/%'");
+      // g.grn_number IS NULL for drafts (number assigned at submission only) — without the
+      // IS NULL guard, MySQL evaluates NULL NOT LIKE 'IDC/%' as NULL (not TRUE), silently
+      // excluding every draft from history.
+      conditions.push("(g.grn_number IS NULL OR g.grn_number NOT LIKE 'IDC/%')");
     }
     if (filters.branchScope) {
       const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
@@ -2273,7 +2276,8 @@ export const grnService = {
   }) {
     // Same IDC exclusion as listGrns() — the legacy db_bill petty-cash import must not inflate
     // the approval-backlog counters that Vendor Payment Dispatch surfaces.
-    const conditions: string[] = ["g.grn_number NOT LIKE 'IDC/%'"];
+    // IS NULL guard: grn_number is NULL until Finance Head approval; NULL NOT LIKE is NULL (false).
+    const conditions: string[] = ["(g.grn_number IS NULL OR g.grn_number NOT LIKE 'IDC/%')"];
     const params: unknown[] = [];
     if (filters.branchScope) {
       const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
