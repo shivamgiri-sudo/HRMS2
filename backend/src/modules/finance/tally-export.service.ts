@@ -219,6 +219,111 @@ function ledgerLine(ledgerName: string, isDeemedPositive: "Yes" | "No", signedAm
           </ALLLEDGERENTRIES.LIST>`;
 }
 
+/**
+ * Phase 5 of the double-entry plan (payment-voucher-double-entry-plan.md) — an alternative to
+ * fetchVoucherRows() above that reads journal_entry_line (Journal Tasks 1–3) instead of
+ * reconstructing double-entry from bank_account_ledger_entry + three separate correlated
+ * lookups (tdsByVoucher, tdsLedgerByVoucher, the multi-GRN grouping). Produces the SAME
+ * VoucherExportRow shape fetchVoucherRows() does, so buildVoucherXml() below needs no changes
+ * and every existing test of it keeps testing the real contract unmodified.
+ *
+ * Deliberately ADDITIVE, not a replacement: fetchVoucherRows() stays exactly as it is, and
+ * tallyExportService.buildEnvelope() still calls it. A voucher only has journal_entry_line rows
+ * once Journal Task 3 posted them (or Phase 6's backfill ran for it) — until every historical
+ * voucher is backfilled, fetchVoucherRowsFromJournal() alone would silently omit anything from
+ * before go-live. Cutting the LIVE export over to this function (i.e. having buildEnvelope()
+ * call it instead) is a decision for whoever runs Phase 6's backfill and confirms parity between
+ * the two functions' output for the same date range — not made unilaterally here.
+ *
+ * One real simplification this buys for free: since Journal Task 3 posts exactly one
+ * journal_entry per payment_voucher (see payment-voucher-journal-lines.ts's own header on why),
+ * grouping by journal_entry.id already IS grouping by voucher — the multi-GRN "collapse several
+ * rows back into one <VOUCHER>" logic fetchVoucherRows() needs no longer exists here.
+ *
+ * Simplification carried over from fetchVoucherRows() rather than fixed here: a voucher whose
+ * allocations span more than one vendor is represented by the FIRST debited party's ledger name
+ * and the SUMMED debit amount, same as the existing function already does — genuinely
+ * per-line-item multi-party vouchers are a bigger change to VoucherExportRow's shape than this
+ * task attempts.
+ */
+async function fetchVoucherRowsFromJournal(bankAccountId: string, from?: string, to?: string): Promise<VoucherExportRow[]> {
+  const conditions: string[] = ["jel.account_type = 'bank_account'", "jel.account_id = ?", "je.source_type = 'payment_voucher'", "je.reversed_by_entry_id IS NULL"];
+  const params: unknown[] = [bankAccountId];
+  if (from) { conditions.push("je.entry_date >= ?"); params.push(from); }
+  if (to) { conditions.push("je.entry_date <= ?"); params.push(to); }
+
+  const [voucherJournalIdRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT je.id AS journal_entry_id
+       FROM journal_entry_line jel
+       JOIN journal_entry je ON je.id = jel.journal_entry_id
+      WHERE ${conditions.join(" AND ")}`,
+    params,
+  );
+  const journalEntryIds = (voucherJournalIdRows as RowDataPacket[]).map((r) => String(r.journal_entry_id));
+  if (journalEntryIds.length === 0) return [];
+  const placeholders = journalEntryIds.map(() => "?").join(",");
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT je.id AS journal_entry_id, je.entry_date, je.narration, je.source_id AS voucher_id,
+            pv.voucher_number, pv.voucher_type,
+            jel.account_type, jel.account_id, jel.debit_amount, jel.credit_amount,
+            cba.tally_ledger_name AS bank_name,
+            vm.vendor_name AS vendor_name,
+            pam.tally_ledger_name AS payable_name,
+            brp.status AS period_status
+       FROM journal_entry_line jel
+       JOIN journal_entry je ON je.id = jel.journal_entry_id
+       JOIN payment_voucher pv ON pv.id = je.source_id
+       LEFT JOIN company_bank_account cba ON jel.account_type = 'bank_account' AND cba.id = jel.account_id
+       LEFT JOIN vendor_master vm ON jel.account_type = 'vendor' AND vm.id = jel.account_id
+       LEFT JOIN payable_account_master pam ON jel.account_type = 'payable_account' AND pam.id = jel.account_id
+       LEFT JOIN bank_reconciliation_period brp
+              ON jel.account_type = 'bank_account' AND brp.bank_account_id = jel.account_id
+             AND je.entry_date BETWEEN brp.from_date AND brp.to_date
+      WHERE je.id IN (${placeholders})
+      ORDER BY je.entry_date ASC, je.posted_at ASC, jel.line_order ASC`,
+    journalEntryIds,
+  );
+
+  type Grouped = { rows: RowDataPacket[] };
+  const grouped = new Map<string, Grouped>();
+  for (const row of rows as RowDataPacket[]) {
+    const key = String(row.journal_entry_id);
+    if (!grouped.has(key)) grouped.set(key, { rows: [] });
+    grouped.get(key)!.rows.push(row);
+  }
+
+  const ledgerNameOf = (row: RowDataPacket) => String(row.vendor_name ?? row.payable_name ?? row.bank_name ?? row.account_id);
+
+  const result: VoucherExportRow[] = [];
+  for (const { rows: entryRows } of grouped.values()) {
+    const first = entryRows[0];
+    const bankLines = entryRows.filter((r) => r.account_type === "bank_account");
+    const debitLines = entryRows.filter((r) => Number(r.debit_amount) > 0);
+    const otherCreditLines = entryRows.filter((r) => r.account_type !== "bank_account" && Number(r.credit_amount) > 0);
+
+    const netAmount = bankLines.reduce((sum, r) => sum + Number(r.credit_amount), 0);
+    const tdsAmount = otherCreditLines.reduce((sum, r) => sum + Number(r.credit_amount), 0);
+    const tdsLedger = tdsAmount > 0 && otherCreditLines[0] ? ledgerNameOf(otherCreditLines[0]) : null;
+
+    result.push({
+      voucher_id: String(first.voucher_id),
+      voucher_number: String(first.voucher_number),
+      voucher_type: first.voucher_type,
+      entry_date: String(first.entry_date).slice(0, 10),
+      narration: String(first.narration ?? ""),
+      bank_ledger: bankLines[0] ? ledgerNameOf(bankLines[0]) : "",
+      party_ledger: debitLines[0] ? ledgerNameOf(debitLines[0]) : "",
+      net_amount: netAmount,
+      tds_ledger: tdsLedger,
+      tds_amount: tdsAmount,
+      period_status: first.period_status ? String(first.period_status) : null,
+    });
+  }
+  result.sort((a, b) => a.entry_date.localeCompare(b.entry_date) || a.voucher_number.localeCompare(b.voucher_number));
+  return result;
+}
+
 export const tallyExportService = {
   /**
    * Builds the full ENVELOPE for one bank account's released vouchers in a date range.
@@ -269,5 +374,39 @@ ${body}
       },
     }).catch(() => undefined);
     return result;
+  },
+
+  /**
+   * Phase 5 — journal_entry_line-sourced counterpart to buildEnvelope() above. Same return
+   * shape, same XML, same isFinal rule. Use this once the team has confirmed
+   * fetchVoucherRowsFromJournal() agrees with fetchVoucherRows() for a shared date range (and,
+   * for anything before Journal Task 3 went live, once Phase 6's backfill has run) — see this
+   * function's own header comment. Not wired to any route by this task; exposed here so it can
+   * be called directly, compared against buildEnvelope()'s output, and switched over
+   * deliberately rather than silently.
+   */
+  async buildEnvelopeFromJournal(bankAccountId: string, from?: string, to?: string) {
+    const rows = await fetchVoucherRowsFromJournal(bankAccountId, from, to);
+    const isFinal = rows.length > 0 && rows.every((r) => r.period_status === "closed");
+    const watermark = isFinal ? "" : "\n  <!-- PROVISIONAL EXPORT: no bank_reconciliation for this period is closed yet. Not for final Tally posting. -->";
+    const body = rows.map(buildVoucherXml).join("\n");
+    const xml = `<ENVELOPE>${watermark}
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Import</TALLYREQUEST>
+    <TYPE>Data</TYPE>
+    <ID>Vouchers</ID>
+  </HEADER>
+  <BODY>
+    <DESC></DESC>
+    <DATA>
+${body}
+    </DATA>
+  </BODY>
+</ENVELOPE>
+`;
+    const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
+    const totalCredit = totalDebit;
+    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit };
   },
 };

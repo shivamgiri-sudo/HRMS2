@@ -273,6 +273,7 @@ import { companyBankAccountRouter } from "./modules/finance/company-bank-account
 import { payableAccountRouter } from "./modules/finance/payable-account.routes.js";
 import { paymentVoucherRouter } from "./modules/finance/payment-voucher.routes.js";
 import { bankReconciliationRouter } from "./modules/finance/bank-reconciliation.routes.js";
+import { ledgerReportsRouter } from "./modules/finance/ledger-reports.routes.js";
 import { bankMasterRouter } from "./modules/finance/bank-master.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
@@ -668,6 +669,9 @@ app.use("/api/finance/bank-accounts", companyBankAccountRouter);
 app.use("/api/finance/payable-accounts", payableAccountRouter);
 app.use("/api/finance/payment-vouchers", paymentVoucherRouter);
 app.use("/api/finance/bank-reconciliation", bankReconciliationRouter);
+// Journal Task 4 (Phase 4 of the double-entry plan) — Trial Balance / Vendor Ledger /
+// Head-Subhead Ledger, reading journal_entry_line directly. See ledger-reports.service.ts.
+app.use("/api/finance/ledger-reports", ledgerReportsRouter);
 app.use("/api/finance/bank-master", bankMasterRouter);
 // Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
 // not be reachable through a path that a broader finance router also serves.

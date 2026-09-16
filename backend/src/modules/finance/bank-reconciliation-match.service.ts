@@ -3,6 +3,8 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
+import { journalService } from "./journal.service.js";
+import type { PoolConnection } from "mysql2/promise";
 
 /**
  * Matching engine (Bank Reconciliation, Phase 4). Three ways a bank_statement_line resolves:
@@ -115,6 +117,35 @@ export const bankReconciliationMatchService = {
       [ledgerEntryId, input.bankAccountId, line.txn_date, debit, credit, input.payableAccountId, input.narration, newBalance, "reconciliation_adjustment", input.actorUserId, input.statementLineId],
     );
     await db.execute(`UPDATE bank_statement_line SET match_status = 'adjusted', matched_ledger_entry_id = ? WHERE id = ?`, [ledgerEntryId, input.statementLineId]);
+
+    // Journal Task 7 (Phase 7) — Dr/Cr Bank against the counter-account this adjustment was
+    // raised under, mirroring the debit/credit the bank statement itself shows. This function
+    // has never wrapped its statements in an explicit transaction (every write above is its own
+    // db.execute call, same as the rest of this function) — journalService.post() is called the
+    // same way, not inside a new transaction this task would be introducing on its own. A
+    // partial failure here (after the ledger row above already committed) leaves the bank ledger
+    // and the journal briefly out of step, the same exposure every other statement in this
+    // function already has; wrapping the whole function in a real transaction is a separate,
+    // pre-existing improvement this task does not attempt to bundle in.
+    if (debit > 0 || credit > 0) {
+      await journalService.post(db as unknown as PoolConnection, {
+        entryDate: String(line.txn_date).slice(0, 10),
+        narration: input.narration,
+        sourceType: "bank_reconciliation_adjustment",
+        sourceId: ledgerEntryId,
+        postedBy: input.actorUserId,
+        lines: debit > 0
+          ? [ // money left the bank per the statement (a charge, say): Dr the counter-account, Cr Bank
+              { accountType: "payable_account", accountId: input.payableAccountId, debitAmount: debit },
+              { accountType: "bank_account", accountId: input.bankAccountId, creditAmount: debit },
+            ]
+          : [ // money came in per the statement (interest, say): Dr Bank, Cr the counter-account
+              { accountType: "bank_account", accountId: input.bankAccountId, debitAmount: credit },
+              { accountType: "payable_account", accountId: input.payableAccountId, creditAmount: credit },
+            ],
+      });
+    }
+
     await logSensitiveAction({
       actor_user_id: input.actorUserId, action_type: "BANK_RECONCILIATION_ADJUSTMENT_POSTED", module_key: "FINANCE",
       entity_type: "bank_account_ledger_entry", entity_id: ledgerEntryId,

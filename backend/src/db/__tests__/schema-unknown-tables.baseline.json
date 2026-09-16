@@ -9,6 +9,19 @@
   "modules/finance/mandate-seat-tracking.service.ts": [
     "mandate_seat_history"
   ],
+  "modules/finance/journal.service.ts": [
+    "journal_entry",
+    "journal_entry_line"
+  ],
+  "modules/finance/grn.service.ts": [
+    "journal_entry"
+  ],
+  "modules/finance/ledger-reports.service.ts": [
+    "journal_entry_line"
+  ],
+  "modules/finance/tally-export.service.ts": [
+    "journal_entry_line"
+  ],
   "modules/salary-dispute/salary-dispute.service.ts": [
     "email_queue",
     "salary_dispute_attachment",
