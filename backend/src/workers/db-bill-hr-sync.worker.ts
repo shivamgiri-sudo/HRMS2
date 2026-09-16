@@ -17,20 +17,20 @@ import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.j
  * documents, income tax, DOJ changes, employee moves, field attendance, qual_* and salary-upload
  * snapshots. All additive (INSERT / INSERT IGNORE, existence-checked first), never deletes.
  *
- * DELIBERATELY NOT RUN HERE, pending an owner decision with real gap numbers in front of them:
+ * leave_request and employee_loans gap-fill (also inside sync-all-tables-from-dbbill.mjs) run
+ * here too as of 2026-09-16 — owner-approved with the real numbers in front of them: ~5,596
+ * legacy leave rows (32,806 in db_bill vs 27,210 already in HRMS) and ~33 legacy loan rows (260
+ * vs 227). Unlike every other table this script touches, these two are live operational tables —
+ * leave_request feeds leave balance, employee_loans feeds payroll deduction — which is why they
+ * were held back from the initial rollout until someone had the actual row count to decide with.
  *
- *   - leave_request and employee_loans gap-fill (inside sync-all-tables-from-dbbill.mjs, run
- *     with --skip-leave-gap --skip-loan-gap below). Every other table this script touches is a
- *     pure audit/snapshot table nothing else reads; these two are live operational tables —
- *     leave_request feeds leave balance, employee_loans feeds payroll deduction. Backfilling old
- *     legacy rows into them can shift a real employee's current balance or take-home pay, which
- *     is a decision for a person with the actual row count, not a nightly cron.
- *   - sync-salary-gap-from-dbbill.mjs entirely. It inserts new salary_prep_line /
- *     salary_prep_line_component rows for FINALIZED historical payroll runs — i.e. it can change
- *     a closed month's payroll, P&L and statutory numbers after the fact. That is exactly what
- *     [[hrms2-never-change-salary-calculation]] exists to guard against; it is not spawned here
- *     at all and is not copied into dist/scripts (copy-runtime-scripts.mjs), so it stays a
- *     manual, reviewed run until the owner explicitly signs off on enabling it.
+ * STILL DELIBERATELY NOT RUN HERE, pending its own owner decision: sync-salary-gap-from-dbbill.mjs.
+ * It inserts new salary_prep_line / salary_prep_line_component rows for FINALIZED historical
+ * payroll runs — i.e. it can change a closed month's payroll, P&L and statutory numbers after the
+ * fact. That is exactly what [[hrms2-never-change-salary-calculation]] exists to guard against;
+ * it is not spawned here at all and is not copied into dist/scripts (copy-runtime-scripts.mjs),
+ * so it stays a manual, reviewed run until the owner has exact per-month gap numbers and signs
+ * off on enabling it.
  *
  * Attendance (2.26M rows) is a separate script (sync-attendance-legacy.mjs), run monthly by hand,
  * not by this worker.
@@ -77,7 +77,7 @@ function runSync(): Promise<void> {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [script, "--skip-leave-gap", "--skip-loan-gap"], {
+    const child = spawn(process.execPath, [script], {
       cwd: path.resolve(path.dirname(script), ".."),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],

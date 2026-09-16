@@ -10,9 +10,10 @@
  * Only scripts a worker actually spawns belong in RUNTIME_SCRIPTS.
  *
  * sync-all-tables-from-dbbill.mjs (db-bill-hr-sync.worker.ts) shipped 2026-09-16, owner-approved
- * ("approved for mas_hrms" / "go ahead") — after review it is nightly, always with
- * --skip-leave-gap --skip-loan-gap (see that worker's docblock: those two write into live
- * leave-balance/payroll-deduction tables, not pure snapshots, and need their own sign-off).
+ * ("approved for mas_hrms" / "go ahead") — nightly in full, including the leave_request /
+ * employee_loans gap-fill, which the owner approved separately once shown the real row counts
+ * (~5,596 legacy leave rows, ~33 legacy loan rows — those two write into live leave-balance /
+ * payroll-deduction tables, not pure snapshots, so they were held back from the first rollout).
  *
  * sync-salary-gap-from-dbbill.mjs is deliberately NOT listed. It inserts new salary_prep_line
  * rows into FINALIZED historical payroll runs — a materially different, higher-risk write than
