@@ -688,6 +688,7 @@ export async function verifyReturn(
 
 export interface ListFilters {
   status?: string | null;
+  branchId?: string | null;
   limit: number;
   offset: number;
 }
@@ -715,6 +716,10 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
   if (filters.status) {
     clauses.push('epr.status = ?');
     params.push(filters.status);
+  }
+  if (filters.branchId) {
+    clauses.push('epr.branch_id = ?');
+    params.push(filters.branchId);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 

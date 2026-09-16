@@ -170,6 +170,15 @@ export default function NativeExitPass() {
   const [showCreate, setShowCreate] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState<{ pass: ExitPass; stage: "branch_head" | "admin" } | null>(null);
   const [detailPassId, setDetailPassId] = useState<string | null>(null);
+  const [branchFilter, setBranchFilter] = useState<string>("");
+  const [filterBranches, setFilterBranches] = useState<BranchOption[]>([]);
+  const filterableTab = tab === "mine" || tab === "outside";
+
+  useEffect(() => {
+    hrmsApi.get<{ data: BranchOption[] }>("/api/org/branches")
+      .then((res) => setFilterBranches(res?.data ?? []))
+      .catch(() => setFilterBranches([]));
+  }, []);
 
   const load = useCallback(async () => {
     if (tab === "bh_admin") return;
@@ -182,7 +191,10 @@ export default function NativeExitPass() {
         tab === "pending_bh" ? "/api/exit-passes/pending/branch-head" :
         tab === "pending_admin" ? "/api/exit-passes/pending/admin" :
         "/api/exit-passes?status=outside_premises";
-      const res = await hrmsApi.get<{ success: boolean; data: ExitPass[]; message?: string }>(path);
+      const branchParam = filterableTab && branchFilter
+        ? `${path.includes('?') ? '&' : '?'}branch_id=${encodeURIComponent(branchFilter)}`
+        : '';
+      const res = await hrmsApi.get<{ success: boolean; data: ExitPass[]; message?: string }>(path + branchParam);
       if (!res?.success) throw new Error(res?.message ?? "Failed to load");
       setPasses(res.data ?? []);
     } catch (e) {
@@ -191,7 +203,7 @@ export default function NativeExitPass() {
     } finally {
       setLoading(false);
     }
-  }, [tab]);
+  }, [tab, filterableTab, branchFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -252,6 +264,20 @@ export default function NativeExitPass() {
             </button>
           ))}
         </div>
+
+        {filterableTab && (
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold uppercase tracking-wide text-slate-400">Branch</label>
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className={`${INPUT_CLS} w-56`}
+            >
+              <option value="">All branches</option>
+              {filterBranches.map((b) => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
+            </select>
+          </div>
+        )}
 
         {tab === "bh_admin" ? (
           <BranchHeadAdmin />

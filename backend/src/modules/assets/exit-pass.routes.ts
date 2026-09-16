@@ -71,7 +71,8 @@ exitPassRouter.get('/', h(async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
     const offset = Number(req.query.offset ?? 0) || 0;
     const status = typeof req.query.status === 'string' ? req.query.status : null;
-    const data = await listExitPasses(requester, roles, { status, limit, offset });
+    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : null;
+    const data = await listExitPasses(requester, roles, { status, branchId, limit, offset });
     return res.json({ success: true, data });
   } catch (error) {
     return fail(res, error);
