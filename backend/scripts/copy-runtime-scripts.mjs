@@ -7,10 +7,19 @@
  * db-bill-finance-sync had been failing every night with MODULE_NOT_FOUND since it was added,
  * which froze the billing mirror at 2026-08-19 and left Live P&L showing August revenue as Rs 0.
  *
- * Only scripts a worker actually spawns belong in RUNTIME_SCRIPTS. db-bill-hr-sync.worker.ts
- * spawns sync-all-tables-from-dbbill.mjs / sync-salary-gap-from-dbbill.mjs under the same broken
- * path; they are deliberately NOT listed, because shipping them would switch on a nightly HR
- * write into production that has never actually run. That needs its own owner decision.
+ * Only scripts a worker actually spawns belong in RUNTIME_SCRIPTS.
+ *
+ * sync-all-tables-from-dbbill.mjs (db-bill-hr-sync.worker.ts) shipped 2026-09-16, owner-approved
+ * ("approved for mas_hrms" / "go ahead") — nightly in full, including the leave_request /
+ * employee_loans gap-fill, which the owner approved separately once shown the real row counts
+ * (~5,596 legacy leave rows, ~33 legacy loan rows — those two write into live leave-balance /
+ * payroll-deduction tables, not pure snapshots, so they were held back from the first rollout).
+ *
+ * sync-salary-gap-from-dbbill.mjs is deliberately NOT listed. It inserts new salary_prep_line
+ * rows into FINALIZED historical payroll runs — a materially different, higher-risk write than
+ * every other HR sync table — and is excluded from db-bill-hr-sync.worker.ts's spawn call too.
+ * Shipping it here would do nothing on its own (nothing spawns it), but keeping it out is the
+ * belt-and-suspenders: this file is the one place that decides what nightly automation can touch.
  *
  * Like write-build-info.mjs this never fails the build: a missing file is reported loudly and
  * the worker then logs "sync script not found" at runtime instead of a silent MODULE_NOT_FOUND.
@@ -19,7 +28,7 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RUNTIME_SCRIPTS = ["sync-db-bill-snapshot.mjs"];
+const RUNTIME_SCRIPTS = ["sync-db-bill-snapshot.mjs", "sync-all-tables-from-dbbill.mjs"];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "..", "dist", "scripts");

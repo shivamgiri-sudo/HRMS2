@@ -908,9 +908,14 @@ async function main() {
 
     if (!process.argv.includes('--skip-revenue')) { await syncRevenue(bill, hrms); log(''); }
     if (!process.argv.includes('--skip-salary-history')) { await syncSalaryHistory(bill, hrms, empMap); log(''); }
-    await syncLeaveGap(bill, hrms, empMap);  log('');
+    // Leave and loan gap-fill write into LIVE operational tables — leave_request feeds leave
+    // balance, employee_loans feeds payroll deduction — not pure audit/snapshot tables like
+    // everything else here. Owner-approved 2026-09-16 with the real numbers in front of them
+    // (~5,596 legacy leave rows, ~33 legacy loan rows); the automated nightly worker no longer
+    // skips them. The flags stay available for a manual run that needs to leave them out.
+    if (!process.argv.includes('--skip-leave-gap')) { await syncLeaveGap(bill, hrms, empMap); log(''); }
     await syncOdGap(bill, hrms);             log('');
-    await syncLoanGap(bill, hrms, empMap);   log('');
+    if (!process.argv.includes('--skip-loan-gap')) { await syncLoanGap(bill, hrms, empMap); log(''); }
     await syncMasjclrGap(bill, hrms);        log('');
     await syncDocsGap(bill, hrms);           log('');
     await syncIncomeTax(bill, hrms);         log('');
