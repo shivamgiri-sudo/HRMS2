@@ -4,6 +4,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
 
 /**
@@ -387,6 +388,9 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   await idcContaminationCheck(period);
+  // Cost-centre scope filters on the EFFECTIVE cost centre (post-override), so selecting 576 also
+  // picks up 577's staff whose pay is now mapped to it — same rule as readPayroll()'s GROUP BY.
+  const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
   const where: string[] = ["r.run_month = ?"];
   const params: unknown[] = [period];
   if (s.processIds.length) {
@@ -394,7 +398,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     params.push(...s.processIds);
   }
   if (s.costCentreIds.length) {
-    where.push(`e.cost_centre_id IN (${marks(s.costCentreIds)})`);
+    where.push(`${ov.effectiveCostCentreExpr} IN (${marks(s.costCentreIds)})`);
     params.push(...s.costCentreIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -407,6 +411,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
+       ${ov.join}
       WHERE ${where.join(" AND ")}
       GROUP BY e.branch_id`,
     params,
@@ -422,21 +427,23 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   // and, without this, disagreed with Live P&L on people cost for every open month: Live P&L
   // correctly showed Rs 58.07 L accrued for Sep-26 company-wide while this tab showed Rs 0 and
   // margin NA. COUNT(*) not DISTINCT, matching that fallback: one row per employee per period.
-  const runningWhere: string[] = ["period_code = ?"];
+  const ovSnapshot = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
+  const runningWhere: string[] = ["s.period_code = ?"];
   const runningParams: unknown[] = [period];
   if (s.processIds.length) {
-    runningWhere.push(`process_id IN (${marks(s.processIds)})`);
+    runningWhere.push(`s.process_id IN (${marks(s.processIds)})`);
     runningParams.push(...s.processIds);
   }
   if (s.costCentreIds.length) {
-    runningWhere.push(`cost_centre_id IN (${marks(s.costCentreIds)})`);
+    runningWhere.push(`${ovSnapshot.effectiveCostCentreExpr} IN (${marks(s.costCentreIds)})`);
     runningParams.push(...s.costCentreIds);
   }
   const [runningRows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id AS branch_id, COUNT(*) AS staff, SUM(earned_salary_till_date) AS cost
-       FROM pnl_running_salary_snapshot
+    `SELECT s.branch_id AS branch_id, COUNT(*) AS staff, SUM(s.earned_salary_till_date) AS cost
+       FROM pnl_running_salary_snapshot s
+       ${ovSnapshot.join}
       WHERE ${runningWhere.join(" AND ")}
-      GROUP BY branch_id`,
+      GROUP BY s.branch_id`,
     runningParams,
   );
   for (const r of runningRows) {

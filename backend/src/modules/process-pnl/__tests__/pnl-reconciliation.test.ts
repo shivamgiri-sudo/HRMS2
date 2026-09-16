@@ -65,7 +65,9 @@ function mockDb(options: { payrollRows?: number } = {}) {
     if (q.includes("COUNT(l.id) AS `rows`")) {
       return [[{ rows: payrollRows, latest_synced_at: "2026-08-31 10:00:00" }], []];
     }
-    if (q.includes("FROM salary_prep_line l") && q.includes("GROUP BY e.cost_centre_id")) {
+    // readPayroll's primary query: groups by the effective (post-override) cost centre, which is
+    // either the bare column or a COALESCE wrapping it — never the branch grouping used elsewhere.
+    if (q.includes("FROM salary_prep_line l") && q.includes("GROUP BY") && q.includes("cost_centre_id") && !q.includes("branch_id")) {
       return payrollRows > 0
         ? [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(60) }], []]
         : [[], []];
@@ -76,7 +78,9 @@ function mockDb(options: { payrollRows?: number } = {}) {
     if (q.includes("FROM pnl_running_salary_snapshot")) {
       return [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(42) }], []];
     }
-    if (q.includes("e.cost_centre_id IS NULL")) return [[{ count: 0, amount: 0 }], []];
+    // readUnallocatedPayroll / exceptions(): filtering on the effective cost centre being NULL,
+    // whether that's the bare column or a COALESCE wrapping it.
+    if (q.includes("cost_centre_id") && q.includes("IS NULL")) return [[{ count: 0, amount: 0 }], []];
     if (q.includes("COUNT(*) AS `rows`")) return [[{ rows: 3, latest_synced_at: "2026-08-19 09:00:00" }], []];
     return [[], []];
   });
@@ -200,7 +204,7 @@ describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => 
   }
 
   it("counts pay of staff with no cost centre in branch and company cost, but in no row", async () => {
-    withOverrides((q) => (q.includes("e.cost_centre_id IS NULL") && q.includes("GROUP BY e.branch_id")
+    withOverrides((q) => (q.includes("cost_centre_id") && q.includes("IS NULL") && q.includes("GROUP BY e.branch_id")
       ? [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(6) }]
       : undefined));
     const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
@@ -216,7 +220,7 @@ describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => 
   });
 
   it("ignores unmapped payroll while payroll is not posted (running snapshot has no such staff)", async () => {
-    withOverrides((q) => (q.includes("e.cost_centre_id IS NULL") && q.includes("GROUP BY e.branch_id")
+    withOverrides((q) => (q.includes("cost_centre_id") && q.includes("IS NULL") && q.includes("GROUP BY e.branch_id")
       ? [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(6) }]
       : undefined), { payrollRows: 0 });
     const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
@@ -311,5 +315,79 @@ describe("P&L reconciliation — committed GRN estimate (reserved, not yet consu
     const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], asOfDate: "2026-09-15" });
     expect(out.totals.grnEstimated).toBe(0);
     expect(out.rows.every((r) => r.grnEstimated === 0)).toBe(true);
+  });
+});
+
+describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax)", () => {
+  function withOverrides(overrides: (q: string) => unknown[] | undefined, options?: { payrollRows?: number }) {
+    mockDb(options);
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const hit = overrides(String(sql));
+      return hit ? [hit, []] : base(sql, params);
+    });
+  }
+
+  it("subtracts a company-wide depreciation/finance-cost/tax entry from truePat, leaving operatingProfit and marginPct untouched", async () => {
+    withOverrides((q) => (q.includes("FROM process_pnl_cost_component")
+      ? [
+          { cost_type: "depreciation", amount: L(10) },
+          { cost_type: "finance_cost", amount: L(3) },
+          { cost_type: "tax", amount: L(1) },
+        ]
+      : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    // Baseline: revenue 120, payroll 60, GRN 25 -> operatingProfit 35 (unchanged, contribution margin).
+    expect(out.totals.operatingProfit).toBe(L(35));
+    expect(out.totals.marginPct).toBeCloseTo((35 / 120) * 100, 6);
+    expect(out.totals.depreciation).toBe(L(10));
+    expect(out.totals.financeCost).toBe(L(3));
+    expect(out.totals.taxProvision).toBe(L(1));
+    expect(out.totals.belowTheLineTotal).toBe(L(14));
+    // True bottom line: 35 - 14 = 21.
+    expect(out.totals.truePat).toBe(L(21));
+    expect(out.totals.truePatPct).toBeCloseTo((21 / 120) * 100, 6);
+    // Never allocated to a row or branch.
+    expect(out.rows.every((r) => !("depreciation" in r))).toBe(true);
+    expect(out.branches.every((b) => !("depreciation" in b))).toBe(true);
+  });
+
+  it("filters to company-wide rows only (process_id IS NULL AND branch_id IS NULL) — never the canonical engine's per-process rows", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    const call = execute.mock.calls.find(([sql]) => String(sql).includes("FROM process_pnl_cost_component"));
+    expect(call, "must query process_pnl_cost_component").toBeTruthy();
+    expect(String(call![0])).toContain("process_id IS NULL AND branch_id IS NULL");
+    expect(String(call![0])).toContain("status = 'approved'");
+  });
+
+  it("with nothing entered, truePat equals operatingProfit and a blocker explains why", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    expect(out.totals.belowTheLineTotal).toBe(0);
+    expect(out.totals.truePat).toBe(out.totals.operatingProfit);
+    expect(out.blockers.join(" ")).toMatch(/Depreciation, finance cost and tax have not been entered/);
+  });
+
+  it("nulls truePatPct (not truePat) alongside marginPct when IDC data is missing company-wide", async () => {
+    withOverrides((q) => (q.includes("FROM grn_cost_allocation") || q.includes("FROM grn_entry_line_snapshot") ? [] : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-03", { branchIds: ["branch-noida"] });
+    expect(out.idcMissing).toBe(true);
+    expect(out.totals.marginPct).toBeNull();
+    expect(out.totals.truePatPct).toBeNull();
+    expect(typeof out.totals.truePat).toBe("number");
+  });
+
+  it("returns zero below-the-line figures when the table does not exist yet (pre-migration/older DB)", async () => {
+    mockDb();
+    tableExists.mockImplementation(async (name: string) => name !== "process_pnl_cost_component");
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    expect(out.totals.belowTheLineTotal).toBe(0);
+    expect(out.totals.truePat).toBe(out.totals.operatingProfit);
   });
 });

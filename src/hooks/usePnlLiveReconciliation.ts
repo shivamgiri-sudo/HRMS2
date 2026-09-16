@@ -89,6 +89,15 @@ export interface PnlLiveReconciliation {
     staffPaid: number;
     operatingProfit: number;
     marginPct: number | null;
+    /** Company-wide only, manually entered under P&L Configuration > Below-the-line costs. */
+    depreciation?: number;
+    financeCost?: number;
+    taxProvision?: number;
+    belowTheLineTotal?: number;
+    /** operatingProfit - belowTheLineTotal — deeper than marginPct above (which is a contribution
+     *  margin); this also subtracts depreciation, finance cost and tax. */
+    truePat?: number;
+    truePatPct?: number | null;
   };
   branches: PnlBranchRollup[];
   rows: PnlReconciliationRow[];

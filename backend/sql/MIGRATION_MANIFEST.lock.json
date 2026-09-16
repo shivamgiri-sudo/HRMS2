@@ -820,7 +820,12 @@
     "1779_live_monitoring_process_branch_wfm_access.sql",
     "1780_employee_master_snapshot_salary_start_joining_month.sql",
     "1781_roster_live_monitoring_admin_hr_regression_fix.sql",
-    "1782_notification_template_employee_identity.sql"
+    "1782_notification_template_employee_identity.sql",
+    "1783_enable_provisioning_overdue_reminder.sql",
+    "1784_leave_approval_overdue_reminder.sql",
+    "1785_leave_exit_cc_wfm_payroll_not_hr.sql",
+    "1786_cost_centre_process_mapping_backfill.sql",
+    "1787_pnl_employee_cost_centre_override.sql"
   ],
   "approvedDeletions": [
     {

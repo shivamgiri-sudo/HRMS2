@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1172,
-  "columnCount": 17440,
+  "tableCount": 1173,
+  "columnCount": 17449,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14059,6 +14059,17 @@
       "priority",
       "effective_from",
       "effective_to",
+      "active_status",
+      "created_by",
+      "updated_by",
+      "created_at",
+      "updated_at"
+    ],
+    "pnl_employee_cost_centre_override": [
+      "id",
+      "employee_id",
+      "target_cost_centre_id",
+      "reason",
       "active_status",
       "created_by",
       "updated_by",

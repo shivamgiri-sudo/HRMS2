@@ -63,6 +63,11 @@ import { pnlManualAdjustmentService } from "./pnl-manual-adjustment.service.js";
 import { getPnlTrend } from "./pnl-trend.service.js";
 import { getReceivablesAgeing } from "./pnl-receivables-ageing.service.js";
 import { getSeatBillability } from "./pnl-seat-billability.service.js";
+import {
+  bulkSetCostCentreOverride,
+  deactivateCostCentreOverride,
+  listCostCentreOverrides,
+} from "./pnl-cost-centre-override.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -1701,6 +1706,47 @@ router.post(
     await asForbidden(assertBranchOf(req, branchId));
     const data = await importSeatBillingFromInvoice(costCentreId, String(req.body?.period ?? ""), actor(req).id);
     res.status(201).json({ success: true, data });
+  })
+);
+
+/**
+ * Cost centre override — redirect an employee's pay to a different cost centre for P&L
+ * attribution only, e.g. BSS/BO/NOIDA-2/577's back-office staff who work entirely on the
+ * BSS/BO/NOIDA-2/576 (Onfido) account. employees.cost_centre_id is never written by these routes;
+ * see pnl-cost-centre-override.service.ts for how getPnlReconciliation() / getCeoOverview() read
+ * it. Company-wide (no branch scope check) — restricted to PNL_WRITE_ROLES because it can move
+ * cost across branches, which a branch head should not be able to do for anyone but themself.
+ */
+
+router.get(
+  "/pnl/cost-centre-overrides",
+  requireRole(...PNL_READ_ROLES),
+  h(async (_req, res) => {
+    const data = await listCostCentreOverrides();
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/cost-centre-overrides/bulk",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const employeeCodes = Array.isArray(req.body?.employeeCodes) ? req.body.employeeCodes.map(String) : [];
+    const targetCostCentreId = String(req.body?.targetCostCentreId ?? "");
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
+    const data = await bulkSetCostCentreOverride({ employeeCodes, targetCostCentreId, reason }, actor(req).id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/cost-centre-overrides/:employeeId/deactivate",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    await deactivateCostCentreOverride(String(req.params.employeeId), actor(req).id);
+    res.json({ success: true });
   })
 );
 

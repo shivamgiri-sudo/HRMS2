@@ -1,0 +1,242 @@
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { tableExists } from "../../shared/dbHelpers.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
+import { refuse } from "./finance-error.js";
+
+/**
+ * Per-employee cost centre override for P&L attribution (migration 1785).
+ *
+ * Business case, confirmed 2026-09-16: cost centre BSS/BO/NOIDA-2/577 is a back-office pool whose
+ * staff work entirely on the BSS/BO/NOIDA-2/576 (Onfido) account. Their real HR cost centre is 577
+ * — roster, attendance, leave all correctly key off it — but every rupee of their pay is really
+ * Onfido's cost, so leaving it there understated 576's margin and made 577 look like pure
+ * unattributed cost with no revenue. This lets Finance redirect a person's cost to a different cost
+ * centre FOR P&L REPORTING ONLY; employees.cost_centre_id, and everything else that reads it, is
+ * never touched.
+ *
+ * One row per employee (unique key on employee_id): setting a new mapping for someone already
+ * mapped replaces it rather than adding a second row, so there is exactly one current answer.
+ * Deactivating reverts that employee to their real cost centre everywhere this is read.
+ *
+ * WIRING — every place Live P&L / CEO Overview aggregates payroll cost by cost centre reads this
+ * via `overrideJoinSql()` below and folds cost centre 577 into 576 automatically:
+ *   pnl-reconciliation.service.ts   readPayroll(), readUnallocatedPayroll(), exceptions()
+ *   ceo-overview.service.ts         peopleByBranch()
+ * Insights and Trend consume getPnlReconciliation()'s rows, so they inherit the fix with no
+ * separate wiring.
+ */
+
+export interface PnlCostCentreOverrideSql {
+  /** Empty string if the table hasn't been migrated yet — callers fall back to the raw column. */
+  join: string;
+  /** `COALESCE(override.target_cost_centre_id, <fallbackExpr>)`, or just fallbackExpr pre-migration. */
+  effectiveCostCentreExpr: string;
+}
+
+/**
+ * `employeeIdExpr` is the already-aliased employee id in the caller's query (`e.id` when joined to
+ * `employees`, or `s.employee_id` when reading a snapshot table that carries no employees join).
+ * `fallbackExpr` is that same query's real cost-centre column (`e.cost_centre_id`, `s.cost_centre_id`).
+ */
+export async function overrideJoinSql(
+  employeeIdExpr: string,
+  fallbackExpr: string,
+  alias = "pecco",
+): Promise<PnlCostCentreOverrideSql> {
+  if (!(await tableExists("pnl_employee_cost_centre_override"))) {
+    return { join: "", effectiveCostCentreExpr: fallbackExpr };
+  }
+  return {
+    join: `LEFT JOIN pnl_employee_cost_centre_override ${alias} ON ${alias}.employee_id = ${employeeIdExpr} AND ${alias}.active_status = 1`,
+    effectiveCostCentreExpr: `COALESCE(${alias}.target_cost_centre_id, ${fallbackExpr})`,
+  };
+}
+
+export interface CostCentreOverrideRow {
+  id: string;
+  employeeId: string;
+  employeeCode: string | null;
+  employeeName: string | null;
+  actualCostCentreId: string | null;
+  actualCostCentreCode: string | null;
+  actualCostCentreName: string | null;
+  targetCostCentreId: string;
+  targetCostCentreCode: string | null;
+  targetCostCentreName: string | null;
+  reason: string | null;
+  activeStatus: boolean;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface OverrideRowSql extends RowDataPacket {
+  id: string;
+  employee_id: string;
+  employee_code: string | null;
+  employee_name: string | null;
+  actual_cost_centre_id: string | null;
+  actual_cost_centre_code: string | null;
+  actual_cost_centre_name: string | null;
+  target_cost_centre_id: string;
+  target_cost_centre_code: string | null;
+  target_cost_centre_name: string | null;
+  reason: string | null;
+  active_status: number;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapRow(r: OverrideRowSql): CostCentreOverrideRow {
+  return {
+    id: r.id,
+    employeeId: r.employee_id,
+    employeeCode: r.employee_code,
+    employeeName: r.employee_name,
+    actualCostCentreId: r.actual_cost_centre_id,
+    actualCostCentreCode: r.actual_cost_centre_code,
+    actualCostCentreName: r.actual_cost_centre_name,
+    targetCostCentreId: r.target_cost_centre_id,
+    targetCostCentreCode: r.target_cost_centre_code,
+    targetCostCentreName: r.target_cost_centre_name,
+    reason: r.reason,
+    activeStatus: Number(r.active_status) === 1,
+    createdBy: r.created_by,
+    createdByName: r.created_by_name,
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+  };
+}
+
+/** Active and deactivated rows, newest first — so a user can see what they turned off, not just what's live. */
+export async function listCostCentreOverrides(): Promise<CostCentreOverrideRow[]> {
+  if (!(await tableExists("pnl_employee_cost_centre_override"))) return [];
+  const [rows] = await db.execute<OverrideRowSql[]>(
+    `SELECT ov.id, ov.employee_id, e.employee_code,
+            NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), '') AS employee_name,
+            e.cost_centre_id AS actual_cost_centre_id,
+            accm.cost_centre_code AS actual_cost_centre_code,
+            accm.cost_centre_name AS actual_cost_centre_name,
+            ov.target_cost_centre_id,
+            tccm.cost_centre_code AS target_cost_centre_code,
+            tccm.cost_centre_name AS target_cost_centre_name,
+            ov.reason, ov.active_status, ov.created_by,
+            NULLIF(TRIM(CONCAT_WS(' ', cu.first_name, cu.last_name)), '') AS created_by_name,
+            ov.created_at, ov.updated_at
+       FROM pnl_employee_cost_centre_override ov
+       JOIN employees e ON e.id = ov.employee_id
+       LEFT JOIN cost_centre_master accm ON accm.id = e.cost_centre_id
+       LEFT JOIN cost_centre_master tccm ON tccm.id = ov.target_cost_centre_id
+       LEFT JOIN employees cu ON cu.id = ov.created_by
+      ORDER BY ov.active_status DESC, ov.updated_at DESC`,
+  );
+  return rows.map(mapRow);
+}
+
+export interface BulkSetOverrideInput {
+  employeeCodes: string[];
+  targetCostCentreId: string;
+  reason?: string | null;
+}
+
+export interface BulkSetOverrideResult {
+  applied: { employeeId: string; employeeCode: string; employeeName: string | null }[];
+  notFound: string[];
+}
+
+/**
+ * Set (or replace) the P&L cost-centre mapping for a batch of employees, pasted in by code — the
+ * whole point is a Finance user doing this for a pool of people in one go instead of one row at a
+ * time. Unknown codes are reported back rather than silently skipped, so a typo doesn't quietly do
+ * nothing.
+ */
+export async function bulkSetCostCentreOverride(
+  input: BulkSetOverrideInput,
+  actorId: string,
+): Promise<BulkSetOverrideResult> {
+  if (!(await tableExists("pnl_employee_cost_centre_override"))) {
+    throw refuse(503, "PNL_CC_OVERRIDE_TABLE_MISSING", "pnl_employee_cost_centre_override table not yet migrated (run sql/1785).");
+  }
+  const codes = Array.from(new Set(input.employeeCodes.map((c) => c.trim()).filter(Boolean)));
+  if (!codes.length) throw refuse(400, "PNL_CC_OVERRIDE_NO_CODES", "At least one employee code is required");
+  if (!input.targetCostCentreId?.trim()) {
+    throw refuse(400, "PNL_CC_OVERRIDE_TARGET_REQUIRED", "A target cost centre is required");
+  }
+
+  const [ccRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM cost_centre_master WHERE id = ?`,
+    [input.targetCostCentreId],
+  );
+  if (!ccRows.length) throw refuse(404, "PNL_CC_OVERRIDE_TARGET_NOT_FOUND", "Target cost centre not found");
+
+  const marksClause = codes.map(() => "?").join(",");
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), '') AS name
+       FROM employees WHERE employee_code IN (${marksClause})`,
+    codes,
+  );
+  const byCode = new Map<string, { id: string; name: string | null }>();
+  for (const r of empRows) byCode.set(String(r.employee_code), { id: String(r.id), name: r.name ? String(r.name) : null });
+
+  const applied: BulkSetOverrideResult["applied"] = [];
+  const notFound: string[] = [];
+  for (const code of codes) {
+    const emp = byCode.get(code);
+    if (!emp) {
+      notFound.push(code);
+      continue;
+    }
+    await db.execute(
+      `INSERT INTO pnl_employee_cost_centre_override
+         (id, employee_id, target_cost_centre_id, reason, active_status, created_by, updated_by)
+       VALUES (?, ?, ?, ?, 1, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         target_cost_centre_id = VALUES(target_cost_centre_id),
+         reason = VALUES(reason),
+         active_status = 1,
+         updated_by = VALUES(updated_by)`,
+      [randomUUID(), emp.id, input.targetCostCentreId, input.reason?.trim() || null, actorId, actorId],
+    );
+    applied.push({ employeeId: emp.id, employeeCode: code, employeeName: emp.name });
+  }
+
+  if (applied.length > 0) {
+    await writeAuditLog({
+      actor_user_id: actorId,
+      action_type: "PNL_COST_CENTRE_OVERRIDE_SET",
+      module_key: "process_pnl",
+      entity_type: "pnl_employee_cost_centre_override",
+      entity_id: input.targetCostCentreId,
+      reason: input.reason ?? undefined,
+      new_value_json: { targetCostCentreId: input.targetCostCentreId, employeeCodes: applied.map((a) => a.employeeCode) },
+    });
+  }
+
+  return { applied, notFound };
+}
+
+/** Reverts one employee to their real cost centre everywhere this is read. Row is kept, not deleted. */
+export async function deactivateCostCentreOverride(employeeId: string, actorId: string): Promise<void> {
+  if (!(await tableExists("pnl_employee_cost_centre_override"))) {
+    throw refuse(503, "PNL_CC_OVERRIDE_TABLE_MISSING", "pnl_employee_cost_centre_override table not yet migrated (run sql/1785).");
+  }
+  const [result] = await db.execute<RowDataPacket[]>(
+    `UPDATE pnl_employee_cost_centre_override SET active_status = 0, updated_by = ? WHERE employee_id = ? AND active_status = 1`,
+    [actorId, employeeId],
+  );
+  const affected = (result as unknown as { affectedRows?: number }).affectedRows ?? 0;
+  if (affected === 0) throw refuse(404, "PNL_CC_OVERRIDE_NOT_FOUND", "No active override found for this employee");
+
+  await writeAuditLog({
+    actor_user_id: actorId,
+    action_type: "PNL_COST_CENTRE_OVERRIDE_DEACTIVATED",
+    module_key: "process_pnl",
+    entity_type: "pnl_employee_cost_centre_override",
+    entity_id: employeeId,
+  });
+}

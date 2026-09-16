@@ -5,6 +5,7 @@ import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
+import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -102,6 +103,18 @@ export interface PnlReconciliationTotals {
   staffPaid: number;
   operatingProfit: number;
   marginPct: number | null;
+  /** Below-the-line — company-wide only, manually entered by Finance (process_pnl_cost_component,
+   *  scoped to no process/branch). See readBelowTheLine(). */
+  depreciation: number;
+  financeCost: number;
+  taxProvision: number;
+  belowTheLineTotal: number;
+  /** operatingProfit - belowTheLineTotal. Deeper than OP% above: OP% is a contribution margin
+   *  (revenue - payroll - GRN); this also subtracts depreciation, loan interest and tax, matching
+   *  the owner's own manual P&L (EBITDA -> EBDTA -> PBT/PAT). Company-wide only, never allocated
+   *  to a branch or cost centre. */
+  truePat: number;
+  truePatPct: number | null;
 }
 
 export interface PnlReconciliationException {
@@ -372,6 +385,41 @@ async function readGrnCommitted(period: string): Promise<Map<string, number>> {
   return out;
 }
 
+/**
+ * Depreciation, finance cost (loan interest) and tax provision — company-wide only, manually
+ * entered by Finance via the "Below-the-line costs" P&L Configuration tab, into the same
+ * process_pnl_cost_component table the older canonical/BPO P&L engine already uses. Filtered to
+ * process_id IS NULL AND branch_id IS NULL deliberately: a process/branch-scoped row on this table
+ * belongs to that other engine's per-process allocation model, not this company-level figure, and
+ * mixing the two would silently invent a branch allocation nobody asked for.
+ *
+ * 2026-09-16: the owner's own manual G-Sheet P&L subtracts these (EBITDA -> minus finance cost ->
+ * EBDTA -> minus depreciation -> PBT/PAT) and its own Risk Dashboard already flags that once they
+ * are subtracted, FY26-27 is a real loss — Live P&L's Operating Profit never reflected that because
+ * it is a contribution margin (revenue - payroll - GRN only). This is intentionally read into
+ * totals ONLY (see truePat below), never into a row or branch rollup.
+ */
+async function readBelowTheLine(period: string): Promise<{ depreciation: number; financeCost: number; taxProvision: number }> {
+  const out = { depreciation: 0, financeCost: 0, taxProvision: 0 };
+  if (!(await tableExists("process_pnl_cost_component"))) return out;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cost_type, SUM(amount_inr) AS amount
+       FROM process_pnl_cost_component
+      WHERE period_code = ? AND status = 'approved'
+        AND process_id IS NULL AND branch_id IS NULL
+        AND cost_type IN ('depreciation', 'finance_cost', 'tax')
+      GROUP BY cost_type`,
+    [period],
+  );
+  for (const row of rows) {
+    const amount = n(row.amount);
+    if (row.cost_type === "depreciation") out.depreciation = amount;
+    else if (row.cost_type === "finance_cost") out.financeCost = amount;
+    else if (row.cost_type === "tax") out.taxProvision = amount;
+  }
+  return out;
+}
+
 async function readBudgets(period: string) {
   const byCostCentre = new Map<string, number>();
   const byBranch = new Map<string, number>();
@@ -410,8 +458,9 @@ async function readBudgets(period: string) {
 async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
+  const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
   const [rows] = await db.execute<MoneyRow[]>(
-    `SELECT e.cost_centre_id AS cost_centre_id,
+    `SELECT ${ov.effectiveCostCentreExpr} AS cost_centre_id,
             COUNT(*) AS staff,
             SUM(COALESCE(l.gross_salary, 0)
               + COALESCE(l.pf_employer, 0)
@@ -420,20 +469,23 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
+       ${ov.join}
       WHERE r.run_month = ?
-      GROUP BY e.cost_centre_id`,
+      GROUP BY ${ov.effectiveCostCentreExpr}`,
     [period],
   );
   for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), { cost: n(row.amount), staff: n(row.staff) });
   if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot"))) return out;
 
+  const ovSnapshot = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
   const [runningRows] = await db.execute<MoneyRow[]>(
-    `SELECT cost_centre_id,
+    `SELECT ${ovSnapshot.effectiveCostCentreExpr} AS cost_centre_id,
             COUNT(*) AS staff,
             SUM(earned_salary_till_date) AS amount
-       FROM pnl_running_salary_snapshot
+       FROM pnl_running_salary_snapshot s
+       ${ovSnapshot.join}
       WHERE period_code = ?
-      GROUP BY cost_centre_id`,
+      GROUP BY ${ovSnapshot.effectiveCostCentreExpr}`,
     [period],
   );
   for (const row of runningRows) {
@@ -452,6 +504,9 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
 async function readUnallocatedPayroll(period: string, branchIds: string[] | undefined): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
   if (!(await tableExists("salary_prep_line"))) return [];
   const branchClause = branchIds?.length ? `AND e.branch_id IN (${marks(branchIds)})` : "";
+  // A mapped override takes an employee out of "unallocated" too — that is a real use of this
+  // feature (someone with no HR cost centre at all can still be pointed at one for P&L purposes).
+  const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id AS branch_id, MAX(bm.branch_name) AS branch_name,
             COUNT(*) AS staff,
@@ -463,7 +518,8 @@ async function readUnallocatedPayroll(period: string, branchIds: string[] | unde
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
        LEFT JOIN branch_master bm ON bm.id = e.branch_id
-      WHERE r.run_month = ? AND e.cost_centre_id IS NULL ${branchClause}
+       ${ov.join}
+      WHERE r.run_month = ? AND ${ov.effectiveCostCentreExpr} IS NULL ${branchClause}
       GROUP BY e.branch_id`,
     [period, ...(branchIds ?? [])],
   );
@@ -535,6 +591,7 @@ async function runningSalaryFreshness(period: string): Promise<PnlSourceFreshnes
 async function exceptions(period: string): Promise<PnlReconciliationException[]> {
   const out: PnlReconciliationException[] = [];
   if (await tableExists("salary_prep_line")) {
+    const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS count,
               SUM(COALESCE(l.gross_salary, 0)
@@ -544,7 +601,8 @@ async function exceptions(period: string): Promise<PnlReconciliationException[]>
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id
          JOIN employees e ON e.id = l.employee_id
-        WHERE r.run_month = ? AND e.cost_centre_id IS NULL`,
+         ${ov.join}
+        WHERE r.run_month = ? AND ${ov.effectiveCostCentreExpr} IS NULL`,
       [period],
     );
     const first = rows[0] ?? {};
@@ -576,13 +634,14 @@ export async function getPnlReconciliation(
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
-  const [costCentres, revenue, grn, grnCommitted, budgets, payroll, freshness, exceptionsOut, unallocated] = await Promise.all([
+  const [costCentres, revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, unallocated] = await Promise.all([
     readCostCentres(filters),
     readRevenue(period),
     readGrn(period),
     readGrnCommitted(period),
     readBudgets(period),
     readPayroll(period),
+    readBelowTheLine(period),
     Promise.all([
       sourceFreshness("Invoice lines", "billing_invoice_particular_snapshot", period),
       sourceFreshness("Billing provision", "billing_provision_snapshot", period),
@@ -746,8 +805,16 @@ export async function getPnlReconciliation(
     staffPaid: sum((row) => row.staffPaid) + unallocatedStaff,
     operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost,
     marginPct: null,
+    depreciation: belowTheLine.depreciation,
+    financeCost: belowTheLine.financeCost,
+    taxProvision: belowTheLine.taxProvision,
+    belowTheLineTotal: belowTheLine.depreciation + belowTheLine.financeCost + belowTheLine.taxProvision,
+    truePat: 0,
+    truePatPct: null,
   };
   totals.marginPct = pct(totals.operatingProfit, totals.revenue);
+  totals.truePat = totals.operatingProfit - totals.belowTheLineTotal;
+  totals.truePatPct = pct(totals.truePat, totals.revenue);
   // No GRN mapped anywhere in the company for the month (readGrn is company-wide, whatever the
   // branch filter) means the overhead data is absent, not that overheads were nil: March 2026 read
   // 40.6% with Rs 0 of indirect cost — its 406 mirror GRNs match no MAS cost centre (Feb: 367, 32.6%). A margin without any overhead is not comparable with any other
@@ -757,6 +824,7 @@ export async function getPnlReconciliation(
   const idcMissing = grn.size === 0 && (!estimateApplies || grnCommitted.size === 0) && totals.payrollCost > 0;
   if (idcMissing) {
     totals.marginPct = null;
+    totals.truePatPct = null;
     for (const branch of branchMap.values()) branch.marginPct = null;
     for (const row of rows) row.marginPct = null;
   }
@@ -766,6 +834,7 @@ export async function getPnlReconciliation(
   const peopleCostMissing = totals.payrollCost === 0 && totals.revenueEstimated > 0;
   if (peopleCostMissing) {
     totals.marginPct = null;
+    totals.truePatPct = null;
     for (const branch of branchMap.values()) if (branch.payrollCost === 0) branch.marginPct = null;
   }
 
@@ -806,6 +875,9 @@ export async function getPnlReconciliation(
     blockers.push(
       `${grnCcCount} cost centre(s) also carry Rs ${(totals.grnEstimated / 100000).toFixed(2)} L of GRN that is approved and reserved but not yet consumed for ${period} — included as a committed estimate so OP is not understated while the bill finishes processing.`,
     );
+  }
+  if (totals.belowTheLineTotal === 0) {
+    blockers.push(`Depreciation, finance cost and tax have not been entered for ${period} (P&L Configuration > Below-the-line costs) — the True Bottom Line (PAT) figure below excludes them until they are.`);
   }
 
   const mode: PnlReconciliationMode = blockers.length ? "LIVE_MTD" : "FINAL";

@@ -61,6 +61,8 @@ import {
 } from "@/hooks/usePnlConfiguration";
 import { PnlBulkUploadDialog } from "@/components/finance/PnlBulkUploadDialog";
 import { SeatBillingPanel } from "@/components/finance/pnl/SeatBillingPanel";
+import { CostCentreOverridePanel } from "@/components/finance/pnl/CostCentreOverridePanel";
+import { BelowTheLinePanel } from "@/components/finance/pnl/BelowTheLinePanel";
 import { costCentreText } from "@/components/finance/pnl/costCentreLabel";
 
 type AnyRow = Record<string, any>;
@@ -803,6 +805,8 @@ export default function PnlMasterControlCenterPage() {
                 <TabsTrigger className="rounded-xl" value="overview">Control overview</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="commercial">Revenue &amp; contracts</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="seatbilling">Seat billing</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="costcentremapping">Cost centre mapping</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="belowtheline">Below-the-line costs</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="delivery">Delivery &amp; adjustments</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="costs">Cost master</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="allocation">Allocation master</TabsTrigger>
@@ -814,6 +818,16 @@ export default function PnlMasterControlCenterPage() {
               {/* ── SEAT BILLING — revenue per day from seat rate x seats, per LOB line ── */}
               <TabsContent value="seatbilling" className="space-y-4">
                 <SeatBillingPanel period={period} />
+              </TabsContent>
+
+              {/* ── COST CENTRE MAPPING — redirect an employee's pay to another cost centre for P&L only ── */}
+              <TabsContent value="costcentremapping" className="space-y-4">
+                <CostCentreOverridePanel />
+              </TabsContent>
+
+              {/* ── BELOW-THE-LINE COSTS — depreciation, finance cost, tax for Live P&L's True Bottom Line ── */}
+              <TabsContent value="belowtheline" className="space-y-4">
+                <BelowTheLinePanel />
               </TabsContent>
 
               {/* ── OVERVIEW ── */}

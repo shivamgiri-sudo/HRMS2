@@ -131,6 +131,21 @@ export function PnlReconciliationPanel({
       danger: data.totals.operatingProfit < 0,
     },
     { label: "Margin", value: percent(data.totals.marginPct), danger: (data.totals.marginPct ?? 0) < 0 },
+    {
+      // Depreciation + finance cost + tax, entered by Finance under P&L Configuration >
+      // Below-the-line costs — company-wide only, never allocated to a branch or cost centre.
+      label: "Below-the-line (depreciation + finance cost + tax)",
+      value: money(data.totals.belowTheLineTotal ?? 0),
+      estimated: (data.totals.belowTheLineTotal ?? 0) === 0,
+    },
+    {
+      // Deeper than "Indicative OP" above: also subtracts depreciation, finance cost and tax,
+      // matching the owner's own manual P&L (EBITDA -> EBDTA -> PBT/PAT). Company-wide only.
+      label: "True Bottom Line (PAT)",
+      value: money(data.totals.truePat ?? data.totals.operatingProfit),
+      danger: (data.totals.truePat ?? data.totals.operatingProfit) < 0,
+    },
+    { label: "True Bottom Line %", value: percent(data.totals.truePatPct ?? null), danger: (data.totals.truePatPct ?? 0) < 0 },
     { label: "Active cost centres", value: String(data.totals.activeCostCentres) },
   ];
   const topRows = sortRows(data.rows).slice(0, 80);
