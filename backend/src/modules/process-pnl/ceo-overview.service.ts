@@ -414,6 +414,34 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   for (const r of rows) {
     out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
   }
+  if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot"))) return out;
+
+  // Same fallback as pnl-reconciliation.service.ts's readPayroll() (2026-09-16 finding: it existed
+  // there and worked, but nothing had ever triggered it for September — see
+  // pnl-running-salary-refresh.worker.ts). This tab reached the same "no final payroll yet" state
+  // and, without this, disagreed with Live P&L on people cost for every open month: Live P&L
+  // correctly showed Rs 58.07 L accrued for Sep-26 company-wide while this tab showed Rs 0 and
+  // margin NA. COUNT(*) not DISTINCT, matching that fallback: one row per employee per period.
+  const runningWhere: string[] = ["period_code = ?"];
+  const runningParams: unknown[] = [period];
+  if (s.processIds.length) {
+    runningWhere.push(`process_id IN (${marks(s.processIds)})`);
+    runningParams.push(...s.processIds);
+  }
+  if (s.costCentreIds.length) {
+    runningWhere.push(`cost_centre_id IN (${marks(s.costCentreIds)})`);
+    runningParams.push(...s.costCentreIds);
+  }
+  const [runningRows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id AS branch_id, COUNT(*) AS staff, SUM(earned_salary_till_date) AS cost
+       FROM pnl_running_salary_snapshot
+      WHERE ${runningWhere.join(" AND ")}
+      GROUP BY branch_id`,
+    runningParams,
+  );
+  for (const r of runningRows) {
+    out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
+  }
   return out;
 }
 

@@ -297,6 +297,7 @@ describe("application shell routing contracts", () => {
       "/onboard-full-v2",
       "/onboarding-demo",
       "/onboarding-step10-demo",
+      "/process-operations-demo",
       "/profile-compare",
       "/profile-enhanced",
       "/profile-v2",

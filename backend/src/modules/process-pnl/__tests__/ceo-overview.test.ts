@@ -667,3 +667,46 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
     expect(out.indirectCost).toBeCloseTo(L(10), 0);
   });
 });
+
+describe("accrued running-salary fallback — parity with Live P&L's readPayroll()", () => {
+  const openMonth = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
+  beforeEach(() => getPnlReconciliation.mockReset().mockResolvedValue({ rows: [] }));
+
+  function withRunningSalary(f: Fixture, running: { branch_id: string | null; staff: number; cost: number }[]) {
+    mockDb(f);
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("FROM pnl_running_salary_snapshot")) {
+        return [running.map((r) => ({ branch_id: r.branch_id, staff: r.staff, cost: r.cost })), []];
+      }
+      return base(sql, params);
+    });
+  }
+
+  it("falls back to the accrual snapshot when final payroll has not run, same as Live P&L", async () => {
+    withRunningSalary({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(150) }],
+      // payrollRows: 0 -> salary_prep_line COUNT(*) rows = 0 -> peopleByBranch's own query returns
+      // nothing either (no fixture rows), matching a month where final payroll never ran.
+    }, [{ branch_id: "n", staff: 300, cost: L(58) }]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview(openMonth);
+    expect(out.peopleCost).toBeCloseTo(L(58), 0);
+    expect(out.staffPaid).toBe(300);
+    expect(out.marginPct).toBeCloseTo(((150 - 58) / 150) * 100, 5);
+  });
+
+  it("never uses the accrual once final payroll has actually posted", async () => {
+    withRunningSalary({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(150) }],
+      people: [{ branch_id: "n", staff: 10, cost: L(90) }],
+    }, [{ branch_id: "n", staff: 300, cost: L(58) }]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview(openMonth);
+    expect(out.peopleCost).toBeCloseTo(L(90), 0);
+    expect(out.staffPaid).toBe(10);
+  });
+});
