@@ -59,6 +59,11 @@ module.exports = {
         // Same reason as hrms-api above. Matters more here, if anything: the schedulers
         // decide which calendar day a cron run belongs to.
         TZ: "Asia/Kolkata",
+        // Enable nightly KPI Studio compute (2 AM IST) that writes process_metric_actual.
+        // Without this flag the worker starts but immediately returns, leaving all
+        // KPI-section tiles stale. Set DRY_RUN=false so rows are actually written.
+        KPI_STUDIO_COMPUTE_ENABLED: "true",
+        KPI_STUDIO_COMPUTE_DRY_RUN: "false",
       },
       // Graceful shutdown - workers need time to finish current jobs
       kill_timeout: 60000,
