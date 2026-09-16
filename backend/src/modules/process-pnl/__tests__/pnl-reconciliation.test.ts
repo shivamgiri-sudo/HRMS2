@@ -248,3 +248,68 @@ describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => 
     expect(out.totals.marginPct).toBeNull();
   });
 });
+
+describe("P&L reconciliation — committed GRN estimate (reserved, not yet consumed)", () => {
+  function withOverrides(overrides: (q: string) => unknown[] | undefined, options?: { payrollRows?: number }) {
+    mockDb(options);
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const hit = overrides(String(sql));
+      return hit ? [hit, []] : base(sql, params);
+    });
+  }
+
+  it("adds reserved GRN as a committed estimate inside the open window", async () => {
+    withOverrides((q) => (q.includes("lifecycle_status = 'reserved'")
+      ? [{ cost_centre_id: "cc-noida-2", amount: L(8) }]
+      : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], asOfDate: "2026-09-15" });
+    const row = out.rows.find((r) => r.costCentreId === "cc-noida-2")!;
+    expect(row.grnEstimated).toBe(L(8));
+    expect(row.issues).toContain("GRN_ESTIMATED_FROM_RESERVED");
+    // cc-noida-2 has no revenue/payroll of its own, plus its existing Rs 5L mirror GRN (fixture)
+    // and now Rs 8L reserved — the whole OP is both cost components together.
+    expect(row.operatingProfit).toBe(-L(13));
+    expect(out.totals.grnEstimated).toBe(L(8));
+    expect(out.blockers.join(" ")).toMatch(/1 cost centre\(s\) also carry Rs 8\.00 L .* committed estimate/);
+  });
+
+  it("never pulls reserved GRN into a closed month outside the estimate window", async () => {
+    withOverrides((q) => (q.includes("lifecycle_status = 'reserved'")
+      ? [{ cost_centre_id: "cc-noida-2", amount: L(8) }]
+      : undefined));
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-03", { branchIds: ["branch-noida"], asOfDate: "2026-09-15" });
+    const row = out.rows.find((r) => r.costCentreId === "cc-noida-2")!;
+    expect(row.grnEstimated).toBe(0);
+    expect(out.totals.grnEstimated).toBe(0);
+    expect(out.blockers.join(" ")).not.toMatch(/committed estimate/);
+  });
+
+  it("reserved GRN alone (no consumed anywhere) satisfies the IDC-exists check and margin is not NA'd", async () => {
+    withOverrides((q) => {
+      if (q.includes("lifecycle_status = 'reserved'")) return [{ cost_centre_id: "cc-noida-1", amount: L(8) }];
+      // No consumed GRN anywhere, app-side or mirror — this alone would normally trip idcMissing.
+      if (q.includes("lifecycle_status = 'consumed'") || q.includes("FROM grn_entry_line_snapshot")) return [];
+      return undefined;
+    });
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], asOfDate: "2026-09-15" });
+    expect(out.idcMissing).toBe(false);
+    expect(out.totals.marginPct).not.toBeNull();
+    const row = out.rows.find((r) => r.costCentreId === "cc-noida-1")!;
+    expect(row.grnActual).toBe(0);
+    expect(row.grnEstimated).toBe(L(8));
+    // Revenue 120, payroll 60, no consumed GRN, Rs 8L reserved GRN estimate.
+    expect(row.operatingProfit).toBe(L(52));
+  });
+
+  it("with no committed GRN fixture at all, grnEstimated is zero everywhere (existing behaviour unchanged)", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], asOfDate: "2026-09-15" });
+    expect(out.totals.grnEstimated).toBe(0);
+    expect(out.rows.every((r) => r.grnEstimated === 0)).toBe(true);
+  });
+});

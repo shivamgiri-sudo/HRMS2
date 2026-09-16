@@ -35,6 +35,9 @@ export interface PnlReconciliationRow {
   estimateSourcePeriod: string | null;
   perDayRevenue: number;
   grnActual: number;
+  /** Approved GRN spend (reserved, not yet consumed) for the open month — a committed estimate,
+   *  same treatment as revenueEstimated. Zero for a closed month or once the bill is consumed. */
+  grnEstimated?: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -51,6 +54,7 @@ export interface PnlBranchRollup {
   costCentres: number;
   revenue: number;
   grnActual: number;
+  grnEstimated?: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -78,6 +82,7 @@ export interface PnlLiveReconciliation {
     estimatedCostCentres: number;
     perDayRevenue: number;
     grnActual: number;
+    grnEstimated?: number;
     allocatedBudget: number;
     branchBudget: number;
     payrollCost: number;
@@ -90,6 +95,8 @@ export interface PnlLiveReconciliation {
   freshness: PnlSourceFreshness[];
   exceptions: Array<{ code: string; label: string; amount: number; count: number }>;
   blockers: string[];
+  /** No GRN maps anywhere in the company for the month, and no committed estimate covers it. */
+  idcMissing?: boolean;
   estimate?: {
     applied: boolean;
     daysInMonth: number;

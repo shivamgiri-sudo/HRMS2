@@ -19,6 +19,7 @@ import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from 
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
 import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sync.worker.js";
+import { startPnlRunningSalaryRefreshWorker, stopPnlRunningSalaryRefreshWorker } from "./pnl-running-salary-refresh.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
@@ -183,6 +184,15 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "db-bill-hr-sync",
     start: () => { startDbBillHrSyncWorker(); return Promise.resolve(); },
+  },
+  {
+    // Keeps the accrued-payroll fallback Live P&L already reads (readPayroll() in
+    // pnl-reconciliation.service.ts) populated for the current month. Found 2026-09-16: that
+    // fallback code existed and worked, but nothing ever called refreshRunningSalarySnapshot()
+    // except a manual button, so every open month showed real revenue with payrollCost=0 and
+    // margin NA until someone clicked it. See pnl-running-salary-refresh.worker.ts.
+    name: "pnl-running-salary-refresh",
+    start: () => { startPnlRunningSalaryRefreshWorker(); return Promise.resolve(); },
   },
   {
     // Builds the outward GST batch and its exception worklist for every registration before
@@ -515,6 +525,7 @@ function shutdown(): void {
   stopDbBillFinanceSyncWorker();
   stopCostCentreProcessResolverWorker();
   stopDbBillHrSyncWorker();
+  stopPnlRunningSalaryRefreshWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
   stopBudgetClosureReminderWorker();

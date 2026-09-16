@@ -109,9 +109,9 @@ export interface PnlInsights {
   notes: string[];
 }
 
-const costOf = (r: PnlReconciliationRow) => n(r.payrollCost) + n(r.grnActual);
+const costOf = (r: PnlReconciliationRow) => n(r.payrollCost) + n(r.grnActual) + n(r.grnEstimated);
 const hasActivity = (r: PnlReconciliationRow) =>
-  n(r.recognisedRevenue) !== 0 || n(r.payrollCost) !== 0 || n(r.grnActual) !== 0;
+  n(r.recognisedRevenue) !== 0 || n(r.payrollCost) !== 0 || n(r.grnActual) !== 0 || n(r.grnEstimated) !== 0;
 const margin = (op: number, revenue: number) => (revenue > 0 ? r1((op / revenue) * 100) : null);
 const noPayrollRow = (r: PnlReconciliationRow) => n(r.recognisedRevenue) > 0 && n(r.payrollCost) <= 0;
 
@@ -175,7 +175,7 @@ export function buildContribution(rec: PnlReconciliation): InsightContribution[]
       const kind: InsightContribution["kind"] = revenue <= 0 ? "no_revenue" : !missing && noPayrollRow(r) ? "no_payroll" : "trading";
       return {
         costCentreId: r.costCentreId, code: r.costCentreCode, name: r.costCentreName, processName: r.costCentreProcess ?? null, branchName: r.branchName,
-        revenue: r2(revenue), payroll: r2(n(r.payrollCost)), idc: r2(n(r.grnActual)), op: r2(op),
+        revenue: r2(revenue), payroll: r2(n(r.payrollCost)), idc: r2(n(r.grnActual) + n(r.grnEstimated)), op: r2(op),
         opPct: missing || kind !== "trading" ? null : margin(op, revenue),
         estimated: n(r.revenueEstimated) > 0,
         revenueEstimated: r2(n(r.revenueEstimated)),

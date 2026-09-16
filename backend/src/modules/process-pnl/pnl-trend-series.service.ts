@@ -136,7 +136,7 @@ function scopeTotals(rec: PnlReconciliation, scope: { type: TrendScopeType; id: 
     const row = rec.rows.find((r) => r.costCentreId === scope.id);
     return {
       revenue: n(row?.recognisedRevenue), revenueEstimated: n(row?.revenueEstimated),
-      payroll: n(row?.payrollCost), grn: n(row?.grnActual), idcMissing: Boolean(rec.idcMissing),
+      payroll: n(row?.payrollCost), grn: n(row?.grnActual) + n(row?.grnEstimated), idcMissing: Boolean(rec.idcMissing),
       label: row ? costCentreLabel(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)) : "Cost centre",
     };
   }
@@ -147,13 +147,13 @@ function scopeTotals(rec: PnlReconciliation, scope: { type: TrendScopeType; id: 
     const unallocated = n(rec.branches.find((b) => b.branchId === scope.id)?.unallocatedPayroll);
     return {
       revenue: sum((r) => r.recognisedRevenue), revenueEstimated: sum((r) => r.revenueEstimated),
-      payroll: sum((r) => r.payrollCost) + unallocated, grn: sum((r) => r.grnActual), idcMissing: Boolean(rec.idcMissing),
+      payroll: sum((r) => r.payrollCost) + unallocated, grn: sum((r) => r.grnActual) + sum((r) => r.grnEstimated), idcMissing: Boolean(rec.idcMissing),
       label: rows[0]?.branchName ?? rec.branches.find((b) => b.branchId === scope.id)?.branchName ?? "Branch",
     };
   }
   return {
     revenue: rec.totals.revenue, revenueEstimated: rec.totals.revenueEstimated ?? 0,
-    payroll: rec.totals.payrollCost, grn: rec.totals.grnActual, label: rec.company, idcMissing: Boolean(rec.idcMissing),
+    payroll: rec.totals.payrollCost, grn: rec.totals.grnActual + rec.totals.grnEstimated, label: rec.company, idcMissing: Boolean(rec.idcMissing),
   };
 }
 

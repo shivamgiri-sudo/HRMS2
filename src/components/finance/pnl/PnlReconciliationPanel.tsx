@@ -113,7 +113,14 @@ export function PnlReconciliationPanel({
     },
     { label: "Revenue per day (seat run-rate)", value: money(data.totals.perDayRevenue ?? 0) },
     { label: "Payroll cost", value: money(data.totals.payrollCost) },
-    { label: "GRN actual", value: money(data.totals.grnActual) },
+    { label: "GRN actual (consumed)", value: money(data.totals.grnActual) },
+    {
+      // Approved GRN that has not been fully consumed yet — real committed spend, only inside
+      // the open month, folded into the cost side so OP is not overstated while the bill finishes.
+      label: "GRN committed (reserved, not yet consumed)",
+      value: money(data.totals.grnEstimated ?? 0),
+      estimated: (data.totals.grnEstimated ?? 0) > 0,
+    },
     {
       // BUG-7: this reconciliation view computes OP as recognisedRevenue - payrollCost - grnActual,
       // a simplified 3-line check with no DSC/BMC/overhead split or allocation layer. It is a
@@ -211,7 +218,10 @@ export function PnlReconciliationPanel({
                     <td className="px-3 py-2 font-medium text-slate-800">{branch.branchName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.revenue)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.payrollCost)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{money(branch.grnActual)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums" title={branch.grnEstimated ? `Includes ${money(branch.grnEstimated)} reserved (not yet consumed)` : undefined}>
+                      {money(branch.grnActual + (branch.grnEstimated ?? 0))}
+                      {(branch.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
+                    </td>
                     <td className={`px-3 py-2 text-right font-semibold tabular-nums ${branch.operatingProfit < 0 ? "text-rose-700" : "text-emerald-700"}`}>
                       {money(branch.operatingProfit)}
                       <span className="ml-1 text-[11px] font-normal text-slate-500">{percent(branch.marginPct)}</span>
@@ -286,8 +296,11 @@ export function PnlReconciliationPanel({
                         params: { metric: CELL_METRIC.grnActual, period, costCentreId: row.costCentreId },
                         label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
-                      title="View the underlying rows"
-                    >{money(row.grnActual)}</td>
+                      title={row.grnEstimated ? `Includes ${money(row.grnEstimated)} reserved (not yet consumed) — click to view the consumed detail` : "View the underlying rows"}
+                    >
+                      {money(row.grnActual + (row.grnEstimated ?? 0))}
+                      {(row.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
+                    </td>
                     <td
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({

@@ -626,3 +626,44 @@ describe("seat-rate estimate — same revenue as the Live P&L tab", () => {
     expect(out.revenueEstimated).toBe(0);
   });
 });
+
+describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", () => {
+  // Always inside the estimate window (current + previous IST month), whatever day the suite runs.
+  const openMonth = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
+  beforeEach(() => getPnlReconciliation.mockReset().mockResolvedValue({ rows: [] }));
+
+  function withReservedGrn(f: Fixture, reserved: { branch_id: string | null; amount: number }[]) {
+    mockDb(f);
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("lifecycle_status = 'reserved'")) return [reserved, []];
+      return base(sql, params);
+    });
+  }
+
+  it("folds approved-but-unconsumed GRN into indirect cost for the open month", async () => {
+    withReservedGrn({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(80) }],
+      people: [{ branch_id: "n", staff: 10, cost: L(30) }],
+      spend: [{ branch_id: "n", amount: L(10) }], // consumed
+    }, [{ branch_id: "n", amount: L(5) }]); // reserved
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview(openMonth);
+    expect(out.indirectCost).toBeCloseTo(L(15), 0);
+    expect(out.operatingProfit).toBeCloseTo(L(35), 0); // 80 - 30 - 15
+  });
+
+  it("never pulls reserved GRN into a closed month outside the estimate window", async () => {
+    withReservedGrn({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: L(80) }],
+      people: [{ branch_id: "n", staff: 10, cost: L(30) }],
+      spend: [{ branch_id: "n", amount: L(10) }],
+    }, [{ branch_id: "n", amount: L(5) }]);
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-01");
+    expect(out.indirectCost).toBeCloseTo(L(10), 0);
+  });
+});

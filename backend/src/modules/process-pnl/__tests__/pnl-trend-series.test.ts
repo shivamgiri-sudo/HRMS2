@@ -22,11 +22,11 @@ function rec(period: string) {
   const m = byMonth[period] ?? { rev: 0, est: 0, pay: 0, grn: 0 };
   return {
     period, company: "MAS Callnet India Pvt Ltd",
-    totals: { revenue: m.rev, revenueEstimated: m.est, payrollCost: m.pay, grnActual: m.grn },
+    totals: { revenue: m.rev, revenueEstimated: m.est, payrollCost: m.pay, grnActual: m.grn, grnEstimated: 0 },
     branches: [{ branchId: "b-noida", branchName: "NOIDA" }],
     rows: [
       { costCentreId: "cc-1", costCentreCode: "BSS/IB/Noida/647", costCentreName: "IDAM", branchId: "b-noida", branchName: "NOIDA",
-        recognisedRevenue: m.rev / 2, revenueEstimated: m.est / 2, payrollCost: m.pay / 2, grnActual: m.grn / 2 },
+        recognisedRevenue: m.rev / 2, revenueEstimated: m.est / 2, payrollCost: m.pay / 2, grnActual: m.grn / 2, grnEstimated: 0 },
     ],
   };
 }

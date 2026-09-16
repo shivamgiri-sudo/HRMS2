@@ -50,6 +50,9 @@ export interface PnlReconciliationRow {
   /** Monthly seat billing / days in month — the daily run-rate, whatever the revenue basis. */
   perDayRevenue: number;
   grnActual: number;
+  /** Approved GRN spend (reserved, not yet consumed) for the open month — a committed estimate,
+   *  same treatment as revenueEstimated. Zero for a closed month or once the bill is consumed. */
+  grnEstimated: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -68,6 +71,7 @@ export interface PnlBranchRollup {
   unallocatedPayroll: number;
   revenue: number;
   grnActual: number;
+  grnEstimated: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -91,6 +95,7 @@ export interface PnlReconciliationTotals {
   estimatedCostCentres: number;
   perDayRevenue: number;
   grnActual: number;
+  grnEstimated: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -338,6 +343,35 @@ async function readGrn(period: string): Promise<Map<string, number>> {
   return out;
 }
 
+/**
+ * GRN spend that is approved and committed but not yet consumed — 'reserved' lifecycle_status,
+ * i.e. a branch head has signed off the request and it is booked against a cost centre, but the
+ * bill has not been fully processed. Real spend the company is on the hook for, just not final.
+ *
+ * Read only for the open estimate window (see isEstimateWindow / the seat-rate revenue estimate
+ * it mirrors): a closed month's IDC is whatever was actually consumed, never a committed figure
+ * that should have long since resolved to consumed-or-cancelled. Live-checked 2026-09-16: Sep-26
+ * carried Rs 1.37 L consumed against Rs 11.65 L reserved — the whole reason live GRN read as
+ * near-zero while real committed spend already existed.
+ *
+ * No mirror UNION: 'reserved' is a workflow state internal to this app's own GRN approval chain,
+ * not something the legacy db_bill snapshot (a bill inventory, not an approval queue) ever holds.
+ */
+async function readGrnCommitted(period: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const [rows] = await db.execute<MoneyRow[]>(
+    `SELECT a.cost_centre_id AS cost_centre_id, SUM(a.pnl_cost_amount) AS amount
+       FROM grn_cost_allocation a
+       JOIN grn_request gr ON gr.id = a.grn_request_id
+      WHERE a.lifecycle_status = 'reserved'
+        AND gr.accounting_period = ?
+      GROUP BY a.cost_centre_id`,
+    [period],
+  );
+  for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
+  return out;
+}
+
 async function readBudgets(period: string) {
   const byCostCentre = new Map<string, number>();
   const byBranch = new Map<string, number>();
@@ -542,10 +576,11 @@ export async function getPnlReconciliation(
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
-  const [costCentres, revenue, grn, budgets, payroll, freshness, exceptionsOut, unallocated] = await Promise.all([
+  const [costCentres, revenue, grn, grnCommitted, budgets, payroll, freshness, exceptionsOut, unallocated] = await Promise.all([
     readCostCentres(filters),
     readRevenue(period),
     readGrn(period),
+    readGrnCommitted(period),
     readBudgets(period),
     readPayroll(period),
     Promise.all([
@@ -585,21 +620,25 @@ export async function getPnlReconciliation(
     const revenueBasis: PnlRevenueBasis = revenueInvoice > 0 ? "INVOICE" : revenueAccrual > 0 ? "ACCRUAL" : useEstimate ? "ESTIMATED" : "NONE";
     const recognisedRevenue = revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
     const grnActual = grn.get(cc.id) ?? 0;
+    // Committed-not-yet-consumed GRN, only inside the open window — same rule as revenueEstimated.
+    const grnEstimated = estimateApplies ? (grnCommitted.get(cc.id) ?? 0) : 0;
     const allocatedBudget = budgets.byCostCentre.get(cc.id) ?? 0;
     const branchBudget = budgets.byBranch.get(cc.branch_id ? String(cc.branch_id) : "") ?? 0;
     const pay = payroll.get(cc.id);
     const payrollCost = pay?.cost ?? 0;
     const staffPaid = pay?.staff ?? 0;
-    const operatingProfit = recognisedRevenue - payrollCost - grnActual;
+    const grnTotal = grnActual + grnEstimated;
+    const operatingProfit = recognisedRevenue - payrollCost - grnTotal;
     const issues: string[] = [];
     addIssue(issues, !payrollPosted && payrollCost > 0, "PAYROLL_ACCRUED_NOT_FINAL");
     addIssue(issues, !payrollPosted && payrollCost === 0, "PAYROLL_NOT_POSTED_FOR_PERIOD");
     addIssue(issues, recognisedRevenue > 0 && payrollCost === 0, "REVENUE_WITH_NO_PAYROLL");
-    addIssue(issues, recognisedRevenue === 0 && (payrollCost > 0 || grnActual > 0), "COST_WITH_NO_REVENUE");
-    addIssue(issues, grnActual > 0 && allocatedBudget === 0, "GRN_WITHOUT_COST_CENTRE_BUDGET");
-    addIssue(issues, allocatedBudget > 0 && grnActual > allocatedBudget, "GRN_OVER_ALLOCATED_BUDGET");
-    addIssue(issues, branchBudget === 0 && (allocatedBudget > 0 || grnActual > 0), "BRANCH_BUDGET_MISSING");
+    addIssue(issues, recognisedRevenue === 0 && (payrollCost > 0 || grnTotal > 0), "COST_WITH_NO_REVENUE");
+    addIssue(issues, grnTotal > 0 && allocatedBudget === 0, "GRN_WITHOUT_COST_CENTRE_BUDGET");
+    addIssue(issues, allocatedBudget > 0 && grnTotal > allocatedBudget, "GRN_OVER_ALLOCATED_BUDGET");
+    addIssue(issues, branchBudget === 0 && (allocatedBudget > 0 || grnTotal > 0), "BRANCH_BUDGET_MISSING");
     addIssue(issues, useEstimate, "REVENUE_ESTIMATED_FROM_SEAT_RATE");
+    addIssue(issues, grnEstimated > 0, "GRN_ESTIMATED_FROM_RESERVED");
     return {
       branchId: cc.branch_id ? String(cc.branch_id) : null,
       branchName: cc.branch_name ? String(cc.branch_name) : "Unassigned",
@@ -620,6 +659,7 @@ export async function getPnlReconciliation(
       estimateSourcePeriod: useEstimate ? seat!.sourcePeriod : null,
       perDayRevenue: seat?.perDay ?? 0,
       grnActual,
+      grnEstimated,
       allocatedBudget,
       branchBudget,
       payrollCost,
@@ -628,7 +668,7 @@ export async function getPnlReconciliation(
       marginPct: pct(operatingProfit, recognisedRevenue),
       sourceStatus: useEstimate
         ? "ESTIMATED"
-        : sourceStatus({ invoice: revenueInvoice, accrual: revenueAccrual, payroll: payrollCost, grn: grnActual, budget: allocatedBudget }, payrollPosted),
+        : sourceStatus({ invoice: revenueInvoice, accrual: revenueAccrual, payroll: payrollCost, grn: grnTotal, budget: allocatedBudget }, payrollPosted),
       issues,
     };
   });
@@ -643,6 +683,7 @@ export async function getPnlReconciliation(
       unallocatedPayroll: 0,
       revenue: 0,
       grnActual: 0,
+      grnEstimated: 0,
       allocatedBudget: 0,
       branchBudget: row.branchBudget,
       payrollCost: 0,
@@ -654,6 +695,7 @@ export async function getPnlReconciliation(
     current.costCentres += 1;
     current.revenue += row.recognisedRevenue;
     current.grnActual += row.grnActual;
+    current.grnEstimated += row.grnEstimated;
     current.allocatedBudget += row.allocatedBudget;
     current.branchBudget = Math.max(current.branchBudget, row.branchBudget);
     current.payrollCost += row.payrollCost;
@@ -670,7 +712,7 @@ export async function getPnlReconciliation(
     const key = u.branchId ?? "unassigned";
     const current = branchMap.get(key) ?? {
       branchId: u.branchId, branchName: u.branchName, costCentres: 0, unallocatedPayroll: 0, revenue: 0,
-      grnActual: 0, allocatedBudget: 0, branchBudget: 0, payrollCost: 0, staffPaid: 0,
+      grnActual: 0, grnEstimated: 0, allocatedBudget: 0, branchBudget: 0, payrollCost: 0, staffPaid: 0,
       operatingProfit: 0, marginPct: null, issues: [],
     };
     current.unallocatedPayroll += u.cost;
@@ -697,6 +739,7 @@ export async function getPnlReconciliation(
     estimatedCostCentres: rows.filter((row) => row.revenueBasis === "ESTIMATED").length,
     perDayRevenue: sum((row) => row.perDayRevenue),
     grnActual: sum((row) => row.grnActual),
+    grnEstimated: sum((row) => row.grnEstimated),
     allocatedBudget: sum((row) => row.allocatedBudget),
     branchBudget: Array.from(branchMap.values()).reduce((total, row) => total + row.branchBudget, 0),
     payrollCost: sum((row) => row.payrollCost) + unallocatedCost,
@@ -708,8 +751,10 @@ export async function getPnlReconciliation(
   // No GRN mapped anywhere in the company for the month (readGrn is company-wide, whatever the
   // branch filter) means the overhead data is absent, not that overheads were nil: March 2026 read
   // 40.6% with Rs 0 of indirect cost — its 406 mirror GRNs match no MAS cost centre (Feb: 367, 32.6%). A margin without any overhead is not comparable with any other
-  // month, so it is NA — the same treatment as a month with no people cost.
-  const idcMissing = grn.size === 0 && totals.payrollCost > 0;
+  // month, so it is NA — the same treatment as a month with no people cost. Reserved (committed,
+  // not yet consumed) GRN counts as IDC data existing too, but only inside the estimate window —
+  // exactly the cases readGrnCommitted() is read for.
+  const idcMissing = grn.size === 0 && (!estimateApplies || grnCommitted.size === 0) && totals.payrollCost > 0;
   if (idcMissing) {
     totals.marginPct = null;
     for (const branch of branchMap.values()) branch.marginPct = null;
@@ -755,6 +800,12 @@ export async function getPnlReconciliation(
     if (peopleCostMissing) {
       blockers.push(`No people cost exists for ${period} yet, so margin is shown as NA — estimated revenue against zero salary cost is not a margin.`);
     }
+  }
+  if (totals.grnEstimated > 0) {
+    const grnCcCount = rows.filter((row) => row.grnEstimated > 0).length;
+    blockers.push(
+      `${grnCcCount} cost centre(s) also carry Rs ${(totals.grnEstimated / 100000).toFixed(2)} L of GRN that is approved and reserved but not yet consumed for ${period} — included as a committed estimate so OP is not understated while the bill finishes processing.`,
+    );
   }
 
   const mode: PnlReconciliationMode = blockers.length ? "LIVE_MTD" : "FINAL";

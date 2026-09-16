@@ -500,6 +500,38 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
     }
   }
 
+  // Committed-not-yet-consumed GRN ('reserved'), only inside the open estimate window — the same
+  // rule and the same real spend pnl-reconciliation.service.ts's readGrnCommitted() reads.
+  // Folded straight into indirectCost (no separate label yet, unlike revenueEstimated) because the
+  // point of this addition is parity: without it, this tab under-counted IDC against Live P&L for
+  // every open month with approved-but-unconsumed GRN, which was most of them.
+  if (isEstimateWindow(period, getCurrentDateIST())) {
+    const commWhere: string[] = ["a.lifecycle_status = 'reserved'", "gr.accounting_period = ?", OWN_COMPANY_SQL];
+    const commParams: unknown[] = [period];
+    if (s.costCentreIds.length) {
+      commWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+      commParams.push(...s.costCentreIds);
+    }
+    if (s.processIds.length) {
+      commWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                                  WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+      commParams.push(...s.processIds);
+    }
+    const [commRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ccm.branch_id AS branch_id, SUM(a.pnl_cost_amount) AS amount
+         FROM grn_cost_allocation a
+         JOIN grn_request gr ON gr.id = a.grn_request_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+        WHERE ${commWhere.join(" AND ")}
+        GROUP BY ccm.branch_id`,
+      commParams,
+    );
+    for (const r of commRows) {
+      const key = r.branch_id ? String(r.branch_id) : "";
+      out.set(key, (out.get(key) ?? 0) + n(r.amount));
+    }
+  }
+
   return out;
 }
 
