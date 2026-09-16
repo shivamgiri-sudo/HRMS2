@@ -560,6 +560,67 @@ export async function createEmployeeFromCandidate(
       );
     }
 
+    // Qualification -> employee_education, and Experience -> employee_experience. Same class
+    // of gap as the address block above: candidate_onboarding_qualification (33,177 rows live)
+    // and candidate_onboarding_experience (286 rows) are real, form-captured data that this
+    // function never read at all -- neither table had ANY writer here before this. The
+    // Employee Master report and the Employee Profile page both read employee_education /
+    // employee_experience, not the candidate_onboarding_* tables directly, so this data was
+    // invisible everywhere despite being sitting right there. Verified 2026-09-16 on three
+    // fresh joiners (MAS63547/63548/63553): real qualification and work-history rows existed,
+    // employee_education/employee_experience had zero rows for any of them.
+    //
+    // A candidate can submit more than one qualification row (10th, 12th, graduate, etc.) --
+    // "Qualification" on this report has always meant the highest one attained (matches the
+    // legacy masjclrentry.Qualification convention), so the row with the highest
+    // passed_out_year wins, not simply the most recently edited one.
+    const [qualRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT qualification, specialization_course_name, institution_name, passed_out_state,
+              passed_out_city, passed_out_year, passed_out_percentage
+         FROM candidate_onboarding_qualification
+        WHERE candidate_id = ?
+        ORDER BY passed_out_year DESC, created_at DESC
+        LIMIT 1`,
+      [candidateId]
+    );
+    const qualRow = (qualRows as RowDataPacket[])[0];
+    if (qualRow?.qualification && String(qualRow.qualification).trim()) {
+      await conn.execute(
+        `INSERT INTO employee_education
+           (id, employee_id, qualification, specialization_course_name, institution_name,
+            passed_out_state, passed_out_city, passed_out_year, passed_out_percentage)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [employeeId, qualRow.qualification, qualRow.specialization_course_name ?? null,
+         qualRow.institution_name ?? null, qualRow.passed_out_state ?? null,
+         qualRow.passed_out_city ?? null, qualRow.passed_out_year ?? null,
+         qualRow.passed_out_percentage ?? null]
+      );
+    }
+
+    // Experience: a row in candidate_onboarding_experience is only ever created when the
+    // candidate actually filled in a past employer, so its presence alone (not a separate
+    // "is this person experienced" flag, which the onboarding form never asks) is what marks
+    // is_fresher = 0. Absence of a row is NOT treated as "confirmed fresher" -- that would
+    // assert something the candidate was never asked, matching the address block's own rule
+    // of never inventing a value the form didn't actually collect. Most recent employer wins,
+    // same reasoning as qualification above (a snapshot, not a full history table).
+    const [expRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT experience_year
+         FROM candidate_onboarding_experience
+        WHERE candidate_id = ?
+        ORDER BY to_date DESC, created_at DESC
+        LIMIT 1`,
+      [candidateId]
+    );
+    const expRow = (expRows as RowDataPacket[])[0];
+    if (expRow?.experience_year !== undefined && expRow?.experience_year !== null) {
+      await conn.execute(
+        `INSERT INTO employee_experience (id, employee_id, is_fresher, experience_years)
+         VALUES (UUID(), ?, 0, ?)`,
+        [employeeId, Number(expRow.experience_year) || 0]
+      );
+    }
+
     // Nominee — captured on the onboarding form (candidate_onboarding_profile.nominee_*)
     // and, until now, never written to employee_nominee at all despite this function's own
     // long-standing comment claiming it handled it (see createRelatedEmployeeRecords below,
