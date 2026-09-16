@@ -10,6 +10,14 @@ import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+import { journalService, type JournalLineInput } from "./journal.service.js";
+import {
+  vendorGrnLines,
+  imprestAllocationLines,
+  vendorAdvanceLines,
+  vendorAdvanceApplicationLines,
+  generalLines,
+} from "./payment-voucher-journal-lines.js";
 
 /**
  * Payment Voucher — the authorization + release chain (PRD §3.4, §6.5, §6.6).
@@ -819,6 +827,22 @@ export const paymentVoucherService = {
 
       const amount = roundMoney(Number(v.amount));
 
+      // Journal Task 3 — every lane below pushes into this ONE array; it posts through exactly
+      // one journalService.post() call at the end (see payment-voucher-journal-lines.ts's
+      // header for why one call, not one per allocation/lane). A TDS-account resolution failure
+      // partway through (thrown by vendorGrnLines/vendorAdvanceApplicationLines) still rolls
+      // back the whole release, same as every other refusal in this transaction.
+      const journalLines: JournalLineInput[] = [];
+      let tdsPayableAccountId: string | null = null;
+      const resolveTdsPayableAccountId = async () => {
+        if (tdsPayableAccountId !== null) return tdsPayableAccountId;
+        const [[row]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`,
+        );
+        tdsPayableAccountId = row ? String((row as any).id) : "";
+        return tdsPayableAccountId || null;
+      };
+
       if (v.source_type === "vendor_grn") {
         // Multi-GRN (Task: "multiple selection of GRN of same vendor"): walk every GRN this
         // voucher was raised against, not just the single linked_vendor_payment_id column —
@@ -916,6 +940,25 @@ export const paymentVoucherService = {
               );
             }
           }
+
+          // Journal Task 3 — Dr Vendor (net + tds) / Cr Bank (net) / Cr TDS Payable (tds).
+          // vendor_id isn't on dispatchResult.payment when release() calls dispatch() with its
+          // own connection (see dispatch()'s own comment on that shape) — read it directly.
+          const [[vptRow]] = await connection.execute<RowDataPacket[]>(
+            `SELECT vendor_id FROM vendor_payment_tracking WHERE id = ?`,
+            [alloc.vendorPaymentTrackingId],
+          );
+          if ((vptRow as any)?.vendor_id) {
+            journalLines.push(
+              ...vendorGrnLines({
+                vendorId: String((vptRow as any).vendor_id),
+                bankAccountId: v.bank_account_id,
+                netAmount: alloc.amount,
+                tdsAmount: tds,
+                tdsPayableAccountId: tds > 0 ? await resolveTdsPayableAccountId() : null,
+              }),
+            );
+          }
         }
       } else if (v.source_type === "imprest_allocation") {
         const [[manager]] = await connection.execute<RowDataPacket[]>(
@@ -958,6 +1001,16 @@ export const paymentVoucherService = {
             runningBalance,
             actorUserId,
           ],
+        );
+
+        // Journal Task 3 — Dr Imprest Float (the ledger head this voucher was raised under) /
+        // Cr Bank.
+        journalLines.push(
+          ...imprestAllocationLines({
+            imprestFloatAccountId: v.payable_account_id,
+            bankAccountId: v.bank_account_id,
+            amount,
+          }),
         );
       } else if (v.source_type === "vendor_advance") {
         // Real money out to the vendor, no GRN behind it — same bank-debit shape as the
@@ -1003,6 +1056,16 @@ export const paymentVoucherService = {
             id, `Advance paid — voucher ${v.voucher_number}`, actorUserId,
           ],
         );
+
+        // Journal Task 3 — Dr Vendor / Cr Bank. Nets naturally against whatever that vendor's
+        // own sub-ledger owes from GRNs already posted (or will post later).
+        journalLines.push(
+          ...vendorAdvanceLines({
+            vendorId: v.linked_vendor_id,
+            bankAccountId: v.bank_account_id,
+            amount,
+          }),
+        );
       } else if (v.source_type === "vendor_advance_application") {
         // No new money moves here — the cash left the bank when the original vendor_advance
         // voucher released. This settles GRN dues on paper: walk the allocation set (same table
@@ -1036,7 +1099,7 @@ export const paymentVoucherService = {
         }));
 
         for (const alloc of applicationAllocations) {
-          await vendorPaymentLedgerService.dispatch(
+          const applicationDispatch = await vendorPaymentLedgerService.dispatch(
             alloc.vendorPaymentTrackingId,
             {
               paymentMode: "Adjustment",
@@ -1050,6 +1113,22 @@ export const paymentVoucherService = {
             connection,
             v.id,
           );
+
+          // Journal Task 3 — no principal entry (the GRN's Cr Vendor and the advance's Dr
+          // Vendor already net on the vendor's own ledger); only TDS, if this installment
+          // withholds any, needs a line — see vendorAdvanceApplicationLines' own header.
+          const applicationTds = roundMoney(
+            Number(applicationDispatch.transactions[applicationDispatch.transactions.length - 1]?.tds_amount ?? 0),
+          );
+          if (applicationTds > 0) {
+            journalLines.push(
+              ...vendorAdvanceApplicationLines({
+                vendorId: v.linked_vendor_id,
+                tdsAmount: applicationTds,
+                tdsPayableAccountId: await resolveTdsPayableAccountId(),
+              }),
+            );
+          }
         }
 
         const newAdvanceBalance = roundMoney(available - amount);
@@ -1086,6 +1165,31 @@ export const paymentVoucherService = {
             actorUserId,
           ],
         );
+
+        // Journal Task 3 — Dr whichever payable_account this voucher was raised under
+        // (Salary Payable / Statutory Dues / Bank Charges / TDS Payable / Other) / Cr Bank.
+        journalLines.push(
+          ...generalLines({
+            payableAccountId: v.payable_account_id,
+            bankAccountId: v.bank_account_id,
+            amount,
+          }),
+        );
+      }
+
+      // Journal Task 3 — the single post() for this entire release, covering every lane and
+      // every allocation above. One payment_voucher = one journal_entry = one Tally voucher.
+      // Nothing to post is legitimate (e.g. a vendor_advance_application with zero TDS) — post()
+      // itself is only called when there's at least one line, since it refuses a <2-line entry.
+      if (journalLines.length > 0) {
+        await journalService.post(connection, {
+          entryDate: paymentDate,
+          narration: `Payment Voucher ${v.voucher_number} released (${v.source_type})`,
+          sourceType: "payment_voucher",
+          sourceId: id,
+          postedBy: actorUserId,
+          lines: journalLines,
+        });
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
