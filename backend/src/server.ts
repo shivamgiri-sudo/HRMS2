@@ -62,6 +62,7 @@ import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cro
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
+import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
@@ -295,6 +296,13 @@ function startServer() {
         // scheduled report could never have run however it was configured. Gated by
         // worker_config.enabled (0) and every subscription is_active=0.
         startReportSubscriptionWorker();
+        // Same dual registration, learned from the ats-reminders/noc-sla-reminder failure
+        // mode above: noc-sla-reminder.worker.ts was written with a real worker_config row
+        // seeded enabled=1, but its start function was never imported into either this file
+        // or workers/all-workers.ts, so it has never run despite looking fully wired — see
+        // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
+        // the start, not as a follow-up fix.
+        startLeaveApprovalReminderWorker();
         console.log(
           "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, helpdesk-sla, ats-reminders, employee-lifecycle started",
         );

@@ -170,6 +170,8 @@ type EmployeeDocumentTarget = {
   department_id: string | null;
   reporting_manager_id: string | null;
   manager_id: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   date_of_joining: string | null;
   candidate_id: string | null;
   joining_document_status: string | null;
@@ -282,12 +284,16 @@ export async function getEmployeeDocumentTarget(employeeId: string): Promise<Emp
           e.department_id,
           e.reporting_manager_id,
           e.manager_id,
+          pm.process_name,
+          COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
           e.date_of_joining,
           ob.candidate_id,
           ${includeStatus ? "e.joining_document_status" : "NULL"} AS joining_document_status,
           e.joining_document_completion_pct
          FROM employees e
          LEFT JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
         WHERE e.id = ?
         LIMIT 1`,
       [employeeId],
@@ -1421,6 +1427,9 @@ export async function createJoiningDocumentEsignRequest(params: {
       const expiryStr = expiryDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
       const emailHtml = buildJoiningDocEsignEmailHtml({
         employeeName: access.target.full_name ?? access.target.employee_code ?? "Employee",
+        employeeCode: access.target.employee_code,
+        processName: access.target.process_name,
+        reportingManagerName: access.target.reporting_manager_name,
         documentName: checklist.document_name,
         signLink: tokenLink,
         expiryStr,
@@ -2547,6 +2556,9 @@ export async function createPublicTokenForEpfReview(params: {
         .toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
       const html = buildEpfComplianceReviewEmailHtml({
         employeeName: target.full_name ?? target.employee_code ?? "Employee",
+        employeeCode: target.employee_code,
+        processName: target.process_name,
+        reportingManagerName: target.reporting_manager_name,
         reviewLink,
         expiryStr,
       });

@@ -150,11 +150,15 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     `SELECT k.*, e.employee_code, e.personal_email, e.branch_id,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
-            e.date_of_joining, d.designation_name, b.branch_name
+            e.date_of_joining, d.designation_name, b.branch_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
        FROM employee_joining_esign_kit k
        JOIN employees e ON e.id = k.employee_id
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE k.id = ? LIMIT 1`,
     [kitId],
   );
@@ -386,6 +390,9 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
         subject: `Action Required: Sign your joining documents — MAS Callnet`,
         html: buildKitEmailHtml({
           employeeName: String(kit.full_name ?? ""),
+          employeeCode: String(kit.employee_code ?? ""),
+          processName: kit.process_name ? String(kit.process_name) : null,
+          reportingManagerName: kit.reporting_manager_name ? String(kit.reporting_manager_name) : null,
           documents: assembled.items.map((i) => i.documentName),
           signLink,
         }),
@@ -448,15 +455,22 @@ type KitForRelink = RowDataPacket & {
   personal_email: string | null;
   official_email: string | null;
   full_name: string | null;
+  employee_code: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
 };
 
 async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
   const [kits] = await db.execute<RowDataPacket[]>(
-    `SELECT k.*, e.personal_email,
+    `SELECT k.*, e.personal_email, e.employee_code,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
-            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name
+            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
        FROM employee_joining_esign_kit k
        JOIN employees e ON e.id = k.employee_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE k.id = ? LIMIT 1`,
     [kitId],
   );
@@ -582,7 +596,14 @@ export async function resendKitEsignLink(
       await emailService.send({
         to: addr,
         subject: `Reminder: sign your joining documents — MAS Callnet`,
-        html: buildKitEmailHtml({ employeeName: String(kit.full_name ?? ""), documents, signLink }),
+        html: buildKitEmailHtml({
+          employeeName: String(kit.full_name ?? ""),
+          employeeCode: String(kit.employee_code ?? ""),
+          processName: kit.process_name ? String(kit.process_name) : null,
+          reportingManagerName: kit.reporting_manager_name ? String(kit.reporting_manager_name) : null,
+          documents,
+          signLink,
+        }),
       });
       emailedTo.push(addr);
     }
@@ -685,8 +706,20 @@ export async function redispatchDeadKit(employeeId: string, actorUserId: string 
   return dispatchJoiningKit(newKitId, actorUserId);
 }
 
-function buildKitEmailHtml(d: { employeeName: string; documents: string[]; signLink: string }): string {
+function buildKitEmailHtml(d: {
+  employeeName: string;
+  employeeCode: string;
+  processName: string | null;
+  reportingManagerName: string | null;
+  documents: string[];
+  signLink: string;
+}): string {
   const list = d.documents.map((n) => `<li style="margin:3px 0">${n}</li>`).join("");
+  const identityBits = [
+    d.employeeCode ? `Code: <strong>${d.employeeCode}</strong>` : null,
+    d.processName ? `Process: <strong>${d.processName}</strong>` : null,
+    d.reportingManagerName ? `Reporting Manager: <strong>${d.reportingManagerName}</strong>` : null,
+  ].filter(Boolean).join(" &nbsp;|&nbsp; ");
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:28px 12px"><tr><td align="center">
     <table width="100%" style="max-width:560px;background:#fff;border-radius:16px;overflow:hidden">
@@ -695,7 +728,8 @@ function buildKitEmailHtml(d: { employeeName: string; documents: string[]; signL
         <div style="color:#fff;font-size:21px;font-weight:800;margin-top:5px">Sign your joining documents</div>
       </td></tr>
       <tr><td style="padding:26px">
-        <p style="margin:0 0 14px;color:#0f172a;font-size:15px">Dear ${d.employeeName},</p>
+        <p style="margin:0 0 6px;color:#0f172a;font-size:15px">Dear ${d.employeeName},</p>
+        ${identityBits ? `<p style="margin:0 0 14px;color:#64748b;font-size:11.5px">${identityBits}</p>` : ""}
         <p style="margin:0 0 14px;color:#334155;font-size:14px;line-height:1.6">
           All of your joining documents are ready. You can review and sign them
           <strong>together, in one step</strong> — you no longer need to sign each one separately.

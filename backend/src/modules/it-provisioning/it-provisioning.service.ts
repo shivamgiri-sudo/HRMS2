@@ -533,7 +533,13 @@ export async function dispatchJoinProvisioningTasks(params: {
   // Notify employee to upload their profile photo if missing (required for ID card)
   try {
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT user_id, photo_url, personal_email, official_email, email FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT e.user_id, e.photo_url, e.personal_email, e.official_email, e.email,
+              pm.process_name,
+              COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+         FROM employees e
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+        WHERE e.id = ? LIMIT 1`,
       [employeeId]
     );
     const emp = (empRows as any[])[0];
@@ -563,12 +569,17 @@ export async function dispatchJoinProvisioningTasks(params: {
         const toEmail = emp.personal_email || emp.official_email || emp.email;
         if (toEmail) {
           const photoUploadUrl = frontendUrl('/profile');
+          const identityLine = [
+            `Code: <strong>${employeeCode}</strong>`,
+            emp.process_name ? `Process: <strong>${emp.process_name}</strong>` : null,
+            emp.reporting_manager_name ? `Reporting Manager: <strong>${emp.reporting_manager_name}</strong>` : null,
+          ].filter(Boolean).join(' &nbsp;|&nbsp; ');
           await emailService.send({
             to: toEmail,
             subject: 'Action Required: Upload your profile photo — ID card pending',
             html: provisioningEmailHtml(
               'Upload Your Profile Photo',
-              `Dear ${employeeName},<br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
+              `Dear ${employeeName},<br><span style="font-size:11.5px;color:#64748b">${identityLine}</span><br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
               photoUploadUrl,
             ),
           });
@@ -847,9 +858,14 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
     `SELECT r.id, r.employee_id, r.task_code, r.assigned_role, r.assigned_user_id,
             r.status, r.sla_due_at,
             TIMESTAMPDIFF(HOUR, r.sla_due_at, NOW()) AS hours_overdue,
-            e.employee_code, e.first_name, e.branch_id
+            e.employee_code, e.branch_id,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name, e.employee_code) AS employee_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
        FROM it_provisioning_request r
        JOIN employees e ON e.id = r.employee_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE r.status IN ('pending', 'pending_unassigned')
         AND r.locked = 0
         AND r.sla_due_at IS NOT NULL
@@ -883,7 +899,9 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
         entityId: String(req.id),
         data: {
           employee_code: req.employee_code,
-          employee_name: req.first_name,
+          employee_name: req.employee_name,
+          process_name: req.process_name,
+          reporting_manager_name: req.reporting_manager_name,
           task_code: req.task_code,
           assigned_role: req.assigned_role,
           status: req.status,

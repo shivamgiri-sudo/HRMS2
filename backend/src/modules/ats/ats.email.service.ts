@@ -552,11 +552,19 @@ export async function sendRejectedEmailProfessional(params: {
 
 export function buildJoiningDocEsignEmailHtml(params: {
   employeeName: string;
+  employeeCode?: string | null;
+  processName?: string | null;
+  reportingManagerName?: string | null;
   documentName: string;
   signLink: string;
   expiryStr: string;
 }): string {
-  const { employeeName, documentName, signLink, expiryStr } = params;
+  const { employeeName, employeeCode, processName, reportingManagerName, documentName, signLink, expiryStr } = params;
+  const identityBits = [
+    employeeCode ? `Code: <strong>${employeeCode}</strong>` : null,
+    processName ? `Process: <strong>${processName}</strong>` : null,
+    reportingManagerName ? `Reporting Manager: <strong>${reportingManagerName}</strong>` : null,
+  ].filter(Boolean).join(" &nbsp;|&nbsp; ");
   return `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -565,7 +573,8 @@ export function buildJoiningDocEsignEmailHtml(params: {
         <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3">Please sign your joining document</h1>
       </div>
       <div style="padding:26px 28px">
-        <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        <p style="margin:0 0 4px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        ${identityBits ? `<p style="margin:0 0 16px;font-size:11.5px;color:#64748b">${identityBits}</p>` : ""}
         <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">
           Your HR team has shared the following joining document for your e-signature:
         </p>
@@ -602,10 +611,18 @@ export function buildJoiningDocEsignEmailHtml(params: {
  */
 export function buildEpfComplianceReviewEmailHtml(params: {
   employeeName: string;
+  employeeCode?: string | null;
+  processName?: string | null;
+  reportingManagerName?: string | null;
   reviewLink: string;
   expiryStr: string;
 }): string {
-  const { employeeName, reviewLink, expiryStr } = params;
+  const { employeeName, employeeCode, processName, reportingManagerName, reviewLink, expiryStr } = params;
+  const identityBits = [
+    employeeCode ? `Code: <strong>${employeeCode}</strong>` : null,
+    processName ? `Process: <strong>${processName}</strong>` : null,
+    reportingManagerName ? `Reporting Manager: <strong>${reportingManagerName}</strong>` : null,
+  ].filter(Boolean).join(" &nbsp;|&nbsp; ");
   return `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -614,7 +631,8 @@ export function buildEpfComplianceReviewEmailHtml(params: {
         <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3">Check your PF details before we file them</h1>
       </div>
       <div style="padding:26px 28px">
-        <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        <p style="margin:0 0 4px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        ${identityBits ? `<p style="margin:0 0 16px;font-size:11.5px;color:#64748b">${identityBits}</p>` : ""}
         <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">
           HR has prepared your Employees' Provident Fund record. Please check it is correct —
           these details go on your EPF filing, and a mistake in your name, date of birth or

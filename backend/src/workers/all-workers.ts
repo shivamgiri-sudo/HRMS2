@@ -71,6 +71,7 @@ import { startReportGenerationWorker, stopReportGenerationWorker } from "./repor
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
+import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
@@ -387,6 +388,15 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startTatEscalationWorker(); return Promise.resolve(); },
   },
   {
+    // Owner directive 2026-09-16: every pending/actionable item must generate a reminder
+    // if it stays unresolved. Registered in BOTH this file and server.ts from the start —
+    // see the note by its server.ts call site on noc-sla-reminder.worker.ts, whose start
+    // function was never imported anywhere and so has never run despite a real seeded
+    // worker_config row.
+    name: "leave-approval-reminder",
+    start: () => { startLeaveApprovalReminderWorker(); return Promise.resolve(); },
+  },
+  {
     // Was registered in NEITHER this file nor server.ts. The worker existed and
     // report_subscription shipped with it, so the feature looked complete — but nothing
     // imported it, meaning a scheduled report could never have fired under either
@@ -500,6 +510,7 @@ function shutdown(): void {
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
+  stopLeaveApprovalReminderWorker();
   // social-feed exports no stop — its timers are unref'd and die with the process.
   stopMcnmeetCron();
   stopEsignReconciliationWorker();

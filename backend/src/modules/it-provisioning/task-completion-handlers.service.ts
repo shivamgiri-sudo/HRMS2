@@ -282,7 +282,13 @@ export async function completeItProvisioningTask(
     if (createdNewAuthUser) {
       try {
         const [photoCheckRows] = await db.execute<RowDataPacket[]>(
-          `SELECT user_id, photo_url, personal_email, official_email, email, first_name FROM employees WHERE id = ? LIMIT 1`,
+          `SELECT e.user_id, e.photo_url, e.personal_email, e.official_email, e.email, e.first_name,
+                  e.employee_code, pm.process_name,
+                  COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+             FROM employees e
+             LEFT JOIN process_master pm ON pm.id = e.process_id
+             LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+            WHERE e.id = ? LIMIT 1`,
           [task.employee_id]
         );
         const empData = (photoCheckRows as any[])[0];
@@ -290,6 +296,11 @@ export async function completeItProvisioningTask(
           const toEmail = empData.personal_email || empData.official_email || empData.email;
           const empName: string = empData.first_name || 'Employee';
           const photoUrl = _frontendUrl('/profile');
+          const identityBits = [
+            empData.employee_code ? `Code: <strong>${empData.employee_code}</strong>` : null,
+            empData.process_name ? `Process: <strong>${empData.process_name}</strong>` : null,
+            empData.reporting_manager_name ? `Reporting Manager: <strong>${empData.reporting_manager_name}</strong>` : null,
+          ].filter(Boolean).join(' &nbsp;|&nbsp; ');
           if (toEmail) {
             await emailService.send({
               to: toEmail,
@@ -297,6 +308,7 @@ export async function completeItProvisioningTask(
               html: `<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">
                 <h2 style="color:#0f766e">Upload Your Profile Photo</h2>
                 <p>Dear ${empName},</p>
+                ${identityBits ? `<p style="color:#64748b;font-size:11.5px;margin:-8px 0 12px">${identityBits}</p>` : ''}
                 <p>Welcome to MAS Callnet! Your HRMS account is now active. Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.</p>
                 <p>Please log in to HRMS and upload your photo from your Profile page.</p>
                 <p><a href="${photoUrl}" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Upload Profile Photo</a></p>

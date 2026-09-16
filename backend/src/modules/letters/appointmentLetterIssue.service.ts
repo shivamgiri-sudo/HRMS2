@@ -94,10 +94,14 @@ export async function issueAppointmentLetter(params: {
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
             d.designation_name, b.branch_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
             (SELECT ab.candidate_id FROM ats_onboarding_bridge ab WHERE ab.employee_id = e.id LIMIT 1) AS candidate_id
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE e.id = ? LIMIT 1`,
     [params.employeeId],
   );
@@ -212,6 +216,9 @@ export async function issueAppointmentLetter(params: {
         subject: `Your Appointment Letter — ${letterNumber} — MAS Callnet`,
         html: buildAppointmentLetterEmailHtml({
           employeeName: String(emp.full_name ?? ""),
+          employeeCode: emp.employee_code ? String(emp.employee_code) : null,
+          processName: emp.process_name ? String(emp.process_name) : null,
+          reportingManagerName: emp.reporting_manager_name ? String(emp.reporting_manager_name) : null,
           letterNumber,
           designation: String(emp.designation_name ?? ""),
           dateOfJoining: istDisplayDate(emp.date_of_joining as Date | null),
@@ -262,7 +269,8 @@ export async function revokeAppointmentLetter(params: {
 }
 
 function buildAppointmentLetterEmailHtml(d: {
-  employeeName: string; letterNumber: string; designation: string;
+  employeeName: string; employeeCode?: string | null; processName?: string | null;
+  reportingManagerName?: string | null; letterNumber: string; designation: string;
   dateOfJoining: string; verifyUrl: string; acceptUrl: string;
 }): string {
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">
@@ -281,8 +289,14 @@ function buildAppointmentLetterEmailHtml(d: {
           <table width="100%" style="background:#f1f5f9;border-radius:10px;padding:14px;margin:0 0 18px">
             <tr><td style="color:#475569;font-size:13px;padding:3px 0">Letter ID</td>
                 <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.letterNumber}</td></tr>
+            <tr><td style="color:#475569;font-size:13px;padding:3px 0">Employee code</td>
+                <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.employeeCode || "—"}</td></tr>
             <tr><td style="color:#475569;font-size:13px;padding:3px 0">Designation</td>
                 <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.designation || "—"}</td></tr>
+            <tr><td style="color:#475569;font-size:13px;padding:3px 0">Process</td>
+                <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.processName || "—"}</td></tr>
+            <tr><td style="color:#475569;font-size:13px;padding:3px 0">Reporting manager</td>
+                <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.reportingManagerName || "—"}</td></tr>
             <tr><td style="color:#475569;font-size:13px;padding:3px 0">Date of joining</td>
                 <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.dateOfJoining || "—"}</td></tr>
           </table>

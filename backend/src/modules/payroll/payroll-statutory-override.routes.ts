@@ -12,6 +12,34 @@ import { notificationGateway } from '../communication/notification.gateway.js';
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+/** Identity fields every statutory opt-out notification must carry (owner directive). */
+async function loadStatutoryOptOutIdentity(employeeId: string): Promise<{
+  employee_code: string | null;
+  employee_name: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+       FROM employees e
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+      WHERE e.id = ?
+      LIMIT 1`,
+    [employeeId],
+  );
+  const row = (rows as RowDataPacket[])[0] as any;
+  return {
+    employee_code: row?.employee_code ?? null,
+    employee_name: row?.employee_name ?? null,
+    process_name: row?.process_name ?? null,
+    reporting_manager_name: row?.reporting_manager_name ?? null,
+  };
+}
+
 router.use(requireAuth);
 
 // ── POST /api/payroll/statutory-overrides/request ────────────────────────────
@@ -86,14 +114,14 @@ router.post('/request', requireRole('employee', 'hr', 'super_admin'), h(async (r
   });
 
   // Notify Payroll HR + Head that a new opt-out request needs review.
-  notificationGateway.notify({
+  loadStatutoryOptOutIdentity(empId).then((identity) => notificationGateway.notify({
     eventCode: 'statutory_opt_out_submitted',
     dedupeKey: `employee_statutory_override:${empId}:${override_type}:submitted`,
     context: { employeeId: empId },
     entityType: 'employee_statutory_override',
     entityId: empId,
-    data: { override_type },
-  }).catch(() => { /* gateway failure must not abort the request */ });
+    data: { override_type, ...identity },
+  })).catch(() => { /* gateway failure must not abort the request */ });
 
   return res.status(201).json({ success: true, message: 'Opt-out request submitted. Pending Payroll HO approval.' });
 }));
@@ -295,14 +323,17 @@ router.patch('/:id/approve', requireRole('payroll', 'super_admin'), h(async (req
   }
 
   // Notify the employee of the decision (approved or rejected).
-  notificationGateway.notify({
+  loadStatutoryOptOutIdentity(rec.employee_id).then((identity) => notificationGateway.notify({
     eventCode: 'statutory_opt_out_decided',
     dedupeKey: `employee_statutory_override:${id}:${newStatus}`,
     context: { employeeId: rec.employee_id },
     entityType: 'employee_statutory_override',
     entityId: id,
-    data: { decision: newStatus, override_type: rec.override_type, effective_from_month: effective_from_month ?? null },
-  }).catch(() => { /* gateway failure must not abort the response */ });
+    data: {
+      decision: newStatus, override_type: rec.override_type,
+      effective_from_month: effective_from_month ?? null, ...identity,
+    },
+  })).catch(() => { /* gateway failure must not abort the response */ });
 
   return res.json({ success: true, message: `Override request ${newStatus}` });
 }));
@@ -375,14 +406,14 @@ router.patch('/:id/revoke', requireRole('payroll', 'super_admin'), h(async (req:
   }
 
   // Notify the employee that their opt-out has been revoked and deductions will resume.
-  notificationGateway.notify({
+  loadStatutoryOptOutIdentity(rec.employee_id).then((identity) => notificationGateway.notify({
     eventCode: 'statutory_opt_out_revoked',
     dedupeKey: `employee_statutory_override:${id}:revoked`,
     context: { employeeId: rec.employee_id },
     entityType: 'employee_statutory_override',
     entityId: id,
-    data: { override_type: rec.override_type },
-  }).catch(() => { /* gateway failure must not abort the response */ });
+    data: { override_type: rec.override_type, ...identity },
+  })).catch(() => { /* gateway failure must not abort the response */ });
 
   return res.json({ success: true, message: 'Override revoked. PF/ESI will resume from next payroll run.' });
 }));
