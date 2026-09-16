@@ -1,14 +1,15 @@
-import { Router, type NextFunction, type Response } from "express";
+﻿import { Router, type NextFunction, type Response } from "express";
 import { randomUUID } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
+import { getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
+import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader } from "./bulk-dispatch.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -32,7 +33,7 @@ router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_a
     );
     res.json({ success: true, data: rows });
   } catch (err: unknown) {
-    // Table may not exist yet — return empty array gracefully
+    // Table may not exist yet â€” return empty array gracefully
     if (typeof err === "object" && err !== null) {
       const code = String((err as { code?: unknown }).code ?? "");
       const message = String((err as { message?: unknown }).message ?? "");
@@ -47,26 +48,26 @@ router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_a
 /**
  * Upload Batch History.
  *
- * WHAT THIS USED TO DO. `SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50` — no scope
+ * WHAT THIS USED TO DO. `SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50` â€” no scope
  * of any kind. Every role on the guard above saw every other user's uploads, from every branch,
  * including the original file name and row counts of work that was none of their business.
  *
  * WHAT IT DOES NOW. A caller always sees their own uploads, plus whatever their assignment scope
  * entitles them to, and nothing else:
  *
- *   own            uploaded_by = me. Unconditional — you can always find the file you uploaded.
+ *   own            uploaded_by = me. Unconditional â€” you can always find the file you uploaded.
  *   scope          buildScopeWhereClause(), the same helper this module's approval service already
  *                  uses. super_admin resolves to 1=1; a branch-scoped user gets their branch; a
  *                  user with no assignment scope gets 1=0 and is left with their own uploads only.
  *
  * EFFECTIVE BRANCH. upload_batch.branch_id is populated on only 32 of 65 live rows, so scoping on
- * that column alone would hide two thirds of the history from a branch head — including uploads
+ * that column alone would hide two thirds of the history from a branch head â€” including uploads
  * genuinely belonging to their branch. The uploader's own branch is used as the fallback, which
  * resolves for all 65, so branch scope means what a reader expects rather than what happens to
  * have been stamped.
  *
  * WHO RAISED IT. auth_user carries no name (email only), so the display name comes from the
- * employee record joined on user_id — populated for all 65 rows — falling back to the login email.
+ * employee record joined on user_id â€” populated for all 65 rows â€” falling back to the login email.
  */
 router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
@@ -166,11 +167,11 @@ router.get("/batches/filter-options", requireRole("admin", "hr", "super_admin", 
 
 /**
  * Each row now carries the ground truth alongside its own row_status:
- * `entity_created` — does a real record exist for this row at all — and
- * `entity_status` — that record's CURRENT status, read live from the table it
+ * `entity_created` â€” does a real record exist for this row at all â€” and
+ * `entity_status` â€” that record's CURRENT status, read live from the table it
  * actually lives in (attendance_regularization / leave_request / the incentive or
  * deduction record). row_status is upload_batch_row's own bookkeeping and, before
- * this, was the only thing shown — see loadRowsWithLiveStatus's own comment for why
+ * this, was the only thing shown â€” see loadRowsWithLiveStatus's own comment for why
  * that alone was not trustworthy.
  */
 router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -180,7 +181,7 @@ router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm",
 
 /**
  * On-demand healing for a batch stuck with rows that never reached a final outcome
- * (row_status still 'pending'/'valid' after the batch itself is already decided) —
+ * (row_status still 'pending'/'valid' after the batch itself is already decided) â€”
  * the exact failure mode reconcileStuckRows exists to close off going forward. This
  * lets an admin repair a batch from BEFORE that fix shipped without needing direct
  * SQL access. It only ever force-resolves rows that are already stuck; it never
@@ -206,7 +207,7 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
   const id = randomUUID();
   const batchNo = body.upload_batch_no || `BATCH-${Date.now()}`;
   // withDeadlockRetry is safe here: this is one autocommit statement (no explicit
-  // transaction), and it is idempotent on retry — a lost deadlock rolls the whole INSERT
+  // transaction), and it is idempotent on retry â€” a lost deadlock rolls the whole INSERT
   // back (nothing partially written), and `id` was generated once above, so a retry
   // replays the exact same row rather than creating a duplicate.
   await withDeadlockRetry(() => db.execute(
@@ -239,7 +240,7 @@ router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm"
   }
   // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
   // retry on any chunk replays the identical INSERT and never double-stages a row.
-  // IDs are assigned here once — not inside the retry lambda — for the same reason.
+  // IDs are assigned here once â€” not inside the retry lambda â€” for the same reason.
   const staged: Array<unknown[]> = rows.map((row) => [
     randomUUID(), req.params.id, row.row_no,
     row.raw_data ? JSON.stringify(row.raw_data) : null,
@@ -291,7 +292,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_leave_application_batch",
   "import_incentive_bulk_batch",
   "import_deduction_bulk_batch",
-  // Onfido process raw-data reports (DOC/POA volume, quality-audit, client-escalation) —
+  // Onfido process raw-data reports (DOC/POA volume, quality-audit, client-escalation) â€”
   // all seven share one generic import service; see onfido-report-configs.ts.
   "import_onfido_doc_raw_batch",
   "import_onfido_doc_quality_batch",
@@ -311,19 +312,19 @@ const KNOWN_IMPORT_RPCS = new Set([
   // tables that stopped being uploaded; see process-manual-kpi-bulk.service.ts.
   "import_process_manual_kpi_batch",
   // Per-process delivery actuals into process_delivery_actual, which the P&L already
-  // Molecular Email / Reginald Men Email daily ticket actuals — the underlying
+  // Molecular Email / Reginald Men Email daily ticket actuals â€” the underlying
   // ticketing DB (molecular_db_email) does not exist anywhere in this project's
   // infrastructure. See email-ticket-daily-bulk.service.ts.
   "import_email_ticket_daily_batch",
-  // LP WebConsole APR — dialer_db.apr_5/apr_137_235/apr_bla_bli_blu (where this
+  // LP WebConsole APR â€” dialer_db.apr_5/apr_137_235/apr_bla_bli_blu (where this
   // would otherwise land) are confirmed empty, a dead sync job. See
   // lp-apr-daily-bulk.service.ts.
   "import_lp_apr_daily_batch",
-  // Clovia Email Dashboard, daily per agent — columns read verbatim from a
+  // Clovia Email Dashboard, daily per agent â€” columns read verbatim from a
   // real sample ("Clovia Email Tracker Sept'26.xlsb"); no DB backing exists
-  // Clovia Chat Performance, daily (Botlytics chat dump) — columns read
+  // Clovia Chat Performance, daily (Botlytics chat dump) â€” columns read
   // verbatim from a real sample; no DB backing exists anywhere. See
-  // Clovia CRM Disposition, per ticket — columns read verbatim from a real
+  // Clovia CRM Disposition, per ticket â€” columns read verbatim from a real
   // sample; no DB backing exists anywhere. See
   // clovia-crm-disposition-bulk.service.ts.
   "import_clovia_crm_disposition_batch",
@@ -408,13 +409,13 @@ const KNOWN_IMPORT_RPCS = new Set([
   // Bla Bli Blu Overall Sales (curated workbook sheet, distinct from the Shopify direct export)
   "import_bla_bli_blu_overall_sales_batch",
   "import_clovia_team_alignment_batch",
-  // Dalmia uploads — after-hour contacts, DialDesk DD raw, outbound CDR
+  // Dalmia uploads â€” after-hour contacts, DialDesk DD raw, outbound CDR
   "import_dalmia_after_hour_batch",
   "import_dalmia_dd_batch",
   "import_dalmia_outbound_batch",
-  // Domestic Billing Approved Headcount — month/process/LOB-grain planning table.
+  // Domestic Billing Approved Headcount â€” month/process/LOB-grain planning table.
   "import_domestic_billing_approved_hc_batch",
-  // GS1 India — email GTIN processing daily actuals, DataKart task daily
+  // GS1 India â€” email GTIN processing daily actuals, DataKart task daily
   // actuals, and Approval/Audit quality review raw log. All three write into
   // dedicated mas_hrms tables; the GS1 process_id is resolved by name at
   // import time. See gs1-email-daily-bulk.service.ts,
@@ -424,7 +425,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_gs1_approval_audit_batch",
 ]);
 
-// POST /batches/:id/import — dispatch import by rpc_name
+// POST /batches/:id/import â€” dispatch import by rpc_name
 router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { rpc_name } = req.body as { rpc_name?: string };
@@ -452,12 +453,12 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
   );
 
   // Atomically claim the batch before running the (possibly long-running) import.
-  // Without this, a client retry after a false request-timeout — the import
-  // itself keeps running server-side even after the client gives up — can fire
+  // Without this, a client retry after a false request-timeout â€” the import
+  // itself keeps running server-side even after the client gives up â€” can fire
   // a second concurrent import of the same batch. The second call finds no
   // 'valid'/'pending' rows left (the first call already flipped them), computes
   // 0 imported / 0 errors, and overwrites the first call's correct summary with
-  // a misleading "imported, 0 rows" — which is exactly what happened to
+  // a misleading "imported, 0 rows" â€” which is exactly what happened to
   // BATCH-1787062644877. Rejecting the concurrent call instead keeps the
   // summary that the completed import actually wrote.
   const [claim] = await db.execute<ResultSetHeader>(
@@ -468,11 +469,11 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
   if (claim.affectedRows === 0) {
     return res.status(409).json({
       success: false,
-      error: "This batch is already being imported. Wait for it to finish, then refresh the page — do not resubmit.",
+      error: "This batch is already being imported. Wait for it to finish, then refresh the page â€” do not resubmit.",
     });
   }
 
-  // The permission checks have to run before the request is answered — a 202 must
+  // The permission checks have to run before the request is answered â€” a 202 must
   // mean the import is genuinely under way, not that it will fail unseen.
   try {
     await assertGatedUploader(rpc_name, req.authUser!.id);
@@ -485,8 +486,8 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     throw err;
   }
 
-  // Importing runs a domain engine per row — submitRegularization and
-  // submitRequest each open a transaction — so a few hundred rows take minutes.
+  // Importing runs a domain engine per row â€” submitRegularization and
+  // submitRequest each open a transaction â€” so a few hundred rows take minutes.
   // Waiting for that inside the request meant nginx closed the connection at 60s
   // and the uploader saw a 502 while the import was still running fine. Detach it
   // and let the page poll /batches/:id/import-status instead.
@@ -499,19 +500,19 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
   /*
    * Guard against BATCH-1788948395588-R6909's failure mode: a batch that claims valid
    * rows (from its own creation payload) but has ZERO rows actually staged in
-   * upload_batch_row — at ANY status, not just 'valid'/'pending' — used to run the
+   * upload_batch_row â€” at ANY status, not just 'valid'/'pending' â€” used to run the
    * import anyway, find nothing to do, and report a clean "imported, 0 rows" success,
    * because every importer only checks for ERRORS, never for whether it did anything
    * at all. Root cause there was the staging INSERT (POST /batches/:id/rows) losing a
-   * database deadlock after the batch header already claimed "14 valid" — the two are
+   * database deadlock after the batch header already claimed "14 valid" â€” the two are
    * separate requests, so one can succeed while the other silently fails.
    *
    * This must NOT fire for the ordinary, legitimate case of re-importing a batch whose
-   * rows already all got consumed by an earlier successful run — those rows still
+   * rows already all got consumed by an earlier successful run â€” those rows still
    * exist, just as 'imported'/'error', which is exactly why `pending` above is 0 for
    * that case too. The only reliable way to tell "nothing left to do" apart from
    * "nothing was ever there" is whether upload_batch_row holds ANY row for this batch,
-   * regardless of status — so that is checked separately, only in this already-rare
+   * regardless of status â€” so that is checked separately, only in this already-rare
    * pending===0 branch.
    */
   if (Number((pending as RowDataPacket[])[0]?.n ?? 0) === 0) {
@@ -525,7 +526,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const stagedCount = Number((stagedRows as RowDataPacket[])[0]?.n ?? 0);
     if (validRows > 0 && stagedCount === 0) {
       const message = `This batch claims ${validRows} valid row(s), but none were ever saved to the `
-        + `database — the upload's row-staging step likely failed or timed out partway through. `
+        + `database â€” the upload's row-staging step likely failed or timed out partway through. `
         + `There is nothing here to import. Re-upload the file (or redo Edit & Resubmit) instead.`;
       await db.execute(
         `UPDATE upload_batch SET batch_status = 'validation_failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
@@ -535,21 +536,14 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     }
   }
 
-  startBatchJob(
-    id,
-    "import",
-    () => dispatchImport(rpc_name, id, req.authUser!.id),
-    async (err) => {
-      await db.execute(
-        // approval_status is cleared with it. Without that a batch that failed mid-import kept
-        // whatever approval stage it had reached, so it stayed in the Branch Head's queue as
-        // "pending" forever — a batch that failed can never be approved, and the queue had no
-        // way to tell. This is the second half of the duplicate-pending-approval defect.
-        `UPDATE upload_batch SET batch_status = 'failed', approval_status = NULL,
-                error_summary = ?, updated_at = NOW() WHERE id = ?`,
-        [String((err as Error)?.message ?? "Import failed").slice(0, 1000), id]
-      );
-    },
+  // Hand off to hrms-workers via the DB queue. The worker polls bulk_import_queue
+  // every few seconds, claims this row, and runs dispatchImport â€” completely off
+  // the API process, zero impact on live users during large imports.
+  await db.execute(
+    `INSERT INTO bulk_import_queue (id, batch_id, rpc_name, user_id, queued_at)
+     VALUES (UUID(), ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE rpc_name = VALUES(rpc_name), user_id = VALUES(user_id), queued_at = NOW(), claimed_at = NULL`,
+    [id, rpc_name, req.authUser!.id]
   );
 
   return res.status(202).json({
@@ -558,18 +552,18 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     job: "import",
     batch_id: id,
     total_rows: Number((pending as RowDataPacket[])[0]?.n ?? 0),
-    message: "Import started. Large files are processed a row at a time — the page will keep itself updated.",
+    message: "Import started. Large files are processed a row at a time â€” the page will keep itself updated.",
   });
 }));
 
 /**
- * GET /batches/:id/import-status — where the upload page collects the import result.
+ * GET /batches/:id/import-status â€” where the upload page collects the import result.
  *
  * Terminal state comes from upload_batch rather than the in-process job map, so a
  * page reloaded (or an API restarted) mid-import still reports the truth.
  */
 /**
- * GET /batches/active — batches owned by this user currently in 'importing' state.
+ * GET /batches/active â€” batches owned by this user currently in 'importing' state.
  *
  * The UI calls this on page mount so a user who closed the page mid-import can pick
  * up the progress bar where they left off, rather than having to know the batch ID or
@@ -625,511 +619,5 @@ router.get("/batches/:id/import-status", requireRole("admin", "hr", "super_admin
   });
 }));
 
-/**
- * The four approval-gated types write leave balances, attendance and payroll
- * deductions. The generic import guard above admits hr/payroll/admin as well, which is
- * right for a master-data import and wrong here: the agreed uploaders are Super Admin
- * and branch WFM only, and widening that silently would put a deduction upload in
- * reach of roles that were never meant to raise one.
- */
-async function assertGatedUploader(rpc_name: string, userId: string): Promise<void> {
-  const gated = new Set([
-    "import_attendance_regularization_batch",
-    "import_leave_application_batch",
-    "import_incentive_bulk_batch",
-    "import_deduction_bulk_batch",
-  ]);
-  if (!gated.has(rpc_name)) return;
-  const { hasAnyRole } = await import("../../shared/scopeAccess.js");
-  const { UPLOADER_ROLES } = await import("./bulk-approval.service.js");
-  if (!(await hasAnyRole(userId, ...UPLOADER_ROLES))) {
-    throw Object.assign(
-      new Error("Only a Super Admin or branch WFM can upload leave, regularization, incentive or deduction batches."),
-      { statusCode: 403 },
-    );
-  }
-}
-
-/**
- * department_master writes are super_admin-only everywhere else (requireDepartmentWrite in
- * org.routes.ts), and a spreadsheet is not an exemption.
- *
- * import_department_upload_batch INSERTs ... ON DUPLICATE KEY UPDATE dept_name = VALUES(dept_name),
- * so a row carrying an existing dept_code does not just add a department — it RENAMES one. The
- * generic import guard above admits admin/hr/wfm/wfm_analyst/payroll/payroll_hr, which would have
- * left every role locked out of the Departments UI still able to rename a department by uploading
- * a file. That is the same structure change by another door, so it takes the same gate.
- *
- * Deliberately stricter than assertGatedUploader: that one admits branch WFM alongside Super
- * Admin, which is right for leave and deduction batches and wrong for the org chart.
- */
-async function assertDepartmentStructureUploader(rpc_name: string, userId: string): Promise<void> {
-  if (rpc_name !== "import_department_upload_batch") return;
-  const { hasAnyRole } = await import("../../shared/scopeAccess.js");
-  if (!(await hasAnyRole(userId, "super_admin"))) {
-    throw Object.assign(
-      new Error("Only a Super Admin can create or rename departments, including by upload."),
-      { statusCode: 403 },
-    );
-  }
-}
-
-/**
- * Run one import and return the payload the route used to send.
- *
- * It no longer writes the response itself: the import runs after the request has
- * already been answered with 202 (see the route below), so there is no response left
- * to write to by the time this finishes.
- */
-async function dispatchImport(
-  rpc_name: string,
-  id: string,
-  userId: string,
-): Promise<Record<string, unknown>> {
-  await assertGatedUploader(rpc_name, userId);
-  await assertDepartmentStructureUploader(rpc_name, userId);
-
-  if (rpc_name === "import_attendance_regularization_batch") {
-    const { importRegularizationBatch } = await import(
-      "./attendance-regularization-bulk.service.js"
-    );
-    const data = await importRegularizationBatch(id, userId);
-    return { success: true, requires_approval: true, data };
-  }
-
-  if (rpc_name === "import_leave_application_batch") {
-    const { importLeaveBatch } = await import("./leave-application-bulk.service.js");
-    const data = await importLeaveBatch(id, userId);
-    return { success: true, requires_approval: true, data };
-  }
-
-  if (rpc_name === "import_incentive_bulk_batch") {
-    const { importIncentiveBatch } = await import("./incentive-bulk.service.js");
-    const data = await importIncentiveBatch(id, userId);
-    return { success: true, requires_approval: true, data };
-  }
-
-  if (rpc_name === "import_deduction_bulk_batch") {
-    const { importDeductionBatch } = await import("./deduction-bulk.service.js");
-    const data = await importDeductionBatch(id, userId);
-    return { success: true, requires_approval: true, data };
-  }
-
-  if (rpc_name === "import_official_email_update_batch") {
-    const { importOfficialEmailBatch } = await import(
-      "../it-provisioning/it-provisioning.bulk.service.js"
-    );
-    const data = await importOfficialEmailBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_pf_uan_batch") {
-    const { importPfUanBatch } = await import(
-      "../bulk-upload/pf-uan-bulk.service.js"
-    );
-    const data = await importPfUanBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_reporting_manager_update_batch") {
-    const { importReportingManagerBatch } = await import(
-      "../bulk-upload/reporting-manager-bulk.service.js"
-    );
-    const data = await importReportingManagerBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_roster_assignment_batch") {
-    const { importRosterAssignmentBatch } = await import(
-      "../bulk-upload/roster-assignment-bulk.service.js"
-    );
-    const data = await importRosterAssignmentBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_weekoff_preference_batch") {
-    const { importWeekOffPreferenceBatch } = await import(
-      "../bulk-upload/weekoff-preference-bulk.service.js"
-    );
-    const data = await importWeekOffPreferenceBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_shift_rotation_type_batch") {
-    const { importShiftRotationTypeBatch } = await import(
-      "../bulk-upload/shift-rotation-type-bulk.service.js"
-    );
-    const data = await importShiftRotationTypeBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_shift_roster_batch") {
-    const { importShiftRosterBatch } = await import(
-      "../bulk-upload/shift-roster-bulk.service.js"
-    );
-    const data = await importShiftRosterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_upload_batch") {
-    const { importEmployeeMasterBatch } = await import(
-      "../bulk-upload/employee-master-bulk.service.js"
-    );
-    const data = await importEmployeeMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_process_upload_batch") {
-    const { importProcessMasterBatch } = await import(
-      "../bulk-upload/process-master-bulk.service.js"
-    );
-    const data = await importProcessMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_department_upload_batch") {
-    const { importDepartmentMasterBatch } = await import(
-      "../bulk-upload/department-master-bulk.service.js"
-    );
-    const data = await importDepartmentMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_asset_upload_batch") {
-    const { importAssetMasterBatch } = await import(
-      "../bulk-upload/asset-master-bulk.service.js"
-    );
-    const data = await importAssetMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_branch_upload_batch") {
-    const { importBranchMasterBatch } = await import(
-      "../bulk-upload/branch-master-bulk.service.js"
-    );
-    const data = await importBranchMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lob_upload_batch") {
-    const { importLobMasterBatch } = await import(
-      "../bulk-upload/lob-master-bulk.service.js"
-    );
-    const data = await importLobMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_designation_upload_batch") {
-    const { importDesignationMasterBatch } = await import(
-      "../bulk-upload/designation-master-bulk.service.js"
-    );
-    const data = await importDesignationMasterBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name.startsWith("import_onfido_")) {
-    const { importOnfidoRawBatch, findOnfidoConfig } = await import(
-      "../bulk-upload/onfido-raw-bulk.service.js"
-    );
-    const config = findOnfidoConfig(rpc_name);
-    if (!config) {
-      throw new Error(`No Onfido report config registered for rpc_name '${rpc_name}'.`);
-    }
-    const data = await importOnfidoRawBatch(config, id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_email_ticket_daily_batch") {
-    const { importEmailTicketDailyBatch } = await import(
-      "../bulk-upload/email-ticket-daily-bulk.service.js"
-    );
-    const data = await importEmailTicketDailyBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lp_apr_daily_batch") {
-    const { importLpAprDailyBatch } = await import(
-      "../bulk-upload/lp-apr-daily-bulk.service.js"
-    );
-    const data = await importLpAprDailyBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_crm_disposition_batch") {
-    const { importCloviaCrmDispositionBatch } = await import(
-      "../bulk-upload/clovia-crm-disposition-bulk.service.js"
-    );
-    const data = await importCloviaCrmDispositionBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_feedback_batch") {
-    const { importCloviaFeedbackBatch } = await import(
-      "../bulk-upload/clovia-feedback-bulk.service.js"
-    );
-    const data = await importCloviaFeedbackBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_housing_premium_sale_raw_batch") {
-    const { importHousingPremiumSaleRawBatch } = await import(
-      "../bulk-upload/housing-premium-sale-raw-bulk.service.js"
-    );
-    const data = await importHousingPremiumSaleRawBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lp_leads_regional_batch") {
-    const { importLpLeadsRegionalBatch } = await import(
-      "../bulk-upload/lp-leads-bulk.service.js"
-    );
-    const data = await importLpLeadsRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lp_leads_non_regional_batch") {
-    const { importLpLeadsNonRegionalBatch } = await import(
-      "../bulk-upload/lp-leads-bulk.service.js"
-    );
-    const data = await importLpLeadsNonRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_gnc_apr_batch") {
-    // Reconciled 2026-09-10: redirected from the retired gnc_apr_daily_actual
-    // (mas_hrms) to db_masmis.gnc_apr directly, per explicit user instruction
-    // to use the same table My Dashboards already writes into. See sql/1741.
-    const { importGncAprMasmisBatch } = await import(
-      "../bulk-upload/gnc-apr-masmis-bulk.service.js"
-    );
-    const data = await importGncAprMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lp_cr_report_regional_batch") {
-    const { importLpCrReportRegionalBatch } = await import(
-      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
-    );
-    const data = await importLpCrReportRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_lp_cr_report_non_regional_batch") {
-    const { importLpCrReportNonRegionalBatch } = await import(
-      "../bulk-upload/lp-cdr-cr-report-bulk.service.js"
-    );
-    const data = await importLpCrReportNonRegionalBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_housing_premium_agent_target_batch") {
-    const { importHousingPremiumAgentTargetBatch } = await import(
-      "../bulk-upload/housing-premium-agent-target-bulk.service.js"
-    );
-    const data = await importHousingPremiumAgentTargetBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_housing_owner_incentive_batch") {
-    const { importHousingOwnerIncentiveBatch } = await import(
-      "../bulk-upload/housing-owner-incentive-bulk.service.js"
-    );
-    const data = await importHousingOwnerIncentiveBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_housing_owner_lead_pipeline_batch") {
-    const { importHousingOwnerLeadPipelineBatch } = await import(
-      "../bulk-upload/housing-owner-lead-pipeline-bulk.service.js"
-    );
-    const data = await importHousingOwnerLeadPipelineBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bla_bli_blu_dd_tagging_batch") {
-    const { importBlaBliBluDdTaggingBatch } = await import(
-      "../bulk-upload/bla-bli-blu-dd-tagging-bulk.service.js"
-    );
-    const data = await importBlaBliBluDdTaggingBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_gnc_sale_masmis_batch") {
-    const { importGncSaleMasmisBatch } = await import(
-      "../bulk-upload/gnc-sale-masmis-bulk.service.js"
-    );
-    const data = await importGncSaleMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_reginald_abandoned_cart_sales_batch") {
-    const { importReginaldAbandonedCartSalesBatch } = await import(
-      "../bulk-upload/reginald-abandoned-cart-sales-bulk.service.js"
-    );
-    const data = await importReginaldAbandonedCartSalesBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bla_bli_blu_auto_callback_batch") {
-    const { importBlaBliBluAutoCallbackBatch } = await import(
-      "../bulk-upload/bla-bli-blu-auto-callback-bulk.service.js"
-    );
-    const data = await importBlaBliBluAutoCallbackBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bla_bli_blu_after_hour_batch") {
-    const { importBlaBliBluAfterHourBatch } = await import(
-      "../bulk-upload/bla-bli-blu-after-hour-bulk.service.js"
-    );
-    const data = await importBlaBliBluAfterHourBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bla_bli_blu_call_disposition_batch") {
-    const { importBlaBliBluCallDispositionBatch } = await import(
-      "../bulk-upload/bla-bli-blu-call-disposition-bulk.service.js"
-    );
-    const data = await importBlaBliBluCallDispositionBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bla_bli_blu_shopify_sales_batch") {
-    const { importBlaBliBluShopifySalesBatch } = await import(
-      "../bulk-upload/bla-bli-blu-shopify-sales-bulk.service.js"
-    );
-    const data = await importBlaBliBluShopifySalesBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bb_sale_masmis_batch") {
-    const { importBbSaleMasmisBatch } = await import(
-      "../bulk-upload/bb-sale-masmis-bulk.service.js"
-    );
-    const data = await importBbSaleMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bb_apr_masmis_batch") {
-    const { importBbAprMasmisBatch } = await import(
-      "../bulk-upload/bb-apr-masmis-bulk.service.js"
-    );
-    const data = await importBbAprMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bb_cart_masmis_batch") {
-    const { importBbCartMasmisBatch } = await import(
-      "../bulk-upload/bb-cart-masmis-bulk.service.js"
-    );
-    const data = await importBbCartMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bb_chat_masmis_batch") {
-    const { importBbChatMasmisBatch } = await import(
-      "../bulk-upload/bb-chat-masmis-bulk.service.js"
-    );
-    const data = await importBbChatMasmisBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_process_manual_kpi_batch") {
-    const { importProcessManualKpiBatch } = await import(
-      "../bulk-upload/process-manual-kpi-bulk.service.js"
-    );
-    const data = await importProcessManualKpiBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_bla_bli_blu_overall_sales_batch") {
-    const { importBlaBliBluOverallSalesBatch } = await import(
-      "../bulk-upload/bla-bli-blu-overall-sales-bulk.service.js"
-    );
-    const data = await importBlaBliBluOverallSalesBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_clovia_team_alignment_batch") {
-    const { importCloviaTeamAlignmentBatch } = await import(
-      "../bulk-upload/clovia-team-alignment-bulk.service.js"
-    );
-    const data = await importCloviaTeamAlignmentBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_dalmia_after_hour_batch") {
-    const { importDalmiaAfterHourBatch } = await import(
-      "../bulk-upload/dalmia-after-hour-bulk.service.js"
-    );
-    const data = await importDalmiaAfterHourBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_dalmia_dd_batch") {
-    const { importDalmiaDdBatch } = await import(
-      "../bulk-upload/dalmia-dd-bulk.service.js"
-    );
-    const data = await importDalmiaDdBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_dalmia_outbound_batch") {
-    const { importDalmiaOutboundBatch } = await import(
-      "../bulk-upload/dalmia-outbound-bulk.service.js"
-    );
-    const data = await importDalmiaOutboundBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_domestic_billing_approved_hc_batch") {
-    const { importDomesticBillingApprovedHcBatch } = await import(
-      "../bulk-upload/domestic-billing-approved-hc-bulk.service.js"
-    );
-    const data = await importDomesticBillingApprovedHcBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_gs1_email_daily_batch") {
-    const { importGs1EmailDailyBatch } = await import(
-      "../bulk-upload/gs1-email-daily-bulk.service.js"
-    );
-    const data = await importGs1EmailDailyBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_gs1_datakart_daily_batch") {
-    const { importGs1DatakartDailyBatch } = await import(
-      "../bulk-upload/gs1-datakart-daily-bulk.service.js"
-    );
-    const data = await importGs1DatakartDailyBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name === "import_gs1_approval_audit_batch") {
-    const { importGs1ApprovalAuditBatch } = await import(
-      "../bulk-upload/gs1-approval-audit-bulk.service.js"
-    );
-    const data = await importGs1ApprovalAuditBatch(id, userId);
-    return { success: true, data };
-  }
-
-  if (rpc_name.startsWith("import_bella_")) {
-    const { importBellaRawBatch, findBellaConfig } = await import(
-      "../bulk-upload/bella-raw-bulk.service.js"
-    );
-    const config = findBellaConfig(rpc_name);
-    if (!config) {
-      throw new Error(`No Bella Vita report config registered for rpc_name '${rpc_name}'.`);
-    }
-    const data = await importBellaRawBatch(config, id, userId);
-    return { success: true, data };
-  }
-
-  // Unreachable in practice — rpc_name is checked against KNOWN_IMPORT_RPCS
-  // before this function is ever called — kept as a safety net so the caller's
-  // try/catch still resets batch_status off 'importing' if it is ever hit.
-  throw new Error(`Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`);
-}
 
 export { router as bulkUploadRouter };

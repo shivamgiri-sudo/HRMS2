@@ -67,6 +67,7 @@ import { startHelpdeskSlaCron, stopHelpdeskSlaCron } from "../modules/helpdesk/h
 import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from "./inbox-reconciliation.worker.js";
 import { startAttendanceCorrectionReconciliationWorker, stopAttendanceCorrectionReconciliationWorker } from "./attendance-correction-reconciliation.worker.js";
 import { startBulkUploadStaleBatchWorker, stopBulkUploadStaleBatchWorker } from "./bulk-upload-stale-batch.worker.js";
+import { startBulkImportWorker, stopBulkImportWorker } from "./bulk-import.worker.js";
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
@@ -359,6 +360,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     // Notices bulk-upload batches whose job was lost to a restart and left them 'importing'
     // forever. Marks them failed with a row count, so a dead import is visible instead of silent.
+    name: "bulk-import",
+    start: () => { startBulkImportWorker(); return Promise.resolve(); },
+  },
+  {
     name: "bulk-upload-stale-batch",
     start: () => { startBulkUploadStaleBatchWorker(); return Promise.resolve(); },
   },
@@ -549,6 +554,7 @@ function shutdown(): void {
   stopHelpdeskSlaCron();
   stopInboxReconciliationWorker();
   stopAttendanceCorrectionReconciliationWorker();
+  stopBulkImportWorker();
   stopBulkUploadStaleBatchWorker();
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();
