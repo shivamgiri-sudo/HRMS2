@@ -47,14 +47,15 @@ ON DUPLICATE KEY UPDATE
 
 -- ─── Step 2: grant per-tab, exact parity with each source endpoint's requireRole() ─────
 
--- Live Monitoring — roster-intelligence.routes.ts ADMIN_ROLES
-INSERT INTO role_page_access (role_key, page_code, can_view, can_create, can_edit, can_delete, can_export, active_status)
-VALUES
-  ('super_admin', 'WFM_ROSTER_LIVE_MONITORING', 1, 0, 0, 0, 1, 1),
-  ('admin',       'WFM_ROSTER_LIVE_MONITORING', 1, 0, 0, 0, 1, 1),
-  ('hr',          'WFM_ROSTER_LIVE_MONITORING', 1, 0, 0, 0, 1, 1),
-  ('wfm',         'WFM_ROSTER_LIVE_MONITORING', 1, 0, 0, 0, 1, 1)
-ON DUPLICATE KEY UPDATE can_view = 1, can_export = 1, active_status = 1;
+-- Live Monitoring: deliberately NOT granted here (removed 2026-09-16, before this
+-- migration's first real run — see the registration comment in runPendingMigrations.ts).
+-- This block as originally written granted admin/hr, but migration 1766 (2026-09-14)
+-- explicitly revoked admin/hr from WFM_ROSTER_LIVE_MONITORING ("branch_head + wfm only"
+-- owner ruling), and migration 1779 (2026-09-16) added branch_wfm/process_manager/
+-- operations_manager. Re-running this block now — 4+ days after both those later,
+-- more-current rulings — would have silently undone them via its own
+-- ON DUPLICATE KEY UPDATE ... active_status = 1. WFM_ROSTER_LIVE_MONITORING's
+-- role_page_access rows are fully owned by migrations 1766 + 1779; nothing here.
 
 -- Team Roster — roster-intelligence.routes.ts MANAGER_ROLES
 INSERT INTO role_page_access (role_key, page_code, can_view, can_create, can_edit, can_delete, can_export, active_status)
