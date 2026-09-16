@@ -842,6 +842,11 @@
       "filename": "1767_onfido_external_audit_add_total_columns.sql",
       "reason": "Removed from manifest because it targets onfido_db (not mas_hrms). The migration runner connects with shivam_user credentials which have no ALTER privilege on onfido_db — production startup failed with 'ALTER command denied'. Migration must be run manually against onfido_db using the ONFIDO_DB_* credentials from .env. File kept on disk and moved to knownUnlisted so it cannot be accidentally re-scheduled through the standard runner.",
       "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1788_gnc_sale_order_id_unique.sql",
+      "reason": "Removed from manifest because it targets db_masmis.gnc_sale (not mas_hrms). shivam_user has no ALTER/INDEX privilege on db_masmis — confirmed live via SHOW GRANTS. The ALTER TABLE must be run manually by a db_masmis schema-privilege user. Duplicate rows were already deduplicated live (2,572→2,029 rows) before this was authored. File kept on disk and moved to knownUnlisted so it cannot be accidentally re-scheduled through the standard runner.",
+      "approvedBy": "shivam.giri@teammas.in"
     }
   ],
   "knownDangling": [
@@ -1056,6 +1061,7 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql"
+    "verify_ats_fix.sql",
+    "1788_gnc_sale_order_id_unique.sql"
   ]
 }
