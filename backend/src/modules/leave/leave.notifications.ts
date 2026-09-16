@@ -18,6 +18,8 @@ interface LeaveContextRow extends RowDataPacket {
   employee_name: string | null;
   branch_id: string | null;
   process_id: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   leave_type_id: string | null;
   leave_name: string | null;
   leave_code: string | null;
@@ -35,11 +37,15 @@ async function loadLeaveContext(requestId: string): Promise<LeaveContextRow | nu
             e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
             e.branch_id, e.process_id,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
             lr.leave_type_id, lt.leave_name, lt.leave_code,
             lr.from_date, lr.to_date, lr.total_days, lr.reason, lr.status
        FROM leave_request lr
        JOIN employees e            ON e.id = lr.employee_id
        LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE lr.id = ?
       LIMIT 1`,
     [requestId],
@@ -102,6 +108,8 @@ export async function notifyLeaveSubmitted(requestId: string): Promise<void> {
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         leave_type: ctx.leave_name,
         dates: dateRange(ctx.from_date, ctx.to_date),
         days: Number(ctx.total_days ?? 0),
@@ -143,6 +151,9 @@ export async function notifyLeaveDecision(
       correlationId: `leave:${requestId}`,
       data: {
         employee_name: ctx.employee_name,
+        employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         decision: status,
         leave_type: ctx.leave_name,
         dates: dateRange(ctx.from_date, ctx.to_date),
@@ -177,6 +188,8 @@ export async function notifyLeavePendingBranchHead(requestId: string, elOccurren
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         leave_type: ctx.leave_name,
         dates: dateRange(ctx.from_date, ctx.to_date),
         days: Number(ctx.total_days ?? 0),

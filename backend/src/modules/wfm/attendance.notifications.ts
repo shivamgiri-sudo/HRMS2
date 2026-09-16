@@ -18,6 +18,8 @@ interface RegContextRow extends RowDataPacket {
   employee_name: string | null;
   branch_id: string | null;
   process_id: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   session_date: string;
   requested_status: string | null;
   current_attendance_status: string | null;
@@ -31,11 +33,15 @@ async function loadRegContext(regularizationId: string): Promise<RegContextRow |
             e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
             e.branch_id, e.process_id,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
             ar.session_date, ar.requested_status, ar.reason,
             adr.attendance_status AS current_attendance_status,
             COALESCE(NULLIF(TRIM(rev.full_name), ''), rev.employee_code) AS reviewer_name
        FROM attendance_regularization ar
        JOIN employees e ON e.id = ar.employee_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
        LEFT JOIN attendance_daily_record adr
               ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
        LEFT JOIN users u ON u.id = ar.reviewed_by
@@ -107,6 +113,8 @@ export async function notifyRegularizationDecision(
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         decision: status,
         date: String(ctx.session_date).slice(0, 10),
         session_date: String(ctx.session_date).slice(0, 10),
@@ -154,6 +162,8 @@ export async function notifyRegularizationStage2Pending(regularizationId: string
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         session_date: String(ctx.session_date).slice(0, 10),
         requested_status: ctx.requested_status,
         // analytics: how deep the queue is, so the SPOC knows whether this is one item
@@ -183,6 +193,8 @@ export async function notifyRegularizationSubmitted(regularizationId: string): P
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         session_date: String(ctx.session_date).slice(0, 10),
         current_status: ctx.current_attendance_status,
         requested_status: ctx.requested_status,

@@ -23,6 +23,8 @@ interface ExitContextRow extends RowDataPacket {
   employee_name: string | null;
   branch_id: string | null;
   process_id: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   designation: string | null;
   date_of_joining: string | null;
   status: string;
@@ -39,12 +41,16 @@ async function loadExitContext(exitRequestId: string): Promise<ExitContextRow | 
             e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
             e.branch_id, e.process_id, e.date_of_joining,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
             d.designation_name AS designation,
             er.status, er.exit_reason_category, er.resignation_reason,
             er.notice_period_days, er.last_working_day_proposed, er.last_working_day_confirmed
        FROM exit_request er
        JOIN employees e ON e.id = er.employee_id
        LEFT JOIN designation_master d ON d.id = e.designation_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE er.id = ?
       LIMIT 1`,
     [exitRequestId],
@@ -88,6 +94,8 @@ export async function notifyResignationSubmitted(exitRequestId: string): Promise
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         designation: ctx.designation,
         reason_category: ctx.exit_reason_category,
         reason: ctx.resignation_reason,
@@ -125,6 +133,8 @@ export async function notifyResignationDecision(
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         decision,
         confirmed_lwd: ctx.last_working_day_confirmed,
         notice_period_days: ctx.notice_period_days,
@@ -177,6 +187,8 @@ export async function notifyFullFinalReady(exitRequestId: string): Promise<void>
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         net_payable: ff.net_payable == null ? null : Number(ff.net_payable),
         gratuity_amount: ff.gratuity_amount == null ? null : Number(ff.gratuity_amount),
         notice_recovery: ff.notice_recovery == null ? null : Number(ff.notice_recovery),
@@ -243,6 +255,8 @@ export async function notifyLastWorkingDayApproaching(exitRequestId: string): Pr
       data: {
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
+        process_name: ctx.process_name,
+        reporting_manager_name: ctx.reporting_manager_name,
         confirmed_lwd: ctx.last_working_day_confirmed,
         days_to_lwd: daysUntil(ctx.last_working_day_confirmed),
         clearance_pending: pending,

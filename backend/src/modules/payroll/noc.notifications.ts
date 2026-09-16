@@ -46,6 +46,8 @@ interface CaseContext extends RowDataPacket {
   employee_id: string;
   branch_id: string | null;
   process_id: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   employee_code: string | null;
   employee_name: string | null;
   location: string | null;
@@ -59,10 +61,16 @@ interface CaseContext extends RowDataPacket {
 
 async function loadCase(caseId: string): Promise<CaseContext | null> {
   const [rows] = await db.execute<CaseContext[]>(
-    `SELECT id, employee_id, branch_id, process_id, employee_code, employee_name, location,
-            resignation_date, last_working_day, fnf_option, fnf_option_suggested, status,
-            decline_reason
-       FROM noc_case WHERE id = ? LIMIT 1`,
+    `SELECT nc.id, nc.employee_id, nc.branch_id, nc.process_id, nc.employee_code, nc.employee_name,
+            nc.location, nc.resignation_date, nc.last_working_day, nc.fnf_option,
+            nc.fnf_option_suggested, nc.status, nc.decline_reason,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+       FROM noc_case nc
+       LEFT JOIN process_master pm ON pm.id = nc.process_id
+       LEFT JOIN employees e ON e.id = nc.employee_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+      WHERE nc.id = ? LIMIT 1`,
     [caseId],
   );
   return rows[0] ?? null;
@@ -196,6 +204,8 @@ export async function notifyInviteSent(
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
+        process_name: nocCase.process_name,
+        reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         noc_form_url: invite.url,
         expires_on: invite.expiresAt ? String(invite.expiresAt).slice(0, 10) : "",
@@ -261,6 +271,8 @@ export async function notifyEmployeeSubmitted(caseId: string): Promise<void> {
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
+        process_name: nocCase.process_name,
+        reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         resignation_date: nocCase.resignation_date,
         noc_case_url: caseUrl(caseId),
@@ -300,6 +312,8 @@ export async function notifySignatoryPending(caseId: string, stageKey: string): 
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
+        process_name: nocCase.process_name,
+        reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         stage_label: stage.stage_label,
         verify_hint: await stageVerifyHint(stageKey),
@@ -361,6 +375,8 @@ export async function notifySignatoryReminder(
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
+        process_name: nocCase.process_name,
+        reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         stage_label: stage.stage_label,
         sla_due_at: stage.sla_due_at ? String(stage.sla_due_at).slice(0, 16).replace("T", " ") : "",
@@ -397,6 +413,8 @@ export async function notifyDeclined(caseId: string, stageKey: string): Promise<
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
+        process_name: nocCase.process_name,
+        reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         stage_label: stage.stage_label,
         decline_reason: nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
@@ -448,6 +466,8 @@ export async function notifyCompleted(caseId: string): Promise<void> {
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
+        process_name: nocCase.process_name,
+        reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
         last_working_day: nocCase.last_working_day ?? "not recorded",
         fnf_option: route ? (FNF_LABEL[route] ?? route) : "to be decided by Finance",

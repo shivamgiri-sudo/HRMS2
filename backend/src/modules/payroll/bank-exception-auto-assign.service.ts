@@ -46,6 +46,29 @@ interface PayrollHrPerson {
 
 const branchHrCache = new Map<string, PayrollHrPerson | null>();
 
+/**
+ * Process/reporting-manager display fields for the notification body. Deliberately a
+ * standalone lookup rather than a field added to BankReadinessResult — that type is shared
+ * with the NEFT export and drilldown surfaces, and this is display-only data the readiness
+ * engine itself has no reason to compute.
+ */
+async function resolveProcessAndManager(
+  employeeId: string,
+): Promise<{ process_name: string | null; reporting_manager_name: string | null }> {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+       FROM employees e
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+      WHERE e.id = ?
+      LIMIT 1`,
+    [employeeId],
+  );
+  const row = (rows as any[])[0];
+  return { process_name: row?.process_name ?? null, reporting_manager_name: row?.reporting_manager_name ?? null };
+}
+
 async function resolvePayrollHrForBranch(branchId: string): Promise<PayrollHrPerson | null> {
   if (branchHrCache.has(branchId)) return branchHrCache.get(branchId)!;
   const [rows] = await db.query<RowDataPacket[]>(
@@ -114,6 +137,7 @@ export async function autoAssignBankExceptionsToPayrollHr(
     if (result.affectedRows === 0) continue;
     summary.assigned++;
 
+    const identity = await resolveProcessAndManager(r.employee_id);
     const outcome = await notificationGateway.notify({
       eventCode: "bank_exception_invalid_assigned",
       // Once per employee: a later re-run finds owner_user_id already set and never reaches
@@ -127,6 +151,8 @@ export async function autoAssignBankExceptionsToPayrollHr(
         employee_code: r.employee_code,
         employee_name: r.employee_name,
         branch_name: r.branch_name,
+        process_name: identity.process_name,
+        reporting_manager_name: identity.reporting_manager_name,
         readiness_class: r.readiness_class,
         reason: r.reason_detail,
         assigned_to: hr.name,
