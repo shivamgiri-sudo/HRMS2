@@ -3,6 +3,7 @@ import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.j
 import { resolveCostCentreProcesses } from "../modules/process-pnl/cost-centre-process-resolver.service.js";
 import { bpoPnlService } from "../modules/process-pnl/bpo-pnl.service.js";
 import { processPnlService } from "../modules/process-pnl/process-pnl.service.js";
+import { backfillProcessMasterForOrphanedCostCentres } from "../shared/cost-centre-sync.js";
 
 /**
  * Keeps cost_centre_master.process_id self-populating.
@@ -39,6 +40,14 @@ async function cycle(): Promise<void> {
         { worker: WORKER_NAME, resolved: resolved.length, unresolved: unresolved.length, excludedCount },
         `[cost-centre-process-resolver] resolved ${resolved.length}, left ${unresolved.length} unresolved (no confident process match), excluded ${excludedCount} out-of-scope`,
       );
+
+      // Create process_master rows for cost centres that arrived via the db_bill sync
+      // (that path bypasses the API's syncCostCentreRelatedTables call, so new clients
+      // from db_bill never appeared in the ATS process dropdown until this ran).
+      const backfilled = await backfillProcessMasterForOrphanedCostCentres();
+      if (backfilled > 0) {
+        logger.info({ worker: WORKER_NAME, backfilled }, `[cost-centre-process-resolver] created ${backfilled} new process_master entries from orphaned cost centres`);
+      }
     } catch (error) {
       // Never throws: same reasoning as db-bill-finance-sync — a failed run must not take the
       // worker process down, and the next scheduled run recovers on its own.

@@ -1,4 +1,4 @@
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../db/mysql.js";
 
 /**
@@ -113,4 +113,85 @@ export async function syncCostCentreRelatedTables(opts: {
       [derivedCode, cost_centre_name, branch_id, client_id ?? null, clientName]
     );
   }
+}
+
+function ccTypeToWorkload(ccType: string | null | undefined): string {
+  switch ((ccType ?? "").toLowerCase().trim()) {
+    case "inbound":     return "inbound_voice";
+    case "blended":     return "blended";
+    case "backoffice":
+    case "back office": return "backoffice";
+    case "chat":        return "chat";
+    case "email":       return "email";
+    default:            return "outbound_voice";
+  }
+}
+
+function ccTypeToProcessType(ccType: string | null | undefined): string {
+  switch ((ccType ?? "").toLowerCase().trim()) {
+    case "inbound":     return "INBOUND";
+    case "blended":     return "OUTBOUND";
+    case "backoffice":
+    case "back office": return "BACK_OFFICE";
+    case "chat":        return "CHAT";
+    case "email":       return "EMAIL";
+    default:            return "OUTBOUND";
+  }
+}
+
+/**
+ * Creates process_master entries for any active cost centres that have a client_name
+ * but no matching active process yet.
+ *
+ * Called nightly by cost-centre-process-resolver.worker after the db_bill sync lands
+ * new cost centres — that path bypasses the API (which calls syncCostCentreRelatedTables
+ * inline), so this is the backstop that closes the gap.
+ *
+ * Returns the count of newly created rows.
+ */
+export async function backfillProcessMasterForOrphanedCostCentres(): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(`
+    SELECT cc.cost_centre_code, cc.client_name, cc.billing_client_name,
+           cc.branch_id, cc.cc_type
+    FROM cost_centre_master cc
+    WHERE cc.client_name IS NOT NULL
+      AND TRIM(cc.client_name) <> ''
+      AND cc.active_status = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM process_master pm
+        WHERE TRIM(LOWER(pm.process_name)) = TRIM(LOWER(cc.client_name))
+          AND pm.active_status = 1
+      )
+  `);
+
+  let created = 0;
+  for (const row of rows as Array<{
+    cost_centre_code: string;
+    client_name: string;
+    billing_client_name: string | null;
+    branch_id: string | null;
+    cc_type: string | null;
+  }>) {
+    const derivedCode = row.cost_centre_code
+      .replace(/[^A-Za-z0-9]/g, "_")
+      .toUpperCase()
+      .replace(/_+/g, "_")
+      .slice(0, 50);
+
+    const [result] = await db.execute<ResultSetHeader>(
+      `INSERT IGNORE INTO process_master
+         (process_code, process_name, branch_id, workload_type, process_type, client_name, active_status)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`,
+      [
+        derivedCode,
+        row.client_name.trim(),
+        row.branch_id ?? null,
+        ccTypeToWorkload(row.cc_type),
+        ccTypeToProcessType(row.cc_type),
+        row.billing_client_name ?? null,
+      ]
+    );
+    if (result.affectedRows > 0) created++;
+  }
+  return created;
 }
