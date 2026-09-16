@@ -11828,7 +11828,9 @@
       "approved_at",
       "approved_by",
       "rejection_reason",
-      "legacy_created_at"
+      "legacy_created_at",
+      "reminder_count",
+      "last_reminder_at"
     ],
     "leave_request_status_repair_log": [
       "id",
