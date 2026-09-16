@@ -25,6 +25,8 @@ import {
   updateAttendanceExceptionStatus,
   updatePayrollHold,
 } from "./peopleos.service.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { resolveDashboardScopeForRequest, narrowDashboardScope } from "../../shared/dashboardScope.js";
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) => fn(req, res).catch(next);
@@ -130,7 +132,35 @@ cosecMonitoringRouter.get("/sync-errors", h(async (req, res) => res.json(apiSucc
 cosecMonitoringRouter.get(
   "/latest-punches",
   requireRole(...COSEC_PUNCH_ROLES),
-  h(async (req, res) => res.json(apiSuccess(await getCosecLatestPunches(actor(req))))),
+  h(async (req, res) => {
+    // Enforces the comment above: a branch-scoped caller (branch_head, branch_wfm, manager,
+    // process_manager — all in COSEC_RUN_ROLES/COSEC_PUNCH_ROLES) must not see another
+    // branch's punches. `wfm` itself resolves PROCESS_ALL, not ORG_ALL, so it is narrowed to
+    // its assigned processes' branches too. Mirrors the injectScopeIfNeeded pattern already
+    // used by wfm/biometric-summary.routes.ts. An explicit ?branchId= is honoured only when
+    // it falls inside the caller's own resolved scope (narrowDashboardScope denies otherwise);
+    // ORG_ALL callers (admin/hr/ceo/super_admin) pass branchIds=undefined = unfiltered.
+    const user = actor(req);
+    let branchIds: string[] | undefined;
+    try {
+      const context = await getUserRoleContext(user.id);
+      const scope = await narrowDashboardScope(
+        await resolveDashboardScopeForRequest(user, context.primaryRole),
+        String(req.query.branchId ?? ""),
+        "",
+      );
+      branchIds = scope.level === "ORG_ALL" ? undefined : scope.branchIds;
+    } catch {
+      // resolveDashboardScope throws DashboardScopeConfigurationError for an account with no
+      // resolvable employee/scope mapping (e.g. a non-admin demo-bypass identity, which has no
+      // backing row in employees/user_assignment_scope). Same fail-CLOSED rule as
+      // wfm/biometric-summary.routes.ts's injectScopeIfNeeded: an unresolvable scope must
+      // render an empty, still-successful list, never bubble a 409 into a panel that only
+      // handles 200/403.
+      branchIds = [];
+    }
+    res.json(apiSuccess(await getCosecLatestPunches(user, branchIds)));
+  }),
 );
 
 export const payrollReadinessRouter = Router();

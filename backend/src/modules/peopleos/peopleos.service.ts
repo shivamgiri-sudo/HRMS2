@@ -572,7 +572,7 @@ export async function getCosecSyncErrors(_actor: Actor) {
   );
 }
 
-export async function getCosecLatestPunches(_actor: Actor) {
+export async function getCosecLatestPunches(_actor: Actor, branchIds?: string[]) {
   // biometric_punch has never existed in this database.
   //
   // The table is biometric_attendance_log (176,694 rows, current to today). Because
@@ -589,6 +589,16 @@ export async function getCosecLatestPunches(_actor: Actor) {
   //
   // These are per-day rollups (first in, last out, count), not individual punches —
   // which is what the table stores. Named accordingly rather than pretending otherwise.
+  //
+  // branchIds is the caller's RBAC-resolved branch scope (peopleos.routes.ts), not a raw
+  // UI filter: this endpoint previously ignored req.query entirely (not just missing a UI
+  // control, unlike the sync-status/runs/errors endpoints this panel also calls), so a
+  // branch-scoped role (branch_head, branch_wfm, manager, process_manager) could read every
+  // branch's punches through this merged console despite the route's own comment saying
+  // that must not happen. `undefined` means the caller's scope is org-wide (ORG_ALL) and the
+  // query stays unfiltered; an empty array means the caller's scope resolved to zero
+  // branches and must fail CLOSED (zero rows), never fall through to "no filter" = everything.
+  if (branchIds && branchIds.length === 0) return [];
   return tableExists("biometric_attendance_log")
     .then((exists) => exists
       ? queryRows(
@@ -601,8 +611,10 @@ export async function getCosecLatestPunches(_actor: Actor) {
                   bal.total_punches, bal.raw_minutes, bal.device_id, bal.source_system
              FROM biometric_attendance_log bal
              LEFT JOIN employees e ON e.id = bal.employee_id
+            ${branchIds ? `WHERE e.branch_id IN (${branchIds.map(() => "?").join(",")})` : ""}
             ORDER BY bal.punch_date DESC, bal.migrated_at DESC
             LIMIT 100`,
+          branchIds ?? [],
         )
       : []);
 }
