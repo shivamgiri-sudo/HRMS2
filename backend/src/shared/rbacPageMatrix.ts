@@ -695,6 +695,22 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "TEAM_ATTENDANCE",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Branch heads previously had visibility into only a few individual WFM sub-pages
+    // (WFM_LIVE_TRACKER, WFM_ATTENDANCE_EXCEPTIONS, RTA_BOARD above) despite owning
+    // everything happening in their branch's WFM operations. Added 2026-09-16, with a
+    // matching role_page_access migration: full read access to roster/attendance
+    // planning, view-only (write endpoints stay wfm/admin-only) on the config-style ones.
+    "WFM_DASHBOARD",
+    "WFM_ATTENDANCE_DASHBOARD",
+    "WFM_ROSTER",
+    "WFM_AUTO_ROSTER",
+    "WFM_PLANNING_RULES",
+    "WFM_SLOT_REQUIREMENTS",
+    "WFM_WEEKOFF_DAY_RULES",
+    "WFM_WEEKOFF_FAIRNESS",
+    "ATTENDANCE_DISPUTES",
+    "ATTENDANCE_REGULARIZATION",
+    "ROSTER_MASTER",
   ],
   branch_hr: [
     "ATS_BRANCH_HEAD_APPROVAL",

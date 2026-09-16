@@ -51,7 +51,10 @@ export default function WeekoffFairness() {
       .catch(() => setProcesses([]));
   }, []);
 
-  const allowed = ["wfm", "admin", "super_admin"].some(r => roleKeys.includes(r));
+  const allowed = ["wfm", "admin", "super_admin", "branch_head"].some(r => roleKeys.includes(r));
+  // Compute (recalculate + write scores) stays wfm/admin/super_admin-only on the backend —
+  // branch_head is view-only here, so the button is hidden rather than shown and 403ing.
+  const canCompute = ["wfm", "admin", "super_admin"].some(r => roleKeys.includes(r));
 
   // Was raw fetch() to a relative URL with a manually-read localStorage token — on this
   // dev setup that resolves against the Vite origin (8080), not the real API (5055), so
@@ -123,9 +126,11 @@ export default function WeekoffFairness() {
         </Select>
         <Input type="date" value={weekStartDate} onChange={(e) => setWeekStartDate(e.target.value)} className="w-44" />
         <Button onClick={fetchScores} disabled={loading || !processId}>Load</Button>
-        <Button variant="secondary" onClick={computeScores} disabled={computing || !processId}>
-          {computing ? "Computing…" : "Compute Scores"}
-        </Button>
+        {canCompute && (
+          <Button variant="secondary" onClick={computeScores} disabled={computing || !processId}>
+            {computing ? "Computing…" : "Compute Scores"}
+          </Button>
+        )}
       </div>
 
       {rows.length > 0 && (
@@ -164,17 +169,23 @@ export default function WeekoffFairness() {
                     <td className="px-3 py-2">{row.consecutive_no_preferred_weekoff > 0 && <Badge variant="secondary">{row.consecutive_no_preferred_weekoff}</Badge>}</td>
                     <td className="px-3 py-2 max-w-[160px] truncate">{row.allocation_exception_reason ?? "—"}</td>
                     <td className="px-3 py-2">
-                      {row.assigned_day == null && !inp && (
-                        <Button size="sm" variant="outline" onClick={() => setInline((p) => ({ ...p, [row.employee_id]: { day: "", reason: "" } }))}>
-                          Record
-                        </Button>
-                      )}
-                      {inp && (
-                        <div className="flex gap-1 items-center">
-                          <Input className="w-14 h-7 text-xs" type="number" min={0} max={6} placeholder="0-6" value={inp.day} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], day: e.target.value } }))} />
-                          <Input className="w-24 h-7 text-xs" placeholder="reason" value={inp.reason} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], reason: e.target.value } }))} />
-                          <Button size="sm" className="h-7 text-xs" onClick={() => recordAllocation(row)}>Save</Button>
-                        </div>
+                      {!canCompute ? (
+                        "—"
+                      ) : (
+                        <>
+                          {row.assigned_day == null && !inp && (
+                            <Button size="sm" variant="outline" onClick={() => setInline((p) => ({ ...p, [row.employee_id]: { day: "", reason: "" } }))}>
+                              Record
+                            </Button>
+                          )}
+                          {inp && (
+                            <div className="flex gap-1 items-center">
+                              <Input className="w-14 h-7 text-xs" type="number" min={0} max={6} placeholder="0-6" value={inp.day} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], day: e.target.value } }))} />
+                              <Input className="w-24 h-7 text-xs" placeholder="reason" value={inp.reason} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], reason: e.target.value } }))} />
+                              <Button size="sm" className="h-7 text-xs" onClick={() => recordAllocation(row)}>Save</Button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                   </tr>

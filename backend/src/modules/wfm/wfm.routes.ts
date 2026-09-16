@@ -2095,7 +2095,10 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
 
 // ── Week-off fairness scores ──────────────────────────────────────────────────
 
-wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+// branch_head added 2026-09-16: view-only, matching the read/write split already used by
+// planning-rules/slot-requirements/weekoff-day-rules — branch heads can see fairness scores
+// for their branch, but /compute (which recalculates and writes scores) stays wfm/admin-only.
+wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin", "branch_head"), h(async (req, res) => {
   const { getFairnessScoresForWeek } = await import("./weekoff-fairness.service.js");
   const processId = String(req.query.processId ?? "");
   const weekStartDate = String(req.query.weekStartDate ?? "");

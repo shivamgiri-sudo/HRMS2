@@ -212,11 +212,11 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-rules"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRulesPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
       {/* Superseded by RosterBuilderPage — redirect */}
       <Route path="/wfm/auto-roster"   element={<Navigate to="/wfm/roster-builder" replace />} />
-      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
       {/* No Gate pageCode here (unlike siblings above): canViewPage() fails closed for any
           pageCode absent from the page-access catalog, and adding one is a production data
           seed outside what a code change should do unreviewed. roles={...} is the live
@@ -235,7 +235,7 @@ export const workforceRouteElements = (
               here. A pageCode can be added later by whoever administers the access catalog. */}
       <Route path="/wfm/rest-policy"       element={<ProtectedRoute roles={['super_admin','admin','wfm','hr']}><NativeWFMRestPolicyConfig /></ProtectedRoute>} />
       <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm','hr','manager']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
-      <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_head']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
       <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
 
       {/* AON & Attrition analytics — the same view the Reports hub serves as its `aon` tab,

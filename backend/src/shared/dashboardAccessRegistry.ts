@@ -103,7 +103,10 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     // 'manager' added 2026-08-22: plain team/branch managers had no WFM Dashboard entitlement
     // at all — not deliberate scoping, just never granted. They already hold the same-shaped
     // Operations Dashboard grant; this brings WFM into parity with that.
-    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "manager", "super_admin"],
+    // 'branch_head' added 2026-09-16: branch heads own everything happening in their branch's
+    // WFM operations and had no entitlement to the WFM dashboard itself, only individual
+    // sub-pages (RTA Board, Live Tracker, Capacity Dashboard).
+    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "manager", "branch_head", "super_admin"],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["attendance", "productivity"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -114,7 +117,8 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "WFM Attendance",
     route: "/wfm-attendance",
     pageCode: "WFM_ATTENDANCE_DASHBOARD",
-    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "hr", "operations_manager", "super_admin"],
+    // 'branch_head' added 2026-09-16: see WFM_DASHBOARD above — same branch-oversight rationale.
+    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "hr", "operations_manager", "branch_head", "super_admin"],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS", "TEAM"],
     sensitiveMetrics: ["attendance", "biometric"],
     permissions: { drilldown: true, export: true, filters: true },
