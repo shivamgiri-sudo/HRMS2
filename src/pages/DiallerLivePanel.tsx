@@ -807,7 +807,7 @@ function InboundDashboard({ f }: { f: Filters }) {
                     {([{ label: "Total Handled", value: repeatQ.data.totals.total.toLocaleString(), color: KPIG[0] }, { label: "Unique Callers", value: repeatQ.data.totals.unique.toLocaleString(), color: KPIG[1] }, { label: "Repeat Calls", value: repeatQ.data.totals.repeat.toLocaleString(), color: KPIG[2] }, { label: "Repeat %", value: `${repeatQ.data.totals.repeatPct.toFixed(1)}%`, color: KPIG[6] }] as KpiSpec[]).map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, trend: ibRepeatTrend(f) }) : undefined} />)}
                   </div>
                   <Panel title="Daily Repeat Contribution">
-                    <ResponsiveContainer width="100%" height={200}><AreaChart data={repeatQ.data.daily}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 9 }} /><Tooltip /><Area type="monotone" dataKey="total" stroke="#93c5fd" fill="#dbeafe" name="Total" /><Area type="monotone" dataKey="repeat" stroke="#e5484d" fill="#fee2e2" name="Repeat" /></AreaChart></ResponsiveContainer>
+                    <ResponsiveContainer width="100%" height={200}><AreaChart data={repeatQ.data.daily}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 9 }} /><Tooltip labelFormatter={fmtD} /><Area type="monotone" dataKey="total" stroke="#93c5fd" fill="#dbeafe" name="Total" /><Area type="monotone" dataKey="repeat" stroke="#e5484d" fill="#fee2e2" name="Repeat" /></AreaChart></ResponsiveContainer>
                   </Panel>
                 </>
               )}

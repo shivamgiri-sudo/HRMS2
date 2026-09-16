@@ -12,6 +12,57 @@ import {
 } from "./NativeSalesDashboard";
 import { HousingDashboardEmbed } from "./NativeHousingDashboards";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
+
+/**
+ * Real inline upload, keyed by processCode (not mapping.type, since Housing
+ * Owner/Premium share one dashboard type but have distinct upload sets).
+ * Every code here already has a working rpc_name in BulkUploadHub's
+ * IMPORT_RPC_BY_TYPE — this is packaging, not new backend capability.
+ * Modeled on a pattern from a colleague's fork (tausifansari-mcn/HRMS-2's
+ * ProcessPerformanceV2Page), which embeds uploads next to their dashboard
+ * instead of only in the separate Bulk Upload Hub.
+ */
+const PROCESS_MASMIS_UPLOADS: Record<string, Array<{ code: string; label: string }>> = {
+  CLOVIA: [
+    { code: "CLOVIA_EMAIL_DAILY", label: "Email Daily" },
+    { code: "CLOVIA_CHAT_DAILY", label: "Chat Daily" },
+    { code: "CLOVIA_CRM_DISPOSITION", label: "CRM Disposition" },
+    { code: "CLOVIA_FEEDBACK", label: "Feedback (CSAT/DSAT)" },
+    { code: "CLOVIA_QUALITY_AUDIT", label: "Quality Audit" },
+    { code: "CLOVIA_RECHURN_CALLS", label: "Rechurn Calls" },
+    { code: "CLOVIA_TEAM_ALIGNMENT", label: "Team Alignment" },
+    { code: "CL_APR_MASMIS", label: "APR" },
+    { code: "CL_CHAT_MASMIS", label: "Chat" },
+    { code: "CL_DISPO_MASMIS", label: "Disposition" },
+    { code: "CL_EMAIL_RAW_MASMIS", label: "Email Raw" },
+    { code: "CL_FEEDBACK_MASMIS", label: "Feedback (raw)" },
+    { code: "CL_IB_CDR_MASMIS", label: "Inbound CDR" },
+    { code: "CL_OUTBOUND_MASMIS", label: "Outbound" },
+    { code: "CL_QUALITY_MASMIS", label: "Quality (raw)" },
+    { code: "CL_RECHURN_CALL_MASMIS", label: "Rechurn Call (raw)" },
+  ],
+  DU_DIGITAL: [
+    { code: "DU_APR_KOREA", label: "APR — Korea" },
+    { code: "DU_APR_THAILAND", label: "APR — Thailand" },
+    { code: "DU_TEAM_MAPPING_KOREA", label: "Team Mapping — Korea" },
+    { code: "DU_TEAM_MAPPING_THAILAND", label: "Team Mapping — Thailand" },
+  ],
+  HOUSING_OWNER: [
+    { code: "HOUSING_OWNER_INCENTIVE", label: "Incentive" },
+    { code: "HOUSING_OWNER_LEAD_PIPELINE", label: "Lead Pipeline" },
+    { code: "OWNER_SALE_MASMIS", label: "Sale" },
+    { code: "OWNER_CDR_MASMIS", label: "CDR" },
+    { code: "OWNER_AGENT_DETAILS_MASMIS", label: "Agent Details" },
+  ],
+  HOUSING_PREMIUM: [
+    { code: "HOUSING_PREMIUM_AGENT_TARGET", label: "Agent Target & Achievement" },
+    { code: "HOUSING_PREMIUM_SALE_RAW", label: "Sale Raw" },
+    { code: "PRE_SALE_MASMIS", label: "Sale" },
+    { code: "PRE_CDR_MASMIS", label: "CDR" },
+    { code: "PRE_AGENT_DETAILS_MASMIS", label: "Agent Details" },
+  ],
+};
 
 // Process code → sales dashboard type. Derived from live process list 2026-09-15.
 const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
@@ -80,6 +131,17 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       {/* This brand's sales uploads — the Brand Sales Analytics "Upload Data"
           tab, narrowed to the selected process. */}
       {canUpload && UPLOAD_BRAND[mapping.type] && <UploadPanel brand={UPLOAD_BRAND[mapping.type]} />}
+
+      {/* Real inline upload for processes whose only prior upload path was
+          either "go to the Bulk Upload Hub" (ProcessDataPanel's banner) or
+          nothing at all (Housing). Every code here already imports through
+          the generic bulk-upload system — see PROCESS_MASMIS_UPLOADS above. */}
+      {canUpload && PROCESS_MASMIS_UPLOADS[processCode] && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Upload Data</p>
+          <MasmisUploaderGrid templates={PROCESS_MASMIS_UPLOADS[processCode]} />
+        </div>
+      )}
     </div>
   );
 }
@@ -123,7 +185,7 @@ import {
   ShieldAlert, Sparkles, Target, Truck, Upload, User, UserCheck, UserPlus, Users, Users2, X,
 } from "lucide-react";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart,
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -695,18 +757,30 @@ function GasActionItem({ index, severity, title, body }: {
 }
 
 /** Executive Brief card (dark navy with score ring + health status + signal grid) */
-function GasExecutiveBrief({ processName, headcount, metrics, metricsWithData, staleCount, failCount, passCount, periodLabel }: {
+function GasExecutiveBrief({ processName, headcount, metrics, metricsWithData, staleCount, failCount, passCount, periodLabel, health: bh }: {
   processName: string; headcount: number; metrics: number; metricsWithData: number;
   staleCount: number; failCount: number; passCount: number; periodLabel: string;
+  health?: ProcessBusinessHealth;
 }) {
   const totalTargeted = failCount + passCount;
   const scorePct = totalTargeted > 0 ? Math.round((passCount / totalTargeted) * 100) : (metricsWithData > 0 ? Math.round((metricsWithData / metrics) * 100) : 0);
-  const health = scorePct >= 80 ? { label: "HEALTHY", bg: "rgba(69,212,154,.16)", color: "#7ff0bb", border: "rgba(95,226,169,.22)" }
+  const status = scorePct >= 80 ? { label: "HEALTHY", bg: "rgba(69,212,154,.16)", color: "#7ff0bb", border: "rgba(95,226,169,.22)" }
     : scorePct >= 55 ? { label: "WATCH", bg: "rgba(232,155,25,.16)", color: "#ffd283", border: "rgba(255,203,106,.24)" }
     : { label: "CRITICAL", bg: "rgba(229,72,77,.18)", color: "#ffb4b7", border: "rgba(255,153,157,.24)" };
   const narrative = totalTargeted > 0
-    ? `${passCount} of ${totalTargeted} targeted metrics are on track. ${failCount > 0 ? `${failCount} metric${failCount === 1 ? "" : "s"} missing target.` : "All targeted metrics passing."}`
-    : `${metricsWithData} of ${metrics} metrics have data for this period. ${staleCount > 0 ? `${staleCount} metric${staleCount === 1 ? "" : "s"} may be stale.` : ""}`;
+    ? `${passCount} of ${totalTargeted} targeted metrics are on track.${failCount > 0 ? ` ${failCount} metric${failCount === 1 ? "" : "s"} missing target.` : " All targeted metrics passing."}`
+    : `${metricsWithData} of ${metrics} metrics have data.${staleCount > 0 ? ` ${staleCount} may be stale.` : ""}`;
+  const fmtLakhBrief = (v: number | null): string => {
+    if (v === null) return "—";
+    const abs = Math.abs(v); const sign = v < 0 ? "-" : "";
+    if (abs >= 10_000_000) return `${sign}₹${(abs / 10_000_000).toFixed(1)}Cr`;
+    if (abs >= 100_000) return `${sign}₹${(abs / 100_000).toFixed(1)}L`;
+    if (abs >= 1000) return `${sign}₹${(abs / 1000).toFixed(0)}K`;
+    return `${sign}₹${abs.toLocaleString("en-IN")}`;
+  };
+  const revPerAgent = bh?.finance?.revenue && (bh.headcount.activeHc ?? 0) > 0
+    ? Math.round(bh.finance.revenue / bh.headcount.activeHc) : null;
+  const hcGap = bh?.headcount?.gap ?? null;
   return (
     <div style={{ padding: "16px 18px", borderRadius: 16, border: "1px solid #1b5770", color: "#fff", position: "relative", overflow: "hidden", background: GAS_BRIEF }}>
       <div aria-hidden style={{ position: "absolute", width: 220, height: 220, borderRadius: "50%", right: -80, bottom: -125, border: "35px solid rgba(255,255,255,.035)", pointerEvents: "none" }} />
@@ -719,17 +793,21 @@ function GasExecutiveBrief({ processName, headcount, metrics, metricsWithData, s
         <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "12px 0" }}>
           <GasScoreRing pct={scorePct} />
           <div>
-            <span style={{ display: "inline-flex", padding: "5px 8px", borderRadius: 999, background: health.bg, color: health.color, border: `1px solid ${health.border}`, fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: .5 }}>
-              {health.label}
+            <span style={{ display: "inline-flex", padding: "5px 8px", borderRadius: 999, background: status.bg, color: status.color, border: `1px solid ${status.border}`, fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: .5 }}>
+              {status.label}
             </span>
             <p style={{ margin: "7px 0 0", color: "#d2e5ee", lineHeight: 1.45, fontSize: 11.5, fontWeight: 600, maxWidth: 500 }}>{narrative}</p>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7 }}>
-          <GasSignal name="Headcount" value={String(headcount)} note="active" />
-          <GasSignal name="Metrics" value={String(metrics)} note="tracked" />
-          <GasSignal name="With data" value={String(metricsWithData)} note={`${metrics > 0 ? Math.round(metricsWithData / metrics * 100) : 0}% coverage`} />
-          <GasSignal name="Stale" value={String(staleCount)} note={staleCount === 0 ? "feeds current" : "feeds quiet"} />
+          <GasSignal name="Headcount" value={String(headcount)}
+            note={bh?.headcount?.mandatedHc ? `of ${bh.headcount.mandatedHc} mandate` : "active agents"} />
+          <GasSignal name="Quality" value={totalTargeted > 0 ? `${scorePct}%` : "—"}
+            note={`${passCount} pass · ${failCount} fail`} />
+          <GasSignal name="Rev / Agent" value={fmtLakhBrief(revPerAgent)}
+            note="monthly productivity" />
+          <GasSignal name="HC Gap" value={hcGap !== null ? (hcGap >= 0 ? `+${hcGap}` : String(hcGap)) : "—"}
+            note={hcGap !== null ? (hcGap >= 0 ? "above mandate" : "below mandate") : "no mandate"} />
         </div>
       </div>
     </div>
@@ -930,7 +1008,7 @@ function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
       </div>
       {/* Value row */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 4, paddingLeft: 7 }}>
-        <span style={{ fontSize: 21, lineHeight: 1.1, fontWeight: 950, color: r.value === null ? "#94a3b8" : valueColor, fontStyle: r.value === null ? "italic" : undefined, fontSize: r.value === null ? 12 : 21 } as React.CSSProperties}>
+        <span style={{ lineHeight: 1.1, fontWeight: 950, color: r.value === null ? "#94a3b8" : valueColor, fontStyle: r.value === null ? "italic" : undefined, fontSize: r.value === null ? 12 : 21 } as React.CSSProperties}>
           {formatValue(r.value, r.unit)}
         </span>
         {d && (
@@ -1006,23 +1084,23 @@ function EnhancedMetricCard({ r, accent, staleAfter, period, onOpen }: {
       <div style={{ padding: "7px 10px 6px 12px" }}>
         {/* Top row: label + status badge (single line, tight) */}
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 3, marginBottom: 3 }}>
-          <p style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: ".4px", color: "#6d7b8c",
+          <p style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: "#6d7b8c",
             fontWeight: 900, lineHeight: 1.2, flex: 1, overflow: "hidden",
             display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" } as React.CSSProperties}>
             {r.label}
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, paddingTop: 1 }}>
-            {status === "pass" && <span style={{ fontSize: 7.5, fontWeight: 900, color: "#15803d", background: "#dcfce7", borderRadius: 3, padding: "0px 3px" }}>✓</span>}
-            {status === "fail" && <span style={{ fontSize: 7.5, fontWeight: 900, color: "#dc2626", background: "#fee2e2", borderRadius: 3, padding: "0px 3px" }}>!</span>}
-            {stale && <Clock style={{ width: 8, height: 8, color: "#e89b19" }} title={`${r.staleDays}d old`} />}
-            {r.source === "manual" && <PenLine style={{ width: 8, height: 8, color: "#7c3aed" }} title="Manual entry" />}
+            {status === "pass" && <span style={{ fontSize: 9, fontWeight: 900, color: "#15803d", background: "#dcfce7", borderRadius: 3, padding: "1px 4px" }}>✓</span>}
+            {status === "fail" && <span style={{ fontSize: 9, fontWeight: 900, color: "#dc2626", background: "#fee2e2", borderRadius: 3, padding: "1px 4px" }}>!</span>}
+            {stale && <span title={`${r.staleDays}d old`}><Clock style={{ width: 8, height: 8, color: "#e89b19" }} /></span>}
+            {r.source === "manual" && <span title="Manual entry"><PenLine style={{ width: 8, height: 8, color: "#7c3aed" }} /></span>}
           </div>
         </div>
 
         {/* Value + delta + numerator — single compact row */}
         <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 1 }}>
           <span style={{
-            fontSize: r.value === null ? 12 : 20,
+            fontSize: r.value === null ? 13 : 22,
             lineHeight: 1, fontWeight: 950, fontVariantNumeric: "tabular-nums",
             color: r.value === null ? "#94a3b8" : valueColor,
             fontStyle: r.value === null ? "italic" : undefined,
@@ -1030,24 +1108,19 @@ function EnhancedMetricCard({ r, accent, staleAfter, period, onOpen }: {
             {formatValue(r.value, r.unit)}
           </span>
           {d && (
-            <span style={{ fontSize: 9, fontWeight: 800,
+            <span style={{ fontSize: 10.5, fontWeight: 800,
               color: d.good === null ? "#94a3b8" : d.good ? "#16a34a" : "#dc2626",
               display: "flex", alignItems: "center", gap: 1 }}>
-              {d.delta === 0 ? <Minus style={{ width: 9, height: 9 }} />
-                : d.delta > 0 ? <ArrowUpRight style={{ width: 9, height: 9 }} /> : <ArrowDownRight style={{ width: 9, height: 9 }} />}
+              {d.delta === 0 ? <Minus style={{ width: 10, height: 10 }} />
+                : d.delta > 0 ? <ArrowUpRight style={{ width: 10, height: 10 }} /> : <ArrowDownRight style={{ width: 10, height: 10 }} />}
               {d.delta !== 0 && Math.abs(d.delta).toFixed(1)}
-            </span>
-          )}
-          {(r.numerator !== null && r.denominator !== null) && (
-            <span style={{ fontSize: 8, color: "#8390a0", fontWeight: 600, marginLeft: 1 }}>
-              {r.numerator.toLocaleString()}/{r.denominator.toLocaleString()}
             </span>
           )}
         </div>
 
         {/* Target caption — only if there's a configured target */}
         {caption && (
-          <p style={{ fontSize: 8, color: status === "fail" ? "#dc2626" : status === "pass" ? "#15803d" : "#8390a0",
+          <p style={{ fontSize: 9.5, color: status === "fail" ? "#dc2626" : status === "pass" ? "#15803d" : "#8390a0",
             fontWeight: 700, marginBottom: hasTarget ? 3 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {caption}
           </p>
@@ -1183,13 +1256,19 @@ function EnhancedSectionBlock({ s, staleAfterDays, period, onOpenDrill, isActive
   const hero = filter === "all" ? heroOf(visible) : null;
   const rest = hero ? visible.filter((m) => m.metricKey !== hero.metricKey) : visible;
 
-  const FILTERS: { key: MetricFilter; label: string; count: number; color: string }[] = [
+  // Split from the .filter() below on purpose: a type annotation on FILTERS
+  // itself does not flow through a chained .filter() back into this array
+  // literal, so each `key` here was inferred as the widened `string` instead
+  // of narrowing to MetricFilter's literal union. Annotating this base array
+  // directly is what actually narrows it.
+  const ALL_FILTERS: { key: MetricFilter; label: string; count: number; color: string }[] = [
     { key: "all",    label: "All",     count: totalMetrics, color: NAVY },
     { key: "pass",   label: "Pass",    count: pass,         color: "#18a866" },
     { key: "fail",   label: "Fail",    count: fail,         color: "#e5484d" },
     { key: "nodata", label: "No data", count: noData,       color: "#94a3b8" },
     { key: "stale",  label: "Stale",   count: staleCount,   color: "#e89b19" },
-  ].filter((f) => f.key === "all" || f.count > 0);
+  ];
+  const FILTERS = ALL_FILTERS.filter((f) => f.key === "all" || f.count > 0);
 
   return (
     <section ref={onRef} style={{
@@ -1381,14 +1460,14 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
           {voc.clapBreakdown.map((c) => {
             const Icon = CLAP_META[c.clap].icon;
             return (
-              <span key={c.clap} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-                <Icon className="h-3 w-3 shrink-0" style={{ color: CLAP_META[c.clap].color }} />
+              <span key={c.clap} className="inline-flex items-center gap-1 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: CLAP_META[c.clap].color }} />
                 {c.clap} {c.pct}%
               </span>
             );
           })}
         </div>
-        <p className="text-[10px] text-slate-400 mt-1.5">
+        <p className="text-[11.5px] text-slate-400 mt-1.5">
           Every audited call classified by its real recorded scenario — Agent means the call turned on
           agent behaviour itself (needs improvement, hold procedure, fraud complaint), not just "someone
           called." Customer/Product/Logistic mean the root issue lay elsewhere.
@@ -1404,7 +1483,7 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
             const n = voc.quotes[cat].positive.length + voc.quotes[cat].negative.length;
             return (
               <button key={cat} type="button" onClick={() => setCategory(cat)}
-                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+                className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
                   category === cat ? "text-white" : "text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
                 style={category === cat ? { background: meta.color, borderColor: meta.color } : undefined}>
                 <Icon className="h-3 w-3 shrink-0" />
@@ -1418,44 +1497,44 @@ function VoiceOfCustomerPanel({ processId, period }: { processId: string; period
 
         <div className="grid sm:grid-cols-2 gap-3 mt-2.5 mb-1">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
+            <p className="text-[12px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
             {quotesForCategory.positive.length ? (
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {quotesForCategory.positive.map((q, i) => (
                   <button key={i} type="button"
                     onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
                     disabled={!q.hasTranscript}
                     title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
-                    className="w-full text-left rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-2.5 py-1.5 cursor-pointer disabled:cursor-not-allowed hover:bg-emerald-100/70 dark:hover:bg-emerald-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500">
-                    <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
-                    <p className="text-[9.5px] text-slate-400 mt-1 flex items-center gap-1">
+                    className="w-full text-left rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-3 py-2 cursor-pointer disabled:cursor-not-allowed hover:bg-emerald-100/70 dark:hover:bg-emerald-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500">
+                    <p className="text-[13px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
+                    <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
                       {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
-                      {q.hasTranscript && <ChevronRight size={10} className="text-slate-300 shrink-0" />}
+                      {q.hasTranscript && <ChevronRight size={11} className="text-slate-300 shrink-0" />}
                     </p>
                   </button>
                 ))}
               </div>
-            ) : <p className="text-[11px] text-slate-400 italic">No positive quotes recorded for this category this period.</p>}
+            ) : <p className="text-[12px] text-slate-400 italic">No positive quotes recorded for this category this period.</p>}
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-red-600 mb-1.5">What went wrong</p>
+            <p className="text-[12px] font-bold uppercase tracking-wide text-red-600 mb-1.5">What went wrong</p>
             {quotesForCategory.negative.length ? (
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {quotesForCategory.negative.map((q, i) => (
                   <button key={i} type="button"
                     onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
                     disabled={!q.hasTranscript}
                     title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
-                    className="w-full text-left rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-2.5 py-1.5 cursor-pointer disabled:cursor-not-allowed hover:bg-red-100/70 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
-                    <p className="text-[11px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
-                    <p className="text-[9.5px] text-slate-400 mt-1 flex items-center gap-1">
+                    className="w-full text-left rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-3 py-2 cursor-pointer disabled:cursor-not-allowed hover:bg-red-100/70 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
+                    <p className="text-[13px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
+                    <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
                       {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
-                      {q.hasTranscript && <ChevronRight size={10} className="text-slate-300 shrink-0" />}
+                      {q.hasTranscript && <ChevronRight size={11} className="text-slate-300 shrink-0" />}
                     </p>
                   </button>
                 ))}
               </div>
-            ) : <p className="text-[11px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
+            ) : <p className="text-[12px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
           </div>
         </div>
       </div>
@@ -1498,11 +1577,11 @@ function ClapHeatmapRow({ processId }: { processId: string }) {
 
   return (
     <div className="mt-2.5">
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
         Last 14 days by category — darker means more calls that day, not worse
       </p>
       <div className="overflow-x-auto">
-        <table className="text-[9px] border-collapse">
+        <table className="text-[11px] border-collapse">
           <thead>
             <tr>
               <th className="text-left pr-2 py-0.5 font-semibold text-slate-400"> </th>
@@ -1734,23 +1813,27 @@ function AgentAuditSummaryPanel({ processId, period }: { processId: string; peri
 /** A single circular gauge, pure SVG (no chart library) -- radius/stroke
  *  fixed so five of these sit evenly in one row on a phone-width screen. */
 function RadialGauge({ label, pct }: { label: string; pct: number | null }) {
-  const r = 30; const stroke = 6; const c = 2 * Math.PI * r;
+  const r = 38; const stroke = 8; const c = 2 * Math.PI * r;
   const value = pct ?? 0;
   const color = value >= 90 ? C_GREEN : value >= 75 ? C_AMBER : C_RED;
   return (
-    <div className="flex flex-col items-center gap-1">
-      <svg width={76} height={76} viewBox="0 0 76 76" className="-rotate-90">
-        <circle cx={38} cy={38} r={r} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-slate-100 dark:text-slate-800" />
-        {pct !== null && (
-          <circle cx={38} cy={38} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
-            strokeDasharray={c} strokeDashoffset={c - (value / 100) * c}
-            className="transition-all duration-500" />
-        )}
-      </svg>
-      <div className="-mt-[52px] text-[13px] font-bold" style={{ color: pct !== null ? color : "#94A3B8" }}>
-        {pct !== null ? `${pct}%` : "—"}
+    <div className="flex flex-col items-center gap-0.5">
+      <div className="relative" style={{ width: 96, height: 96 }}>
+        <svg width={96} height={96} viewBox="0 0 96 96" className="-rotate-90" style={{ position: "absolute", inset: 0 }}>
+          <circle cx={48} cy={48} r={r} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-slate-100 dark:text-slate-800" />
+          {pct !== null && (
+            <circle cx={48} cy={48} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
+              strokeDasharray={c} strokeDashoffset={c - (value / 100) * c}
+              className="transition-all duration-500" />
+          )}
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-[19px] font-black tabular-nums leading-none" style={{ color: pct !== null ? color : "#94A3B8" }}>
+            {pct !== null ? `${pct}%` : "—"}
+          </span>
+        </div>
       </div>
-      <div className="mt-[22px] text-[9.5px] text-center text-slate-500 dark:text-slate-400 font-medium leading-tight max-w-[76px]">{label}</div>
+      <div className="text-[12px] text-center text-slate-600 dark:text-slate-400 font-semibold leading-tight max-w-[96px] mt-0.5">{label}</div>
     </div>
   );
 }
@@ -1769,7 +1852,7 @@ function ScoreComponentsPanel({ processId, period }: { processId: string; period
 
   return (
     <ChartCard title="Score components" subtitle="Five skill groups behind the overall call quality score">
-      <div className="px-3 pb-2">
+      <div className="px-4 pb-4 pt-1">
         {isLoading || !sc ? (
           <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading score components…
@@ -1777,7 +1860,7 @@ function ScoreComponentsPanel({ processId, period }: { processId: string; period
         ) : !sc.available ? (
           <p className="text-xs text-slate-400 italic py-1">{sc.reason}</p>
         ) : (
-          <div className="flex items-start justify-between gap-1 flex-wrap">
+          <div className="flex items-start justify-around gap-3 flex-wrap">
             {sc.components.map((c) => <RadialGauge key={c.key} label={c.label} pct={c.scorePct} />)}
           </div>
         )}
@@ -1801,7 +1884,7 @@ function AchtCategorizationPanel({ processId, period }: { processId: string; per
 
   return (
     <ChartCard title="ACHT categorization" subtitle="Audit quality and fatal rate by how long the call ran">
-      <div className="px-3 pb-1">
+      <div className="px-3 pb-3 pt-1">
         {isLoading || !acht ? (
           <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading ACHT categorization…
@@ -1809,32 +1892,34 @@ function AchtCategorizationPanel({ processId, period }: { processId: string; per
         ) : !acht.available ? (
           <p className="text-xs text-slate-400 italic py-1">{acht.reason}</p>
         ) : (
-          <table className="w-full text-[10.5px] border-collapse">
-            <thead>
-              <tr className="text-left text-slate-400 uppercase tracking-wide text-[9px]">
-                <th className="pb-1.5 pr-2 font-semibold">Length</th>
-                <th className="pb-1.5 pr-2 font-semibold text-right">Audits</th>
-                <th className="pb-1.5 pr-2 font-semibold text-right">Score</th>
-                <th className="pb-1.5 font-semibold text-right">Fatal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {acht.rows.map((r) => (
-                <tr key={r.key} className="border-t border-slate-100 dark:border-slate-800">
-                  <td className="py-1 pr-2 font-medium text-slate-700 dark:text-slate-300">{r.label}</td>
-                  <td className="py-1 pr-2 text-right text-slate-500">{r.auditCount}</td>
-                  <td className="py-1 pr-2 text-right font-semibold text-slate-700 dark:text-slate-300">
-                    {r.scorePct !== null ? `${r.scorePct}%` : "—"}
-                  </td>
-                  <td className="py-1 text-right">
-                    {r.fatalCount > 0
-                      ? <span className="text-red-600 font-semibold">{r.fatalCount} ({r.fatalPct}%)</span>
-                      : <span className="text-slate-400">0</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {acht.rows.map((r) => {
+              const scoreColor = r.scorePct === null ? "#94A3B8" : r.scorePct >= 80 ? C_GREEN : r.scorePct >= 65 ? C_AMBER : C_RED;
+              const hasFatal = r.fatalCount > 0;
+              return (
+                <div key={r.key} className="rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 px-3 py-2.5 flex flex-col gap-1">
+                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">{r.label}</div>
+                  <div className="flex items-baseline gap-0.5 mt-0.5">
+                    <span className="text-[26px] font-black leading-none tabular-nums" style={{ color: scoreColor }}>
+                      {r.scorePct !== null ? r.scorePct : "—"}
+                    </span>
+                    {r.scorePct !== null && <span className="text-[13px] font-bold" style={{ color: scoreColor }}>%</span>}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">{r.auditCount}</span> audits
+                  </div>
+                  {hasFatal ? (
+                    <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 px-1.5 py-1 flex items-center gap-1 mt-auto">
+                      <span className="text-[11px] font-bold text-red-600">{r.fatalCount} fatal</span>
+                      <span className="text-[10.5px] text-red-400 tabular-nums">({r.fatalPct}%)</span>
+                    </div>
+                  ) : (
+                    <div className="text-[10.5px] text-slate-300 dark:text-slate-600 mt-auto">No fatals</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </ChartCard>
@@ -1856,7 +1941,7 @@ function CriticalSignalsPanel({ processId, period }: { processId: string; period
 
   return (
     <ChartCard title="Critical signals" subtitle="Share of examined calls carrying each negative-language category">
-      <div className="px-3 pb-2">
+      <div className="px-3 pb-3 pt-1">
         {isLoading || !cs ? (
           <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading critical signals…
@@ -1864,17 +1949,31 @@ function CriticalSignalsPanel({ processId, period }: { processId: string; period
         ) : !cs.available ? (
           <p className="text-xs text-slate-400 italic py-1">{cs.reason}</p>
         ) : (
-          <div className="grid grid-cols-5 gap-1.5">
-            {cs.signals.map((s) => (
-              <div key={s.key} className="flex flex-col items-center gap-0.5 rounded-lg border border-slate-100 dark:border-slate-800 px-1 py-2">
-                <span className="text-lg leading-none">{s.emoji}</span>
-                <span className={`text-[12px] font-bold ${s.pct > 0 ? "text-slate-700 dark:text-slate-200" : "text-slate-300 dark:text-slate-600"}`}>
-                  {s.pct}%
-                </span>
-                <span className="text-[8.5px] text-slate-500 dark:text-slate-400 uppercase tracking-wide text-center leading-tight">{s.label}</span>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="flex gap-1.5">
+              {cs.signals.map((s) => {
+                const hot = s.pct > 0;
+                return (
+                  <div key={s.key} className={`flex-1 rounded-xl border px-1.5 py-2.5 flex flex-col items-center gap-1 transition-colors ${
+                    hot ? "border-red-200 dark:border-red-900 bg-red-50/70 dark:bg-red-950/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/40"
+                  }`}>
+                    <span className="text-[22px] leading-none">{s.emoji}</span>
+                    <span className={`text-[18px] font-black leading-none tabular-nums ${hot ? "text-red-600 dark:text-red-400" : "text-slate-200 dark:text-slate-700"}`}>
+                      {s.pct}%
+                    </span>
+                    <span className={`text-[10px] font-bold uppercase tracking-wide text-center leading-tight ${hot ? "text-red-500 dark:text-red-400" : "text-slate-400"}`}>
+                      {s.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            {cs.totalExamined > 0 && (
+              <p className="text-[9.5px] text-slate-400 mt-2 text-right tabular-nums">
+                {cs.totalExamined.toLocaleString()} calls examined
+              </p>
+            )}
+          </>
         )}
       </div>
     </ChartCard>
@@ -1931,11 +2030,14 @@ function DailyQualityTrendPanel({ processId }: { processId: string }) {
                   <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
                   <ReferenceLine y={trend.targetPct} stroke={C_GREEN} strokeDasharray="4 3" strokeWidth={1.5} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE}
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate}
                     formatter={(_: number, __: string, item: any) =>
                       item?.payload?.score === null ? ["No audits", "Score"] : [`${item.payload.score}%`, "Score"]} />
                   <Bar dataKey="displayHeight" radius={[3, 3, 0, 0]}>
                     {chartData.map((d, i) => <Cell key={i} fill={barColor(d.score, trend.targetPct)} />)}
+                    <LabelList dataKey="score" position="top"
+                      style={{ fontSize: 9, fill: "#475569", fontWeight: 700 }}
+                      formatter={(v: number | null) => v === null ? "" : `${v}%`} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -2122,12 +2224,24 @@ function DayWiseScenarioAuditPanel({ processId, period }: { processId: string; p
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                 <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} />
                 <Legend wrapperStyle={{ fontSize: 10 }} />
-                <Bar dataKey="Complaint" stackId="s" fill={C_RED} radius={[0, 0, 0, 0]} />
-                <Bar dataKey="Query" stackId="s" fill={C_BLUE} />
-                <Bar dataKey="Request" stackId="s" fill={C_AMBER} />
-                <Bar dataKey="Sale Done" stackId="s" fill={C_GREEN} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Complaint" stackId="s" fill={C_RED} radius={[0, 0, 0, 0]}>
+                  <LabelList dataKey="Complaint" position="inside" style={{ fontSize: 9, fill: "#fff", fontWeight: 700 }}
+                    formatter={(v: number) => v > 0 ? v : ""} />
+                </Bar>
+                <Bar dataKey="Query" stackId="s" fill={C_BLUE}>
+                  <LabelList dataKey="Query" position="inside" style={{ fontSize: 9, fill: "#fff", fontWeight: 700 }}
+                    formatter={(v: number) => v > 0 ? v : ""} />
+                </Bar>
+                <Bar dataKey="Request" stackId="s" fill={C_AMBER}>
+                  <LabelList dataKey="Request" position="inside" style={{ fontSize: 9, fill: "#fff", fontWeight: 700 }}
+                    formatter={(v: number) => v > 0 ? v : ""} />
+                </Bar>
+                <Bar dataKey="Sale Done" stackId="s" fill={C_GREEN} radius={[3, 3, 0, 0]}>
+                  <LabelList dataKey="Sale Done" position="top" style={{ fontSize: 9, fill: "#475569", fontWeight: 700 }}
+                    formatter={(v: number) => v > 0 ? v : ""} />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -2187,7 +2301,7 @@ function RepeatAnalysisPanel({ processId, period }: { processId: string; period:
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 9, fill: "#94A3B8" }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
                   <Area type="monotone" dataKey="Unique" stroke={C_BLUE} fill={C_BLUE} fillOpacity={0.15} strokeWidth={1.5} />
                   <Area type="monotone" dataKey="Repeat" stroke={C_AMBER} fill={C_AMBER} fillOpacity={0.3} strokeWidth={1.5} />
@@ -2310,32 +2424,37 @@ function ScenarioDistributionPanel({ processId, period }: { processId: string; p
         ) : !dist.items.length ? (
           <p className="text-xs text-slate-400 italic py-1">No audited calls in this period.</p>
         ) : (
-          <div className="space-y-1.5 pb-1">
+          <div className="space-y-1 pb-2">
             {dist.items.map((item, i) => {
               const color = SCENARIO_DIST_COLORS[i % SCENARIO_DIST_COLORS.length];
               const isOpen = expanded === item.scenario;
               return (
-                <div key={item.scenario}>
+                <div key={item.scenario} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${color}22` }}>
                   <button type="button" onClick={() => setExpanded(isOpen ? null : item.scenario)}
-                    className="w-full text-left group cursor-pointer focus:outline-none">
-                    <div className="flex items-center justify-between text-[11px] mb-0.5">
-                      <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                        <ChevronRight size={11} className={`text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                        {item.scenario}
-                      </span>
-                      <span className="text-slate-500 tabular-nums">{item.count} · {item.pct}%</span>
+                    className="w-full text-left group cursor-pointer focus:outline-none px-2.5 py-2"
+                    style={{ background: isOpen ? `${color}0e` : "transparent" }}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <ChevronRight size={11} className={`shrink-0 transition-transform text-slate-400 ${isOpen ? "rotate-90" : ""}`} />
+                      <span className="flex-1 text-[11.5px] font-semibold text-slate-700 dark:text-slate-300 leading-tight">{item.scenario}</span>
+                      <span className="shrink-0 text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded-full text-white"
+                        style={{ background: color }}>{item.pct}%</span>
+                      <span className="shrink-0 text-[10px] text-slate-400 tabular-nums">{item.count}</span>
                     </div>
-                    <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden ml-3.5">
-                      <div className="h-full rounded-full transition-all group-hover:opacity-80"
-                        style={{ width: `${Math.max(2, item.pct)}%`, background: color }} />
+                    <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden ml-[19px]">
+                      <div className="h-full rounded-full transition-all"
+                        style={{ width: `${Math.max(2, item.pct)}%`, background: color, opacity: isOpen ? 1 : 0.75 }} />
                     </div>
                   </button>
-                  {isOpen && (
-                    <div className="ml-6 mt-1 mb-2 space-y-1 border-l-2 pl-2" style={{ borderColor: color }}>
-                      {item.children.map((c) => (
-                        <div key={c.scenario1} className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
-                          <span className="truncate">{c.scenario1}</span>
-                          <span className="tabular-nums shrink-0 ml-2">{c.count} · {c.pct}%</span>
+                  {isOpen && item.children.length > 0 && (
+                    <div className="mx-2.5 mb-2 mt-1 rounded-lg overflow-hidden border" style={{ borderColor: `${color}30` }}>
+                      {item.children.map((c, ci) => (
+                        <div key={c.scenario1}
+                          className={`flex items-center justify-between px-2.5 py-1.5 text-[10.5px] ${ci > 0 ? "border-t" : ""}`}
+                          style={{ borderColor: `${color}20`, background: ci % 2 === 0 ? `${color}06` : "transparent" }}>
+                          <span className="text-slate-600 dark:text-slate-400 truncate leading-tight">{c.scenario1}</span>
+                          <span className="tabular-nums font-semibold shrink-0 ml-3" style={{ color }}>
+                            {c.count} <span className="font-normal text-slate-400">· {c.pct}%</span>
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -2637,20 +2756,25 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
           </p>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%" minWidth={280}>
-              <LineChart data={wc.daily} margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
+              <LineChart data={wc.daily} margin={{ top: 8, right: 24, bottom: 0, left: 0 }}>
                 <CartesianGrid {...GRID} vertical={false} />
                 <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
-                  tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
-                <YAxis domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE}
+                  tickFormatter={fmtDate} minTickGap={22} />
+                <YAxis
+                  domain={[
+                    (dataMin: number) => Math.max(0, Math.floor(dataMin * 10) / 10 - 1),
+                    (dataMax: number) => Math.min(100, Math.ceil(dataMax * 10) / 10 + 2),
+                  ]}
+                  unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} tickCount={6} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate}
                   formatter={(v: number, n: string) => [v === null ? "no data" : `${v.toFixed(1)}%`,
                     n === "agentClapPct" ? "Agent-attributed calls" : "≤30-day tenure share"]} />
                 <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
                   formatter={(n: string) => n === "agentClapPct" ? "Agent-attributed calls" : "≤30-day tenure share"} />
-                <Line type="monotone" dataKey="agentClapPct" stroke={CLAP_META.Agent.color} strokeWidth={2}
-                  dot={false} isAnimationActive={false} connectNulls={false} />
+                <Line type="monotone" dataKey="agentClapPct" stroke={CLAP_META.Agent.color} strokeWidth={2.5}
+                  dot={{ r: 3, fill: CLAP_META.Agent.color }} isAnimationActive={false} connectNulls={false} />
                 <Line type="monotone" dataKey="rampCohortPct" stroke={C_AMBER} strokeWidth={2}
-                  strokeDasharray="4 2" dot={false} isAnimationActive={false} connectNulls={false} />
+                  strokeDasharray="4 2" dot={{ r: 2, fill: C_AMBER, strokeWidth: 0 }} isAnimationActive={false} connectNulls={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -2669,9 +2793,9 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
                   <LineChart data={wc.daily} margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
                     <CartesianGrid {...GRID} vertical={false} />
                     <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
-                      tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
+                      tickFormatter={fmtDate} minTickGap={22} />
                     <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={TOOLTIP_STYLE}
+                    <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate}
                       formatter={(v: number, n: string) => [v === null ? "no roster data" : v,
                         n === "plannedHeadcount" ? "Rostered" : "Present"]} />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }}
@@ -2705,10 +2829,13 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
                 <BarChart data={wc.weeklyAttrition} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
                   <CartesianGrid {...GRID} vertical={false} />
                   <XAxis dataKey="weekStart" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
-                    tickFormatter={(v) => String(v).slice(5)} />
+                    tickFormatter={fmtDate} />
                   <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} allowDecimals={false} width={20} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v, "Exits"]} />
-                  <Bar dataKey="exits" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: number) => [v, "Exits"]} />
+                  <Bar dataKey="exits" fill={C_RED} radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                    <LabelList dataKey="exits" position="top" style={{ fontSize: 10, fill: "#dc2626", fontWeight: 700 }}
+                      formatter={(v: number) => v > 0 ? v : ""} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -2725,6 +2852,19 @@ function WorkforceCorrelationPanel({ processId, period }: { processId: string; p
   );
 }
 
+/** Format any date value as DD-MMM-YY (e.g. 03-Sep-26) for chart axes and tooltips. */
+function fmtDate(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}-${MON[parseInt(iso[2], 10) - 1]}-${iso[1].slice(2)}`;
+  const d = new Date(s);
+  if (!isNaN(d.getTime()))
+    return `${String(d.getDate()).padStart(2,"0")}-${MON[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+  return s;
+}
+
 function currency(v: number | null): string {
   if (v === null) return "no data";
   const rounded = Math.round(v);
@@ -2734,9 +2874,9 @@ function currency(v: number | null): string {
 
 const REVENUE_STATUS_LABEL: Record<string, string> = {
   recognized: "Recognized",
-  configured_no_delivery: "Configured (no delivery feed)",
-  accounting_fallback: "Fallback — no revenue rule was in effect",
-  missing_rule: "No revenue rule configured",
+  configured_no_delivery: "Configured — no delivery feed",
+  accounting_fallback: "Accounting fallback",
+  missing_rule: "No rule configured",
 };
 
 /** A single stat in the Business Health grid — value, its own honest-null state, a caption. */
@@ -2911,67 +3051,95 @@ function InsightCard({ insight: ins }: { insight: Insight }) {
   );
 }
 
-function ProcessCardInsightsPanel({ processId, ops }: { processId: string; ops: Operations }) {
-  // Shares the exact queryKey BusinessHealthPanel uses -- react-query dedupes
-  // this against that component's own fetch, so this panel costs zero extra
-  // network requests, not a second poll of the same endpoint.
-  const { data } = useQuery({
-    queryKey: ["process-operations", "business-health", processId],
-    queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessBusinessHealth>>(
-      `/api/process-operations/${processId}/business-health`),
-    staleTime: 60_000,
-  });
-  const health = data?.data;
-  const insights = useMemo(() => deriveInsights(ops, health), [ops, health]);
-  const pareto = useMemo(() => deriveParetoData(ops), [ops]);
+const PERF_SECTION_STYLE: Record<string, { text: string; border: string; bg: string }> = {
+  operations: { text: "#1d4ed8", border: "#bfdbfe", bg: "#eff6ff" },
+  conversion:  { text: "#15803d", border: "#bbf7d0", bg: "#f0fdf4" },
+  risk:        { text: "#c2410c", border: "#fed7aa", bg: "#fff7ed" },
+  conduct:     { text: "#b45309", border: "#fde68a", bg: "#fffbeb" },
+  quality:     { text: "#7e22ce", border: "#e9d5ff", bg: "#faf5ff" },
+  hygiene:     { text: "#475569", border: "#e2e8f0", bg: "#f8fafc" },
+};
 
-  if (!insights.length) {
-    return (
-      <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 px-3.5 py-2.5 flex items-center gap-2">
-        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-        <p className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">
-          Nothing missing target right now — headcount, quality and hygiene are all within their configured targets.
-        </p>
-      </div>
-    );
-  }
+function ProcessCardInsightsPanel({ processId: _processId, ops, onDrill }: {
+  processId: string; ops: Operations; onDrill?: (key: string) => void;
+}) {
+  const allWithData   = ops.sections.flatMap((s) => s.metrics).filter((m) => m.value !== null);
+  const passingCount  = allWithData.filter((m) => targetStatus(m) === "pass").length;
+  const failingCount  = allWithData.filter((m) => targetStatus(m) === "fail").length;
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="flex items-center gap-1.5 px-3.5 pt-3 pb-2">
-        <Lightbulb className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-          Read this first — {insights.length} thing{insights.length === 1 ? "" : "s"} missing target
-        </p>
+    <div className="space-y-3">
+      {/* Summary strip */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 text-[13px] font-bold text-emerald-600">
+          <CheckCircle2 className="h-3.5 w-3.5" />{passingCount} on target
+        </span>
+        {failingCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-[13px] font-bold text-red-500">
+            <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />{failingCount} missing target
+          </span>
+        )}
+        <span className="text-[11px] text-slate-400">{allWithData.length} metrics with data</span>
       </div>
-      <div className="grid gap-2 px-3.5 pb-3.5 sm:grid-cols-2">
-        {insights.map((ins, i) => <InsightCard key={i} insight={ins} />)}
-      </div>
-      {pareto.length >= 2 && (
-        <div className="px-3.5 pb-3.5">
-          <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
-            Biggest drivers — relative gap vs. each metric's own target, ranked worst first
-          </p>
-          <div className="h-44">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={pareto} margin={{ top: 4, right: 24, bottom: 0, left: -14 }}>
-                <CartesianGrid {...GRID} vertical={false} />
-                <XAxis dataKey="label" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
-                  interval={0} angle={-20} textAnchor="end" height={46} />
-                <YAxis yAxisId="left" unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} width={40} />
-                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} width={40} />
-                <Tooltip contentStyle={TOOLTIP_STYLE}
-                  formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, n === "gapPct" ? "Gap vs. target" : "Cumulative"]} />
-                <Bar yAxisId="left" dataKey="gapPct" radius={[3, 3, 0, 0]} name="gapPct">
-                  {pareto.map((p, i) => <Cell key={p.label} fill={i === 0 ? C_RED_TEXT : C_AMBER} />)}
-                </Bar>
-                <Line yAxisId="right" type="monotone" dataKey="cumulativePct" name="cumulativePct"
-                  stroke={C_SLATE} strokeWidth={1.5} dot={{ r: 2.5, fill: C_SLATE }} isAnimationActive={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
+
+      {/* One group per section */}
+      {ops.sections.filter((s) => s.metrics.some((m) => m.value !== null)).map((section) => {
+        const style   = PERF_SECTION_STYLE[section.key] ?? PERF_SECTION_STYLE.hygiene;
+        const sPass   = section.metrics.filter((m) => targetStatus(m) === "pass").length;
+        const sFail   = section.metrics.filter((m) => targetStatus(m) === "fail").length;
+        const hasTarget = section.metrics.some((m) => m.targetValue !== null);
+        return (
+          <div key={section.key}>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-black uppercase tracking-widest" style={{ color: style.text }}>
+                {section.title}
+              </span>
+              {hasTarget && (
+                <span className="text-[10px] tabular-nums text-slate-400">
+                  {sPass}/{sPass + sFail} on target
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {section.metrics.filter((m) => m.value !== null).map((m) => {
+                const status = targetStatus(m);
+                const d      = deltaOf(m);
+                const tileStyle = status === "pass"
+                  ? { border: "#bbf7d0", bg: "#f0fdf4", val: C_GREEN }
+                  : status === "fail"
+                  ? { border: "#fecaca", bg: "#fff5f5", val: C_RED_TEXT }
+                  : { border: style.border, bg: style.bg, val: "#475569" };
+                return (
+                  <button key={m.metricKey} type="button"
+                    onClick={() => onDrill?.(m.metricKey)}
+                    title="Click to see trend, daily readings and employee breakdown"
+                    className={`rounded-xl border px-2.5 py-2 flex flex-col gap-0.5 text-left w-full transition-shadow ${onDrill ? "cursor-pointer hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1" : ""}`}
+                    style={{ borderColor: tileStyle.border, background: tileStyle.bg }}>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 truncate leading-tight flex items-center justify-between gap-1" title={m.label}>
+                      <span className="truncate">{m.label}</span>
+                      {onDrill && <ChevronRight size={10} className="shrink-0 text-slate-300" />}
+                    </div>
+                    <div className="flex items-baseline gap-1 mt-0.5">
+                      <span className="text-[20px] font-black leading-none tabular-nums" style={{ color: tileStyle.val }}>
+                        {formatValue(m.value, m.unit)}
+                      </span>
+                      {d && d.delta !== 0 && (
+                        <span className="text-[11px] font-bold leading-none"
+                          style={{ color: d.good === true ? C_GREEN : d.good === false ? C_RED_TEXT : "#94A3B8" }}>
+                          {d.good === true ? "▲" : d.good === false ? "▼" : "→"}{Math.abs(d.delta).toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                    {m.targetValue !== null && (
+                      <div className="text-[9.5px] text-slate-400 leading-tight">{targetCaption(m)}</div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
@@ -3007,116 +3175,103 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
   }
 
   const { finance, headcount, hiring, periodCode } = health;
+
+  const revenueStatusLabel = finance.revenueStatus
+    ? (REVENUE_STATUS_LABEL[finance.revenueStatus] ?? finance.revenueStatus)
+    : undefined;
+  const revenueIsFallback = finance.revenueStatus === "accounting_fallback" || finance.revenueStatus === "missing_rule";
+
   return (
-    <ChartCard title="Business Health" subtitle={`${periodCode} — revenue, headcount and hiring for this process`}>
-      <div className="px-3 space-y-4">
-        {/* Finance */}
+    <ChartCard title="Business Health" subtitle={`${periodCode} — revenue, headcount and hiring`}>
+      <div className="px-3 pb-3 space-y-3.5">
+
+        {/* ── Finance ── */}
         <div>
-          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">
             <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_BLUE }} />
-            Revenue &amp; margin
+            Revenue &amp; Margin
           </p>
           {finance.available ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <HealthStat label="Revenue" value={currency(finance.revenue)}
-                  caption={finance.revenueStatus ? REVENUE_STATUS_LABEL[finance.revenueStatus] ?? finance.revenueStatus : undefined}
-                  tone={finance.revenue && finance.revenue > 0 ? "good" : "neutral"} />
-                <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} />
-                {finance.agentSalaryIsRealThisMonth ? (
-                  <>
-                    <HealthStat label="Agent salary" value={currency(finance.agentSalary)} />
-                    <HealthStat label="EBIT" value={currency(finance.ebit)}
-                      tone={finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"} />
-                    <HealthStat label="Op %" value={finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`}
-                      tone={finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"} />
-                  </>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-2.5 py-2 flex items-center max-w-[280px]">
-                    <p className="text-[10.5px] text-slate-400 italic">
-                      Agent salary, EBIT and Op % withheld — no payroll run processed for this month yet.
-                    </p>
-                  </div>
-                )}
-              </div>
-              {finance.revenue === 0 && (
-                <p className="text-[9.5px] text-slate-400 italic mt-1.5">
-                  Revenue shows ₹0 because no revenue rule was in effect for this exact month — not because the
-                  process earned nothing. GRN above is real regardless.
-                </p>
-              )}
-              {!finance.agentSalaryIsRealThisMonth && finance.revenue !== null && finance.revenue > 0 && (
-                <p className="text-[9.5px] text-amber-600 dark:text-amber-400 mt-1.5">
-                  Revenue for the month is a recognized figure (the committed monthly rate, not pro-rated by day) —
-                  it isn't directly comparable to a cost figure that hasn't been produced yet either.
-                </p>
-              )}
-            </>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <HealthStat label="Revenue" value={currency(finance.revenue)}
+                caption={revenueStatusLabel}
+                tone={revenueIsFallback ? "neutral" : finance.revenue && finance.revenue > 0 ? "good" : "neutral"}
+                icon={revenueIsFallback ? AlertTriangle : undefined} />
+              <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} tone="neutral" />
+              <HealthStat label="Agent Salary"
+                value={finance.agentSalaryIsRealThisMonth ? currency(finance.agentSalary) : "no data"}
+                caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
+                tone="neutral" icon={Users} />
+              <HealthStat label="EBIT"
+                value={finance.agentSalaryIsRealThisMonth ? currency(finance.ebit) : "no data"}
+                caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
+                tone={!finance.agentSalaryIsRealThisMonth || finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"} />
+              <HealthStat label="Operating %"
+                value={finance.agentSalaryIsRealThisMonth
+                  ? (finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`)
+                  : "no data"}
+                caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
+                tone={!finance.agentSalaryIsRealThisMonth || finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"} />
+            </div>
           ) : (
             <p className="text-[11px] text-slate-400 italic py-1">{finance.reason}</p>
           )}
         </div>
 
-        {/* Headcount vs mandate */}
+        {/* ── Headcount ── */}
         <div>
-          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">
             <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_PURPLE }} />
-            Headcount vs. sanctioned mandate
+            Headcount vs. Mandate
           </p>
-          <div className="flex flex-wrap gap-2">
-            <HealthStat label="Headcount" value={String(headcount.activeHc)} icon={Users}
-              caption={headcount.available && headcount.mandatedHc ? `of ${headcount.mandatedHc} mandate` : undefined}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <HealthStat label="Active Headcount" value={String(headcount.activeHc)} icon={Users}
+              caption={headcount.available && headcount.mandatedHc ? `of ${headcount.mandatedHc} sanctioned` : undefined}
               fillPct={headcount.available && headcount.mandatedHc ? (headcount.activeHc / headcount.mandatedHc) * 100 : undefined}
               fillGood={headcount.available && headcount.mandatedHc ? headcount.activeHc >= headcount.mandatedHc : undefined} />
             {headcount.available ? (
               <>
-                <HealthStat label="Mandate" value={String(headcount.mandatedHc)} icon={Target}
-                  caption={headcount.reason ? "see note below" : undefined} />
-                <HealthStat label="Available count" value={String(headcount.availableCount)} icon={UserCheck}
-                  caption="staffed on this process right now" tone="neutral" />
-                <HealthStat label="Buffer" value={`+${headcount.buffer}`} icon={ArrowUpRight}
-                  caption="staffed above mandate" tone={headcount.buffer! > 0 ? "good" : "neutral"} />
-                <HealthStat label="Shortfall" value={`-${headcount.shortfall}`} icon={AlertTriangle}
-                  caption="staffed below mandate" tone={headcount.shortfall! > 0 ? "bad" : "neutral"} />
+                <HealthStat label="Mandate" value={headcount.mandatedHc !== null ? String(headcount.mandatedHc) : "no data"} icon={Target} />
+                <HealthStat label="Available Now" value={String(headcount.availableCount)} icon={UserCheck}
+                  caption="staffed on process" tone="neutral" />
+                <HealthStat label="Gap vs Mandate"
+                  value={headcount.gap !== null ? (headcount.gap === 0 ? "0" : headcount.gap > 0 ? `+${headcount.gap}` : String(headcount.gap)) : "no data"}
+                  icon={headcount.gap !== null && headcount.gap < 0 ? AlertTriangle : ArrowUpRight}
+                  caption={headcount.gap !== null ? (headcount.gap >= 0 ? "above mandate" : "below mandate") : undefined}
+                  tone={headcount.gap === null ? "neutral" : headcount.gap >= 0 ? "good" : "bad"} />
+                <HealthStat label="Buffer" value={headcount.buffer !== null ? `+${headcount.buffer}` : "no data"} icon={ArrowUpRight}
+                  caption="above mandate" tone={headcount.buffer !== null && headcount.buffer > 0 ? "good" : "neutral"} />
+                <HealthStat label="Shortfall" value={headcount.shortfall !== null ? String(headcount.shortfall) : "no data"} icon={AlertTriangle}
+                  caption="below mandate" tone={headcount.shortfall !== null && headcount.shortfall > 0 ? "bad" : "neutral"} />
               </>
             ) : (
-              <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-2.5 py-2 flex items-center">
-                <p className="text-[10.5px] text-slate-400 italic">{headcount.reason}</p>
+              <div className="col-span-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 px-3 py-2">
+                <p className="text-[11px] text-slate-400 italic">{headcount.reason ?? "No mandate data configured"}</p>
               </div>
             )}
           </div>
-          {headcount.available && headcount.reason && (
-            <p className="text-[9.5px] text-amber-600 dark:text-amber-400 mt-1.5">{headcount.reason}</p>
-          )}
         </div>
 
-        {/* Hiring pipeline */}
+        {/* ── Hiring ── */}
         <div>
-          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1.5">
+          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">
             <span className="w-1 h-4 rounded-full shrink-0" style={{ background: C_AMBER }} />
-            Hiring pipeline
+            Hiring Pipeline
           </p>
-          <div className="flex flex-wrap gap-2">
-            <HealthStat label="Requisition open" value={String(hiring.openRequisitions)} icon={Briefcase}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <HealthStat label="Open Requisitions" value={String(hiring.openRequisitions)} icon={Briefcase}
               tone={hiring.openRequisitions > 0 ? "neutral" : "good"} />
-            <HealthStat label="Hired count" value={String(hiring.hiredCount)} icon={UserPlus}
-              caption="filled via requisition, ever" tone="good" />
-            <HealthStat label="Pending hiring count" value={String(hiring.pendingHiringCount)} icon={Hourglass}
+            <HealthStat label="Open Positions" value={String(hiring.openPositions)} icon={Target}
+              caption="positions yet to be filled" tone={hiring.openPositions > 0 ? "bad" : "good"} />
+            <HealthStat label="Hired (all time)" value={String(hiring.hiredCount)} icon={UserPlus}
+              caption="filled via requisition" tone="good" />
+            <HealthStat label="Pending Hiring" value={String(hiring.pendingHiringCount)} icon={Hourglass}
               caption="requested minus fulfilled" tone={hiring.pendingHiringCount > 0 ? "bad" : "good"} />
-            <HealthStat label="Candidates in pipeline" value={String(hiring.candidatesInPipeline)} icon={Users2}
-              caption="matched by process name, not a hard link" />
+            <HealthStat label="Candidates in Pipeline" value={String(hiring.candidatesInPipeline)} icon={Users2}
+              caption="matched by process" tone="neutral" />
           </div>
-          {hiring.openRequisitions === 0 && hiring.candidatesInPipeline === 0 && (
-            <p className="text-[9.5px] text-slate-400 italic mt-1.5">
-              Nothing open right now — this is a genuinely empty pipeline, not a missing feature.
-            </p>
-          )}
         </div>
 
-        <p className="text-[9.5px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
-          Shrinkage isn't shown here: the dedicated shrinkage table has no process-level data for any
-          process yet — the nightly job that fills it only runs at branch/org level today.
-        </p>
       </div>
     </ChartCard>
   );
@@ -3152,16 +3307,17 @@ function FunnelChart({ metrics }: { metrics: Reading[] }) {
           <LineChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: -14 }}>
             <CartesianGrid {...GRID} vertical={false} />
             <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false}
-              tickFormatter={(v) => String(v).slice(5)} minTickGap={22} />
+              tickFormatter={fmtDate} minTickGap={22} />
             <YAxis domain={[0, 100]} unit="%" tick={AXIS_TICK} tickLine={false} axisLine={false} />
-            <Tooltip contentStyle={TOOLTIP_STYLE}
+            <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate}
               formatter={(v: number, n: string) => [`${v.toFixed(1)}%`, present.find((l) => l[0] === n)?.[1] ?? n]} />
             <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
               formatter={(n: string) => present.find((l) => l[0] === n)?.[1] ?? n} />
             {present.map(([key, , colour, dashed]) => (
               <Line key={key} type="monotone" dataKey={key} stroke={colour} strokeWidth={dashed ? 1.5 : 2}
-                strokeDasharray={dashed ? "4 2" : undefined} dot={false} isAnimationActive={false}
-                connectNulls={false} />
+                strokeDasharray={dashed ? "4 2" : undefined}
+                dot={{ r: 2.5, fill: colour, strokeWidth: 0 }}
+                isAnimationActive={false} connectNulls={false} />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -3239,18 +3395,22 @@ function QualityRadar({ metrics }: { metrics: Reading[] }) {
   if (data.length < 3) return null;
   return (
     <ChartCard title="Quality shape" subtitle="Evenly strong, or lopsided? Each axis is a scored parameter">
-      <div className="h-60">
+      <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
-          <RadarChart data={data} outerRadius="55%" margin={{ top: 16, right: 28, bottom: 16, left: 28 }}>
+          <RadarChart data={data} outerRadius="68%" margin={{ top: 22, right: 36, bottom: 22, left: 36 }}>
             <PolarGrid stroke="#E2E8F0" />
-            <PolarAngleAxis dataKey="axis" tick={{ fontSize: 10, fill: "#64748B" }} />
-            <PolarRadiusAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#94A3B8" }} />
+            <PolarAngleAxis dataKey="axis" tick={{ fontSize: 12, fill: "#475569", fontWeight: 600 }} />
+            <PolarRadiusAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#94A3B8" }} />
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
               labelFormatter={(_, payload) => payload?.[0]?.payload?.full ?? ""}
               formatter={(v: number) => [`${v.toFixed(1)}%`, ""]}
             />
-            <Radar dataKey="value" stroke={C_GREEN} fill={C_GREEN} fillOpacity={0.3} />
+            <Radar dataKey="value" stroke={C_GREEN} fill={C_GREEN} fillOpacity={0.25} strokeWidth={2}>
+              <LabelList dataKey="value" position="outside"
+                style={{ fontSize: 11, fill: "#047857", fontWeight: 700 }}
+                formatter={(v: number) => v !== null ? `${v.toFixed(0)}%` : ""} />
+            </Radar>
           </RadarChart>
         </ResponsiveContainer>
       </div>
@@ -3275,7 +3435,11 @@ function RiskBars({ metrics }: { metrics: Reading[] }) {
             <YAxis type="category" dataKey="name" width={124}
               tick={{ ...AXIS_TICK, fontSize: 10 }} tickLine={false} axisLine={false} />
             <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(2)}%`, ""]} />
-            <Bar dataKey="value" fill={C_RED} radius={[0, 3, 3, 0]} barSize={13} />
+            <Bar dataKey="value" fill={C_RED} radius={[0, 3, 3, 0]} barSize={13}>
+              <LabelList dataKey="value" position="right"
+                style={{ fontSize: 10, fill: "#dc2626", fontWeight: 700 }}
+                formatter={(v: number) => `${v.toFixed(1)}%`} />
+            </Bar>
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -3327,29 +3491,36 @@ function DrilldownTrendChart({ readings, unit, targetValue, direction }: {
             <LineChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: -14 }}>
               <CartesianGrid {...GRID} vertical={false} />
               <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
-                tickFormatter={(v) => String(v).slice(5)} minTickGap={18} />
+                tickFormatter={fmtDate} minTickGap={18} />
               <YAxis tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false} width={38} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [formatValue(v, unit), "Value"]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: number) => [formatValue(v, unit), "Value"]} />
               {targetValue !== null && (
                 <ReferenceLine y={targetValue} stroke={C_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
                   label={{ value: "Target", position: "insideTopRight", fontSize: 9, fill: C_AMBER }} />
               )}
               <Line type="monotone" dataKey="value" stroke={C_BLUE} strokeWidth={2}
-                dot={{ r: 2.5, fill: C_BLUE }} isAnimationActive={false} />
+                dot={{ r: 2.5, fill: C_BLUE }} isAnimationActive={false}>
+                <LabelList dataKey="value" position="top"
+                  style={{ fontSize: 9, fill: "#2563eb", fontWeight: 700 }}
+                  formatter={(v: number | null) => v === null ? "" : formatValue(v, unit)} />
+              </Line>
             </LineChart>
           ) : (
             <BarChart data={data} margin={{ top: 6, right: 12, bottom: 0, left: -14 }}>
               <CartesianGrid {...GRID} vertical={false} />
               <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false}
-                tickFormatter={(v) => String(v).slice(5)} minTickGap={18} />
+                tickFormatter={fmtDate} minTickGap={18} />
               <YAxis tick={{ ...AXIS_TICK, fontSize: 9 }} tickLine={false} axisLine={false} width={38} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [formatValue(v, unit), "Value"]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: number) => [formatValue(v, unit), "Value"]} />
               {targetValue !== null && (
                 <ReferenceLine y={targetValue} stroke={C_AMBER} strokeDasharray="4 2" strokeWidth={1.5}
                   label={{ value: "Target", position: "insideTopRight", fontSize: 9, fill: C_AMBER }} />
               )}
               <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={false}>
                 {data.map((pt) => <Cell key={pt.date} fill={barColor(pt.value)} />)}
+                <LabelList dataKey="value" position="top"
+                  style={{ fontSize: 9, fill: "#475569", fontWeight: 700 }}
+                  formatter={(v: number | null) => v === null ? "" : formatValue(v, unit)} />
               </Bar>
             </BarChart>
           )}
@@ -3697,7 +3868,7 @@ function AnalystBreakdownPanel({ processId, metricKey, period }: {
   return (
     <section>
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5 inline-flex items-center gap-1">
-        <Users size={11} />Analyst-wise score — the deepest level of this drill-down
+        <Users size={11} />Employee breakdown — each individual's value for this metric
       </div>
       {isLoading || !ab ? (
         <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
@@ -4071,8 +4242,6 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                       <tr>
                         <th className="text-left px-2 py-1.5 font-semibold">Date</th>
                         <th className="text-right px-2 py-1.5 font-semibold">Value</th>
-                        <th className="text-right px-2 py-1.5 font-semibold">Numerator</th>
-                        <th className="text-right px-2 py-1.5 font-semibold">Denominator</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4097,15 +4266,9 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                               x.value === null ? "text-slate-400 italic font-normal" : "text-slate-900 dark:text-slate-100"}`}>
                               {x.value === null ? "no data" : formatValue(x.value, d.unit)}
                             </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
-                              {x.numerator === null ? "—" : Math.round(x.numerator).toLocaleString()}
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
-                              {x.denominator === null ? "—" : Math.round(x.denominator).toLocaleString()}
-                            </td>
                           </tr>
                           {expandedDate === x.date && metricKey && (
-                            <RawRowsPanel processId={processId} metricKey={metricKey} date={x.date} columnCount={4} />
+                            <RawRowsPanel processId={processId} metricKey={metricKey} date={x.date} columnCount={2} />
                           )}
                         </Fragment>
                       ))}
@@ -5016,22 +5179,60 @@ export default function ProcessOperationsPage() {
           ) : (
             <div className="space-y-4">
 
-              {/* ── Row 0: KPI strip (mirrors the Live Dashboard card row) ─── */}
-              {ops && currentProcess && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-                  <LiveKpiCard label="Headcount" value={ops.headcount} sub="active employees" color="linear-gradient(135deg,#1e3a5f,#2f6fed)" />
-                  <LiveKpiCard label="Total Metrics" value={allMetricsForBrief.length} sub="tracked this period" color="linear-gradient(135deg,#0369a1,#06b6d4)" />
-                  <LiveKpiCard label="Passing" value={passCount} sub="on target" color="linear-gradient(135deg,#047857,#10b981)" />
-                  <LiveKpiCard label="Failing" value={failCount} sub="below target"
-                    color={failCount > 0 ? "linear-gradient(135deg,#be123c,#f43f5e)" : "linear-gradient(135deg,#047857,#10b981)"} />
-                  <LiveKpiCard label="Stale" value={staleCount} sub={staleCount > 0 ? "feeds quiet" : "feeds current"}
-                    color={staleCount > 0 ? "linear-gradient(135deg,#b45309,#f59e0b)" : "linear-gradient(135deg,#0369a1,#06b6d4)"} />
-                </div>
-              )}
+              {/* ── Row 0: CEO KPI strip — financial + quality + workforce ── */}
+              {ops && currentProcess && (() => {
+                const h = healthForBoard?.data;
+                const totalTargeted = failCount + passCount;
+                const qualityPct = totalTargeted > 0 ? Math.round((passCount / totalTargeted) * 100) : null;
+                const hcGap = h?.headcount?.gap ?? null;
+                const revPerAgent = (h?.finance?.revenue && (h?.headcount?.activeHc ?? 0) > 0)
+                  ? Math.round(h.finance.revenue / h.headcount.activeHc) : null;
+                const fmtL = (v: number | null): string => {
+                  if (v === null) return "—";
+                  const abs = Math.abs(v); const s = v < 0 ? "-" : "";
+                  if (abs >= 10_000_000) return `${s}₹${(abs / 10_000_000).toFixed(1)}Cr`;
+                  if (abs >= 100_000) return `${s}₹${(abs / 100_000).toFixed(1)}L`;
+                  if (abs >= 1000) return `${s}₹${(abs / 1000).toFixed(0)}K`;
+                  return `${s}₹${abs.toLocaleString("en-IN")}`;
+                };
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 10 }}>
+                    <LiveKpiCard label="Revenue"
+                      value={h?.finance?.available ? fmtL(h.finance.revenue) : "—"}
+                      sub={h?.finance?.revenueStatus === "accounting_fallback" ? "accounting fallback" : "this month"}
+                      color="linear-gradient(135deg,#1e3a5f,#2f6fed)" />
+                    <LiveKpiCard label="Operating %"
+                      value={h?.finance?.agentSalaryIsRealThisMonth && h.finance.operatingProfitPct !== null
+                        ? `${h.finance.operatingProfitPct.toFixed(1)}%` : "—"}
+                      sub={!h?.finance?.agentSalaryIsRealThisMonth ? "payroll pending" : "EBIT ÷ Revenue"}
+                      color={h?.finance?.agentSalaryIsRealThisMonth && h.finance.operatingProfitPct !== null
+                        ? (h.finance.operatingProfitPct >= 0 ? "linear-gradient(135deg,#047857,#10b981)" : "linear-gradient(135deg,#be123c,#f43f5e)")
+                        : "linear-gradient(135deg,#334155,#64748b)"} />
+                    <LiveKpiCard label="Quality Score"
+                      value={qualityPct !== null ? `${qualityPct}%` : "—"}
+                      sub={`${passCount} on target · ${failCount} failing`}
+                      color={qualityPct !== null
+                        ? (qualityPct >= 80 ? "linear-gradient(135deg,#047857,#10b981)"
+                          : qualityPct >= 55 ? "linear-gradient(135deg,#b45309,#f59e0b)"
+                          : "linear-gradient(135deg,#be123c,#f43f5e)")
+                        : "linear-gradient(135deg,#0369a1,#06b6d4)"} />
+                    <LiveKpiCard label="HC vs Mandate"
+                      value={hcGap !== null ? (hcGap >= 0 ? `+${hcGap}` : String(hcGap)) : `${ops.headcount} HC`}
+                      sub={hcGap !== null ? (hcGap >= 0 ? "above mandate" : "below mandate") : "no mandate set"}
+                      color={hcGap !== null
+                        ? (hcGap >= 0 ? "linear-gradient(135deg,#047857,#10b981)" : "linear-gradient(135deg,#be123c,#f43f5e)")
+                        : "linear-gradient(135deg,#1e3a5f,#2f6fed)"} />
+                    <LiveKpiCard label="Rev / Agent"
+                      value={fmtL(revPerAgent)}
+                      sub="monthly productivity"
+                      color="linear-gradient(135deg,#5b21b6,#7c5ce5)" />
+                  </div>
+                );
+              })()}
 
               {/* ── Row 1: Executive Brief + Action Board ─────────────────── */}
               {ops && currentProcess && (
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(320px,.9fr)", gap: 14, alignItems: "stretch" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(0,.9fr)", gap: 14, alignItems: "stretch" }}>
                   <GasExecutiveBrief
                     processName={currentProcess.processName}
                     headcount={ops.headcount}
@@ -5041,8 +5242,26 @@ export default function ProcessOperationsPage() {
                     failCount={failCount}
                     passCount={passCount}
                     periodLabel={periodLabel ?? period}
+                    health={healthForBoard?.data}
                   />
                   <GasActionBoard items={actionItems} />
+                </div>
+              )}
+
+              {/* ── Section nav — sticky below topbar for instant KPI jumping ── */}
+              {ops && ops.sections.length > 0 && (
+                <div style={{ position: "sticky", top: 72, zIndex: 90, background: "#f1f5fa", paddingTop: 4, paddingBottom: 6, marginLeft: -20, marginRight: -20, paddingLeft: 20, paddingRight: 20, borderBottom: "1px solid #dce4ed", boxShadow: "0 4px 12px rgba(16,35,57,.06)" }}>
+                  <SectionOverviewStrip
+                    sections={ops.sections}
+                    ungrouped={ops.ungrouped}
+                    staleAfterDays={ops.staleAfterDays}
+                    activeSectionKey={activeSectionKey}
+                    onSectionClick={(key) => {
+                      setActiveSectionKey(prev => prev === key ? null : key);
+                      const el = sectionRefs.current[key];
+                      if (el) { setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
+                    }}
+                  />
                 </div>
               )}
 
@@ -5067,50 +5286,67 @@ export default function ProcessOperationsPage() {
                     </div>
                   )}
 
-                  {/* Pareto chart + insights */}
-                  {current && ops && <LivePanel title="Performance Distribution"><ProcessCardInsightsPanel processId={current} ops={ops} /></LivePanel>}
-
-                  {/* Business health */}
+                  {/* ── ZONE 1: Business Context (CEO reads first) ──────────── */}
                   {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} /></LivePanel>}
 
-                  {/* Conversion funnel + quality charts */}
+                  {/* ── ZONE 2: Root Cause — why quality is where it is ─────── */}
+                  {current && <LivePanel title="Root Cause vs. Workforce"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
+
+                  {/* ── ZONE 3: Quality Overview ────────────────────────────── */}
+                  {current && ops && <LivePanel title="Performance Distribution"><ProcessCardInsightsPanel processId={current} ops={ops} onDrill={setDrill} /></LivePanel>}
+
+                  {/* Voice of the customer — what clients/customers are saying */}
+                  {current && <LivePanel title="Voice of Customer"><VoiceOfCustomerPanel processId={current} period={period} /></LivePanel>}
+
+                  {/* Conversion funnel + quality trend charts */}
                   {charts.length > 0 && (
                     <LivePanel title="Trend Charts" sub={`${charts.length}`}>
                       <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">{charts}</div>
                     </LivePanel>
                   )}
 
-                  {/* Quality & analysis panels — VoiceOfCustomer and DailyQualityTrend are NOT wrapped (plan constraint) */}
-                  {current && <VoiceOfCustomerPanel processId={current} period={period} />}
+                  {/* ── Zone divider: executive summary above / operational detail below ── */}
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 select-none">
+                      Operations Detail — Managers &amp; QA
+                    </span>
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                  </div>
+
+                  {/* ── ZONE 4: Quality Deep-Dives (operations managers) ─────── */}
                   {current && <LivePanel title="Fatal Calls Analysis"><FatalCallsPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Critical Signals"><CriticalSignalsPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Customer Risk"><CustomerRiskCardsPanel processId={current} period={period} /></LivePanel>}
                   {current && <LivePanel title="Agent Audit Summary"><AgentAuditSummaryPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Scenario Distribution"><ScenarioDistributionPanel processId={current} period={period} /></LivePanel>}
                   {current && <LivePanel title="Score Components"><ScoreComponentsPanel processId={current} period={period} /></LivePanel>}
                   {current && <LivePanel title="ACHT Categorization"><AchtCategorizationPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Critical Signals"><CriticalSignalsPanel processId={current} period={period} /></LivePanel>}
-                  {current && <DailyQualityTrendPanel processId={current} />}
-                  {current && <LivePanel title="Customer Risk"><CustomerRiskCardsPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Daily Quality Trend"><DailyQualityTrendPanel processId={current} /></LivePanel>}
+
+                  {/* ── Zone divider: quality deep-dives above / analyst drill-downs below ── */}
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 select-none">
+                      Analyst Drill-Downs
+                    </span>
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                  </div>
+
+                  {/* ── ZONE 5: Analyst Drill-Downs (QA / Process analysts) ─── */}
                   {current && <LivePanel title="Fatal Analysis"><FatalAnalysisPanel processId={current} period={period} /></LivePanel>}
+                  {current && <LivePanel title="Scenario Distribution"><ScenarioDistributionPanel processId={current} period={period} /></LivePanel>}
                   {current && <LivePanel title="Day-wise Scenario Audit"><DayWiseScenarioAuditPanel processId={current} period={period} /></LivePanel>}
                   {current && <LivePanel title="Repeat Analysis"><RepeatAnalysisPanel processId={current} period={period} /></LivePanel>}
                   {current && <LivePanel title="Fraud Call Detection"><FraudCallPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Workforce Correlation"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
 
-                  {/* ── Section Overview Strip ────────────────────────────── */}
-                  {ops.sections.length > 0 && (
-                    <SectionOverviewStrip
-                      sections={ops.sections}
-                      ungrouped={ops.ungrouped}
-                      staleAfterDays={ops.staleAfterDays}
-                      activeSectionKey={activeSectionKey}
-                      onSectionClick={(key) => {
-                        setActiveSectionKey(prev => prev === key ? null : key);
-                        // Scroll to the section
-                        const el = sectionRefs.current[key];
-                        if (el) { setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
-                      }}
-                    />
-                  )}
+                  {/* ── KPI Sections header ──────────────────────────────── */}
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 select-none">
+                      KPI Metric Sections
+                    </span>
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                  </div>
 
                   {/* ── Enhanced metric sections ──────────────────────────── */}
                   {[...ops.sections, ...(ops.ungrouped.length
